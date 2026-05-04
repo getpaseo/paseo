@@ -8,9 +8,17 @@ import {
   type UseAgentFormStateResult,
 } from "@/hooks/use-agent-form-state";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
+import {
+  areAttachmentsEqual,
+  buildDraftComposerCommandConfig,
+  buildDraftStatusControls,
+  hasDraftContent,
+  resolveDraftKey,
+  resolveEffectiveComposerModelId,
+  resolveEffectiveComposerThinkingOptionId,
+  type DraftKeyInput,
+} from "@/hooks/use-agent-input-draft-core";
 import { useDraftStore } from "@/stores/draft-store";
-import type { AgentModelDefinition } from "@server/server/agent/agent-sdk-types";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -23,12 +31,6 @@ interface AgentInputDraftComposerOptions {
   onlineServerIds?: string[];
   lockedWorkingDir?: string;
 }
-
-interface DraftKeyContext {
-  selectedServerId: string | null;
-}
-
-type DraftKeyInput = string | ((context: DraftKeyContext) => string);
 
 interface UseAgentInputDraftInput {
   draftKey: DraftKeyInput;
@@ -55,121 +57,6 @@ interface AgentInputDraft {
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
   composerState: DraftComposerState | null;
-}
-
-function hasDraftContent(input: {
-  text: string;
-  attachments: UserComposerAttachment[];
-  cwd: string;
-}): boolean {
-  return (
-    input.text.trim().length > 0 || input.attachments.length > 0 || input.cwd.trim().length > 0
-  );
-}
-
-function areAttachmentsEqual(input: {
-  left: UserComposerAttachment[];
-  right: UserComposerAttachment[];
-}): boolean {
-  if (input.left.length !== input.right.length) {
-    return false;
-  }
-
-  return input.left.every((attachment, index) => {
-    const other = input.right[index];
-    return JSON.stringify(attachment) === JSON.stringify(other);
-  });
-}
-
-function resolveDraftKey(input: {
-  draftKey: DraftKeyInput;
-  selectedServerId: string | null;
-}): string {
-  if (typeof input.draftKey === "function") {
-    return input.draftKey({ selectedServerId: input.selectedServerId });
-  }
-  return input.draftKey;
-}
-
-function resolveEffectiveComposerModelId(input: {
-  selectedModel: string;
-  availableModels: AgentModelDefinition[];
-}): string {
-  return input.selectedModel.trim();
-}
-
-function resolveEffectiveComposerThinkingOptionId(input: {
-  selectedThinkingOptionId: string;
-  availableModels: AgentModelDefinition[];
-  effectiveModelId: string;
-}): string {
-  const selectedThinkingOptionId = input.selectedThinkingOptionId.trim();
-  if (selectedThinkingOptionId) {
-    return selectedThinkingOptionId;
-  }
-
-  const selectedModelDefinition =
-    input.availableModels.find((model) => model.id === input.effectiveModelId) ?? null;
-  return selectedModelDefinition?.defaultThinkingOptionId ?? "";
-}
-
-function buildDraftComposerCommandConfig(input: {
-  provider: AgentProvider | null;
-  cwd: string;
-  modeOptions: DraftAgentStatusBarProps["modeOptions"];
-  selectedMode: string;
-  effectiveModelId: string;
-  effectiveThinkingOptionId: string;
-  featureValues?: Record<string, unknown>;
-}): DraftCommandConfig | undefined {
-  const cwd = input.cwd.trim();
-  if (!input.provider || !cwd) {
-    return undefined;
-  }
-
-  return {
-    provider: input.provider,
-    cwd,
-    ...(input.modeOptions.length > 0 && input.selectedMode !== ""
-      ? { modeId: input.selectedMode }
-      : {}),
-    ...(input.effectiveModelId ? { model: input.effectiveModelId } : {}),
-    ...(input.effectiveThinkingOptionId
-      ? { thinkingOptionId: input.effectiveThinkingOptionId }
-      : {}),
-    ...(input.featureValues ? { featureValues: input.featureValues } : {}),
-  };
-}
-
-function buildDraftStatusControls(input: {
-  formState: UseAgentFormStateResult;
-  features?: DraftAgentStatusBarProps["features"];
-  onSetFeature?: DraftAgentStatusBarProps["onSetFeature"];
-  onDropdownClose?: DraftAgentStatusBarProps["onDropdownClose"];
-}): DraftAgentStatusBarProps {
-  const { formState, features, onSetFeature, onDropdownClose } = input;
-  return {
-    providerDefinitions: formState.providerDefinitions,
-    selectedProvider: formState.selectedProvider,
-    onSelectProvider: formState.setProviderFromUser,
-    modeOptions: formState.modeOptions,
-    selectedMode: formState.selectedMode,
-    onSelectMode: formState.setModeFromUser,
-    models: formState.availableModels,
-    selectedModel: formState.selectedModel,
-    onSelectModel: formState.setModelFromUser,
-    isModelLoading: formState.isModelLoading,
-    allProviderModels: formState.allProviderModels,
-    isAllModelsLoading: formState.isAllModelsLoading,
-    onSelectProviderAndModel: formState.setProviderAndModelFromUser,
-    thinkingOptions: formState.availableThinkingOptions,
-    selectedThinkingOptionId: formState.selectedThinkingOptionId,
-    onSelectThinkingOption: formState.setThinkingOptionFromUser,
-    features,
-    onSetFeature,
-    onDropdownClose,
-    onModelSelectorOpen: formState.refetchProviderModelsIfStale,
-  };
 }
 
 export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDraft {
