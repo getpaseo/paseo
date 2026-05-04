@@ -25,8 +25,7 @@ export function parseGitHubRepoNameFromRemote(remoteUrl: string): string | null 
     return null;
   }
 
-  const repoName = githubRepo.split("/").pop();
-  return repoName && repoName.length > 0 ? repoName : null;
+  return githubRepo.split("/").pop() || null;
 }
 
 export function deriveProjectSlug(cwd: string, remoteUrl: string | null = null): string {
@@ -51,7 +50,7 @@ export function buildWorkspaceGitMetadataFromSnapshot(input: {
       workspaceDisplayName: input.directoryName,
       gitRemote: null,
       isWorktree: false,
-      projectSlug: deriveProjectSlug(input.cwd, null),
+      projectSlug: deriveProjectSlug(input.cwd),
       repoRoot: null,
       currentBranch: null,
       remoteUrl: null,
