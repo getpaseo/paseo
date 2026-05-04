@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-function requireServerId(): string {
+export function requireServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
   if (!serverId) {
     throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");

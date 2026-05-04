@@ -97,13 +97,13 @@ export function useKeyboardShortcuts({
           navigateToWorkspace(action.serverId, action.workspaceId, { currentPathname: pathname });
           return true;
         case "router-replace":
-          router.replace(action.route);
+          router.replace(action.route as Parameters<typeof router.replace>[0]);
           return true;
         case "router-back":
           router.back();
           return true;
         case "router-push":
-          router.push(action.route);
+          router.push(action.route as Parameters<typeof router.push>[0]);
           return true;
         case "open-project-picker":
           void openProjectPickerAction();

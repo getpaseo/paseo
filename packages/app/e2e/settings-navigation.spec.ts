@@ -1,62 +1,60 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
-
-async function clickSidebarSection(page: Page, label: string) {
-  const sidebar = page.getByTestId("settings-sidebar");
-  await expect(sidebar).toBeVisible();
-  await sidebar.getByRole("button", { name: label, exact: true }).click();
-}
+import {
+  openSettingsSection,
+  expectSettingsHeader,
+  openAddHostFlow,
+  selectHostConnectionType,
+  toggleHostAdvanced,
+  openCompactSettings,
+  expectCompactSettingsList,
+  expectSettingsSidebarVisible,
+  expectSettingsSidebarHidden,
+  expectSettingsSidebarSections,
+  goBackInSettings,
+  expectSettingsBackButton,
+  clickSettingsBackToWorkspace,
+  verifyLegacyHostSettingsRedirect,
+  openCompactSettingsHost,
+  expectAddHostMethodOptions,
+  fillDirectHostUri,
+  expectDirectHostFormValues,
+  expectDirectHostSslEnabled,
+  expectDirectHostUriValue,
+  expectDirectHostUriHidden,
+  expectDiagnosticsContent,
+  expectAboutContent,
+  expectGeneralContent,
+} from "./helpers/settings";
 
 test.describe("Settings sidebar navigation", () => {
   test("clicking a sidebar section updates the URL and renders the section", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
 
-    await clickSidebarSection(page, "Diagnostics");
-    await expect(page).toHaveURL(/\/settings\/diagnostics$/);
-    await expect(page.getByRole("button", { name: "Play test" })).toBeVisible();
-    await expect(page.getByTestId("settings-detail-header-title")).toHaveText("Diagnostics");
+    await openSettingsSection(page, "diagnostics");
+    await expectSettingsHeader(page, "Diagnostics");
+    await expectDiagnosticsContent(page);
 
-    await clickSidebarSection(page, "About");
-    await expect(page).toHaveURL(/\/settings\/about$/);
-    await expect(page.getByText("Version", { exact: true }).first()).toBeVisible();
-    await expect(page.getByTestId("settings-detail-header-title")).toHaveText("About");
+    await openSettingsSection(page, "about");
+    await expectSettingsHeader(page, "About");
+    await expectAboutContent(page);
 
-    await clickSidebarSection(page, "General");
-    await expect(page).toHaveURL(/\/settings\/general$/);
-    await expect(page.getByText("Theme", { exact: true }).first()).toBeVisible();
-    await expect(page.getByTestId("settings-detail-header-title")).toHaveText("General");
+    await openSettingsSection(page, "general");
+    await expectSettingsHeader(page, "General");
+    await expectGeneralContent(page);
   });
 
   test("/h/[serverId]/settings redirects to /settings/hosts/[serverId]", async ({ page }) => {
-    const serverId = getServerId();
     await gotoAppShell(page);
-    await page.goto(`/h/${encodeURIComponent(serverId)}/settings`);
-    await expect(page).toHaveURL(
-      new RegExp(`/settings/hosts/${escapeRegex(encodeURIComponent(serverId))}$`),
-    );
+    await verifyLegacyHostSettingsRedirect(page);
   });
 
   test("the + Add host button opens the add-host method modal", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
-
-    await page.getByTestId("settings-add-host").click();
-    await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Direct connection" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Paste pairing link" })).toBeVisible();
+    await openAddHostFlow(page);
+    await expectAddHostMethodOptions(page);
   });
 
   test("direct connection advanced URI round-trips SSL and password into the form", async ({
@@ -64,38 +62,34 @@ test.describe("Settings sidebar navigation", () => {
   }) => {
     await gotoAppShell(page);
     await openSettings(page);
+    await openAddHostFlow(page);
+    await selectHostConnectionType(page, "direct");
 
-    await page.getByTestId("settings-add-host").click();
-    await page.getByRole("button", { name: "Direct connection" }).click();
+    await toggleHostAdvanced(page);
+    await fillDirectHostUri(page, "tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
+    await toggleHostAdvanced(page);
 
-    await page.getByTestId("direct-host-advanced-toggle").click();
-    await page
-      .getByTestId("direct-host-uri-input")
-      .fill("tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
-    await page.getByTestId("direct-host-advanced-toggle").click();
+    await expectDirectHostFormValues(page, {
+      host: "example.paseo.test",
+      port: "7443",
+      password: "shared-secret",
+    });
+    await expectDirectHostSslEnabled(page);
+    await expectDirectHostUriHidden(page);
 
-    await expect(page.getByTestId("direct-host-input")).toHaveValue("example.paseo.test");
-    await expect(page.getByTestId("direct-port-input")).toHaveValue("7443");
-    await expect(page.getByTestId("direct-ssl-toggle-checked")).toBeVisible();
-    await expect(page.getByTestId("direct-password-input")).toHaveValue("shared-secret");
-    await expect(page.getByTestId("direct-host-uri-input")).toHaveCount(0);
-
-    await page.getByTestId("direct-host-advanced-toggle").click();
-    await expect(page.getByTestId("direct-host-uri-input")).toHaveValue(
+    await toggleHostAdvanced(page);
+    await expectDirectHostUriValue(
+      page,
       "tcp://example.paseo.test:7443?ssl=true&password=shared-secret",
     );
-    await page.getByTestId("direct-host-advanced-toggle").click();
-    await expect(page.getByTestId("direct-host-uri-input")).toHaveCount(0);
+    await toggleHostAdvanced(page);
+    await expectDirectHostUriHidden(page);
   });
 
   test("sidebar shows a Back to workspace row that leaves /settings", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
-
-    const backRow = page.getByTestId("settings-back-to-workspace");
-    await expect(backRow).toBeVisible();
-
-    await backRow.click();
+    await clickSettingsBackToWorkspace(page);
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
 });
@@ -103,113 +97,57 @@ test.describe("Settings sidebar navigation", () => {
 test.describe("Settings — compact master-detail", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  async function openCompactSettingsRoot(page: Page) {
-    await gotoAppShell(page);
-    // Wait for bootstrap to settle on a host route so storeReady is true before
-    // we navigate into the protected settings stack. A direct page.goto("/settings")
-    // on a cold load is eaten by Stack.Protected while bootstrap is still running.
-    await expect(page).toHaveURL(/\/h\/|\/welcome/, { timeout: 15000 });
-
-    // Drive navigation the same way a user would: open the mobile drawer and tap
-    // the Settings footer icon. This preserves the in-app router state instead of
-    // triggering a full reload through Stack.Protected.
-    await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
-    const sidebarSettingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
-    await expect(sidebarSettingsButton).toBeVisible();
-    await sidebarSettingsButton.click();
-
-    await expect(page).toHaveURL(/\/settings$/);
-    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
-  }
-
-  async function expectCompactSettingsRootList(page: Page) {
-    await expect(page).toHaveURL(/\/settings$/);
-    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
-
-    await expect(page.getByText("Theme", { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Play test" })).toHaveCount(0);
-    await expect(page.locator('[data-testid^="settings-host-page-"]')).toHaveCount(0);
-  }
-
   test("/settings renders only the sidebar list (no section content)", async ({ page }) => {
-    await openCompactSettingsRoot(page);
+    await gotoAppShell(page);
+    await openCompactSettings(page);
 
-    // Sidebar rows are present.
-    await expect(
-      page.getByTestId("settings-sidebar").getByRole("button", { name: "General", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page
-        .getByTestId("settings-sidebar")
-        .getByRole("button", { name: "Diagnostics", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("settings-sidebar").getByRole("button", { name: "About", exact: true }),
-    ).toBeVisible();
+    await expectSettingsSidebarSections(page, ["general", "diagnostics", "about"]);
+    await expectCompactSettingsList(page);
 
-    // Section detail content is NOT rendered at the root.
-    await expectCompactSettingsRootList(page);
-
-    const rootBackButton = page.getByRole("button", { name: "Back", exact: true });
-    await expect(rootBackButton).toBeVisible();
-    await rootBackButton.click();
+    await expectSettingsBackButton(page);
+    await goBackInSettings(page);
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
 
   test("tapping a section pushes /settings/[section] and shows a back button", async ({ page }) => {
-    await openCompactSettingsRoot(page);
+    await gotoAppShell(page);
+    await openCompactSettings(page);
 
-    await page
-      .getByTestId("settings-sidebar")
-      .getByRole("button", { name: "Diagnostics", exact: true })
-      .click();
+    await openSettingsSection(page, "diagnostics");
     await expect(page).toHaveURL(/\/settings\/diagnostics$/);
-    await expect(page.getByRole("button", { name: "Play test" })).toBeVisible();
-    // Sidebar is no longer visible — we are on a detail screen.
-    // (Expo Router stack keeps the previous screen in the DOM but hidden; check
-    // only visible instances.)
-    await expect(page.locator('[data-testid="settings-sidebar"]:visible')).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
+    await expectDiagnosticsContent(page);
+    await expectSettingsSidebarHidden(page);
+    await expectSettingsBackButton(page);
   });
 
   test("back from a section detail returns to the /settings list", async ({ page }) => {
-    await openCompactSettingsRoot(page);
+    await gotoAppShell(page);
+    await openCompactSettings(page);
 
-    await page
-      .getByTestId("settings-sidebar")
-      .getByRole("button", { name: "About", exact: true })
-      .click();
+    await openSettingsSection(page, "about");
     await expect(page).toHaveURL(/\/settings\/about$/);
 
-    await page.getByRole("button", { name: "Back", exact: true }).click();
-    await expectCompactSettingsRootList(page);
-    await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
+    await goBackInSettings(page);
+    await expectCompactSettingsList(page);
+    await expectSettingsBackButton(page);
   });
 
   test("tapping a host entry pushes /settings/hosts/[serverId]", async ({ page }) => {
-    const serverId = getServerId();
-    await openCompactSettingsRoot(page);
+    await gotoAppShell(page);
+    await openCompactSettings(page);
 
-    await page.getByTestId(`settings-host-entry-${serverId}`).click();
-    await expect(page).toHaveURL(
-      new RegExp(`/settings/hosts/${escapeRegex(encodeURIComponent(serverId))}$`),
-    );
-    await expect(page.getByTestId(`settings-host-page-${serverId}`)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
-    await expect(page.locator('[data-testid="settings-sidebar"]:visible')).toHaveCount(0);
+    await openCompactSettingsHost(page);
+    await expectSettingsBackButton(page);
+    await expectSettingsSidebarHidden(page);
   });
 
   test("back from a host detail returns to the /settings list", async ({ page }) => {
-    const serverId = getServerId();
-    await openCompactSettingsRoot(page);
+    await gotoAppShell(page);
+    await openCompactSettings(page);
 
-    await page.getByTestId(`settings-host-entry-${serverId}`).click();
-    await expect(page).toHaveURL(
-      new RegExp(`/settings/hosts/${escapeRegex(encodeURIComponent(serverId))}$`),
-    );
-
-    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await openCompactSettingsHost(page);
+    await goBackInSettings(page);
     await expect(page).toHaveURL(/\/settings$/);
-    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+    await expectSettingsSidebarVisible(page);
   });
 });
