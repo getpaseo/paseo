@@ -593,7 +593,7 @@ describe("create_agent MCP tool", () => {
     await tool.callback({
       cwd: existingCwd,
       title: "Config test",
-      mode: "default",
+      mode: "auto",
       initialPrompt: "Do work",
       provider: "codex/gpt-5.4",
       thinking: "think-hard",
@@ -1169,7 +1169,7 @@ describe("create_agent MCP tool", () => {
     await tool.callback({
       cwd: existingCwd,
       title: "Injected config test",
-      mode: "default",
+      mode: "auto",
       provider: "codex/gpt-5.4",
       initialPrompt: "Do work",
     });
@@ -1182,6 +1182,129 @@ describe("create_agent MCP tool", () => {
     expect(configArg.mcpServers).toBeUndefined();
     expect(agentIdArg).toBeUndefined();
     expect(optionsArg).toBeUndefined();
+  });
+
+  it("rejects an explicit mode that is not valid for the target provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const tool = registeredTool(server, "create_agent");
+
+    await expect(
+      tool.callback({
+        cwd: existingCwd,
+        title: "Bad mode",
+        provider: "opencode/gpt-5.4",
+        mode: "bypassPermissions",
+        initialPrompt: "Do work",
+      }),
+    ).rejects.toThrow(
+      "Invalid mode 'bypassPermissions' for provider 'opencode'. Available modes: build, full-access, plan",
+    );
+    expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("inherits the caller mode when the new agent uses the same provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "claude",
+      currentModeId: "bypassPermissions",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "bypassPermissions",
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.callback({
+      title: "Child",
+      provider: "claude/claude-sonnet-4-20250514",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ modeId: "bypassPermissions" }),
+      undefined,
+      expect.any(Object),
+    );
+  });
+
+  it("refuses cross-provider mode inheritance when no explicit mode is given", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "claude",
+      currentModeId: "bypassPermissions",
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+
+    await expect(
+      tool.callback({
+        title: "Child",
+        provider: "opencode/gpt-5.4",
+        initialPrompt: "Do work",
+      }),
+    ).rejects.toThrow(
+      "cannot inherit mode 'bypassPermissions' from caller (provider 'claude') for new agent (provider 'opencode'). Pass an explicit mode. Available modes for 'opencode': build, full-access, plan",
+    );
+    expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("accepts an explicit valid mode across providers", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "claude",
+      currentModeId: "bypassPermissions",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.callback({
+      title: "Child",
+      provider: "opencode/gpt-5.4",
+      mode: "build",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ modeId: "build" }),
+      undefined,
+      expect.any(Object),
+    );
   });
 });
 

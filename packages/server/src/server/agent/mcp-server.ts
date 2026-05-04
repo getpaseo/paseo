@@ -49,6 +49,8 @@ import type {
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { resolveAndValidateCreateAgentMode } from "./create-agent-mode.js";
 import { resolveSnapshotCwd } from "./provider-snapshot-manager.js";
 import {
   AgentModelSchema,
@@ -492,6 +494,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
+    mode: z
+      .string()
+      .optional()
+      .describe(
+        "Optional session mode for the new agent. Required when the new agent uses a different provider than the caller agent.",
+      ),
     background: z
       .boolean()
       .optional()
@@ -628,6 +636,18 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     setupContinuation: AgentWorktreeSetupContinuation | undefined;
   }
 
+  const getAvailableModeIds = (provider: AgentProvider): string[] | undefined => {
+    const fromRegistry = providerRegistry?.[provider];
+    if (fromRegistry) {
+      return fromRegistry.modes.map((mode) => mode.id);
+    }
+    try {
+      return getAgentProviderDefinition(provider).modes.map((mode) => mode.id);
+    } catch {
+      return undefined;
+    }
+  };
+
   const resolveCallerCreateAgentArgs = (
     args: unknown,
     parentAgentId: string,
@@ -645,10 +665,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       lockedCwd: callerContext?.lockedCwd,
       allowCustomCwd: callerContext?.allowCustomCwd ?? true,
     });
-    const parentMode = parentAgent.currentModeId;
-    const resolvedMode = parentMode
-      ? mapModeAcrossProviders(parentMode, parentAgent.provider, provider)
-      : undefined;
+    const resolvedMode = resolveAndValidateCreateAgentMode({
+      requestedMode: callerArgs.mode,
+      targetProvider: provider,
+      parent: { provider: parentAgent.provider, modeId: parentAgent.currentModeId },
+      availableModes: getAvailableModeIds(provider),
+    });
     return {
       provider,
       initialPrompt: callerArgs.initialPrompt,
@@ -670,6 +692,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     const topLevelArgs = topLevelCreateAgentArgsSchema.parse(args);
     const resolvedProviderModel = resolveRequiredProviderModel(topLevelArgs.provider);
     const { cwd, mode, worktreeName, baseBranch, refName, action, githubPrNumber } = topLevelArgs;
+    const resolvedMode = resolveAndValidateCreateAgentMode({
+      requestedMode: mode,
+      targetProvider: resolvedProviderModel.provider,
+      parent: null,
+      availableModes: getAvailableModeIds(resolvedProviderModel.provider),
+    });
     let resolvedCwd = expandUserPath(cwd);
     let setupContinuation: AgentWorktreeSetupContinuation | undefined;
 
@@ -725,7 +753,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       labels: topLevelArgs.labels,
       notifyOnFinish: topLevelArgs.notifyOnFinish ?? false,
       resolvedCwd,
-      resolvedMode: mode,
+      resolvedMode,
       setupContinuation,
     };
   };
