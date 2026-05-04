@@ -147,17 +147,13 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
 
-  const cadenceCount = Number(options.every !== undefined) + Number(options.cron !== undefined);
-  if (cadenceCount !== 1) {
+  const cadence = parseCadenceFromFlags(options.every, options.cron);
+  if (!cadence) {
     throw {
       code: "INVALID_CADENCE",
       message: "Specify exactly one of --every or --cron",
     } satisfies CommandError;
   }
-
-  const cadence: ScheduleCadence = options.every
-    ? { type: "every", everyMs: parseDuration(options.every) }
-    : { type: "cron", expression: options.cron!.trim() };
 
   const cwdInput = options.cwd?.trim();
   if (options.host !== undefined && !cwdInput) {
@@ -257,7 +253,7 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
     } satisfies CommandError;
   }
 
-  const cadence = parseUpdateCadence(options);
+  const cadence = parseCadenceFromFlags(options.every, options.cron);
   const newAgentConfig = buildNewAgentConfigPatch(options);
   const maxRuns = parseUpdateMaxRuns(options);
   const expiresAt = parseUpdateExpiresAt(options);
@@ -289,18 +285,21 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
   };
 }
 
-function parseUpdateCadence(options: ScheduleUpdateOptionsInput): ScheduleCadence | undefined {
-  if (options.every !== undefined && options.cron !== undefined) {
+function parseCadenceFromFlags(
+  every: string | undefined,
+  cron: string | undefined,
+): ScheduleCadence | undefined {
+  if (every !== undefined && cron !== undefined) {
     throw {
       code: "INVALID_CADENCE",
       message: "Specify at most one of --every or --cron",
     } satisfies CommandError;
   }
-  if (options.every !== undefined) {
-    return { type: "every", everyMs: parseDuration(options.every) };
+  if (every !== undefined) {
+    return { type: "every", everyMs: parseDuration(every) };
   }
-  if (options.cron !== undefined) {
-    return { type: "cron", expression: options.cron.trim() };
+  if (cron !== undefined) {
+    return { type: "cron", expression: cron.trim() };
   }
   return undefined;
 }
