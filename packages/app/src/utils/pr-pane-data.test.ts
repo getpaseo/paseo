@@ -3,7 +3,13 @@ import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@server/shared/messages";
-import { deriveAvatarColor, formatAge, mapPrPaneData } from "./pr-pane-data";
+import {
+  deriveAvatarColor,
+  formatAge,
+  getActivityVerb,
+  getStateLabel,
+  mapPrPaneData,
+} from "./pr-pane-data";
 
 type CheckoutPrStatus = NonNullable<CheckoutPrStatusResponse["payload"]["status"]>;
 type PullRequestTimeline = PullRequestTimelineResponse["payload"];
@@ -333,5 +339,40 @@ describe("formatAge", () => {
     expect(formatAge(now - 3 * 24 * 60 * 60_000, now)).toBe("3d ago");
     expect(formatAge(now - 90 * 24 * 60 * 60_000, now)).toBe("3mo ago");
     expect(formatAge(now - 365 * 24 * 60 * 60_000, now)).toBe("1y ago");
+  });
+});
+
+describe("getStateLabel", () => {
+  it.each([
+    ["open", "Open"],
+    ["draft", "Draft"],
+    ["merged", "Merged"],
+    ["closed", "Closed"],
+  ] as const)("maps %s → %s", (state, expected) => {
+    expect(getStateLabel(state)).toBe(expected);
+  });
+});
+
+describe("getActivityVerb", () => {
+  it("returns Commented for comment kind", () => {
+    expect(getActivityVerb({ kind: "comment" })).toBe("Commented");
+  });
+
+  it("returns Approved for approved review", () => {
+    expect(getActivityVerb({ kind: "review", reviewState: "approved" })).toBe("Approved");
+  });
+
+  it("returns Requested changes for changes_requested review", () => {
+    expect(getActivityVerb({ kind: "review", reviewState: "changes_requested" })).toBe(
+      "Requested changes",
+    );
+  });
+
+  it("returns Reviewed for a commented review with body (generic case)", () => {
+    expect(getActivityVerb({ kind: "review", reviewState: "commented" })).toBe("Reviewed");
+  });
+
+  it("returns Reviewed when reviewState is undefined", () => {
+    expect(getActivityVerb({ kind: "review" })).toBe("Reviewed");
   });
 });

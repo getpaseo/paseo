@@ -16,6 +16,7 @@ import {
   MessageSquare,
 } from "lucide-react-native";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { getActivityVerb, getStateLabel } from "@/utils/pr-pane-data";
 import type {
   CheckStatus,
   PrPaneActivity,
@@ -283,13 +284,6 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
   );
 }
 
-function getActivityVerb(item: PrPaneActivity): string {
-  if (item.kind === "comment") return "Commented";
-  if (item.reviewState === "approved") return "Approved";
-  if (item.reviewState === "changes_requested") return "Requested changes";
-  return "Reviewed";
-}
-
 function getStateColor(state: PrState, theme: ReturnType<typeof useUnistyles>["theme"]): string {
   if (state === "open") return theme.colors.statusSuccess;
   if (state === "draft") return theme.colors.foregroundMuted;
@@ -302,13 +296,6 @@ function getStateIcon(state: PrState) {
   if (state === "merged") return GitMerge;
   if (state === "closed") return GitPullRequestClosed;
   return GitPullRequest;
-}
-
-function getStateLabel(state: PrState): string {
-  if (state === "draft") return "Draft";
-  if (state === "merged") return "Merged";
-  if (state === "closed") return "Closed";
-  return "Open";
 }
 
 const styles = StyleSheet.create((theme) => ({

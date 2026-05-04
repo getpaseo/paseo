@@ -225,3 +225,17 @@ function hashLogin(login: string): number {
   }
   return hash;
 }
+
+export function getStateLabel(state: PrState): string {
+  if (state === "draft") return "Draft";
+  if (state === "merged") return "Merged";
+  if (state === "closed") return "Closed";
+  return "Open";
+}
+
+export function getActivityVerb(item: Pick<PrPaneActivity, "kind" | "reviewState">): string {
+  if (item.kind === "comment") return "Commented";
+  if (item.reviewState === "approved") return "Approved";
+  if (item.reviewState === "changes_requested") return "Requested changes";
+  return "Reviewed";
+}
