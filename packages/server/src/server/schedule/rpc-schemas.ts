@@ -31,6 +31,7 @@ export const ScheduleCreateRequestSchema = z.object({
   target: ScheduleCreateTargetSchema,
   maxRuns: z.number().int().positive().optional(),
   expiresAt: z.string().optional(),
+  runOnCreate: z.boolean().optional(),
 });
 
 export const ScheduleListRequestSchema = z.object({
@@ -64,6 +65,12 @@ export const ScheduleResumeRequestSchema = z.object({
 
 export const ScheduleDeleteRequestSchema = z.object({
   type: z.literal("schedule/delete"),
+  requestId: z.string(),
+  scheduleId: z.string(),
+});
+
+export const ScheduleRunOnceRequestSchema = z.object({
+  type: z.literal("schedule/run-once"),
   requestId: z.string(),
   scheduleId: z.string(),
 });
@@ -127,6 +134,15 @@ export const ScheduleDeleteResponseSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     scheduleId: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ScheduleRunOnceResponseSchema = z.object({
+  type: z.literal("schedule/run-once/response"),
+  payload: z.object({
+    requestId: z.string(),
+    schedule: StoredScheduleSchema.nullable(),
     error: z.string().nullable(),
   }),
 });

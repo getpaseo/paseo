@@ -388,6 +388,10 @@ type ScheduleDeletePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/delete/response" }
 >["payload"];
+type ScheduleRunOncePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/run-once/response" }
+>["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
@@ -541,6 +545,7 @@ export interface CreateScheduleOptions {
       };
   maxRuns?: number;
   expiresAt?: string;
+  runOnCreate?: boolean;
   requestId?: string;
 }
 export interface InspectScheduleOptions {
@@ -3667,6 +3672,7 @@ export class DaemonClient {
         ...(options.name ? { name: options.name } : {}),
         ...(typeof options.maxRuns === "number" ? { maxRuns: options.maxRuns } : {}),
         ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
+        ...(typeof options.runOnCreate === "boolean" ? { runOnCreate: options.runOnCreate } : {}),
       },
       responseType: "schedule/create/response",
       timeout: 10000,
@@ -3740,6 +3746,18 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/delete/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleRunOnce(options: InspectScheduleOptions): Promise<ScheduleRunOncePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/run-once",
+        scheduleId: options.id,
+      },
+      responseType: "schedule/run-once/response",
       timeout: 10000,
     });
   }

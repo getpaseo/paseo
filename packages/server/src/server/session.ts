@@ -2130,6 +2130,23 @@ export class Session {
         return this.handleChatReadRequest(msg);
       case "chat/wait":
         return this.handleChatWaitRequest(msg);
+      case "loop/run":
+        return this.handleLoopRunRequest(msg);
+      case "loop/list":
+        return this.handleLoopListRequest(msg);
+      case "loop/inspect":
+        return this.handleLoopInspectRequest(msg);
+      case "loop/logs":
+        return this.handleLoopLogsRequest(msg);
+      case "loop/stop":
+        return this.handleLoopStopRequest(msg);
+      default:
+        return this.dispatchScheduleMessage(msg);
+    }
+  }
+
+  private dispatchScheduleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
       case "schedule/create":
         return this.handleScheduleCreateRequest(msg);
       case "schedule/list":
@@ -2144,16 +2161,8 @@ export class Session {
         return this.handleScheduleResumeRequest(msg);
       case "schedule/delete":
         return this.handleScheduleDeleteRequest(msg);
-      case "loop/run":
-        return this.handleLoopRunRequest(msg);
-      case "loop/list":
-        return this.handleLoopListRequest(msg);
-      case "loop/inspect":
-        return this.handleLoopInspectRequest(msg);
-      case "loop/logs":
-        return this.handleLoopLogsRequest(msg);
-      case "loop/stop":
-        return this.handleLoopStopRequest(msg);
+      case "schedule/run-once":
+        return this.handleScheduleRunOnceRequest(msg);
       default:
         return undefined;
     }
@@ -8395,7 +8404,8 @@ export class Session {
           | "schedule/logs"
           | "schedule/pause"
           | "schedule/resume"
-          | "schedule/delete";
+          | "schedule/delete"
+          | "schedule/run-once";
       }
     >,
     error: unknown,
@@ -8428,6 +8438,7 @@ export class Session {
         target,
         maxRuns: request.maxRuns,
         expiresAt: request.expiresAt,
+        runOnCreate: request.runOnCreate,
       });
       this.emit({
         type: "schedule/create/response",
@@ -8542,6 +8553,24 @@ export class Session {
         payload: {
           requestId: request.requestId,
           scheduleId: request.scheduleId,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emitScheduleRpcError(request, error);
+    }
+  }
+
+  private async handleScheduleRunOnceRequest(
+    request: Extract<SessionInboundMessage, { type: "schedule/run-once" }>,
+  ): Promise<void> {
+    try {
+      const schedule = await this.scheduleService.runOnce(request.scheduleId);
+      this.emit({
+        type: "schedule/run-once/response",
+        payload: {
+          requestId: request.requestId,
+          schedule,
           error: null,
         },
       });

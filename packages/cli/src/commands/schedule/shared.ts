@@ -135,6 +135,7 @@ export function parseScheduleCreateInput(options: {
   host?: string;
   maxRuns?: string;
   expiresIn?: string;
+  runNow?: boolean;
 }): CreateScheduleInput {
   const prompt = options.prompt.trim();
   if (!prompt) {
@@ -164,6 +165,8 @@ export function parseScheduleCreateInput(options: {
         "--cwd is required when --host is specified (the local working directory will not exist on the remote daemon)",
     } satisfies CommandError;
   }
+
+  const runOnCreate = resolveRunOnCreate(options.runNow, cadence.type);
 
   const targetValue = options.target?.trim();
   const modeId = options.mode?.trim();
@@ -199,10 +202,32 @@ export function parseScheduleCreateInput(options: {
     prompt,
     cadence,
     target,
+    runOnCreate,
     ...(options.name?.trim() ? { name: options.name.trim() } : {}),
     ...(maxRuns !== undefined ? { maxRuns } : {}),
     ...(expiresAt ? { expiresAt } : {}),
   };
+}
+
+function resolveRunOnCreate(
+  runNow: boolean | undefined,
+  cadenceType: ScheduleCadence["type"],
+): boolean {
+  if (runNow === true && cadenceType === "every") {
+    throw {
+      code: "REDUNDANT_RUN_NOW",
+      message: "--run-now is redundant with --every (interval schedules already fire on creation)",
+      details: "Drop --run-now, or use --no-run-now to wait the full interval before the first run",
+    } satisfies CommandError;
+  }
+  if (runNow === false && cadenceType === "cron") {
+    throw {
+      code: "REDUNDANT_NO_RUN_NOW",
+      message: "--no-run-now is redundant with --cron (cron schedules never fire on creation)",
+      details: "Drop --no-run-now, or use --run-now to fire one immediate run on creation",
+    } satisfies CommandError;
+  }
+  return runNow ?? cadenceType === "every";
 }
 
 function parsePositiveInt(value: string, flag: string): number {

@@ -85,6 +85,7 @@ export interface CreateScheduleInput {
   target: ScheduleTarget;
   maxRuns?: number;
   expiresAt?: string;
+  runOnCreate?: boolean;
 }
 
 export interface ScheduleCreatePayload {
@@ -129,6 +130,12 @@ export interface ScheduleDeletePayload {
   error: string | null;
 }
 
+export interface ScheduleRunOncePayload {
+  requestId: string;
+  schedule: ScheduleRecord | null;
+  error: string | null;
+}
+
 export interface ScheduleDaemonClient {
   scheduleCreate(input: CreateScheduleInput): Promise<ScheduleCreatePayload>;
   scheduleList(): Promise<ScheduleListPayload>;
@@ -137,5 +144,6 @@ export interface ScheduleDaemonClient {
   schedulePause(input: { id: string }): Promise<SchedulePausePayload>;
   scheduleResume(input: { id: string }): Promise<ScheduleResumePayload>;
   scheduleDelete(input: { id: string }): Promise<ScheduleDeletePayload>;
+  scheduleRunOnce(input: { id: string }): Promise<ScheduleRunOncePayload>;
   close(): Promise<void>;
 }

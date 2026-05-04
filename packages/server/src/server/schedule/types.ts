@@ -90,6 +90,7 @@ export interface CreateScheduleInput {
   target: ScheduleTarget;
   maxRuns?: number | null;
   expiresAt?: string | null;
+  runOnCreate?: boolean | null;
 }
 
 export interface ScheduleExecutionResult {

@@ -142,6 +142,8 @@ export class ScheduleService {
     const now = this.now();
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
+    const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
+    const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
     const schedule = await this.store.create({
       name: trimOptionalName(input.name),
       prompt,
@@ -150,7 +152,7 @@ export class ScheduleService {
       status: "active",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
-      nextRunAt: computeNextRunAt(input.cadence, now).toISOString(),
+      nextRunAt: nextRunAt.toISOString(),
       lastRunAt: null,
       pausedAt: null,
       expiresAt: input.expiresAt ?? null,
@@ -221,6 +223,18 @@ export class ScheduleService {
     await this.store.delete(id);
   }
 
+  async runOnce(id: string): Promise<StoredSchedule> {
+    const schedule = await this.inspect(id);
+    if (schedule.status === "completed") {
+      throw new Error(`Schedule ${id} is already completed`);
+    }
+    if (this.runningScheduleIds.has(id)) {
+      throw new Error(`Schedule ${id} is already running`);
+    }
+    await this.runSchedule(schedule, this.now(), { manual: true });
+    return this.inspect(id);
+  }
+
   async tick(): Promise<void> {
     const now = this.now();
     const schedules = await this.store.list();
@@ -286,12 +300,17 @@ export class ScheduleService {
     );
   }
 
-  private async runSchedule(schedule: StoredSchedule, now: Date): Promise<void> {
+  private async runSchedule(
+    schedule: StoredSchedule,
+    now: Date,
+    options?: { manual?: boolean },
+  ): Promise<void> {
+    const manual = options?.manual === true;
     this.runningScheduleIds.add(schedule.id);
     const runId = randomUUID();
     const runningRun: ScheduleRun = {
       id: runId,
-      scheduledFor: schedule.nextRunAt ?? now.toISOString(),
+      scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
       startedAt: now.toISOString(),
       endedAt: null,
       status: "running",
@@ -315,6 +334,7 @@ export class ScheduleService {
         agentId: result.agentId,
         output: result.output,
         error: null,
+        manual,
       });
     } catch (error) {
       await this.finishRun({
@@ -324,6 +344,7 @@ export class ScheduleService {
         agentId: null,
         output: null,
         error: error instanceof Error ? error.message : String(error),
+        manual,
       });
     } finally {
       this.runningScheduleIds.delete(schedule.id);
@@ -337,6 +358,7 @@ export class ScheduleService {
     agentId: string | null;
     output: string | null;
     error: string | null;
+    manual: boolean;
   }): Promise<void> {
     const schedule = await this.inspect(params.scheduleId);
     const now = this.now();
@@ -359,7 +381,9 @@ export class ScheduleService {
       updatedAt: now.toISOString(),
     };
 
-    if (shouldCompleteSchedule(updated, now)) {
+    if (params.manual) {
+      // Manual one-shot runs do not advance the cadence or recompute completion.
+    } else if (shouldCompleteSchedule(updated, now)) {
       updated = completeSchedule(updated, now);
     } else if (updated.status === "paused") {
       updated = {
