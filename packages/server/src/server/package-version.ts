@@ -1,15 +1,23 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 interface ResolvePackageVersionParams {
   moduleUrl?: string;
   packageName: string;
 }
 
-interface PackageJson {
-  name?: unknown;
-  version?: unknown;
+export const packageJsonSchema = z.object({
+  name: z.string().optional(),
+  version: z.string().optional(),
+});
+
+export type PackageJson = z.infer<typeof packageJsonSchema>;
+
+function parsePackageJson(raw: unknown): PackageJson | null {
+  const result = packageJsonSchema.safeParse(raw);
+  return result.success ? result.data : null;
 }
 
 export class PackageVersionResolutionError extends Error {
@@ -26,7 +34,9 @@ function readMatchingPackageVersion(
 ): string | null {
   let packageJson: PackageJson;
   try {
-    packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageJson;
+    const parsed = parsePackageJson(JSON.parse(readFileSync(packageJsonPath, "utf8")));
+    if (!parsed) return null;
+    packageJson = parsed;
   } catch {
     return null;
   }

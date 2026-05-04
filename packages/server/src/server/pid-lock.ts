@@ -2,14 +2,26 @@ import { open, readFile, unlink, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
+import { z } from "zod";
 
-export interface PidLockInfo {
-  pid: number;
-  startedAt: string;
-  hostname: string;
-  uid: number;
-  listen: string | null;
-  desktopManaged?: boolean;
+export const pidLockInfoSchema = z.object({
+  pid: z.number(),
+  startedAt: z.string(),
+  hostname: z.string(),
+  uid: z.number(),
+  listen: z.string().nullable(),
+  desktopManaged: z.boolean().optional(),
+});
+
+export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
+
+function parsePidLockInfo(raw: unknown): PidLockInfo | null {
+  const result = pidLockInfoSchema.safeParse(raw);
+  return result.success ? result.data : null;
+}
+
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && "code" in err;
 }
 
 export class PidLockError extends Error {
@@ -58,7 +70,7 @@ export async function acquirePidLock(
   let existingLock: PidLockInfo | null = null;
   try {
     const content = await readFile(pidPath, "utf-8");
-    existingLock = JSON.parse(content) as PidLockInfo;
+    existingLock = parsePidLockInfo(JSON.parse(content));
   } catch {
     // No existing lock or invalid JSON - that's fine
   }
@@ -95,16 +107,19 @@ export async function acquirePidLock(
     fd = await open(pidPath, "wx");
     await fd.write(JSON.stringify(lockInfo));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+    if (isErrnoException(err) && err.code === "EEXIST") {
       // Race condition - another process created the file
       // Re-read and check
       try {
         const content = await readFile(pidPath, "utf-8");
-        const raceLock = JSON.parse(content) as PidLockInfo;
-        throw new PidLockError(
-          `Another Paseo daemon is already running (PID ${raceLock.pid})`,
-          raceLock,
-        );
+        const raceLock = parsePidLockInfo(JSON.parse(content));
+        if (raceLock) {
+          throw new PidLockError(
+            `Another Paseo daemon is already running (PID ${raceLock.pid})`,
+            raceLock,
+          );
+        }
+        throw new PidLockError("Failed to acquire PID lock due to race condition");
       } catch (innerErr) {
         if (innerErr instanceof PidLockError) throw innerErr;
         throw new PidLockError("Failed to acquire PID lock due to race condition");
@@ -124,7 +139,10 @@ export async function updatePidLock(
   const pidPath = getPidFilePath(paseoHome);
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   const content = await readFile(pidPath, "utf-8");
-  const existingLock = JSON.parse(content) as PidLockInfo;
+  const existingLock = parsePidLockInfo(JSON.parse(content));
+  if (!existingLock) {
+    throw new PidLockError("Cannot update PID lock: invalid lock file");
+  }
 
   if (existingLock.pid !== lockOwnerPid) {
     throw new PidLockError(`Cannot update PID lock owned by PID ${existingLock.pid}`, existingLock);
@@ -153,8 +171,8 @@ export async function releasePidLock(
   try {
     // Only remove if it's our lock
     const content = await readFile(pidPath, "utf-8");
-    const lock = JSON.parse(content) as PidLockInfo;
-    if (lock.pid === lockOwnerPid) {
+    const lock = parsePidLockInfo(JSON.parse(content));
+    if (lock?.pid === lockOwnerPid) {
       await unlink(pidPath);
     }
   } catch {
@@ -166,7 +184,7 @@ export async function getPidLockInfo(paseoHome: string): Promise<PidLockInfo | n
   const pidPath = getPidFilePath(paseoHome);
   try {
     const content = await readFile(pidPath, "utf-8");
-    return JSON.parse(content) as PidLockInfo;
+    return parsePidLockInfo(JSON.parse(content));
   } catch {
     return null;
   }
