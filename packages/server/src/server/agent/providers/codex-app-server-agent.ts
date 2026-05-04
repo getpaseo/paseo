@@ -541,6 +541,10 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
         url: config.url,
         http_headers: config.headers,
       };
+    default: {
+      const _exhaustive = config as { type: never };
+      throw new Error(`Unsupported MCP config type: ${String(_exhaustive.type)}`);
+    }
   }
 }
 interface JsonRpcRequest {
@@ -562,13 +566,36 @@ interface JsonRpcNotification {
 
 type JsonRpcMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotification;
 
+function isJsonRpcResponse(msg: JsonRpcMessage): msg is JsonRpcResponse {
+  const m = msg as unknown as Record<string, unknown>;
+  if (typeof m.id !== "number") return false;
+  return m.result !== undefined || !!m.error;
+}
+
+function isJsonRpcRequest(msg: JsonRpcMessage): msg is JsonRpcRequest {
+  const m = msg as unknown as Record<string, unknown>;
+  return typeof m.id === "number" && typeof m.method === "string";
+}
+
+function isJsonRpcNotification(msg: JsonRpcMessage): msg is JsonRpcNotification {
+  const m = msg as unknown as Record<string, unknown>;
+  return typeof m.method === "string" && typeof m.id !== "number";
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
-type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
+type RequestHandler = (params: unknown) => unknown;
 
 type NotificationHandler = (method: string, params: unknown) => void;
 
@@ -590,10 +617,6 @@ interface CodexModel {
 
 interface CodexModelListResponse {
   data?: CodexModel[];
-}
-
-interface CodexThreadStartResponse {
-  thread?: { id?: string };
 }
 
 class CodexAppServerClient {
@@ -717,32 +740,31 @@ class CodexAppServerClient {
 
   private async handleLine(line: string): Promise<void> {
     if (!line.trim()) return;
-    let msg: JsonRpcMessage;
-    try {
-      msg = JSON.parse(line);
-    } catch (error) {
-      this.logger.warn({ error, line }, "Failed to parse Codex app-server JSON");
+    const raw = JSON.parse(line);
+    const msg = toObjectRecord(raw) as unknown as JsonRpcMessage;
+    if (!msg) {
+      this.logger.warn({ line }, "Parsed JSON is not an object");
       return;
     }
 
-    if (typeof (msg as JsonRpcResponse).id === "number") {
-      const id = (msg as JsonRpcResponse).id;
-      if ((msg as JsonRpcResponse).result !== undefined || (msg as JsonRpcResponse).error) {
+    if (isJsonRpcResponse(msg)) {
+      const id = msg.id;
+      if (msg.result !== undefined || msg.error) {
         const pending = this.pending.get(id);
         if (!pending) return;
         clearTimeout(pending.timer);
         this.pending.delete(id);
-        if ((msg as JsonRpcResponse).error) {
-          pending.reject(new Error((msg as JsonRpcResponse).error?.message ?? "Unknown error"));
+        if (msg.error) {
+          pending.reject(new Error(msg.error.message ?? "Unknown error"));
         } else {
-          pending.resolve((msg as JsonRpcResponse).result);
+          pending.resolve(msg.result);
         }
         return;
       }
 
       // Server-initiated request
-      if (typeof (msg as JsonRpcRequest).method === "string") {
-        const request = msg as JsonRpcRequest;
+      if (isJsonRpcRequest(msg)) {
+        const request = msg;
         const handler = this.requestHandlers.get(request.method);
         try {
           const result = handler ? await handler(request.params) : {};
@@ -757,38 +779,26 @@ class CodexAppServerClient {
       }
     }
 
-    if (typeof (msg as JsonRpcNotification).method === "string") {
-      const notification = msg as JsonRpcNotification;
-      this.notificationHandler?.(notification.method, notification.params);
+    if (isJsonRpcNotification(msg)) {
+      this.notificationHandler?.(msg.method, msg.params);
     }
   }
 }
 
 function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
-  if (!tokenUsage || typeof tokenUsage !== "object") return undefined;
-  const usage = tokenUsage as {
-    model_context_window?: number;
-    modelContextWindow?: number;
-    last?: {
-      inputTokens?: number;
-      cachedInputTokens?: number;
-      outputTokens?: number;
-      total_tokens?: number;
-      totalTokens?: number;
-    };
-  };
+  const usage = toObjectRecord(tokenUsage);
+  if (!usage) return undefined;
+  const last = toObjectRecord(usage.last);
   const contextWindowMaxTokens = firstPositiveFiniteNumber(
     usage.model_context_window,
     usage.modelContextWindow,
   );
-  const contextWindowUsedTokens = firstPositiveFiniteNumber(
-    usage.last?.total_tokens,
-    usage.last?.totalTokens,
-  );
+  const contextWindowUsedTokens = firstPositiveFiniteNumber(last?.total_tokens, last?.totalTokens);
   return {
-    inputTokens: usage.last?.inputTokens,
-    cachedInputTokens: usage.last?.cachedInputTokens,
-    outputTokens: usage.last?.outputTokens,
+    inputTokens: typeof last?.inputTokens === "number" ? last.inputTokens : undefined,
+    cachedInputTokens:
+      typeof last?.cachedInputTokens === "number" ? last.cachedInputTokens : undefined,
+    outputTokens: typeof last?.outputTokens === "number" ? last.outputTokens : undefined,
     ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
     ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
   };
@@ -798,11 +808,12 @@ function extractUserText(content: unknown): string | null {
   if (!Array.isArray(content)) return null;
   const parts: string[] = [];
   for (const item of content) {
-    if (item && typeof item === "object") {
-      const obj = item as { type?: string; text?: string };
-      if (obj.type === "text" && typeof obj.text === "string") {
-        parts.push(obj.text);
-      }
+    const record = toObjectRecord(item);
+    if (!record) {
+      continue;
+    }
+    if (record.type === "text" && typeof record.text === "string") {
+      parts.push(record.text);
     }
   }
   return parts.length > 0 ? parts.join("\n") : null;
@@ -919,10 +930,10 @@ function normalizeCodexQuestionPrompts(raw: unknown): CodexQuestionPrompt[] {
   }
   const questions: CodexQuestionPrompt[] = [];
   for (const item of raw) {
-    if (!item || typeof item !== "object") {
+    const record = toObjectRecord(item);
+    if (!record) {
       continue;
     }
-    const record = item as Record<string, unknown>;
     const id = nonEmptyString(record.id);
     const header = nonEmptyString(record.header);
     const question = nonEmptyString(record.question);
@@ -931,10 +942,10 @@ function normalizeCodexQuestionPrompts(raw: unknown): CodexQuestionPrompt[] {
     }
     const options = Array.isArray(record.options)
       ? record.options.flatMap((option): CodexQuestionOption[] => {
-          if (!option || typeof option !== "object") {
+          const optionRecord = toObjectRecord(option);
+          if (!optionRecord) {
             return [];
           }
-          const optionRecord = option as Record<string, unknown>;
           const label = nonEmptyString(optionRecord.label);
           if (!label) {
             return [];
@@ -1045,13 +1056,9 @@ function mapCodexQuestionResponseByHeader(params: {
   if (params.response.behavior !== "allow") {
     return null;
   }
-  const answersRecord =
-    params.response.updatedInput && typeof params.response.updatedInput === "object"
-      ? ((params.response.updatedInput as Record<string, unknown>).answers as
-          | Record<string, unknown>
-          | undefined)
-      : undefined;
-  if (!answersRecord || typeof answersRecord !== "object") {
+  const updatedInputRecord = toObjectRecord(params.response.updatedInput);
+  const answersRecord = toObjectRecord(updatedInputRecord?.answers);
+  if (!answersRecord) {
     return null;
   }
 
@@ -1086,10 +1093,10 @@ interface CodexPatchFileChange {
 }
 
 function extractPatchLikeText(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") {
+  const record = toObjectRecord(value);
+  if (!record) {
     return undefined;
   }
-  const record = value as Record<string, unknown>;
   const candidates = [
     record.diff,
     record.patch,
@@ -1194,10 +1201,10 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
   if (Array.isArray(changes)) {
     return changes
       .map((entry): CodexPatchFileChange | null => {
-        if (!entry || typeof entry !== "object") {
+        const record = toObjectRecord(entry);
+        if (!record) {
           return null;
         }
-        const record = entry as Record<string, unknown>;
         const pathValue = resolvePathFromRecord(record);
         if (!pathValue) {
           return null;
@@ -1214,7 +1221,10 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
       .filter((entry): entry is CodexPatchFileChange => entry !== null);
   }
 
-  const recordChanges = changes as Record<string, unknown>;
+  const recordChanges = toObjectRecord(changes);
+  if (!recordChanges) {
+    return [];
+  }
   const directPathValue = resolvePathFromRecord(recordChanges);
   if (directPathValue) {
     return [
@@ -1472,8 +1482,8 @@ function threadItemToTimeline(
   item: unknown,
   options?: { includeUserMessage?: boolean; cwd?: string | null },
 ): AgentTimelineItem | null {
-  if (!item || typeof item !== "object") return null;
-  const itemRecord = item as Record<string, unknown>;
+  const itemRecord = toObjectRecord(item);
+  if (!itemRecord) return null;
   const includeUserMessage = options?.includeUserMessage ?? true;
   const cwd = options?.cwd ?? null;
   const normalizedType = normalizeCodexThreadItemType(
@@ -2397,17 +2407,14 @@ async function readCodexConfiguredDefaults(
 ): Promise<CodexConfiguredDefaults> {
   let savedConfigDefaults: CodexConfiguredDefaults = {};
   try {
-    const response = (await client.request("getUserSavedConfig", {})) as {
-      config?: {
-        model?: string | null;
-        modelReasoningEffort?: string | null;
-      };
-    };
+    const response = toObjectRecord(await client.request("getUserSavedConfig", {}));
+    const config = toObjectRecord(response?.config);
+    const modelValue = typeof config?.model === "string" ? config.model : undefined;
+    const thinkingOptionValue =
+      typeof config?.modelReasoningEffort === "string" ? config.modelReasoningEffort : null;
     savedConfigDefaults = {
-      model: normalizeCodexModelId(response?.config?.model),
-      thinkingOptionId: normalizeCodexThinkingOptionId(
-        response?.config?.modelReasoningEffort ?? null,
-      ),
+      model: normalizeCodexModelId(modelValue),
+      thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
     };
   } catch (error) {
     logger.debug({ error }, "Failed to read Codex saved config defaults");
@@ -2419,17 +2426,14 @@ async function readCodexConfiguredDefaults(
 
   let configReadDefaults: CodexConfiguredDefaults = {};
   try {
-    const response = (await client.request("config/read", {})) as {
-      config?: {
-        model?: string | null;
-        model_reasoning_effort?: string | null;
-      };
-    };
+    const response = toObjectRecord(await client.request("config/read", {}));
+    const config = toObjectRecord(response?.config);
+    const modelValue = typeof config?.model === "string" ? config.model : undefined;
+    const thinkingOptionValue =
+      typeof config?.model_reasoning_effort === "string" ? config.model_reasoning_effort : null;
     configReadDefaults = {
-      model: normalizeCodexModelId(response?.config?.model),
-      thinkingOptionId: normalizeCodexThinkingOptionId(
-        response?.config?.model_reasoning_effort ?? null,
-      ),
+      model: normalizeCodexModelId(modelValue),
+      thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
     };
   } catch (error) {
     logger.debug({ error }, "Failed to read Codex config defaults");
@@ -2678,19 +2682,22 @@ class CodexAppServerAgentSession implements AgentSession {
   private async loadCollaborationModes(): Promise<void> {
     if (!this.client) return;
     try {
-      const response = (await this.client.request("collaborationMode/list", {})) as {
-        data?: Array<Record<string, unknown>>;
-      };
+      const response = toObjectRecord(await this.client.request("collaborationMode/list", {}));
       const data = Array.isArray(response?.data) ? response.data : [];
-      this.collaborationModes = data.map((entry) => ({
-        name: typeof entry.name === "string" ? entry.name : "",
-        mode: typeof entry.mode === "string" ? entry.mode : null,
-        model: typeof entry.model === "string" ? entry.model : null,
-        reasoning_effort:
-          typeof entry.reasoning_effort === "string" ? entry.reasoning_effort : null,
-        developer_instructions:
-          typeof entry.developer_instructions === "string" ? entry.developer_instructions : null,
-      }));
+      this.collaborationModes = data.map((entry) => {
+        const record = toObjectRecord(entry);
+        return {
+          name: typeof record?.name === "string" ? record.name : "",
+          mode: typeof record?.mode === "string" ? record.mode : null,
+          model: typeof record?.model === "string" ? record.model : null,
+          reasoning_effort:
+            typeof record?.reasoning_effort === "string" ? record.reasoning_effort : null,
+          developer_instructions:
+            typeof record?.developer_instructions === "string"
+              ? record.developer_instructions
+              : null,
+        };
+      });
     } catch (error) {
       this.logger.trace({ error }, "Failed to load collaboration modes");
       this.collaborationModes = [];
@@ -2701,21 +2708,24 @@ class CodexAppServerAgentSession implements AgentSession {
   private async loadSkills(): Promise<void> {
     if (!this.client) return;
     try {
-      const response = (await this.client.request("skills/list", {
-        cwd: [this.config.cwd],
-      })) as { data?: Array<Record<string, unknown>> };
+      const response = toObjectRecord(
+        await this.client.request("skills/list", {
+          cwd: [this.config.cwd],
+        }),
+      );
       const entries = Array.isArray(response?.data) ? response.data : [];
       const skills: Array<{ name: string; description: string; path: string }> = [];
       for (const entry of entries) {
-        const list = Array.isArray(entry.skills)
-          ? (entry.skills as Array<Record<string, unknown>>)
-          : [];
+        const entryRecord = toObjectRecord(entry);
+        const list = Array.isArray(entryRecord?.skills) ? entryRecord.skills : [];
         for (const skill of list) {
-          if (typeof skill?.name !== "string" || typeof skill?.path !== "string") continue;
+          const skillRecord = toObjectRecord(skill);
+          if (typeof skillRecord?.name !== "string" || typeof skillRecord?.path !== "string")
+            continue;
           skills.push({
-            name: skill.name,
-            description: resolveSkillDescription(skill),
-            path: skill.path,
+            name: skillRecord.name,
+            description: resolveSkillDescription(skillRecord),
+            path: skillRecord.path,
           });
         }
       }
@@ -2896,7 +2906,7 @@ class CodexAppServerAgentSession implements AgentSession {
   private async ensureThreadLoaded(): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     try {
-      const loaded = (await this.client.request("thread/loaded/list", {})) as { data?: string[] };
+      const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
       if (ids.includes(this.currentThreadId)) {
         return;
@@ -3439,8 +3449,21 @@ class CodexAppServerAgentSession implements AgentSession {
     }
 
     if (!model || !thinkingOptionId) {
-      const modelResponse = (await this.client.request("model/list", {})) as CodexModelListResponse;
-      const models = modelResponse?.data ?? [];
+      const modelResponse = toObjectRecord(await this.client.request("model/list", {}));
+      const modelData = Array.isArray(modelResponse?.data) ? modelResponse.data : [];
+      const models = modelData
+        .map((m) => {
+          const record = toObjectRecord(m);
+          return {
+            id: typeof record?.id === "string" ? record.id : "",
+            isDefault: !!record?.isDefault,
+            defaultReasoningEffort:
+              typeof record?.defaultReasoningEffort === "string"
+                ? record.defaultReasoningEffort
+                : undefined,
+          };
+        })
+        .filter((m) => m.id);
       const defaultModel = models.find((m) => m.isDefault) ?? models[0];
       if (!defaultModel) {
         throw new Error("No models available from Codex app-server");
@@ -3473,7 +3496,7 @@ class CodexAppServerAgentSession implements AgentSession {
     const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
     const sandbox = this.config.sandboxMode ?? preset.sandbox;
     const innerConfig = this.buildCodexInnerConfig();
-    const response = (await this.client.request("thread/start", {
+    const rawResponse = await this.client.request("thread/start", {
       model,
       cwd: this.config.cwd ?? null,
       approvalPolicy,
@@ -3483,8 +3506,10 @@ class CodexAppServerAgentSession implements AgentSession {
         : {}),
       ...(innerConfig ? { config: innerConfig } : {}),
       ...(this.ephemeral ? { ephemeral: true } : {}),
-    })) as CodexThreadStartResponse;
-    const threadId = response?.thread?.id;
+    });
+    const response = toObjectRecord(rawResponse);
+    const threadRecord = toObjectRecord(response?.thread);
+    const threadId = typeof threadRecord?.id === "string" ? threadRecord.id : undefined;
     if (!threadId) {
       throw new Error("Codex app-server did not return thread id");
     }
@@ -4512,9 +4537,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       client.notify("initialized", {});
 
       const limit = options?.limit ?? 20;
-      const response = (await client.request("thread/list", { limit })) as {
-        data?: Array<Record<string, unknown>>;
-      };
+      const response = toObjectRecord(await client.request("thread/list", { limit }));
       const threads = Array.isArray(response?.data) ? response.data : [];
       const descriptors: PersistedAgentDescriptor[] = await Promise.all(
         threads.slice(0, limit).map(async (thread) => {

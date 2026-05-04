@@ -87,6 +87,13 @@ import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
+function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 type TurnState = "idle" | "foreground" | "autonomous";
 
 interface EventIdentifiers {
@@ -334,11 +341,11 @@ function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogS
     if (typeof systemPromptRaw === "string") {
       return { mode: "string" as const, preset: null };
     }
-    const prompt = systemPromptRaw as Record<string, unknown>;
-    const promptType = typeof prompt.type === "string" ? prompt.type : "custom";
+    const prompt = toObjectRecord(systemPromptRaw);
+    const promptType = typeof prompt?.type === "string" ? prompt.type : "custom";
     return {
       mode: promptType === "preset" ? ("preset" as const) : ("custom" as const),
-      preset: typeof prompt.preset === "string" && prompt.preset.length > 0 ? prompt.preset : null,
+      preset: typeof prompt?.preset === "string" && prompt.preset.length > 0 ? prompt.preset : null,
     };
   })();
   const mcpServerNames = options.mcpServers ? Object.keys(options.mcpServers).sort() : [];
@@ -409,7 +416,11 @@ function normalizeForDeterministicString(value: unknown, seen: WeakSet<object>):
       return "[circular]";
     }
     seen.add(objectValue);
-    const record = value as Record<string, unknown>;
+    const record = toObjectRecord(value);
+    if (!record) {
+      seen.delete(objectValue);
+      return "[invalid]";
+    }
     const normalized: Record<string, unknown> = {};
     for (const key of Object.keys(record).sort()) {
       normalized[key] = normalizeForDeterministicString(record[key], seen);
@@ -417,7 +428,10 @@ function normalizeForDeterministicString(value: unknown, seen: WeakSet<object>):
     seen.delete(objectValue);
     return normalized;
   }
-  return String(value);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "[unsupported]";
 }
 
 function deterministicStringify(value: unknown): string {
@@ -431,11 +445,13 @@ function deterministicStringify(value: unknown): string {
     }
     return JSON.stringify(normalized);
   } catch {
-    try {
-      return String(value);
-    } catch {
-      return "[unserializable]";
+    if (typeof value === "string") {
+      return value;
     }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    return "[unserializable]";
   }
 }
 
@@ -847,7 +863,7 @@ class TimelineAssembler {
     runId: string | null,
     messageIdHint: string | null,
   ): AgentTimelineItem[] {
-    const event = message.event as unknown as Record<string, unknown>;
+    const event = toObjectRecord(message.event) ?? {};
     const eventType = readTrimmedString(event.type);
     const streamEventMessageId = this.readMessageIdFromStreamEvent(event) ?? messageIdHint;
 
