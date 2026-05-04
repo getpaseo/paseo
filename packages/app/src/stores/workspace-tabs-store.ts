@@ -41,6 +41,14 @@ export function buildWorkspaceTabPersistenceKey(input: {
   return `${serverId}:${workspaceId}`;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  return isPlainRecord(value) ? value : undefined;
+}
+
 function normalizeTabOrder(list: unknown): string[] {
   if (!Array.isArray(list)) {
     return [];
@@ -94,17 +102,6 @@ function buildNextTabsForEnsure(args: {
   );
 }
 
-interface LegacyPersistedWorkspaceTabsState {
-  version?: number;
-  state?: unknown;
-  openTabsByWorkspace?: Record<string, WorkspaceTab[]>;
-  uiTabsByWorkspace?: Record<string, WorkspaceTab[]>;
-  focusedTabIdByWorkspace?: Record<string, string>;
-  tabOrderByWorkspace?: Record<string, string[]>;
-  lastFocusedTabByWorkspace?: Record<string, unknown>;
-  tabOrderLegacyByWorkspace?: Record<string, string[]>;
-}
-
 interface MigrationRawSources {
   rawUiTabsByWorkspace: Record<string, unknown>;
   rawFocused: Record<string, unknown>;
@@ -113,42 +110,69 @@ interface MigrationRawSources {
 }
 
 function extractMigrationRawSources(persistedState: unknown): MigrationRawSources {
-  const legacy = persistedState as LegacyPersistedWorkspaceTabsState | undefined;
-  const rawState = ((legacy as { state?: Record<string, unknown> } | undefined)?.state ??
-    legacy ??
-    {}) as Record<string, unknown>;
+  const top = toObjectRecord(persistedState) ?? {};
+  const rawState = toObjectRecord(top.state) ?? top;
 
   return {
-    rawUiTabsByWorkspace: (rawState.uiTabsByWorkspace ??
-      rawState.openTabsByWorkspace ??
-      legacy?.uiTabsByWorkspace ??
-      legacy?.openTabsByWorkspace ??
-      {}) as Record<string, unknown>,
-    rawFocused: (rawState.focusedTabIdByWorkspace ??
-      legacy?.focusedTabIdByWorkspace ??
-      rawState.lastFocusedTabByWorkspace ??
-      {}) as Record<string, unknown>,
-    rawOrder: (rawState.tabOrderByWorkspace ??
-      legacy?.tabOrderByWorkspace ??
-      rawState.tabOrderByWorkspace ??
-      {}) as Record<string, unknown>,
-    legacyOrder: (rawState.tabOrderByWorkspace ??
-      rawState.tabOrderLegacyByWorkspace ??
-      {}) as Record<string, unknown>,
+    rawUiTabsByWorkspace:
+      toObjectRecord(
+        rawState.uiTabsByWorkspace ??
+          rawState.openTabsByWorkspace ??
+          top.uiTabsByWorkspace ??
+          top.openTabsByWorkspace,
+      ) ?? {},
+    rawFocused:
+      toObjectRecord(
+        rawState.focusedTabIdByWorkspace ??
+          rawState.lastFocusedTabByWorkspace ??
+          top.focusedTabIdByWorkspace,
+      ) ?? {},
+    rawOrder: toObjectRecord(rawState.tabOrderByWorkspace ?? top.tabOrderByWorkspace) ?? {},
+    legacyOrder:
+      toObjectRecord(
+        rawState.tabOrderByWorkspace ??
+          rawState.tabOrderLegacyByWorkspace ??
+          top.tabOrderLegacyByWorkspace,
+      ) ?? {},
   };
 }
 
+function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  const kind = typeof raw.kind === "string" ? raw.kind : null;
+  if (kind === "draft" && typeof raw.draftId === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "draft", draftId: raw.draftId });
+  }
+  if (kind === "agent" && typeof raw.agentId === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "agent", agentId: raw.agentId });
+  }
+  if (kind === "terminal" && typeof raw.terminalId === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "terminal", terminalId: raw.terminalId });
+  }
+  if (kind === "browser" && typeof raw.browserId === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "browser", browserId: raw.browserId });
+  }
+  if (kind === "file" && typeof raw.path === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "file", path: raw.path });
+  }
+  if (kind === "setup" && typeof raw.workspaceId === "string") {
+    return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
+  }
+  return null;
+}
+
 function migrateSingleTab(rawTab: unknown): WorkspaceTab | null {
-  if (!rawTab || typeof rawTab !== "object") {
+  const record = toObjectRecord(rawTab);
+  if (!record) {
     return null;
   }
-  const normalizedTarget = normalizeWorkspaceTabTarget((rawTab as WorkspaceTab).target);
+  const rawTarget = toObjectRecord(record.target);
+  const normalizedTarget = rawTarget ? coerceWorkspaceTabTarget(rawTarget) : null;
   if (!normalizedTarget) {
     return null;
   }
-  const rawTabId = trimNonEmpty((rawTab as WorkspaceTab).tabId);
+  const rawTabId = trimNonEmpty(typeof record.tabId === "string" ? record.tabId : null);
   const tabId = rawTabId ?? buildDeterministicWorkspaceTabId(normalizedTarget);
-  const rawCreatedAt = (rawTab as WorkspaceTab).createdAt;
+  const rawCreatedAt = record.createdAt;
   return {
     tabId,
     target: normalizedTarget,

@@ -230,16 +230,24 @@ export function connectionFromListen(listen: string): HostConnection | null {
   }
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  return isPlainRecord(value) ? value : undefined;
+}
+
 function normalizeStoredConnection(connection: unknown): HostConnection | null {
-  if (!connection || typeof connection !== "object") {
+  const record = toObjectRecord(connection);
+  if (!record) {
     return null;
   }
-  const record = connection as Record<string, unknown>;
   const type = typeof record.type === "string" ? record.type : null;
   if (type === "directTcp") {
     try {
       const endpoint = normalizeLoopbackToLocalhost(
-        normalizeHostPort(String(record.endpoint ?? "")),
+        normalizeHostPort(typeof record.endpoint === "string" ? record.endpoint : ""),
       );
       return DirectTcpHostConnectionSchema.parse({
         id: `direct:${endpoint}`,
@@ -253,17 +261,21 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
     }
   }
   if (type === "directSocket") {
-    const path = String(record.path ?? "").trim();
+    const path = (typeof record.path === "string" ? record.path : "").trim();
     return path ? { id: `socket:${path}`, type: "directSocket", path } : null;
   }
   if (type === "directPipe") {
-    const path = String(record.path ?? "").trim();
+    const path = (typeof record.path === "string" ? record.path : "").trim();
     return path ? { id: `pipe:${path}`, type: "directPipe", path } : null;
   }
   if (type === "relay") {
     try {
-      const relayEndpoint = normalizeHostPort(String(record.relayEndpoint ?? ""));
-      const daemonPublicKeyB64 = String(record.daemonPublicKeyB64 ?? "").trim();
+      const relayEndpoint = normalizeHostPort(
+        typeof record.relayEndpoint === "string" ? record.relayEndpoint : "",
+      );
+      const daemonPublicKeyB64 = (
+        typeof record.daemonPublicKeyB64 === "string" ? record.daemonPublicKeyB64 : ""
+      ).trim();
       if (!daemonPublicKeyB64) return null;
       return {
         id: `relay:${relayEndpoint}`,
@@ -280,10 +292,10 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
 }
 
 export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
-  if (!entry || typeof entry !== "object") {
+  const record = toObjectRecord(entry);
+  if (!record) {
     return null;
   }
-  const record = entry as Record<string, unknown>;
   const serverId = typeof record.serverId === "string" ? record.serverId.trim() : "";
   if (!serverId) {
     return null;

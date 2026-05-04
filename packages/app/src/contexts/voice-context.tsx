@@ -57,9 +57,9 @@ export function useVoice() {
 export function useVoiceOptional(): VoiceContextValue | null {
   const runtime = useContext(VoiceRuntimeContext);
   const snapshot = useSyncExternalStore(
-    runtime ? runtime.subscribe : noopSubscribe,
-    runtime ? runtime.getSnapshot : getEmptySnapshot,
-    runtime ? runtime.getSnapshot : getEmptySnapshot,
+    runtime ? runtime.subscribe.bind(runtime) : noopSubscribe,
+    runtime ? runtime.getSnapshot.bind(runtime) : getEmptySnapshot,
+    runtime ? runtime.getSnapshot.bind(runtime) : getEmptySnapshot,
   );
 
   if (!runtime) {
@@ -68,10 +68,10 @@ export function useVoiceOptional(): VoiceContextValue | null {
 
   return {
     ...snapshot,
-    startVoice: runtime.startVoice,
-    stopVoice: runtime.stopVoice,
-    isVoiceModeForAgent: runtime.isVoiceModeForAgent,
-    toggleMute: runtime.toggleMute,
+    startVoice: runtime.startVoice.bind(runtime),
+    stopVoice: runtime.stopVoice.bind(runtime),
+    isVoiceModeForAgent: runtime.isVoiceModeForAgent.bind(runtime),
+    toggleMute: runtime.toggleMute.bind(runtime),
   };
 }
 
@@ -86,9 +86,9 @@ export function useVoiceTelemetry() {
 export function useVoiceTelemetryOptional(): VoiceRuntimeTelemetrySnapshot | null {
   const runtime = useContext(VoiceRuntimeContext);
   const snapshot = useSyncExternalStore(
-    runtime ? runtime.subscribeTelemetry : noopSubscribe,
-    runtime ? runtime.getTelemetrySnapshot : getEmptyTelemetry,
-    runtime ? runtime.getTelemetrySnapshot : getEmptyTelemetry,
+    runtime ? runtime.subscribeTelemetry.bind(runtime) : noopSubscribe,
+    runtime ? runtime.getTelemetrySnapshot.bind(runtime) : getEmptyTelemetry,
+    runtime ? runtime.getTelemetrySnapshot.bind(runtime) : getEmptyTelemetry,
   );
 
   return runtime ? snapshot : null;
