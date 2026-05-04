@@ -49,7 +49,7 @@ describe("configToDraft", () => {
     expect(devRow.commandOriginalKind).toBe("string");
     expect(devRow.type).toBe("long-running");
     expect(devRow.portText).toBe("3000");
-    expect(devRow.id).toBeTruthy();
+    expect(devRow.id).toMatch(/^script-draft-\d+$/);
     expect(buildRow.name).toBe("build");
     expect(buildRow.commandText).toBe("npm\nrun\nbuild");
     expect(buildRow.commandOriginalKind).toBe("array");
