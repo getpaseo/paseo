@@ -99,7 +99,7 @@ export interface AgentToolCallData {
   callId: string;
   name: string;
   status: AgentToolCallStatus;
-  error: unknown | null;
+  error: unknown;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
 }
@@ -331,7 +331,7 @@ function hasNonEmptyObject(value: unknown): boolean {
   return isRecord(value) && Object.keys(value).length > 0;
 }
 
-function mergeUnknownValue(existing: unknown | null, incoming: unknown | null): unknown | null {
+function mergeUnknownValue(existing: unknown, incoming: unknown): unknown {
   if (incoming === null) {
     return existing;
   }
@@ -406,7 +406,7 @@ export function mergeToolCallDetail(
   return incoming;
 }
 
-function inputFromUnknownDetail(detail: ToolCallDetail): unknown | null {
+function inputFromUnknownDetail(detail: ToolCallDetail): unknown {
   return detail.type === "unknown" ? detail.input : null;
 }
 

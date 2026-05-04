@@ -64,9 +64,9 @@ export type MessageEntry =
       id: string;
       timestamp: number;
       toolName: string;
-      args: unknown | null;
-      result?: unknown | null;
-      error?: unknown | null;
+      args: unknown;
+      result?: unknown;
+      error?: unknown;
       status: "executing" | "completed" | "failed";
     };
 

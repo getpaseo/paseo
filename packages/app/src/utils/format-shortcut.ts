@@ -1,4 +1,4 @@
-export type ShortcutKey = "mod" | "shift" | "alt" | "ctrl" | "meta" | string;
+export type ShortcutKey = string;
 
 export type ShortcutOs = "mac" | "non-mac";
 
