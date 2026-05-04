@@ -5,7 +5,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { deriveProjectSlug, parseGitHubRepoNameFromRemote } from "./workspace-git-metadata.js";
+import {
+  buildWorkspaceGitMetadataFromSnapshot,
+  deriveProjectSlug,
+  parseGitHubRepoNameFromRemote,
+} from "./workspace-git-metadata.js";
 
 function runGit(cwd: string, args: string[]): void {
   execFileSync("git", args, {
@@ -164,5 +168,49 @@ describe("deriveProjectSlug", () => {
     mkdirSync(cwd);
 
     expect(deriveProjectSlug(cwd)).toBe("untitled");
+  });
+});
+
+describe("buildWorkspaceGitMetadataFromSnapshot", () => {
+  test("uses owner/repo as the display name for GitHub remotes", () => {
+    const result = buildWorkspaceGitMetadataFromSnapshot({
+      cwd: "/repos/some-dir",
+      directoryName: "some-dir",
+      isGit: true,
+      repoRoot: "/repos/some-dir",
+      mainRepoRoot: null,
+      currentBranch: "main",
+      remoteUrl: "git@github.com:acme/widgets.git",
+    });
+
+    expect(result.projectDisplayName).toBe("acme/widgets");
+  });
+
+  test("uses owner/repo as the display name for non-GitHub remotes", () => {
+    const result = buildWorkspaceGitMetadataFromSnapshot({
+      cwd: "/repos/random-name",
+      directoryName: "random-name",
+      isGit: true,
+      repoRoot: "/repos/random-name",
+      mainRepoRoot: null,
+      currentBranch: "main",
+      remoteUrl: "git@gitlab.com:acme/app.git",
+    });
+
+    expect(result.projectDisplayName).toBe("acme/app");
+  });
+
+  test("falls back to the directory name when there is no remote", () => {
+    const result = buildWorkspaceGitMetadataFromSnapshot({
+      cwd: "/repos/local-only",
+      directoryName: "local-only",
+      isGit: true,
+      repoRoot: "/repos/local-only",
+      mainRepoRoot: null,
+      currentBranch: "main",
+      remoteUrl: null,
+    });
+
+    expect(result.projectDisplayName).toBe("local-only");
   });
 });

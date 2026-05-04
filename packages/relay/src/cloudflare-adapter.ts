@@ -49,6 +49,52 @@ interface WebSocketWithAttachment extends WebSocket {
   deserializeAttachment(): unknown;
 }
 
+function hasAttachmentMethods(ws: WebSocket): ws is WebSocketWithAttachment {
+  // Type-safe check for attachment methods - required for Cloudflare WebSocket hibernation API
+  // Use Reflect to check for methods without type assertions
+  return (
+    "serializeAttachment" in ws &&
+    "deserializeAttachment" in ws &&
+    typeof Reflect.get(ws, "serializeAttachment") === "function" &&
+    typeof Reflect.get(ws, "deserializeAttachment") === "function"
+  );
+}
+
+function deserializeAttachment(ws: WebSocket): unknown {
+  if (!hasAttachmentMethods(ws)) return null;
+  try {
+    return ws.deserializeAttachment();
+  } catch {
+    return null;
+  }
+}
+
+function serializeAttachment(ws: WebSocket, value: unknown): void {
+  if (!hasAttachmentMethods(ws)) {
+    throw new Error("WebSocket does not support attachments");
+  }
+  ws.serializeAttachment(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function getGlobalWebSocketPair(): (new () => WebSocketPair) | undefined {
+  // Access WebSocketPair from global scope (Cloudflare Workers runtime)
+  // Use Reflect to access global property without type assertions
+  const WebSocketPair = Reflect.get(globalThis, "WebSocketPair") as unknown;
+  if (typeof WebSocketPair === "function") {
+    return WebSocketPair as new () => WebSocketPair;
+  }
+  return undefined;
+}
+
 interface Env {
   RELAY: DurableObjectNamespace;
 }
@@ -91,9 +137,11 @@ export class RelayDurableObject {
   }
 
   private createWebSocketPair(): [WebSocket, WebSocket] {
-    const pair = new (
-      globalThis as unknown as { WebSocketPair: new () => WebSocketPair }
-    ).WebSocketPair();
+    const WebSocketPairCtor = getGlobalWebSocketPair();
+    if (!WebSocketPairCtor) {
+      throw new Error("WebSocketPair not available in global scope");
+    }
+    const pair: WebSocketPair = new WebSocketPairCtor();
     return [pair[0], pair[1]];
   }
 
@@ -146,8 +194,9 @@ export class RelayDurableObject {
 
   private handleControlKeepalive(ws: WebSocket, message: string): void {
     try {
-      const parsed = JSON.parse(message) as unknown as { type?: unknown };
-      if (parsed?.type !== "ping") return;
+      const parsed: unknown = JSON.parse(message);
+      const parsedRecord = isRecord(parsed) ? parsed : null;
+      if (parsedRecord?.type !== "ping") return;
       try {
         ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
       } catch {
@@ -220,9 +269,8 @@ export class RelayDurableObject {
     const out = new Set<string>();
     for (const ws of this.state.getWebSockets("client")) {
       try {
-        const attachment = (
-          ws as WebSocketWithAttachment
-        ).deserializeAttachment() as RelaySessionAttachment | null;
+        const attachmentRaw = deserializeAttachment(ws);
+        const attachment = isRecord(attachmentRaw) ? attachmentRaw : null;
         if (
           attachment?.role === "client" &&
           typeof attachment.connectionId === "string" &&
@@ -271,7 +319,7 @@ export class RelayDurableObject {
       connectionId: null,
       createdAt: Date.now(),
     };
-    (server as WebSocketWithAttachment).serializeAttachment(attachment);
+    serializeAttachment(server, attachment);
 
     console.log(`[Relay DO] v1:${role} connected to session ${serverId}`);
 
@@ -322,7 +370,7 @@ export class RelayDurableObject {
       connectionId: resolvedConnectionId || null,
       createdAt: Date.now(),
     };
-    (server as WebSocketWithAttachment).serializeAttachment(attachment);
+    serializeAttachment(server, attachment);
 
     let roleSuffix = "";
     if (isServerControl) {
@@ -359,7 +407,8 @@ export class RelayDurableObject {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const role = url.searchParams.get("role") as ConnectionRole | null;
+    const roleRaw = url.searchParams.get("role");
+    const role = roleRaw === "server" || roleRaw === "client" ? roleRaw : null;
     const serverId = url.searchParams.get("serverId");
     const connectionIdRaw = url.searchParams.get("connectionId");
     const connectionId = typeof connectionIdRaw === "string" ? connectionIdRaw.trim() : "";
@@ -388,15 +437,14 @@ export class RelayDurableObject {
    * Called when a WebSocket message is received (wakes from hibernation).
    */
   webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
-    const attachment = (
-      ws as WebSocketWithAttachment
-    ).deserializeAttachment() as RelaySessionAttachment | null;
-    if (!attachment) {
+    const attachmentRaw = deserializeAttachment(ws);
+    if (!isRecord(attachmentRaw)) {
       console.error("[Relay DO] Message from WebSocket without attachment");
       return;
     }
+    const attachment = attachmentRaw;
 
-    const version = attachment.version ?? LEGACY_RELAY_VERSION;
+    const version = getString(attachment, "version") ?? LEGACY_RELAY_VERSION;
 
     if (version === LEGACY_RELAY_VERSION) {
       const targetRole = attachment.role === "server" ? "client" : "server";
@@ -411,7 +459,8 @@ export class RelayDurableObject {
       return;
     }
 
-    const { role, connectionId } = attachment;
+    const role = getString(attachment, "role");
+    const connectionId = getString(attachment, "connectionId");
     if (!connectionId) {
       // Control channel: support simple app-level keepalive.
       if (typeof message === "string") {
@@ -451,44 +500,46 @@ export class RelayDurableObject {
    * Called when a WebSocket closes (wakes from hibernation).
    */
   webSocketClose(ws: WebSocket, code: number, reason: string, _wasClean: boolean): void {
-    const attachment = (
-      ws as WebSocketWithAttachment
-    ).deserializeAttachment() as RelaySessionAttachment | null;
-    if (!attachment) return;
+    const attachmentRaw = deserializeAttachment(ws);
+    if (!isRecord(attachmentRaw)) return;
+    const attachment = attachmentRaw;
 
-    const version = attachment.version ?? LEGACY_RELAY_VERSION;
+    const version = getString(attachment, "version") ?? LEGACY_RELAY_VERSION;
+    const role = getString(attachment, "role");
+    const connectionId = getString(attachment, "connectionId");
+    const serverId = getString(attachment, "serverId");
     console.log(
-      `[Relay DO] v${version}:${attachment.role}${attachment.connectionId ? `(${attachment.connectionId})` : ""} disconnected from session ${attachment.serverId} (${code}: ${reason})`,
+      `[Relay DO] v${version}:${role ?? "unknown"}${connectionId ? `(${connectionId})` : ""} disconnected from session ${serverId ?? "unknown"} (${code}: ${reason})`,
     );
 
     if (version === LEGACY_RELAY_VERSION) {
       return;
     }
 
-    if (attachment.role === "client" && attachment.connectionId) {
+    if (role === "client" && connectionId) {
       const remainingClientSockets = this.state
-        .getWebSockets(`client:${attachment.connectionId}`)
+        .getWebSockets(`client:${connectionId}`)
         .some((socket) => socket !== ws);
       if (remainingClientSockets) {
         return;
       }
 
-      this.pendingFrames.delete(attachment.connectionId);
+      this.pendingFrames.delete(connectionId);
       // Last socket for this session closed: now clean up matching server-data socket.
-      for (const serverWs of this.state.getWebSockets(`server:${attachment.connectionId}`)) {
+      for (const serverWs of this.state.getWebSockets(`server:${connectionId}`)) {
         try {
           serverWs.close(1001, "Client disconnected");
         } catch {
           // ignore
         }
       }
-      this.notifyControls({ type: "disconnected", connectionId: attachment.connectionId });
+      this.notifyControls({ type: "disconnected", connectionId });
       return;
     }
 
-    if (attachment.role === "server" && attachment.connectionId) {
+    if (role === "server" && connectionId) {
       // Force the client to reconnect and re-handshake when the daemon side drops.
-      for (const clientWs of this.state.getWebSockets(`client:${attachment.connectionId}`)) {
+      for (const clientWs of this.state.getWebSockets(`client:${connectionId}`)) {
         try {
           clientWs.close(1012, "Server disconnected");
         } catch {
@@ -502,10 +553,10 @@ export class RelayDurableObject {
    * Called on WebSocket error.
    */
   webSocketError(ws: WebSocket, error: unknown): void {
-    const attachment = (
-      ws as WebSocketWithAttachment
-    ).deserializeAttachment() as RelaySessionAttachment | null;
-    console.error(`[Relay DO] WebSocket error for ${attachment?.role ?? "unknown"}:`, error);
+    const attachmentRaw = deserializeAttachment(ws);
+    const attachment = isRecord(attachmentRaw) ? attachmentRaw : null;
+    const role = attachment ? getString(attachment, "role") : undefined;
+    console.error(`[Relay DO] WebSocket error for ${role ?? "unknown"}:`, error);
   }
 }
 

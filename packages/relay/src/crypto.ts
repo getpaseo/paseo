@@ -26,6 +26,15 @@ const NONCE_LENGTH = nacl.box.nonceLength; // 24
 
 let prngReady = false;
 
+interface GlobalWithCrypto {
+  crypto?: Crypto;
+}
+
+function getGlobalCrypto(): Crypto | undefined {
+  const g = globalThis as GlobalWithCrypto;
+  return g.crypto;
+}
+
 function ensurePrng(): void {
   if (prngReady) return;
 
@@ -37,7 +46,7 @@ function ensurePrng(): void {
     // fallthrough
   }
 
-  const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto;
+  const cryptoObj = getGlobalCrypto();
   if (cryptoObj?.getRandomValues) {
     nacl.setPRNG((x, n) => {
       const buf = new Uint8Array(n);

@@ -7,6 +7,8 @@ import type {
   ScheduleListItem,
   ScheduleRecord,
   ScheduleTarget,
+  UpdateScheduleInput,
+  UpdateScheduleNewAgentConfig,
 } from "./types.js";
 import { parseDuration } from "../../utils/duration.js";
 import { resolveProviderAndModel } from "../../utils/provider-model.js";
@@ -145,17 +147,13 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
 
-  const cadenceCount = Number(options.every !== undefined) + Number(options.cron !== undefined);
-  if (cadenceCount !== 1) {
+  const cadence = parseCadenceFromFlags(options.every, options.cron);
+  if (!cadence) {
     throw {
       code: "INVALID_CADENCE",
       message: "Specify exactly one of --every or --cron",
     } satisfies CommandError;
   }
-
-  const cadence: ScheduleCadence = options.every
-    ? { type: "every", everyMs: parseDuration(options.every) }
-    : { type: "cron", expression: options.cron!.trim() };
 
   const cwdInput = options.cwd?.trim();
   if (options.host !== undefined && !cwdInput) {
@@ -228,6 +226,167 @@ function resolveRunOnCreate(
     } satisfies CommandError;
   }
   return runNow ?? cadenceType === "every";
+}
+
+export interface ScheduleUpdateOptionsInput {
+  id: string;
+  every?: string;
+  cron?: string;
+  name?: string;
+  prompt?: string;
+  provider?: string;
+  model?: string;
+  mode?: string;
+  cwd?: string;
+  maxRuns?: string;
+  expiresIn?: string;
+  clearMaxRuns?: boolean;
+  clearExpires?: boolean;
+}
+
+export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): UpdateScheduleInput {
+  const id = options.id.trim();
+  if (!id) {
+    throw {
+      code: "INVALID_SCHEDULE_ID",
+      message: "Schedule id cannot be empty",
+    } satisfies CommandError;
+  }
+
+  const cadence = parseCadenceFromFlags(options.every, options.cron);
+  const newAgentConfig = buildNewAgentConfigPatch(options);
+  const maxRuns = parseUpdateMaxRuns(options);
+  const expiresAt = parseUpdateExpiresAt(options);
+  const name = parseUpdateName(options);
+  const prompt = parseUpdatePrompt(options);
+
+  if (
+    name === undefined &&
+    prompt === undefined &&
+    cadence === undefined &&
+    newAgentConfig === undefined &&
+    maxRuns === undefined &&
+    expiresAt === undefined
+  ) {
+    throw {
+      code: "NO_UPDATES",
+      message: "Specify at least one field to update",
+    } satisfies CommandError;
+  }
+
+  return {
+    id,
+    ...(name !== undefined ? { name } : {}),
+    ...(prompt !== undefined ? { prompt } : {}),
+    ...(cadence !== undefined ? { cadence } : {}),
+    ...(newAgentConfig !== undefined ? { newAgentConfig } : {}),
+    ...(maxRuns !== undefined ? { maxRuns } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+  };
+}
+
+function parseCadenceFromFlags(
+  every: string | undefined,
+  cron: string | undefined,
+): ScheduleCadence | undefined {
+  if (every !== undefined && cron !== undefined) {
+    throw {
+      code: "INVALID_CADENCE",
+      message: "Specify at most one of --every or --cron",
+    } satisfies CommandError;
+  }
+  if (every !== undefined) {
+    return { type: "every", everyMs: parseDuration(every) };
+  }
+  if (cron !== undefined) {
+    return { type: "cron", expression: cron.trim() };
+  }
+  return undefined;
+}
+
+function parseUpdateMaxRuns(options: ScheduleUpdateOptionsInput): number | null | undefined {
+  if (options.maxRuns !== undefined && options.clearMaxRuns) {
+    throw {
+      code: "CONFLICTING_MAX_RUNS",
+      message: "Use either --max-runs <n> or --no-max-runs, not both",
+    } satisfies CommandError;
+  }
+  if (options.clearMaxRuns) {
+    return null;
+  }
+  if (options.maxRuns !== undefined) {
+    return parsePositiveInt(options.maxRuns, "--max-runs");
+  }
+  return undefined;
+}
+
+function parseUpdateExpiresAt(options: ScheduleUpdateOptionsInput): string | null | undefined {
+  if (options.expiresIn !== undefined && options.clearExpires) {
+    throw {
+      code: "CONFLICTING_EXPIRES",
+      message: "Use either --expires-in <duration> or --no-expires-in, not both",
+    } satisfies CommandError;
+  }
+  if (options.clearExpires) {
+    return null;
+  }
+  if (options.expiresIn !== undefined) {
+    return new Date(Date.now() + parseDuration(options.expiresIn)).toISOString();
+  }
+  return undefined;
+}
+
+function parseUpdateName(options: ScheduleUpdateOptionsInput): string | null | undefined {
+  if (options.name === undefined) {
+    return undefined;
+  }
+  const trimmed = options.name.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseUpdatePrompt(options: ScheduleUpdateOptionsInput): string | undefined {
+  if (options.prompt === undefined) {
+    return undefined;
+  }
+  const trimmed = options.prompt.trim();
+  if (!trimmed) {
+    throw {
+      code: "INVALID_PROMPT",
+      message: "--prompt cannot be empty",
+    } satisfies CommandError;
+  }
+  return trimmed;
+}
+
+function buildNewAgentConfigPatch(
+  options: ScheduleUpdateOptionsInput,
+): UpdateScheduleNewAgentConfig | undefined {
+  const patch: UpdateScheduleNewAgentConfig = {};
+  if (options.provider !== undefined || options.model !== undefined) {
+    const resolved = resolveProviderAndModel({
+      provider: options.provider,
+      model: options.model,
+    });
+    patch.provider = resolved.provider;
+    if (resolved.model !== undefined) {
+      patch.model = resolved.model;
+    }
+  }
+  if (options.mode !== undefined) {
+    const trimmed = options.mode.trim();
+    patch.modeId = trimmed.length > 0 ? trimmed : null;
+  }
+  if (options.cwd !== undefined) {
+    const trimmed = options.cwd.trim();
+    if (!trimmed) {
+      throw {
+        code: "INVALID_CWD",
+        message: "--cwd cannot be empty",
+      } satisfies CommandError;
+    }
+    patch.cwd = trimmed;
+  }
+  return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
 function parsePositiveInt(value: string, flag: string): number {
