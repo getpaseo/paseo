@@ -507,7 +507,10 @@ async function execSetupCommandStreamed(options: {
       });
 
       terminal.onExit(({ exitCode }) => {
-        finish(typeof exitCode === "number" ? exitCode : null);
+        // Defer to allow any pending onData events to fire before resolving.
+        // On Linux, node-pty's exit callback can arrive before the last buffered
+        // PTY data is delivered, causing tail bytes to be dropped.
+        setImmediate(() => finish(typeof exitCode === "number" ? exitCode : null));
       });
     } catch (error) {
       emitOutput("stderr", error instanceof Error ? error.message : String(error));
