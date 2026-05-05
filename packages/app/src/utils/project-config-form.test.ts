@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PaseoConfigRawSchema } from "@server/utils/paseo-config-schema";
 import type { PaseoConfigRaw } from "@server/shared/messages";
 import { applyDraftToConfig, configToDraft, type ProjectConfigDraft } from "./project-config-form";
 
@@ -102,7 +103,7 @@ describe("applyDraftToConfig", () => {
   });
 
   it("preserves unknown top-level, worktree, and script entry fields on round-trip", () => {
-    const base = {
+    const base = PaseoConfigRawSchema.parse({
       worktree: {
         setup: "npm install",
         terminals: [{ name: "dev", command: "npm run dev" }],
@@ -117,28 +118,28 @@ describe("applyDraftToConfig", () => {
         },
       },
       customTopLevel: "preserved",
-    } as unknown as PaseoConfigRaw;
+    });
 
     const draft = configToDraft(base);
     const next = applyDraftToConfig({ draft, base });
 
-    expect((next as unknown as Record<string, unknown>).customTopLevel).toBe("preserved");
-    expect((next.worktree as unknown as Record<string, unknown>).customWorktreeField).toBe("keep");
-    expect((next.worktree as unknown as Record<string, unknown>).terminals).toEqual([
+    expect((next as Record<string, unknown>).customTopLevel).toBe("preserved");
+    expect((next.worktree as Record<string, unknown>).customWorktreeField).toBe("keep");
+    expect((next.worktree as Record<string, unknown>).terminals).toEqual([
       { name: "dev", command: "npm run dev" },
     ]);
-    const devEntry = (next.scripts ?? {}).dev as unknown as Record<string, unknown>;
+    const devEntry = (next.scripts ?? {}).dev as Record<string, unknown>;
     expect(devEntry.customScriptField).toEqual({ nested: true });
   });
 
   it("preserves all scripts on round-trip, including ones never edited in this session", () => {
-    const base = {
+    const base = PaseoConfigRawSchema.parse({
       scripts: {
         dev: { type: "long-running", command: "npm run dev", port: 3000, customDevField: "keep" },
         build: { command: ["npm", "run", "build"], customBuildField: { nested: 1 } },
         lint: { command: "npm run lint", type: "task" },
       },
-    } as unknown as PaseoConfigRaw;
+    });
 
     const draft = configToDraft(base);
     // Edit only "dev". Leave "build" and "lint" untouched.
@@ -150,37 +151,37 @@ describe("applyDraftToConfig", () => {
     const scripts = next.scripts ?? {};
     expect(Object.keys(scripts).sort()).toEqual(["build", "dev", "lint"]);
 
-    const devEntry = scripts.dev as unknown as Record<string, unknown>;
+    const devEntry = scripts.dev as Record<string, unknown>;
     expect(devEntry.command).toBe("npm run dev -- --watch");
     expect(devEntry.type).toBe("long-running");
     expect(devEntry.port).toBe(3000);
     expect(devEntry.customDevField).toBe("keep");
 
-    const buildEntry = scripts.build as unknown as Record<string, unknown>;
+    const buildEntry = scripts.build as Record<string, unknown>;
     expect(buildEntry.command).toEqual(["npm", "run", "build"]);
     expect(buildEntry.customBuildField).toEqual({ nested: 1 });
 
-    const lintEntry = scripts.lint as unknown as Record<string, unknown>;
+    const lintEntry = scripts.lint as Record<string, unknown>;
     expect(lintEntry.command).toBe("npm run lint");
     expect(lintEntry.type).toBe("task");
   });
 
   it("normalizes script command text into the original command kind", () => {
-    const base = {
+    const base = PaseoConfigRawSchema.parse({
       scripts: {
         build: { command: ["npm", "run", "build"] },
       },
-    } as unknown as PaseoConfigRaw;
+    });
     const draft = configToDraft(base);
     const buildRow = draft.scripts[0];
     buildRow.commandText = "npm run build";
     const next = applyDraftToConfig({ draft, base });
-    const buildEntry = (next.scripts ?? {}).build as unknown as Record<string, unknown>;
+    const buildEntry = (next.scripts ?? {}).build as Record<string, unknown>;
     expect(buildEntry.command).toEqual(["npm run build"]);
   });
 
   it("parses script port as a number when numeric and writes string for non-numeric input", () => {
-    const base: PaseoConfigRaw = {};
+    const base = PaseoConfigRawSchema.parse({});
     const draft = configToDraft(base);
     draft.scripts = [
       {
@@ -203,19 +204,19 @@ describe("applyDraftToConfig", () => {
       },
     ];
     const next = applyDraftToConfig({ draft, base });
-    const dev = (next.scripts ?? {}).dev as unknown as Record<string, unknown>;
-    const tunnel = (next.scripts ?? {}).tunnel as unknown as Record<string, unknown>;
+    const dev = (next.scripts ?? {}).dev as Record<string, unknown>;
+    const tunnel = (next.scripts ?? {}).tunnel as Record<string, unknown>;
     expect(dev.port).toBe(3000);
     expect(tunnel.port).toBe("auto");
   });
 
   it("drops scripts with an empty name and removes scripts no longer present in the draft", () => {
-    const base = {
+    const base = PaseoConfigRawSchema.parse({
       scripts: {
         dev: { command: "npm run dev" },
         build: { command: "npm run build" },
       },
-    } as unknown as PaseoConfigRaw;
+    });
     const draft = configToDraft(base);
     // remove build, add a row with empty name.
     draft.scripts = draft.scripts
