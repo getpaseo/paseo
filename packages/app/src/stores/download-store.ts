@@ -42,6 +42,10 @@ interface DownloadState {
       mimeType: string | null;
       error: string | null;
     }>;
+    requestFileBytes?: (path: string) => Promise<{
+      bytes: Uint8Array;
+      mimeType: string | null;
+    }>;
   }) => Promise<void>;
 
   updateProgress: (id: string, progress: DownloadProgress) => void;
@@ -66,6 +70,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     path,
     daemonProfile,
     requestFileDownloadToken,
+    requestFileBytes,
   }) => {
     const id = generateDownloadId();
     const download: Download = {
@@ -83,12 +88,26 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     }));
 
     try {
+      const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
+      if (isWeb && !downloadTarget.baseUrl) {
+        if (!requestFileBytes) {
+          throw new Error("Download host is unavailable.");
+        }
+        const file = await requestFileBytes(path);
+        triggerBrowserBytesDownload(
+          file.bytes,
+          fileName,
+          file.mimeType ?? "application/octet-stream",
+        );
+        get().completeDownload(id);
+        return;
+      }
+
       const tokenResponse = await requestFileDownloadToken(path);
       if (tokenResponse.error || !tokenResponse.token) {
         throw new Error(tokenResponse.error ?? "Failed to request download token.");
       }
 
-      const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
       if (!downloadTarget.baseUrl) {
         throw new Error("Download host is unavailable.");
       }
@@ -311,6 +330,21 @@ function triggerBrowserDownload(url: string, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function triggerBrowserBytesDownload(bytes: Uint8Array, fileName: string, mimeType: string) {
+  if (typeof URL === "undefined") {
+    throw new Error("Browser download API is unavailable.");
+  }
+
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const objectUrl = URL.createObjectURL(new Blob([buffer], { type: mimeType }));
+  try {
+    triggerBrowserDownload(objectUrl, fileName);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
 }
 
 function resolveDownloadTargetFile(fileName: string): FSFile {
