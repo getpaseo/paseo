@@ -165,7 +165,7 @@ import {
 import { resolveCloseAgentTabPolicy } from "@/subagents";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { isAbsolutePath } from "@/utils/path";
-import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
+import { useIsWorkspaceCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
@@ -1501,7 +1501,7 @@ function WorkspaceScreenContent({
 }: WorkspaceScreenContentProps) {
   const _insets = useSafeAreaInsets();
   const toast = useToast();
-  const isMobile = useIsCompactFormFactor();
+  const isMobile = useIsWorkspaceCompactFormFactor();
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
 
   const normalizedServerId = useMemo(() => trimNonEmpty(decodeSegment(serverId)) ?? "", [serverId]);

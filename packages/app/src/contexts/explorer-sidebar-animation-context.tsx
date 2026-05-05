@@ -10,7 +10,7 @@ import {
 import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useIsWorkspaceCompactFormFactor } from "@/constants/layout";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getRightSidebarAnimationTargets,
@@ -37,7 +37,7 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
 
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
-  const isCompactLayout = useIsCompactFormFactor();
+  const isCompactLayout = useIsWorkspaceCompactFormFactor();
   const isOpen = usePanelStore((state) =>
     selectIsFileExplorerOpen(state, { isCompact: isCompactLayout }),
   );

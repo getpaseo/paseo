@@ -22,7 +22,7 @@ import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useIsWorkspaceCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
@@ -1306,7 +1306,7 @@ function ActiveAgentComposer({
   onMessageSent: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const isCompact = useIsCompactFormFactor();
+  const isCompact = useIsWorkspaceCompactFormFactor();
   const paneContext = usePaneContext();
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();

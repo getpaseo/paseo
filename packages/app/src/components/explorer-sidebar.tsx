@@ -23,7 +23,7 @@ import {
   type ExplorerTab,
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
-import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
+import { HEADER_INNER_HEIGHT, useIsWorkspaceCompactFormFactor } from "@/constants/layout";
 import { GitDiffPane } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
@@ -52,7 +52,7 @@ export function ExplorerSidebar({
   const { theme } = useUnistyles();
   const isScreenFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const isMobile = useIsCompactFormFactor();
+  const isMobile = useIsWorkspaceCompactFormFactor();
   const isOpen = usePanelStore((state) => selectIsFileExplorerOpen(state, { isCompact: isMobile }));
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);

@@ -34,7 +34,24 @@ export {
  */
 export function useIsCompactFormFactor(): boolean {
   const { rt } = useUnistyles();
-  return rt.breakpoint === "xs" || rt.breakpoint === "sm";
+  return isCompactBreakpoint(rt.breakpoint);
+}
+
+export function isCompactBreakpoint(breakpoint: string | undefined): boolean {
+  return breakpoint === "xs" || breakpoint === "sm";
+}
+
+export function isWorkspaceCompactBreakpoint(breakpoint: string | undefined): boolean {
+  return breakpoint === "xs" || breakpoint === "sm" || breakpoint === "md";
+}
+
+/**
+ * Workspace panes need more horizontal room than the rest of the app. Treat md
+ * widths as compact so mobile web browsers don't keep desktop sidebars pinned.
+ */
+export function useIsWorkspaceCompactFormFactor(): boolean {
+  const { rt } = useUnistyles();
+  return isWorkspaceCompactBreakpoint(rt.breakpoint);
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.

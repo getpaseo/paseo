@@ -21,7 +21,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsWorkspaceCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { Check, ChevronDown, X } from "lucide-react-native";
@@ -232,7 +232,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     ref,
   ) {
     const viewportRef = useRef<StreamViewportHandle | null>(null);
-    const isMobile = useIsCompactFormFactor();
+    const isMobile = useIsWorkspaceCompactFormFactor();
     const streamRenderStrategy = useMemo(
       () =>
         resolveStreamRenderStrategy({
@@ -831,7 +831,7 @@ function PermissionRequestCard({
   permission: PendingPermission;
   client: DaemonClient | null;
 }) {
-  const isMobile = useIsCompactFormFactor();
+  const isMobile = useIsWorkspaceCompactFormFactor();
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";

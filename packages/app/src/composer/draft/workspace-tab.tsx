@@ -36,7 +36,7 @@ import {
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsWorkspaceCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 
@@ -380,7 +380,7 @@ export function WorkspaceDraftAgentTab({
     };
   }, [pendingAutoSubmit, pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
-  const isCompact = useIsCompactFormFactor();
+  const isCompact = useIsWorkspaceCompactFormFactor();
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd: composerState.workingDir,
