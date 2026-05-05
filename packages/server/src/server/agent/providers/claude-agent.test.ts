@@ -2,7 +2,11 @@ import { describe, expect, test, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
+import {
+  ClaudeAgentClient,
+  convertClaudeHistoryEntry,
+  normalizeClaudeAskUserQuestionUpdatedInput,
+} from "./claude-agent.js";
 import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../agent-sdk-types.js";
 
 interface TestClaudeSession {
@@ -361,6 +365,138 @@ describe("ClaudeAgentClient.listModels", () => {
 
     const defaultModel = models.find((m) => m.isDefault);
     expect(defaultModel?.id).toBe("claude-opus-4-6");
+  });
+});
+
+describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
+  test("maps frontend header-keyed answers to Claude question text keys", () => {
+    expect(
+      normalizeClaudeAskUserQuestionUpdatedInput(
+        {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+          answers: { Provider: "Claude" },
+        },
+        undefined,
+      ),
+    ).toEqual({
+      questions: [
+        {
+          question: "Which provider should I use?",
+          header: "Provider",
+          options: [],
+          multiSelect: false,
+        },
+      ],
+      answers: { "Which provider should I use?": "Claude" },
+    });
+  });
+
+  test("uses fallback request questions when response only includes answers", () => {
+    expect(
+      normalizeClaudeAskUserQuestionUpdatedInput(
+        {
+          answers: { Provider: "Codex" },
+        },
+        {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+        },
+      ),
+    ).toEqual({
+      questions: [
+        {
+          question: "Which provider should I use?",
+          header: "Provider",
+          options: [],
+          multiSelect: false,
+        },
+      ],
+      answers: { "Which provider should I use?": "Codex" },
+    });
+  });
+
+  test("respondToPermission preserves full question input when UI returns answers-only payload", async () => {
+    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    const request = {
+      id: "permission-question-1",
+      provider: "claude",
+      name: "AskUserQuestion",
+      kind: "question",
+      input: {
+        questions: [
+          {
+            question: "Which provider should I use?",
+            header: "Provider",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      },
+    };
+
+    const resultPromise = new Promise<unknown>((resolve, reject) => {
+      (
+        session as unknown as {
+          pendingPermissions: Map<
+            string,
+            {
+              request: typeof request;
+              resolve: (value: unknown) => void;
+              reject: (error: Error) => void;
+            }
+          >;
+        }
+      ).pendingPermissions.set(request.id, {
+        request,
+        resolve,
+        reject,
+      });
+    });
+
+    try {
+      await session.respondToPermission(request.id, {
+        behavior: "allow",
+        updatedInput: {
+          answers: { Provider: "Claude" },
+        },
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+          answers: { "Which provider should I use?": "Claude" },
+        },
+        updatedPermissions: undefined,
+      });
+    } finally {
+      await session.close();
+    }
   });
 });
 

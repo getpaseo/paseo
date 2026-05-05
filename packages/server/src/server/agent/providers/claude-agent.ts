@@ -87,6 +87,61 @@ import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+export function normalizeClaudeAskUserQuestionUpdatedInput(
+  updatedInput: AgentMetadata | undefined,
+  fallbackInput: AgentMetadata | undefined,
+): AgentMetadata {
+  const fallback = isMetadata(fallbackInput) ? fallbackInput : {};
+  const base = isMetadata(updatedInput) ? updatedInput : {};
+  // Paseo's shared question UI serializes answers by question header, but Claude's
+  // AskUserQuestion tool expects answer keys to match the full question text. Merge
+  // the original request payload back in so provider callbacks that only return
+  // `{ answers }` still satisfy Claude's full tool input schema.
+  const merged = { ...fallback, ...base };
+  const questions =
+    (Array.isArray(base.questions) ? base.questions : null) ??
+    (Array.isArray(fallback.questions) ? fallback.questions : null);
+  const answers = isMetadata(base.answers) ? base.answers : null;
+
+  if (!questions || !answers) {
+    return merged;
+  }
+
+  const normalizedAnswers: Record<string, string> = {};
+  for (const item of questions) {
+    const question = isMetadata(item) ? item : null;
+    if (!question) {
+      continue;
+    }
+
+    const questionText = readNonEmptyString(question.question);
+    if (!questionText) {
+      continue;
+    }
+
+    const header = readNonEmptyString(question.header);
+    const answer =
+      readNonEmptyString(answers[questionText]) ??
+      (header ? readNonEmptyString(answers[header]) : null);
+    if (answer) {
+      normalizedAnswers[questionText] = answer;
+    }
+  }
+
+  if (Object.keys(normalizedAnswers).length === 0) {
+    return merged;
+  }
+
+  return {
+    ...merged,
+    answers: normalizedAnswers,
+  };
+}
+
 type TurnState = "idle" | "foreground" | "autonomous";
 
 interface EventIdentifiers {
@@ -1772,9 +1827,16 @@ class ClaudeAgentSession implements AgentSession {
           }),
         );
       }
+      const updatedInput =
+        pending.request.kind === "question"
+          ? normalizeClaudeAskUserQuestionUpdatedInput(
+              response.updatedInput,
+              pending.request.input ?? undefined,
+            )
+          : (response.updatedInput ?? pending.request.input ?? {});
       const result: PermissionResult = {
         behavior: "allow",
-        updatedInput: response.updatedInput ?? pending.request.input ?? {},
+        updatedInput,
         updatedPermissions: this.normalizePermissionUpdates(response.updatedPermissions),
       };
       pending.resolve(result);
