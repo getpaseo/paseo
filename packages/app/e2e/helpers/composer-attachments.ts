@@ -63,26 +63,9 @@ export async function closeImageLightbox(page: Page): Promise<void> {
   await expect(page.getByTestId("attachment-lightbox-close")).not.toBeVisible({ timeout: 5_000 });
 }
 
-/**
- * Press the agent interrupt shortcut.
- * The app binds "agent.interrupt" to Escape (keyboard-shortcuts.ts, id: "agent-interrupt",
- * combo: "Escape"), fired when commandCenter=false and terminal=false.
- */
+/** Press Escape, which is bound to the "agent.interrupt" shortcut. */
 export async function pressInterruptShortcut(page: Page): Promise<void> {
   await page.keyboard.press("Escape");
-}
-
-/**
- * Assert the composer input is non-editable and the attach button is disabled.
- * This state arises when the parent passes isSubmitLoading=true to Composer
- * (e.g. workspace-draft-agent-tab during agent creation).
- */
-export async function expectComposerLocked(page: Page): Promise<void> {
-  await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).not.toBeEditable({
-    timeout: 5_000,
-  });
-  // The DropdownMenuTrigger renders aria-disabled when disabled={true}.
-  await expect(page.getByTestId("message-input-attach-button")).toBeDisabled({ timeout: 5_000 });
 }
 
 /** Assert the composer textarea contains the expected text. */
@@ -97,11 +80,7 @@ export interface MockAgentSetup {
   repo: Awaited<ReturnType<typeof createTempGitRepo>>;
 }
 
-/**
- * Create a temp git repo, start a mock agent, navigate to it, and wait for
- * the agent to be visibly running. Returns client and repo for cleanup in a
- * finally block.
- */
+/** Create a temp repo, start a mock agent, navigate to it, and wait for it to be running. */
 export async function startRunningMockAgent(
   page: Page,
   opts: { prefix: string; model: string; prompt: string },

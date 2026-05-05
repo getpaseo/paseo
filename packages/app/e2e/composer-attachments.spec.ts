@@ -133,15 +133,16 @@ test.describe("Composer attachments", () => {
   });
 
   test.fixme("workspace-review pill suppresses on X-click and reappears after send", async () => {
-    // Requires a window-exposed seeding bridge for useWorkspaceAttachmentsStore.
-    // Once added (e.g. via page.exposeFunction in fixtures.ts), this test should:
+    // The Zustand store is exposed on window.__paseoWorkspaceAttachmentsStore in E2E mode
+    // (workspace-attachments-store.ts). Steps once a seeding helper exists:
     //   1. Navigate to workspace + new chat
-    //   2. Inject a review WorkspaceComposerAttachment via the bridge
-    //   3. Assert "composer-review-attachment-pill" is visible
-    //   4. Click "Remove review attachment" to suppress it
-    //   5. Assert pill is gone
-    //   6. Submit any message (triggers completeSubmit → resetSuppression)
-    //   7. Assert pill reappears
+    //   2. Build scope key via buildWorkspaceAttachmentScopeKey({ serverId, cwd })
+    //   3. Call store.getState().setWorkspaceAttachments({ scopeKey, attachments: [reviewAttachment] })
+    //   4. Assert "composer-review-attachment-pill" is visible
+    //   5. Click "Remove review attachment" to suppress it
+    //   6. Assert pill is gone
+    //   7. Submit any message (triggers completeSubmit → resetSuppression)
+    //   8. Assert pill reappears
   });
 
   test("Escape interrupt cancels the running agent and preserves composer draft", async ({
