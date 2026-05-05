@@ -773,6 +773,7 @@ export async function createPaseoDaemon(
           const relayEnabled = config.relayEnabled ?? true;
           const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
           const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
+          const relayUseTls = config.relayUseTls ?? true;
           const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
 
           if (boundListenTarget.type === "tcp") {
@@ -847,7 +848,7 @@ export async function createPaseoDaemon(
             const offer = await createConnectionOfferV2({
               serverId,
               daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
-              relay: { endpoint: relayPublicEndpoint },
+              relay: { endpoint: relayPublicEndpoint, useTls: relayUseTls },
             });
 
             encodeOfferToFragmentUrl({ offer, appBaseUrl });
@@ -862,6 +863,7 @@ export async function createPaseoDaemon(
                 return wsServer.attachExternalSocket(ws, metadata);
               },
               relayEndpoint,
+              relayUseTls,
               serverId,
               daemonKeyPair: daemonKeyPair.keyPair,
             });

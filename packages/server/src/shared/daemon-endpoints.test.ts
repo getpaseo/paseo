@@ -4,6 +4,7 @@ import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
   CURRENT_RELAY_PROTOCOL_VERSION,
+  extractHostPortFromWebSocketUrl,
   normalizeRelayProtocolVersion,
   parseConnectionUri,
   serializeConnectionUri,
@@ -172,5 +173,18 @@ describe("relay websocket URLs", () => {
     );
 
     expect(url.protocol).toBe("wss:");
+  });
+
+  test("round-trips IPv6 relay endpoints with TLS enabled", () => {
+    const wsUrl = buildRelayWebSocketUrl({
+      endpoint: "[::1]:443",
+      useTls: true,
+      serverId: "srv_test",
+      role: "client",
+    });
+    const url = new URL(wsUrl);
+
+    expect(url.protocol).toBe("wss:");
+    expect(extractHostPortFromWebSocketUrl(wsUrl)).toBe("[::1]:443");
   });
 });

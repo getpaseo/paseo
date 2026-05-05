@@ -286,7 +286,7 @@ async function connectViaRelayOffer(
     endpoint: offer.relay.endpoint,
     serverId: offer.serverId,
     role: "client",
-    useTls: shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
+    useTls: offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
   });
 
   const client = new DaemonClient({

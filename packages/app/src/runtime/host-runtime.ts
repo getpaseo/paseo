@@ -476,7 +476,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         ...base,
         url: buildRelayWebSocketUrl({
           endpoint: connection.relayEndpoint,
-          useTls: shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),
+          useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),
           serverId: host.serverId,
         }),
         e2ee: {

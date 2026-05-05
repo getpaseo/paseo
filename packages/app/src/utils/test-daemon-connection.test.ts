@@ -145,6 +145,37 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(daemonClientMock.createdConfigs[0]?.password).toBe("shared-secret");
   });
 
+  it("uses relay TLS from the stored connection", async () => {
+    const mod = await import("./test-daemon-connection");
+
+    const tlsResult = await mod.connectToDaemon(
+      {
+        id: "relay:wss:[::1]:443",
+        type: "relay",
+        relayEndpoint: "[::1]:443",
+        useTls: true,
+        daemonPublicKeyB64: "pubkey",
+      },
+      { serverId: "srv_probe_test" },
+    );
+    await tlsResult.client.close();
+
+    const plainResult = await mod.connectToDaemon(
+      {
+        id: "relay:relay.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay.paseo.sh:443",
+        useTls: false,
+        daemonPublicKeyB64: "pubkey",
+      },
+      { serverId: "srv_probe_test" },
+    );
+    await plainResult.client.close();
+
+    expect(daemonClientMock.createdConfigs[0]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
+    expect(daemonClientMock.createdConfigs[1]?.url).toMatch(/^ws:\/\/relay\.paseo\.sh:443\/ws\?/);
+  });
+
   it("surfaces auth rejection as an incorrect password", async () => {
     const mod = await import("./test-daemon-connection");
     daemonClientMock.setNextConnectFailure(
