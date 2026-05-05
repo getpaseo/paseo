@@ -283,6 +283,10 @@ export async function clickSessionRow(page: Page, title: string): Promise<void> 
   await row.click();
 }
 
+export async function expectSessionsEmptyState(page: Page): Promise<void> {
+  await expect(page.getByText("No sessions yet")).toBeVisible({ timeout: 30_000 });
+}
+
 export async function archiveAgentFromSessions(
   page: Page,
   input: { agentId: string; title: string },
