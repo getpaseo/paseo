@@ -140,6 +140,7 @@ interface ResolveRelayInput {
   env: NodeJS.ProcessEnv;
   persisted: ReturnType<typeof loadPersistedConfig>;
   cliRelayEnabled: boolean | undefined;
+  cliRelayUseTls: boolean | undefined;
 }
 
 interface ResolvedRelay {
@@ -164,9 +165,10 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     input.persisted.daemon?.relay?.publicEndpoint ??
     endpoint;
   const useTls =
-    input.env.PASEO_RELAY_USE_TLS !== undefined
+    input.cliRelayUseTls ??
+    (input.env.PASEO_RELAY_USE_TLS !== undefined
       ? (parseBooleanEnv(input.env.PASEO_RELAY_USE_TLS) ?? false)
-      : (input.persisted.daemon?.relay?.useTls ?? endpoint === DEFAULT_RELAY_ENDPOINT);
+      : (input.persisted.daemon?.relay?.useTls ?? endpoint === DEFAULT_RELAY_ENDPOINT));
   return { enabled, endpoint, publicEndpoint, useTls };
 }
 
@@ -271,6 +273,7 @@ export function loadConfig(
     env,
     persisted,
     cliRelayEnabled: options?.cli?.relayEnabled,
+    cliRelayUseTls: options?.cli?.relayUseTls,
   });
 
   const { openai, speech } = resolveSpeechConfig({

@@ -77,4 +77,23 @@ describe("local daemon launch supervision", () => {
     expectSupervisorLaunch(argv);
     expect(argv).toContain("--no-mcp");
   });
+
+  test("relay TLS flag is passed to the supervised daemon", async () => {
+    mocks.spawnSync.mockReturnValue({ status: 0, error: undefined });
+
+    const { startLocalDaemonForeground } = await import("./local-daemon.js");
+    const status = startLocalDaemonForeground({
+      home: "/tmp/paseo-test",
+      relayUseTls: true,
+    });
+
+    expect(status).toBe(0);
+    const [, argv, options] = mocks.spawnSync.mock.calls[0] as [
+      string,
+      string[],
+      { env?: NodeJS.ProcessEnv },
+    ];
+    expect(argv).toContain("--relay-use-tls");
+    expect(options.env?.PASEO_RELAY_USE_TLS).toBe("true");
+  });
 });

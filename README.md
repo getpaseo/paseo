@@ -140,6 +140,52 @@ npm run typecheck
 
 - [paseo-relay](https://github.com/zenghongtu/paseo-relay) — self-hosted relay in Go
 
+### Self-hosted relay TLS
+
+Self-hosted relays use `ws://` unless TLS is opted in. For a relay behind nginx on 443, start the daemon with:
+
+```bash
+PASEO_RELAY_ENDPOINT=127.0.0.1:8080 \
+PASEO_RELAY_PUBLIC_ENDPOINT=relay.example.com:443 \
+PASEO_RELAY_USE_TLS=true \
+paseo daemon start
+```
+
+Equivalent config:
+
+```json
+{
+  "daemon": {
+    "relay": {
+      "enabled": true,
+      "endpoint": "127.0.0.1:8080",
+      "publicEndpoint": "relay.example.com:443",
+      "useTls": true
+    }
+  }
+}
+```
+
+Minimal nginx WebSocket proxy:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name relay.example.com;
+
+  ssl_certificate /etc/letsencrypt/live/relay.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/relay.example.com/privkey.pem;
+
+  location /ws {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+  }
+}
+```
+
 ---
 
 <p align="center">

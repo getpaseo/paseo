@@ -11,6 +11,7 @@ export interface DaemonStartOptions {
   home?: string;
   foreground?: boolean;
   relay?: boolean;
+  relayUseTls?: boolean;
   mcp?: boolean;
   injectMcp?: boolean;
   hostnames?: string;
@@ -28,6 +29,9 @@ export interface LocalDaemonPidInfo {
 export interface LocalDaemonState {
   home: string;
   listen: string;
+  relayEnabled: boolean;
+  relayEndpoint: string;
+  relayUseTls: boolean;
   logPath: string;
   pidPath: string;
   pidInfo: LocalDaemonPidInfo | null;
@@ -93,6 +97,9 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   if (options.relay === false) {
     args.push("--no-relay");
   }
+  if (options.relayUseTls === true) {
+    args.push("--relay-use-tls");
+  }
 
   if (options.mcp === false) {
     args.push("--no-mcp");
@@ -116,6 +123,9 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   }
   if (options.hostnames) {
     childEnv.PASEO_HOSTNAMES = options.hostnames;
+  }
+  if (options.relayUseTls === true) {
+    childEnv.PASEO_RELAY_USE_TLS = "true";
   }
   return childEnv;
 }
@@ -353,6 +363,9 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
   return {
     home,
     listen,
+    relayEnabled: config.relayEnabled ?? true,
+    relayEndpoint: config.relayPublicEndpoint ?? config.relayEndpoint ?? "relay.paseo.sh:443",
+    relayUseTls: config.relayUseTls ?? false,
     logPath,
     pidPath,
     pidInfo,

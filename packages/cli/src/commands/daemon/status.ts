@@ -18,6 +18,7 @@ interface DaemonStatus {
   connectedDaemon: "reachable" | "unreachable" | "not_probed";
   home: string;
   listen: string;
+  relay: string;
   hostname: string | null;
   pid: number | null;
   startedAt: string | null;
@@ -117,6 +118,7 @@ function toStatusRows(status: DaemonStatus): StatusRow[] {
     { key: "Connected Daemon", value: status.connectedDaemon },
     { key: "Home", value: status.home },
     { key: "Listen", value: status.listen },
+    { key: "Relay", value: status.relay },
     { key: "Hostname", value: status.hostname ?? "-" },
     { key: "PID", value: status.pid === null ? "-" : String(status.pid) },
     { key: "Started", value: status.startedAt ?? "-" },
@@ -312,6 +314,12 @@ async function resolveDaemonNodeLabel(
   return fromPid.nodePath ?? `unknown (${fromPid.error ?? "could not resolve from PID"})`;
 }
 
+function formatRelayStatus(state: ReturnType<typeof resolveLocalDaemonState>): string {
+  if (!state.relayEnabled) return "disabled";
+  const scheme = state.relayUseTls ? "wss" : "ws";
+  return `${scheme}://${state.relayEndpoint}`;
+}
+
 export type StatusResult = ListResult<StatusRow>;
 
 export async function runStatusCommand(
@@ -370,6 +378,7 @@ export async function runStatusCommand(
     connectedDaemon,
     home: state.home,
     listen: state.listen,
+    relay: formatRelayStatus(state),
     hostname: state.pidInfo?.hostname ?? null,
     pid: state.pidInfo?.pid ?? null,
     startedAt: state.pidInfo?.startedAt ?? null,
