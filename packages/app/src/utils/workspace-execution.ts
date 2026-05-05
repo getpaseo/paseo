@@ -112,7 +112,7 @@ export function getWorkspaceExecutionAuthority(
       reason: "workspace_missing",
       message:
         "workspaces" in input
-          ? `Workspace not found: ${String(input.workspaceId ?? "")}`
+          ? `Workspace not found: ${input.workspaceId ?? ""}`
           : "Workspace not found.",
     };
   }

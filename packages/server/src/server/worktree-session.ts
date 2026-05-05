@@ -662,7 +662,7 @@ export async function runWorktreeSetupInBackground(
   let setupResults: WorktreeSetupCommandResult[] = [];
   let setupStarted = false;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
-  const workspaceId = String(options.workspaceId);
+  const workspaceId = options.workspaceId;
 
   const emitSetupProgress = (status: "running" | "completed" | "failed", error: string | null) => {
     const snapshot: WorkspaceSetupSnapshot = {

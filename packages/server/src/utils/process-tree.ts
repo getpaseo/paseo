@@ -75,7 +75,7 @@ export function signalProcessTree(
     }
 
     try {
-      (options.kill ?? process.kill)(-pid, signal);
+      (options.kill ?? process.kill.bind(process))(-pid, signal);
       return;
     } catch {
       // Fall back to the direct child when no separate process group exists.

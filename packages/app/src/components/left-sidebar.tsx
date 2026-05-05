@@ -308,7 +308,7 @@ function HostPickerTrigger({
   const pressableStyle = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.hostTrigger,
-      Boolean(hovered) && styles.hostTriggerHovered,
+      hovered && styles.hostTriggerHovered,
     ],
     [],
   );

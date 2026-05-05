@@ -141,7 +141,7 @@ export function useAgentHistory(options: {
     isLoading,
     isInitialLoad,
     isRevalidating,
-    hasMore: Boolean(hasNextPage),
+    hasMore: hasNextPage,
     isLoadingMore: isFetchingNextPage,
     refreshAll,
     loadMore,

@@ -94,7 +94,7 @@ function fetchAfter(ctx: FetchContext): AgentTimelineFetchResult {
     gap: false,
     window,
     hasOlder: selected[0].seq > minSeq,
-    hasNewer: Boolean(lastSelected && lastSelected.seq < maxSeq),
+    hasNewer: lastSelected !== null && lastSelected !== undefined && lastSelected.seq < maxSeq,
     rows: selected.map(cloneRow),
   };
 }

@@ -86,7 +86,7 @@ async function showDesktopConfirmDialog(input: ConfirmDialogInput): Promise<bool
   const desktopAsk = desktopApi.dialog?.ask;
 
   if (typeof desktopAsk === "function") {
-    return Boolean(await desktopAsk(input.message, options));
+    return await desktopAsk(input.message, options);
   }
 
   return null;

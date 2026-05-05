@@ -7,17 +7,17 @@ export interface PaneContextValue {
   workspaceId: string;
   tabId: string;
   target: WorkspaceTabTarget;
-  openTab(target: WorkspaceTabTarget): void;
-  closeCurrentTab(): void;
-  retargetCurrentTab(target: WorkspaceTabTarget): void;
-  openFileInWorkspace(filePath: string): void;
+  openTab: (target: WorkspaceTabTarget) => void;
+  closeCurrentTab: () => void;
+  retargetCurrentTab: (target: WorkspaceTabTarget) => void;
+  openFileInWorkspace: (filePath: string) => void;
 }
 
 export interface PaneFocusContextValue {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   isInteractive: boolean;
-  focusPane(): void;
+  focusPane: () => void;
 }
 
 const PaneContext = createContext<PaneContextValue | null>(null);

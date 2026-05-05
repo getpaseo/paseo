@@ -315,7 +315,7 @@ export function DropdownMenuTrigger({
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (typeof style === "function") {
-        return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
+        return style({ pressed, hovered, open: ctx.open });
       }
       return style;
     },
@@ -324,7 +324,7 @@ export function DropdownMenuTrigger({
 
   const renderChildren = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
-      const state: TriggerState = { pressed, hovered: Boolean(hovered), open: ctx.open };
+      const state: TriggerState = { pressed, hovered, open: ctx.open };
       return typeof children === "function" ? children(state) : children;
     },
     [children, ctx.open],

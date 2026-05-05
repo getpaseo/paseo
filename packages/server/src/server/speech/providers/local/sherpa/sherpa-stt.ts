@@ -165,10 +165,10 @@ export class SherpaOnnxSTT implements SpeechToTextProvider {
       }
 
       const rawResult = this.engine.recognizer.getResult(stream);
-      const text = String(
+      const text = (
         (typeof rawResult === "object" && rawResult && "text" in rawResult
           ? rawResult.text
-          : undefined) ?? "",
+          : undefined) ?? ""
       ).trim();
       const duration = Date.now() - start;
       this.logger.debug({ duration, textLength: text.length }, "Sherpa transcription complete");

@@ -13,7 +13,7 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
 function shouldPrintPairingQr(): boolean {
   const env = parseBooleanEnv(process.env.PASEO_PAIRING_QR);
   if (env !== undefined) return env;
-  return Boolean(process.stdout.isTTY);
+  return process.stdout.isTTY ?? false;
 }
 
 export async function renderPairingQr(url: string): Promise<string> {

@@ -12,9 +12,9 @@ export type ProviderFinalTextReducer = (params: {
 }) => string;
 
 export interface ProviderTurnRunner {
-  startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
-  subscribe(callback: (event: AgentStreamEvent) => void): () => void;
-  getSessionId(): string | Promise<string>;
+  startTurn: (prompt: AgentPromptInput, options?: AgentRunOptions) => Promise<{ turnId: string }>;
+  subscribe: (callback: (event: AgentStreamEvent) => void) => () => void;
+  getSessionId: () => string | Promise<string>;
 }
 
 export interface RunProviderTurnOptions extends ProviderTurnRunner {

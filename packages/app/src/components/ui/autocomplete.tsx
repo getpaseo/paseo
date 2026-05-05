@@ -72,7 +72,7 @@ function AutocompleteRow({
   const pressableStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.item,
-      (Boolean(hovered) || pressed || isSelected) && styles.itemActive,
+      (hovered || pressed || isSelected) && styles.itemActive,
     ],
     [isSelected],
   );

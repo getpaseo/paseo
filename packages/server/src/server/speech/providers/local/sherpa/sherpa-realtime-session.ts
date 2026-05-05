@@ -59,10 +59,10 @@ export class SherpaRealtimeTranscriptionSession
       }
 
       const rawResult = this.engine.recognizer.getResult(this.stream);
-      const text = String(
+      const text = (
         (typeof rawResult === "object" && rawResult && "text" in rawResult
           ? rawResult.text
-          : undefined) ?? "",
+          : undefined) ?? ""
       ).trim();
       if (text !== this.lastPartialText) {
         this.lastPartialText = text;
@@ -97,10 +97,10 @@ export class SherpaRealtimeTranscriptionSession
       }
 
       const rawFinal = this.engine.recognizer.getResult(this.stream);
-      const finalText = String(
+      const finalText = (
         (typeof rawFinal === "object" && rawFinal && "text" in rawFinal
           ? rawFinal.text
-          : undefined) ?? "",
+          : undefined) ?? ""
       ).trim();
       const segmentId = this.currentSegmentId;
       const previousSegmentId = this.previousSegmentId;
