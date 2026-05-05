@@ -4,6 +4,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import {
+  closeSidebar,
+  closeMobileAgentSidebar,
+  expectMobileAgentSidebarHidden,
+  expectMobileAgentSidebarVisible,
+  expectWorkspaceListSubscribed,
+  installWorkspaceFetchMonitor,
+  openMobileAgentSidebar,
+} from "./helpers/sidebar";
 import { createTempGitRepo } from "./helpers/workspace";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
 import { connectWorkspaceSetupClient } from "./helpers/workspace-setup";
@@ -178,5 +187,42 @@ test.describe("Sidebar workspace list", () => {
       await client.close();
       await repo.cleanup();
     }
+  });
+});
+
+test.describe("Sidebar workspace-list query", () => {
+  test("does not refetch after desktop sidebar is hidden", async ({ page }) => {
+    const client = await connectWorkspaceSetupClient();
+    const repo = await createTempGitRepo("sidebar-query-pause-");
+
+    try {
+      const workspace = await openProjectViaDaemon(client, repo.path);
+      // Monitor must be installed before navigation so the WebSocket connection is captured.
+      await installWorkspaceFetchMonitor(page);
+      await gotoAppShell(page);
+      await waitForSidebarWorkspace(page, workspace.id);
+      // Initial hydration sent at least one fetch_workspaces_request — sidebar was active.
+      await expectWorkspaceListSubscribed(page, true);
+      // Closing the sidebar sets enabled:false in useSidebarWorkspacesList — query pauses.
+      await closeSidebar(page);
+      // No new fetch_workspaces_request should be sent while the sidebar is hidden.
+      await expectWorkspaceListSubscribed(page, false);
+    } finally {
+      await client.close();
+      await repo.cleanup();
+    }
+  });
+});
+
+test.describe("Mobile sidebar panelState transition", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("showMobileAgent open and close transition", async ({ page }) => {
+    await gotoAppShell(page);
+    await expectMobileAgentSidebarHidden(page);
+    await openMobileAgentSidebar(page);
+    await expectMobileAgentSidebarVisible(page);
+    await closeMobileAgentSidebar(page);
+    await expectMobileAgentSidebarHidden(page);
   });
 });
