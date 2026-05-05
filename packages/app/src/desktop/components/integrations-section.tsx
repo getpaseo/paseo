@@ -48,7 +48,7 @@ export function IntegrationsSection() {
     logLabel: "[Integrations] Failed to load skills status",
   });
 
-  const installCliMutation = useDesktopMutation<InstallStatus>({
+  const { mutate: runCliInstall, isPending: isInstallingCli } = useDesktopMutation<InstallStatus>({
     mutationFn: installCli,
     errorMessage: "Unable to install the Paseo CLI.",
     logLabel: "[Integrations] Failed to install CLI",
@@ -56,14 +56,15 @@ export function IntegrationsSection() {
       queryClient.setQueryData<InstallStatus>(CLI_INSTALL_STATUS_QUERY_KEY, status);
     },
   });
-  const installSkillsMutation = useDesktopMutation<InstallStatus>({
-    mutationFn: installSkills,
-    errorMessage: "Unable to install orchestration skills.",
-    logLabel: "[Integrations] Failed to install skills",
-    onSuccess: (status) => {
-      queryClient.setQueryData<InstallStatus>(SKILLS_INSTALL_STATUS_QUERY_KEY, status);
-    },
-  });
+  const { mutate: runSkillsInstall, isPending: isInstallingSkills } =
+    useDesktopMutation<InstallStatus>({
+      mutationFn: installSkills,
+      errorMessage: "Unable to install orchestration skills.",
+      logLabel: "[Integrations] Failed to install skills",
+      onSuccess: (status) => {
+        queryClient.setQueryData<InstallStatus>(SKILLS_INSTALL_STATUS_QUERY_KEY, status);
+      },
+    });
 
   useFocusEffect(
     useCallback(() => {
@@ -75,14 +76,14 @@ export function IntegrationsSection() {
   );
 
   const handleInstallCli = useCallback(() => {
-    if (installCliMutation.isPending) return;
-    installCliMutation.mutate();
-  }, [installCliMutation]);
+    if (isInstallingCli) return;
+    runCliInstall();
+  }, [isInstallingCli, runCliInstall]);
 
   const handleInstallSkills = useCallback(() => {
-    if (installSkillsMutation.isPending) return;
-    installSkillsMutation.mutate();
-  }, [installSkillsMutation]);
+    if (isInstallingSkills) return;
+    runSkillsInstall();
+  }, [isInstallingSkills, runSkillsInstall]);
 
   const handleOpenCliDocs = useCallback(() => {
     void openExternalUrl(CLI_DOCS_URL);
@@ -152,9 +153,9 @@ export function IntegrationsSection() {
               variant="outline"
               size="sm"
               onPress={handleInstallCli}
-              disabled={installCliMutation.isPending}
+              disabled={isInstallingCli}
             >
-              {installCliMutation.isPending ? "Installing..." : "Install"}
+              {isInstallingCli ? "Installing..." : "Install"}
             </Button>
           )}
         </View>
@@ -178,9 +179,9 @@ export function IntegrationsSection() {
               variant="outline"
               size="sm"
               onPress={handleInstallSkills}
-              disabled={installSkillsMutation.isPending}
+              disabled={isInstallingSkills}
             >
-              {installSkillsMutation.isPending ? "Installing..." : "Install"}
+              {isInstallingSkills ? "Installing..." : "Install"}
             </Button>
           )}
         </View>

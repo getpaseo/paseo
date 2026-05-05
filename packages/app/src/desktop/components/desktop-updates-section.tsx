@@ -37,47 +37,48 @@ function useDaemonManagementToggle(args: {
   refetch: () => void;
 }) {
   const { daemonStatus, settings, updateSettings, setStatus, refetch } = args;
-  const toggleMutation = useDesktopMutation<DaemonManagementToggleResult>({
-    mutationFn: () =>
-      executeDaemonManagementToggle(settings.manageBuiltInDaemon, daemonStatus, {
-        confirm: () =>
-          confirmDialog({
-            title: "Pause built-in daemon",
-            message:
-              "This will stop the built-in daemon immediately. Running agents and terminals connected to the built-in daemon will be stopped.",
-            confirmLabel: "Pause and stop",
-            cancelLabel: "Cancel",
-            destructive: true,
-          }),
-        persistSettings: (next) => updateSettings(next) as Promise<void>,
-        startDaemon: startDesktopDaemon,
-        stopDaemon: stopDesktopDaemon,
-      }),
-    errorMessage: settings.manageBuiltInDaemon
-      ? "Built-in daemon management was paused, but Paseo could not stop the daemon."
-      : "Unable to update built-in daemon management.",
-    logLabel: "[Settings] Failed to update built-in daemon management",
-    onSuccess: (result) => {
-      if (result.kind === "cancelled") {
-        return;
-      }
-      if (result.newStatus) {
-        setStatus(result.newStatus);
-      }
-      refetch();
-    },
-  });
+  const { mutate: toggleDaemonManagement, isPending: isUpdatingDaemonManagement } =
+    useDesktopMutation<DaemonManagementToggleResult>({
+      mutationFn: () =>
+        executeDaemonManagementToggle(settings.manageBuiltInDaemon, daemonStatus, {
+          confirm: () =>
+            confirmDialog({
+              title: "Pause built-in daemon",
+              message:
+                "This will stop the built-in daemon immediately. Running agents and terminals connected to the built-in daemon will be stopped.",
+              confirmLabel: "Pause and stop",
+              cancelLabel: "Cancel",
+              destructive: true,
+            }),
+          persistSettings: (next) => updateSettings(next) as Promise<void>,
+          startDaemon: startDesktopDaemon,
+          stopDaemon: stopDesktopDaemon,
+        }),
+      errorMessage: settings.manageBuiltInDaemon
+        ? "Built-in daemon management was paused, but Paseo could not stop the daemon."
+        : "Unable to update built-in daemon management.",
+      logLabel: "[Settings] Failed to update built-in daemon management",
+      onSuccess: (result) => {
+        if (result.kind === "cancelled") {
+          return;
+        }
+        if (result.newStatus) {
+          setStatus(result.newStatus);
+        }
+        refetch();
+      },
+    });
 
   const handleToggleDaemonManagement = useCallback(() => {
-    if (toggleMutation.isPending) {
+    if (isUpdatingDaemonManagement) {
       return;
     }
 
-    toggleMutation.mutate();
-  }, [toggleMutation]);
+    toggleDaemonManagement();
+  }, [isUpdatingDaemonManagement, toggleDaemonManagement]);
 
   return {
-    isUpdatingDaemonManagement: toggleMutation.isPending,
+    isUpdatingDaemonManagement,
     handleToggleDaemonManagement,
   };
 }

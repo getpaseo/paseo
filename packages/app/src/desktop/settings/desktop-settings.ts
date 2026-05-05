@@ -43,7 +43,7 @@ export function useDesktopSettings(): {
     errorMessage: "Unable to load desktop settings.",
     logLabel: "[DesktopSettings] Failed to load settings",
   });
-  const updateSettingsMutation = useDesktopMutation<
+  const { mutateAsync: saveDesktopSettings } = useDesktopMutation<
     DesktopSettings,
     DesktopSettingsPatch,
     DesktopSettingsMutationContext
@@ -77,9 +77,9 @@ export function useDesktopSettings(): {
         return;
       }
 
-      await updateSettingsMutation.mutateAsync(updates);
+      await saveDesktopSettings(updates);
     },
-    [updateSettingsMutation],
+    [saveDesktopSettings],
   );
 
   return {
