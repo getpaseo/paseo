@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Terminal, Blocks, Check } from "lucide-react-native";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
@@ -15,67 +16,73 @@ import {
   installSkills,
   type InstallStatus,
 } from "@/desktop/daemon/desktop-daemon";
+import { useDesktopMutation, useDesktopQuery } from "@/desktop/hooks/use-desktop-ipc";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+const CLI_INSTALL_STATUS_QUERY_KEY = ["desktop", "integrations", "cli-install-status"] as const;
+const SKILLS_INSTALL_STATUS_QUERY_KEY = [
+  "desktop",
+  "integrations",
+  "skills-install-status",
+] as const;
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();
+  const queryClient = useQueryClient();
   const showSection = shouldUseDesktopDaemon();
 
-  const [cliStatus, setCliStatus] = useState<InstallStatus | null>(null);
-  const [skillsStatus, setSkillsStatus] = useState<InstallStatus | null>(null);
-  const [isInstallingCli, setIsInstallingCli] = useState(false);
-  const [isInstallingSkills, setIsInstallingSkills] = useState(false);
+  const { data: cliStatus, refetch: refetchCliStatus } = useDesktopQuery({
+    queryKey: CLI_INSTALL_STATUS_QUERY_KEY,
+    queryFn: getCliInstallStatus,
+    enabled: showSection,
+    errorMessage: "Unable to check CLI install status.",
+    logLabel: "[Integrations] Failed to load CLI status",
+  });
+  const { data: skillsStatus, refetch: refetchSkillsStatus } = useDesktopQuery({
+    queryKey: SKILLS_INSTALL_STATUS_QUERY_KEY,
+    queryFn: getSkillsInstallStatus,
+    enabled: showSection,
+    errorMessage: "Unable to check orchestration skills install status.",
+    logLabel: "[Integrations] Failed to load skills status",
+  });
 
-  const loadStatus = useCallback(() => {
-    if (!showSection) return;
-    void getCliInstallStatus()
-      .then(setCliStatus)
-      .catch((error) => {
-        console.error("[Integrations] Failed to load CLI status", error);
-      });
-    void getSkillsInstallStatus()
-      .then(setSkillsStatus)
-      .catch((error) => {
-        console.error("[Integrations] Failed to load skills status", error);
-      });
-  }, [showSection]);
+  const installCliMutation = useDesktopMutation<InstallStatus>({
+    mutationFn: installCli,
+    errorMessage: "Unable to install the Paseo CLI.",
+    logLabel: "[Integrations] Failed to install CLI",
+    onSuccess: (status) => {
+      queryClient.setQueryData<InstallStatus>(CLI_INSTALL_STATUS_QUERY_KEY, status);
+    },
+  });
+  const installSkillsMutation = useDesktopMutation<InstallStatus>({
+    mutationFn: installSkills,
+    errorMessage: "Unable to install orchestration skills.",
+    logLabel: "[Integrations] Failed to install skills",
+    onSuccess: (status) => {
+      queryClient.setQueryData<InstallStatus>(SKILLS_INSTALL_STATUS_QUERY_KEY, status);
+    },
+  });
 
   useFocusEffect(
     useCallback(() => {
       if (!showSection) return undefined;
-      loadStatus();
+      void refetchCliStatus();
+      void refetchSkillsStatus();
       return undefined;
-    }, [loadStatus, showSection]),
+    }, [refetchCliStatus, refetchSkillsStatus, showSection]),
   );
 
   const handleInstallCli = useCallback(() => {
-    if (isInstallingCli) return;
-    setIsInstallingCli(true);
-    void installCli()
-      .then(setCliStatus)
-      .catch((error) => {
-        console.error("[Integrations] Failed to install CLI", error);
-      })
-      .finally(() => {
-        setIsInstallingCli(false);
-      });
-  }, [isInstallingCli]);
+    if (installCliMutation.isPending) return;
+    installCliMutation.mutate();
+  }, [installCliMutation]);
 
   const handleInstallSkills = useCallback(() => {
-    if (isInstallingSkills) return;
-    setIsInstallingSkills(true);
-    void installSkills()
-      .then(setSkillsStatus)
-      .catch((error) => {
-        console.error("[Integrations] Failed to install skills", error);
-      })
-      .finally(() => {
-        setIsInstallingSkills(false);
-      });
-  }, [isInstallingSkills]);
+    if (installSkillsMutation.isPending) return;
+    installSkillsMutation.mutate();
+  }, [installSkillsMutation]);
 
   const handleOpenCliDocs = useCallback(() => {
     void openExternalUrl(CLI_DOCS_URL);
@@ -145,9 +152,9 @@ export function IntegrationsSection() {
               variant="outline"
               size="sm"
               onPress={handleInstallCli}
-              disabled={isInstallingCli}
+              disabled={installCliMutation.isPending}
             >
-              {isInstallingCli ? "Installing..." : "Install"}
+              {installCliMutation.isPending ? "Installing..." : "Install"}
             </Button>
           )}
         </View>
@@ -171,9 +178,9 @@ export function IntegrationsSection() {
               variant="outline"
               size="sm"
               onPress={handleInstallSkills}
-              disabled={isInstallingSkills}
+              disabled={installSkillsMutation.isPending}
             >
-              {isInstallingSkills ? "Installing..." : "Install"}
+              {installSkillsMutation.isPending ? "Installing..." : "Install"}
             </Button>
           )}
         </View>

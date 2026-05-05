@@ -8,6 +8,7 @@ import {
   type DesktopAppUpdateInstallResult,
 } from "@/desktop/updates/desktop-updates";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
+import { useDesktopMutation } from "@/desktop/hooks/use-desktop-ipc";
 
 export type DesktopAppUpdateStatus =
   | "idle"
@@ -92,6 +93,11 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const installMutation = useDesktopMutation<DesktopAppUpdateInstallResult>({
+    mutationFn: () => installDesktopAppUpdate({ releaseChannel }),
+    errorMessage: "Unable to install the desktop app update.",
+    logLabel: "[DesktopUpdater] Failed to install app update",
+  });
 
   const checkForUpdates = useCallback(
     async (options: { silent?: boolean } = {}) => {
@@ -177,7 +183,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     setErrorMessage(null);
 
     try {
-      const result = await installDesktopAppUpdate({ releaseChannel });
+      const result = await installMutation.mutateAsync();
       setLastCheckedAt(Date.now());
 
       if (result.installed) {
@@ -197,7 +203,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       setErrorMessage(message);
       return null;
     }
-  }, [isDesktopApp, releaseChannel]);
+  }, [installMutation, isDesktopApp]);
 
   return {
     isDesktopApp,
@@ -211,7 +217,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     errorMessage,
     lastCheckedAt,
     isChecking: status === "checking",
-    isInstalling: status === "installing",
+    isInstalling: status === "installing" || installMutation.isPending,
     checkForUpdates,
     installUpdate,
   };

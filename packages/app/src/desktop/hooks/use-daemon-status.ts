@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getDesktopDaemonLogs,
   getDesktopDaemonStatus,
@@ -7,6 +7,7 @@ import {
   type DesktopDaemonLogs,
   type DesktopDaemonStatus,
 } from "@/desktop/daemon/desktop-daemon";
+import { useDesktopQuery } from "@/desktop/hooks/use-desktop-ipc";
 
 const DAEMON_STATUS_QUERY_KEY = ["desktopDaemonStatus"] as const;
 
@@ -19,7 +20,7 @@ export function useDaemonStatus() {
   const queryClient = useQueryClient();
   const enabled = shouldUseDesktopDaemon();
 
-  const query = useQuery<DaemonStatusData>({
+  const query = useDesktopQuery({
     queryKey: DAEMON_STATUS_QUERY_KEY,
     enabled,
     staleTime: 30_000,
@@ -28,6 +29,8 @@ export function useDaemonStatus() {
       const [status, logs] = await Promise.all([getDesktopDaemonStatus(), getDesktopDaemonLogs()]);
       return { status, logs };
     },
+    errorMessage: "Unable to load desktop daemon status.",
+    logLabel: "[DesktopDaemon] Failed to load daemon status",
   });
 
   const setStatus = useCallback(

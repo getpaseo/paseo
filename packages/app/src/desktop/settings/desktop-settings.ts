@@ -1,7 +1,8 @@
 import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { getIsElectron } from "@/constants/platform";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { useDesktopMutation, useDesktopQuery } from "@/desktop/hooks/use-desktop-ipc";
 import type { ReleaseChannel } from "@/hooks/use-settings";
 
 export const DESKTOP_SETTINGS_QUERY_KEY = ["desktop-settings"] as const;
@@ -34,11 +35,40 @@ export function useDesktopSettings(): {
   updateSettings: (updates: DesktopSettingsPatch) => Promise<void>;
 } {
   const queryClient = useQueryClient();
-  const { data, isPending, error } = useQuery({
+  const { data, isPending, error } = useDesktopQuery({
     queryKey: DESKTOP_SETTINGS_QUERY_KEY,
     queryFn: loadDesktopSettings,
     staleTime: Infinity,
     gcTime: Infinity,
+    errorMessage: "Unable to load desktop settings.",
+    logLabel: "[DesktopSettings] Failed to load settings",
+  });
+  const updateSettingsMutation = useDesktopMutation<
+    DesktopSettings,
+    DesktopSettingsPatch,
+    DesktopSettingsMutationContext
+  >({
+    mutationFn: updatePersistedDesktopSettings,
+    errorMessage: "Unable to save desktop settings.",
+    logLabel: "[DesktopSettings] Failed to save settings",
+    onMutate: (updates) => {
+      const previous =
+        queryClient.getQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY) ??
+        DEFAULT_DESKTOP_SETTINGS;
+      queryClient.setQueryData<DesktopSettings>(
+        DESKTOP_SETTINGS_QUERY_KEY,
+        mergeDesktopSettings(previous, updates),
+      );
+      return { previous };
+    },
+    onSuccess: (persisted) => {
+      queryClient.setQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY, persisted);
+    },
+    onError: (_error, _updates, context) => {
+      if (context) {
+        queryClient.setQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY, context.previous);
+      }
+    },
   });
 
   const updateSettings = useCallback(
@@ -47,15 +77,9 @@ export function useDesktopSettings(): {
         return;
       }
 
-      const previous =
-        queryClient.getQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY) ??
-        DEFAULT_DESKTOP_SETTINGS;
-      const next = mergeDesktopSettings(previous, updates);
-      queryClient.setQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY, next);
-      const persisted = await updatePersistedDesktopSettings(updates);
-      queryClient.setQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY, persisted);
+      await updateSettingsMutation.mutateAsync(updates);
     },
-    [queryClient],
+    [updateSettingsMutation],
   );
 
   return {
@@ -64,6 +88,10 @@ export function useDesktopSettings(): {
     error: error ?? null,
     updateSettings,
   };
+}
+
+interface DesktopSettingsMutationContext {
+  previous: DesktopSettings;
 }
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
