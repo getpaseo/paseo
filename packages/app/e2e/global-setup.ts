@@ -237,9 +237,36 @@ if (args[0] === "pr" && args[1] === "list") {
   process.exit(0);
 }
 
+const fs = require("fs");
+const path = require("path");
+
 if (args[0] === "pr" && args[1] === "view" && args[2] === "--json" && args[3]) {
+  const fixture = path.join(process.cwd(), ".paseo-e2e-pr.json");
+  if (fs.existsSync(fixture)) {
+    console.log(fs.readFileSync(fixture, "utf8"));
+    process.exit(0);
+  }
   console.error("no pull requests found for branch");
   process.exit(1);
+}
+
+if (args[0] === "api" && args[1] === "graphql") {
+  const fixture = path.join(process.cwd(), ".paseo-e2e-timeline.json");
+  if (fs.existsSync(fixture)) {
+    console.log(fs.readFileSync(fixture, "utf8"));
+    process.exit(0);
+  }
+  console.log(JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+          comments: { nodes: [], pageInfo: { hasNextPage: false } },
+        },
+      },
+    },
+  }));
+  process.exit(0);
 }
 
 if (args[0] === "issue" && args[1] === "list") {

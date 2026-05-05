@@ -91,15 +91,17 @@ export function PrPane({ data }: { data: PrPaneData }) {
   );
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} testID="pr-pane">
       <Pressable onPress={handleOpenPrUrl} style={styles.header}>
         {({ hovered }) => (
           <>
             <View style={styles.stateLine}>
               <StateIcon size={14} color={stateColor} />
-              <Text style={stateLabelStyle}>{stateLabel}</Text>
+              <Text style={stateLabelStyle} testID="pr-pane-state">
+                {stateLabel}
+              </Text>
             </View>
-            <Text style={styles.title} numberOfLines={3}>
+            <Text style={styles.title} numberOfLines={3} testID="pr-pane-title">
               {data.title}
               {hovered ? (
                 <Text>
@@ -124,12 +126,19 @@ export function PrPane({ data }: { data: PrPaneData }) {
               count={passed}
               color={theme.colors.statusSuccess}
               icon={checkSuccessIcon}
+              testID="pr-pane-check-passed"
             />
-            <SummaryPill count={failed} color={theme.colors.statusDanger} icon={checkDangerIcon} />
+            <SummaryPill
+              count={failed}
+              color={theme.colors.statusDanger}
+              icon={checkDangerIcon}
+              testID="pr-pane-check-failed"
+            />
             <SummaryPill
               count={pending}
               color={theme.colors.statusWarning}
               icon={checkWarningIcon}
+              testID="pr-pane-check-pending"
             />
           </>
         }
@@ -211,15 +220,17 @@ function SummaryPill({
   count,
   color,
   icon,
+  testID,
 }: {
   count: number;
   color: string;
   icon: React.ReactNode;
+  testID?: string;
 }) {
   const textStyle = useMemo(() => [styles.summaryPillText, { color }], [color]);
   if (count === 0) return null;
   return (
-    <View style={styles.summaryPill}>
+    <View style={styles.summaryPill} testID={testID}>
       {icon}
       <Text style={textStyle}>{count}</Text>
     </View>
@@ -264,7 +275,7 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
     [item.avatarColor],
   );
   return (
-    <Pressable onPress={handlePress} style={activityPressableStyle}>
+    <Pressable onPress={handlePress} style={activityPressableStyle} testID="pr-pane-activity-row">
       <View style={avatarStyle}>
         <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
       </View>
