@@ -100,7 +100,7 @@ function isAgentArchiving(input: IsAgentArchivingInput): boolean {
   if (!key) {
     return false;
   }
-  return readPendingState(input.queryClient)[key];
+  return readPendingState(input.queryClient)[key] ?? false;
 }
 
 function removeAgentFromListPayload<T extends AgentsListQueryData | undefined>(
@@ -420,7 +420,7 @@ export function useArchiveAgent() {
       if (!key) {
         return false;
       }
-      return (pendingQuery.data ?? {})[key];
+      return (pendingQuery.data ?? {})[key] ?? false;
     },
     [pendingQuery.data],
   );
