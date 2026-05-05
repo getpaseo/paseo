@@ -11,10 +11,14 @@
 import { spawn } from "child_process";
 import { $ } from "zx";
 import { readdir, writeFile } from "fs/promises";
-import { join, dirname } from "path";
+import { join, dirname, delimiter } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// npm workspace scripts only add the local node_modules/.bin to PATH; hoisted
+// packages live in the root. Prepend it so `npx paseo` resolves locally.
+const rootNodeModulesBin = join(__dirname, "..", "..", "..", "node_modules", ".bin");
 const args = process.argv.slice(2);
 const testEnvDefaults = {
   PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
@@ -193,6 +197,7 @@ async function runSingleTest(testFile: string): Promise<TestOutcome> {
     const proc = spawn("npx", ["tsx", testPath], {
       env: {
         ...process.env,
+        PATH: [rootNodeModulesBin, process.env.PATH].filter(Boolean).join(delimiter),
         PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD,
         PASEO_DICTATION_ENABLED: testEnvDefaults.PASEO_DICTATION_ENABLED,
         PASEO_VOICE_MODE_ENABLED: testEnvDefaults.PASEO_VOICE_MODE_ENABLED,
