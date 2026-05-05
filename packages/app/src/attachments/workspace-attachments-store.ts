@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import { isWeb } from "@/constants/platform";
 import type { WorkspaceComposerAttachment } from "./types";
 
 const EMPTY_WORKSPACE_ATTACHMENTS: readonly WorkspaceComposerAttachment[] = [];
@@ -113,9 +112,4 @@ export function useWorkspaceAttachments(scopeKey: string): readonly WorkspaceCom
 
 export function resetWorkspaceAttachmentsStore(): void {
   useWorkspaceAttachmentsStore.setState({ attachmentsByScope: {} });
-}
-
-if (isWeb && typeof localStorage !== "undefined" && localStorage.getItem("@paseo:e2e") === "1") {
-  // @ts-expect-error — intentional E2E debug surface for test injection
-  window.__paseoWorkspaceAttachmentsStore = useWorkspaceAttachmentsStore;
 }
