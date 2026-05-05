@@ -1,4 +1,4 @@
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test as base, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
@@ -17,6 +17,7 @@ import {
   navigateToProjectSettings,
   openProjectSettings,
   removeProjectScript,
+  restorePaseoConfig,
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
 
@@ -194,10 +195,7 @@ test.describe("Projects settings — error UX", () => {
     await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).not.toBeVisible();
 
     // Restore a valid config so the reload succeeds.
-    await writeFile(
-      path.join(editableProject.path, "paseo.json"),
-      JSON.stringify(initialPaseoConfig, null, 2) + "\n",
-    );
+    await restorePaseoConfig(editableProject.path, initialPaseoConfig);
 
     await clickReloadProjectSettings(page);
 
@@ -226,7 +224,7 @@ test.describe("Projects settings — error UX", () => {
     await expectProjectSettingsError(page, "write_failed");
 
     await unblockPaseoConfigWrites(editableProject.path);
-    await page.getByTestId("write-failed-callout-action-1").click();
+    await clickReloadProjectSettings(page);
     await expect(page.getByTestId("write-failed-callout")).not.toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).toBeVisible({
       timeout: 15_000,

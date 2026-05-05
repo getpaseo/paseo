@@ -58,9 +58,10 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
     .locator('[data-testid^="script-row-"]:not([data-testid*="-menu-"])')
     .filter({ hasText: scriptName })
     .first();
-  // DropdownMenuTrigger renders Pressable without explicit accessibilityRole="button",
-  // so find it by its testID prefix instead.
-  await row.locator('[data-testid^="script-row-menu-"]').click();
+  // DropdownMenuTrigger renders as a Pressable (no role="button"), so look it up by
+  // deriving its testID from the row's testID — avoids scoped locator issues.
+  const id = (await row.getAttribute("data-testid"))!.replace("script-row-", "");
+  await page.getByTestId(`script-row-menu-${id}`).click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Remove" }).click();
 }
@@ -85,4 +86,11 @@ export async function blockPaseoConfigWrites(repoPath: string): Promise<void> {
 
 export async function unblockPaseoConfigWrites(repoPath: string): Promise<void> {
   await chmod(repoPath, 0o755);
+}
+
+export async function restorePaseoConfig(
+  repoPath: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  await writeFile(path.join(repoPath, "paseo.json"), JSON.stringify(config, null, 2) + "\n");
 }
