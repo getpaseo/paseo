@@ -37,7 +37,7 @@ export function createStub<T extends object>(stubs: { [K in keyof T]?: unknown }
       if (Reflect.has(target, prop)) return Reflect.get(target, prop, receiver);
       if (typeof prop === "symbol") return undefined;
       return (..._args: unknown[]): never => {
-        throw new Error(`createStub: "${String(prop)}" was called but not stubbed`);
+        throw new Error(`createStub: "${prop}" was called but not stubbed`);
       };
     },
   }) as unknown as T; // one justified cast — rationale in file-level comment
@@ -52,6 +52,6 @@ export function createStub<T extends object>(stubs: { [K in keyof T]?: unknown }
  * assertion — narrowing from the top type is safe, unlike `as unknown as T`
  * which short-circuits structural checking on a concrete source type.
  */
-export function asInternals<T>(obj: unknown): T {
+export function asInternals<T>(obj: T extends object ? unknown : unknown): T {
   return obj as T;
 }

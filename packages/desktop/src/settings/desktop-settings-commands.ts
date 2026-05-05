@@ -1,6 +1,6 @@
 import type { DesktopSettingsStore } from "./desktop-settings.js";
 
-export type DesktopCommandHandler = (args?: Record<string, unknown>) => Promise<unknown> | unknown;
+export type DesktopCommandHandler = (args?: Record<string, unknown>) => unknown;
 
 export function createDesktopSettingsCommandHandlers({
   settingsStore,

@@ -230,10 +230,10 @@ function getArchivedAgentListCacheSnapshot(
   };
 }
 
-function restoreCachedQuerySnapshot<T>(
+function restoreCachedQuerySnapshot(
   queryClient: QueryClient,
   queryKey: readonly unknown[],
-  snapshot: T | undefined,
+  snapshot: unknown,
 ): void {
   if (snapshot === undefined) {
     queryClient.removeQueries({ queryKey, exact: true });

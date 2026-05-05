@@ -96,7 +96,7 @@ export function hasMeaningfulToolCallDetail(detail: ToolCallDetail | undefined):
 export function isPendingToolCallDetail(params: {
   detail: ToolCallDetail | undefined;
   status: "executing" | "running" | "completed" | "failed" | "canceled";
-  error: unknown | null | undefined;
+  error: unknown;
 }): boolean {
   const isRunning = params.status === "running" || params.status === "executing";
   return isRunning && params.error == null && !hasMeaningfulToolCallDetail(params.detail);

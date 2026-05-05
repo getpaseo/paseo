@@ -481,13 +481,11 @@ describe("AgentStreamCoalescer", () => {
   test("stale timers cannot flush reused agent ids", () => {
     const scheduled: Array<() => void> = [];
     const flushes: AgentStreamCoalescerFlush[] = [];
-    const setTimeoutShim: AgentStreamCoalescerTimers["setTimeout"] = (callback, delay, ...args) => {
-      if (typeof callback === "function") {
-        scheduled.push(() => {
-          callback(...args);
-        });
-      }
-      return setTimeout(callback, delay, ...args);
+    const setTimeoutShim: AgentStreamCoalescerTimers["setTimeout"] = (callback, delay) => {
+      scheduled.push(() => {
+        callback();
+      });
+      return setTimeout(callback, delay);
     };
     const coalescer = new AgentStreamCoalescer({
       timers: {

@@ -24,10 +24,10 @@ function getExpoProjectId(): string | null {
 
 async function ensurePushPermission(): Promise<boolean> {
   const existing = await Notifications.getPermissionsAsync();
-  if (existing.status === "granted") return true;
+  if (existing.status === Notifications.PermissionStatus.GRANTED) return true;
   if (!existing.canAskAgain) return false;
   const requested = await Notifications.requestPermissionsAsync();
-  return requested.status === "granted";
+  return requested.status === Notifications.PermissionStatus.GRANTED;
 }
 
 export function usePushTokenRegistration(params: { client: DaemonClient; serverId: string }): void {

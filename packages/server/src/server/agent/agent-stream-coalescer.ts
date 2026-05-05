@@ -11,7 +11,7 @@ type CoalescableTimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }> 
 };
 
 export interface AgentStreamCoalescerTimers {
-  setTimeout: typeof setTimeout;
+  setTimeout: (callback: () => void, ms?: number) => ReturnType<typeof setTimeout>;
   clearTimeout: typeof clearTimeout;
 }
 

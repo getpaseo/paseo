@@ -110,7 +110,7 @@ export function deriveProjectGroupingName(projectKey: string): string {
       return pathSegments.slice(-2).join("/");
     }
     if (pathSegments.length === 1) {
-      return pathSegments[0]!;
+      return pathSegments[0];
     }
     return projectKey;
   }

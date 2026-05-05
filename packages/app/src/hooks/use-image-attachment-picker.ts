@@ -20,7 +20,10 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
   const ensurePermission = useCallback(async () => {
     let currentPermission = mediaPermission;
 
-    if (!currentPermission || currentPermission.status === "undetermined") {
+    if (
+      !currentPermission ||
+      currentPermission.status === ImagePicker.PermissionStatus.UNDETERMINED
+    ) {
       currentPermission = await requestMediaPermission();
     } else if (!currentPermission.granted) {
       currentPermission = await requestMediaPermission();

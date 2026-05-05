@@ -45,7 +45,7 @@ interface WorkspaceSetupDaemonClient {
   }>;
   fetchAgent(agentId: string): Promise<{
     agent: { id: string; cwd: string } | null;
-    project: unknown | null;
+    project: unknown;
   } | null>;
   listTerminals(cwd: string): Promise<{
     cwd?: string;

@@ -42,8 +42,8 @@ function canonicalToolTimeline(params: {
   callId: string;
   name: string;
   status: CanonicalToolStatus;
-  input?: unknown | null;
-  output?: unknown | null;
+  input?: unknown;
+  output?: unknown;
   error?: unknown;
   metadata?: Record<string, unknown>;
   detail?: ToolCallDetail;

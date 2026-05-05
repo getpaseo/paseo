@@ -22,7 +22,7 @@ import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/works
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import type { DaemonClient } from "@server/client/daemon-client";
-import type { ComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
+import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
@@ -147,7 +147,7 @@ async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
   images?: UserMessageImageAttachment[];
-  attachments?: ComposerAttachment[] | unknown;
+  attachments?: unknown;
   client: DaemonClient | null;
   workspaceDirectory: string | null;
   workspaceExecutionAuthority: { workspaceId: string } | null;
