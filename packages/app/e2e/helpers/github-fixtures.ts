@@ -23,6 +23,13 @@ export interface PrSpec {
   commentCount?: number;
 }
 
+export interface IssueSpec {
+  title: string;
+  body?: string;
+  labels?: string[];
+  state?: "open" | "closed";
+}
+
 export interface GhPrFixture {
   number: number;
   title: string;
@@ -31,11 +38,18 @@ export interface GhPrFixture {
   localPath: string;
 }
 
+export interface GhIssueFixture {
+  number: number;
+  title: string;
+  url: string;
+}
+
 export interface GhRepoFixture {
   owner: string;
   name: string;
   fullName: string;
   prs: GhPrFixture[];
+  issues: GhIssueFixture[];
   cleanup(): Promise<void>;
 }
 
@@ -55,11 +69,96 @@ function git(args: string[], cwd: string): string {
   }).trim();
 }
 
+async function seedPr(args: {
+  spec: PrSpec;
+  branch: string;
+  index: number;
+  basePath: string;
+  authedUrl: string;
+  fullName: string;
+  repoName: string;
+}): Promise<{ fixture: GhPrFixture; localPath: string }> {
+  const { spec, branch, index, basePath, authedUrl, fullName, repoName } = args;
+
+  const createArgs = [
+    "pr",
+    "create",
+    "--title",
+    spec.title,
+    "--base",
+    "main",
+    "--head",
+    branch,
+    "--body",
+    "",
+  ];
+  if (spec.state === "draft") createArgs.push("--draft");
+
+  const prUrl = gh(createArgs, { cwd: basePath });
+  const prNumber = parseInt(prUrl.split("/").pop() ?? "0", 10);
+
+  if (spec.checks && spec.checks.length > 0) {
+    const sha = git(["rev-parse", branch], basePath);
+    for (const check of spec.checks) {
+      gh([
+        "api",
+        `repos/${fullName}/statuses/${sha}`,
+        "--method",
+        "POST",
+        "-f",
+        `state=${check.state}`,
+        "-f",
+        `context=${check.context}`,
+        "-f",
+        `target_url=https://example.com/${encodeURIComponent(check.context)}`,
+      ]);
+    }
+  }
+
+  for (let j = 0; j < (spec.commentCount ?? 0); j++) {
+    gh(["pr", "comment", String(prNumber), "--body", `Test comment ${j + 1}`], { cwd: basePath });
+  }
+
+  if (spec.state === "merged") {
+    gh(["pr", "merge", String(prNumber), "--merge"], { cwd: basePath });
+  } else if (spec.state === "closed") {
+    gh(["pr", "close", String(prNumber)], { cwd: basePath });
+  }
+
+  const localPath = await mkdtemp(path.join("/tmp", `${repoName}-ws-${index}-`));
+  git(["clone", authedUrl, localPath, "--quiet", "-b", branch], basePath);
+  // Clean remote URL (no embedded token) so gh can parse owner/repo
+  git(["remote", "set-url", "origin", `https://github.com/${fullName}.git`], localPath);
+  git(["config", "user.email", "e2e@paseo.test"], localPath);
+  git(["config", "user.name", "Paseo E2E"], localPath);
+  git(["config", "commit.gpgsign", "false"], localPath);
+
+  return {
+    fixture: { number: prNumber, title: spec.title, url: prUrl, branch, localPath },
+    localPath,
+  };
+}
+
+function seedIssue(args: { spec: IssueSpec; basePath: string }): GhIssueFixture {
+  const { spec, basePath } = args;
+  const createArgs = ["issue", "create", "--title", spec.title, "--body", spec.body ?? ""];
+  for (const label of spec.labels ?? []) {
+    createArgs.push("--label", label);
+  }
+  const issueUrl = gh(createArgs, { cwd: basePath });
+  const issueNumber = parseInt(issueUrl.split("/").pop() ?? "0", 10);
+  if (spec.state === "closed") {
+    gh(["issue", "close", String(issueNumber)], { cwd: basePath });
+  }
+  return { number: issueNumber, title: spec.title, url: issueUrl };
+}
+
 export async function createTempGithubRepo(options: {
   prefix?: string;
-  prs: PrSpec[];
+  prs?: PrSpec[];
+  issues?: IssueSpec[];
 }): Promise<GhRepoFixture> {
-  const { prefix = "paseo-e2e-", prs } = options;
+  const { prefix = "paseo-e2e-", prs = [], issues = [] } = options;
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const repoName = `${prefix}${uniqueSuffix}`;
 
@@ -96,80 +195,32 @@ export async function createTempGithubRepo(options: {
     git(["checkout", "main"], basePath);
   }
 
-  // Push all branches in one shot
-  git(["push", "origin", ...branches], basePath);
+  if (branches.length > 0) {
+    git(["push", "origin", ...branches], basePath);
+  }
 
-  // Create PRs, seed checks/comments, apply state changes, clone workspace
+  // Create PRs, seed checks/comments, apply state changes, clone workspaces
   const prFixtures: GhPrFixture[] = [];
   const localPaths: string[] = [];
 
   for (let i = 0; i < prs.length; i++) {
-    const spec = prs[i];
-    const branch = branches[i];
-
-    const createArgs = [
-      "pr",
-      "create",
-      "--title",
-      spec.title,
-      "--base",
-      "main",
-      "--head",
-      branch,
-      "--body",
-      "",
-    ];
-    if (spec.state === "draft") createArgs.push("--draft");
-
-    const prUrl = gh(createArgs, { cwd: basePath });
-    const prNumber = parseInt(prUrl.split("/").pop() ?? "0", 10);
-
-    // Commit statuses for check pills
-    if (spec.checks && spec.checks.length > 0) {
-      const sha = git(["rev-parse", branch], basePath);
-      for (const check of spec.checks) {
-        gh([
-          "api",
-          `repos/${fullName}/statuses/${sha}`,
-          "--method",
-          "POST",
-          "-f",
-          `state=${check.state}`,
-          "-f",
-          `context=${check.context}`,
-          "-f",
-          `target_url=https://example.com/${encodeURIComponent(check.context)}`,
-        ]);
-      }
-    }
-
-    // PR comments for activity rows
-    if (spec.commentCount && spec.commentCount > 0) {
-      for (let j = 0; j < spec.commentCount; j++) {
-        gh(["pr", "comment", String(prNumber), "--body", `Test comment ${j + 1}`], {
-          cwd: basePath,
-        });
-      }
-    }
-
-    // Apply PR state
-    if (spec.state === "merged") {
-      gh(["pr", "merge", String(prNumber), "--merge"], { cwd: basePath });
-    } else if (spec.state === "closed") {
-      gh(["pr", "close", String(prNumber)], { cwd: basePath });
-    }
-
-    // Clone to a fresh workspace dir on the right branch
-    const localPath = await mkdtemp(path.join("/tmp", `${repoName}-ws-${i}-`));
-    git(["clone", authedUrl, localPath, "--quiet", "-b", branch], basePath);
-    // Store a clean remote URL (no embedded token) so gh can parse it
-    git(["remote", "set-url", "origin", `https://github.com/${fullName}.git`], localPath);
-    git(["config", "user.email", "e2e@paseo.test"], localPath);
-    git(["config", "user.name", "Paseo E2E"], localPath);
-    git(["config", "commit.gpgsign", "false"], localPath);
-
+    const { fixture, localPath } = await seedPr({
+      spec: prs[i],
+      branch: branches[i],
+      index: i,
+      basePath,
+      authedUrl,
+      fullName,
+      repoName,
+    });
     localPaths.push(localPath);
-    prFixtures.push({ number: prNumber, title: spec.title, url: prUrl, branch, localPath });
+    prFixtures.push(fixture);
+  }
+
+  // Create issues
+  const issueFixtures: GhIssueFixture[] = [];
+  for (const spec of issues) {
+    issueFixtures.push(seedIssue({ spec, basePath }));
   }
 
   return {
@@ -177,6 +228,7 @@ export async function createTempGithubRepo(options: {
     name: repoName,
     fullName,
     prs: prFixtures,
+    issues: issueFixtures,
     cleanup: async () => {
       try {
         gh(["repo", "delete", fullName, "--yes"]);
