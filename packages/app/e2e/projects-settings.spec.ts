@@ -1,7 +1,6 @@
 import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, test as base, type Page } from "./fixtures";
-import { gotoAppShell, openSettings } from "./helpers/app";
+import { expect, test as base } from "./fixtures";
 import { connectNewWorkspaceDaemonClient, openProjectViaDaemon } from "./helpers/new-workspace";
 import { createTempGitRepo } from "./helpers/workspace";
 import {
@@ -11,11 +10,23 @@ import {
   clickRetryProjectSettingsSave,
   clickSaveProjectSettings,
   corruptPaseoConfig,
+  editWorktreeSetup,
+  expectEmptyScriptList,
+  expectHostIndicatorVisible,
+  expectHostPickerHidden,
+  expectNoEditableTarget,
+  expectNoProjectSettingsError,
   expectProjectSettingsError,
+  expectProjectSettingsFormHidden,
+  expectProjectSettingsFormVisible,
   expectSaveButtonDisabled,
   expectScriptRowCount,
+  expectWriteFailedCalloutActions,
+  installDaemonConnectionGate,
+  installReadTransportFailure,
   navigateToProjectSettings,
   openProjectSettings,
+  openProjects,
   removeProjectScript,
   restorePaseoConfig,
   unblockPaseoConfigWrites,
@@ -86,19 +97,6 @@ const test = base.extend<ProjectsSettingsFixtures>({
     await repo.cleanup();
   },
 });
-
-async function openProjects(page: Page): Promise<void> {
-  await gotoAppShell(page);
-  await openSettings(page);
-  await page.getByTestId("settings-projects").click();
-  await expect(page).toHaveURL(/\/settings\/projects$/);
-}
-
-async function editWorktreeSetup(page: Page, setupCommands: string[]): Promise<void> {
-  await page
-    .getByRole("textbox", { name: "Worktree setup commands" })
-    .fill(setupCommands.join("\n"));
-}
 
 async function expectProjectConfigSaved(project: ProjectsSettingsProject): Promise<void> {
   await expect
@@ -176,10 +174,8 @@ test.describe("Projects settings — error UX", () => {
 
     await clickReloadProjectSettings(page);
 
-    await expect(page.getByTestId("stale-callout")).not.toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).toBeVisible({
-      timeout: 15_000,
-    });
+    await expectNoProjectSettingsError(page, "stale");
+    await expectProjectSettingsFormVisible(page);
   });
 
   test("invalid paseo.json shows read-error callout, reload after fix shows form", async ({
@@ -192,17 +188,15 @@ test.describe("Projects settings — error UX", () => {
     await navigateToProjectSettings(page, editableProject.name);
 
     await expectProjectSettingsError(page, "invalid");
-    await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).not.toBeVisible();
+    await expectProjectSettingsFormHidden(page);
 
     // Restore a valid config so the reload succeeds.
     await restorePaseoConfig(editableProject.path, initialPaseoConfig);
 
     await clickReloadProjectSettings(page);
 
-    await expect(page.getByTestId("invalid-callout")).not.toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).toBeVisible({
-      timeout: 15_000,
-    });
+    await expectNoProjectSettingsError(page, "invalid");
+    await expectProjectSettingsFormVisible(page);
   });
 
   test("write_failed callout appears on save with blocked directory, retry re-attempts, reload clears it", async ({
@@ -217,18 +211,53 @@ test.describe("Projects settings — error UX", () => {
     await clickSaveProjectSettings(page);
 
     await expectProjectSettingsError(page, "write_failed");
-    await expect(page.getByTestId("write-failed-callout-action-0")).toHaveText("Try again");
-    await expect(page.getByTestId("write-failed-callout-action-1")).toHaveText("Reload");
+    await expectWriteFailedCalloutActions(page);
 
     await clickRetryProjectSettingsSave(page);
     await expectProjectSettingsError(page, "write_failed");
 
     await unblockPaseoConfigWrites(editableProject.path);
     await clickReloadProjectSettings(page);
-    await expect(page.getByTestId("write-failed-callout")).not.toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("textbox", { name: "Worktree setup commands" })).toBeVisible({
-      timeout: 15_000,
-    });
+    await expectNoProjectSettingsError(page, "write_failed");
+    await expectProjectSettingsFormVisible(page);
+  });
+
+  test("read-transport failure shows callout, reload recovers", async ({
+    page,
+    editableProject,
+  }) => {
+    // Drop the WS connection the moment a read_project_config_request is sent.
+    // Subsequent connections are proxied transparently so Reload can succeed.
+    await installReadTransportFailure(page);
+
+    await openProjects(page);
+    await navigateToProjectSettings(page, editableProject.name);
+
+    await expectProjectSettingsError(page, "transport");
+    await expectProjectSettingsFormHidden(page);
+
+    // The client reconnects after a ~1.5 s backoff; retry Reload until refetch succeeds.
+    await expect(async () => {
+      await clickReloadProjectSettings(page);
+      await expectNoProjectSettingsError(page, "transport", 3_000);
+    }).toPass({ timeout: 15_000 });
+    await expectProjectSettingsFormVisible(page);
+  });
+
+  test("project settings shows no-target state when daemon connection drops", async ({
+    page,
+    editableProject,
+  }) => {
+    const gate = await installDaemonConnectionGate(page);
+
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+
+    // Closing with code 1001 (Going Away) and no reason text causes the host-runtime
+    // to transition to "offline" immediately, emptying editableHosts.
+    await gate.drop();
+
+    await expectNoEditableTarget(page);
   });
 
   test("single-host project renders static host indicator, not a picker chip", async ({
@@ -238,8 +267,8 @@ test.describe("Projects settings — error UX", () => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
 
-    await expect(page.getByTestId("host-indicator")).toBeVisible();
-    await expect(page.getByTestId("host-picker")).not.toBeVisible();
+    await expectHostIndicatorVisible(page);
+    await expectHostPickerHidden(page);
   });
 
   test("script removal via kebab menu removes the row from the form", async ({
@@ -254,6 +283,6 @@ test.describe("Projects settings — error UX", () => {
     await removeProjectScript(page, "dev");
 
     await expectScriptRowCount(page, 0);
-    await expect(page.getByText("No scripts yet.")).toBeVisible();
+    await expectEmptyScriptList(page);
   });
 });

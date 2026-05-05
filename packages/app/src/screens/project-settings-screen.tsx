@@ -71,6 +71,12 @@ export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScr
     }
   }, [editableHosts, selectedServerId]);
 
+  const selectedSnapshot = useHostRuntimeSnapshot(selectedServerId);
+  const isHostGone =
+    Boolean(selectedServerId) &&
+    (selectedSnapshot?.connectionStatus === "offline" ||
+      selectedSnapshot?.connectionStatus === "error");
+
   const selectedHost = editableHosts.find((host) => host.serverId === selectedServerId);
   const client = useHostRuntimeClient(selectedHost?.serverId ?? "");
 
@@ -85,6 +91,7 @@ export default function ProjectSettingsScreen({ projectKey }: ProjectSettingsScr
       selectedHost={selectedHost}
       onSelectHost={setSelectedServerId}
       client={client}
+      isHostGone={isHostGone}
     />
   );
 }
@@ -139,6 +146,7 @@ interface ProjectSettingsBodyProps {
   selectedHost: ProjectHostEntry;
   onSelectHost: (serverId: string) => void;
   client: DaemonClient;
+  isHostGone: boolean;
 }
 
 function ProjectSettingsBody({
@@ -147,6 +155,7 @@ function ProjectSettingsBody({
   selectedHost,
   onSelectHost,
   client,
+  isHostGone,
 }: ProjectSettingsBodyProps) {
   const queryKey = useMemo(
     () => ["project-config", selectedHost.serverId, selectedHost.repoRoot] as const,
@@ -192,6 +201,7 @@ function ProjectSettingsBody({
         client,
         onReload: handleReload,
         hasMultipleHosts,
+        isHostGone,
       })}
     </View>
   );
@@ -207,6 +217,7 @@ interface RenderContentInput {
   client: DaemonClient;
   onReload: () => void;
   hasMultipleHosts: boolean;
+  isHostGone: boolean;
 }
 
 function renderContent({
@@ -219,6 +230,7 @@ function renderContent({
   client,
   onReload,
   hasMultipleHosts,
+  isHostGone,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -248,6 +260,10 @@ function renderContent({
         hasMultipleHosts={hasMultipleHosts}
       />
     );
+  }
+
+  if (isHostGone) {
+    return <NoEditableTarget />;
   }
 
   if (!loadedConfig) {
