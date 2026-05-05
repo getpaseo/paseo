@@ -219,7 +219,7 @@ test("ACP setModel only uses config-option fallback when the matching select cho
 
   await expect(session.setModel("new-provider-model")).resolves.toBeUndefined();
   expect(childLogger.warn).toHaveBeenCalledWith(
-    "new-provider-model",
+    { value: "new-provider-model" },
     expect.stringContaining("is not a valid claude-acp model config option"),
   );
   expect(setSessionConfigOption).not.toHaveBeenCalled();
@@ -513,11 +513,11 @@ describe("ACPAgentSession Zed parity", () => {
     expect(invalid.setSessionMode).not.toHaveBeenCalled();
     expect(invalid.unstableSetSessionModel).not.toHaveBeenCalled();
     expect(childLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("acceptEdits"),
+      { value: expect.stringContaining("acceptEdits") },
       expect.stringContaining("not valid"),
     );
     expect(childLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("opus"),
+      { value: expect.stringContaining("opus") },
       expect.stringContaining("not a valid"),
     );
   });
