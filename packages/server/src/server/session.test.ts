@@ -1011,6 +1011,99 @@ describe("session agent import", () => {
     );
   });
 
+  test("imports by provider handle id and hydrates title metadata from the first user message", async () => {
+    const messages: unknown[] = [];
+    const cwd = "/tmp/imported-agent";
+    const timeline: AgentTimelineItem[] = [
+      { type: "user_message", text: "Trace recent provider sessions\n\nkeep it tight" },
+      { type: "assistant_message", text: "I will inspect the provider listing." },
+    ];
+    const snapshot = {
+      id: "00000000-0000-4000-8000-000000000633",
+      provider: "custom-codex",
+      cwd,
+      capabilities: TEST_CAPABILITIES,
+      config: { provider: "custom-codex", cwd },
+      createdAt: new Date("2026-04-30T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-30T00:00:00.000Z"),
+      availableModes: [],
+      currentModeId: null,
+      pendingPermissions: new Map(),
+      bufferedPermissionResolutions: new Map(),
+      inFlightPermissionResponses: new Set(),
+      pendingReplacement: false,
+      persistence: {
+        provider: "custom-codex",
+        sessionId: "thread-imported",
+        nativeHandle: "provider-thread-imported",
+        metadata: { provider: "custom-codex", cwd },
+      },
+      historyPrimed: true,
+      lastUserMessageAt: null,
+      attention: { requiresAttention: false },
+      foregroundTurnWaiters: new Set(),
+      finalizedForegroundTurnIds: new Set(),
+      unsubscribeSession: null,
+      internal: false,
+      labels: {},
+      lifecycle: "closed",
+      session: null,
+      activeForegroundTurnId: null,
+    } satisfies ManagedAgent;
+    const agentManager = {
+      listAgents: vi.fn(() => []),
+      subscribe: vi.fn(() => () => {}),
+      findPersistedAgent: vi.fn().mockResolvedValue({
+        provider: "custom-codex",
+        sessionId: "thread-imported",
+        cwd,
+        title: null,
+        firstPromptPreview: "Trace recent provider sessions",
+        lastPromptPreview: "Trace recent provider sessions",
+        lastActivityAt: new Date("2026-04-30T00:00:00.000Z"),
+        persistence: snapshot.persistence,
+      }),
+      resumeAgentFromPersistence: vi.fn().mockResolvedValue(snapshot),
+      hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
+      getTimeline: vi.fn().mockReturnValue(timeline),
+      setTitle: vi.fn().mockResolvedValue(undefined),
+      notifyAgentState: vi.fn(),
+    };
+    const agentStorage = {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn().mockResolvedValue(null),
+    };
+    const session = createSessionForTest({ messages });
+    Object.assign(session, { agentManager, agentStorage });
+
+    await asSessionInternals(session).handleImportAgentRequest({
+      type: "import_agent_request",
+      providerId: "custom-codex",
+      providerHandleId: "provider-thread-imported",
+      cwd,
+      requestId: "import-thread",
+    });
+
+    expect(agentManager.findPersistedAgent).toHaveBeenCalledWith(
+      "custom-codex",
+      "provider-thread-imported",
+    );
+    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(snapshot.id);
+    expect(agentManager.setTitle).toHaveBeenCalledWith(
+      snapshot.id,
+      "Trace recent provider sessions",
+    );
+    expect(agentMetadataMocks.scheduleAgentMetadataGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentManager,
+        agentId: snapshot.id,
+        cwd,
+        initialPrompt: "Trace recent provider sessions\n\nkeep it tight",
+        explicitTitle: null,
+      }),
+    );
+  });
+
   test("sets a provisional title and schedules auto-title generation from the first hydrated user message", async () => {
     const messages: unknown[] = [];
     const cwd = "/tmp/imported-agent";
