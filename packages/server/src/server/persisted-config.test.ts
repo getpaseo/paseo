@@ -15,6 +15,23 @@ describe("PersistedConfigSchema daemon auth config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon relay config", () => {
+  test("accepts optional relay TLS setting", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        relay: {
+          enabled: true,
+          endpoint: "relay.example.com:443",
+          publicEndpoint: "public.example.com:443",
+          useTls: true,
+        },
+      },
+    });
+
+    expect(parsed.daemon?.relay?.useTls).toBe(true);
+  });
+});
+
 describe("PersistedConfigSchema agent provider runtime settings", () => {
   test("legacy append entries are skipped during migration", () => {
     const parsed = PersistedConfigSchema.parse({

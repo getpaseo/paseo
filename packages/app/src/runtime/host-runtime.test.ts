@@ -198,6 +198,7 @@ function makeOffer(input?: Partial<ConnectionOffer>): ConnectionOffer {
     daemonPublicKeyB64: input?.daemonPublicKeyB64 ?? "pk_test_offer",
     relay: {
       endpoint: input?.relay?.endpoint ?? "relay.paseo.sh:443",
+      useTls: input?.relay?.useTls ?? false,
     },
   };
 }

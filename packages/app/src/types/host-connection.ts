@@ -22,6 +22,7 @@ export interface RelayHostConnection {
   id: string;
   type: "relay";
   relayEndpoint: string;
+  useTls?: boolean;
   daemonPublicKeyB64: string;
 }
 
@@ -73,6 +74,7 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   if (left.type === "relay" && right.type === "relay") {
     return (
       left.relayEndpoint === right.relayEndpoint &&
+      (left.useTls ?? false) === (right.useTls ?? false) &&
       left.daemonPublicKeyB64 === right.daemonPublicKeyB64
     );
   }
@@ -277,10 +279,12 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
         typeof record.daemonPublicKeyB64 === "string" ? record.daemonPublicKeyB64 : ""
       ).trim();
       if (!daemonPublicKeyB64) return null;
+      const useTls = record.useTls === true;
       return {
-        id: `relay:${relayEndpoint}`,
+        id: useTls ? `relay:wss:${relayEndpoint}` : `relay:${relayEndpoint}`,
         type: "relay",
         relayEndpoint,
+        ...(useTls ? { useTls } : {}),
         daemonPublicKeyB64,
       };
     } catch {

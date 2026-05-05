@@ -40,6 +40,39 @@ describe("connection offer", () => {
     expect(parseConnectionOfferFromUrl(`https://app.paseo.sh/#offer=${encoded}`)).toEqual(offer);
   });
 
+  it("defaults relay TLS to false when absent", () => {
+    expect(
+      ConnectionOfferSchema.parse({
+        v: 2,
+        serverId: "server-123",
+        daemonPublicKeyB64: "pubkey",
+        relay: { endpoint: "relay.example.com:80" },
+      }),
+    ).toEqual({
+      v: 2,
+      serverId: "server-123",
+      daemonPublicKeyB64: "pubkey",
+      relay: { endpoint: "relay.example.com:80", useTls: false },
+    });
+  });
+
+  it("round-trips relay TLS in offers without rejecting extra relay fields", () => {
+    const offer = ConnectionOfferSchema.parse({
+      v: 2,
+      serverId: "server-123",
+      daemonPublicKeyB64: "pubkey",
+      relay: { endpoint: "relay.example.com:443", useTls: true, extra: "future" },
+    });
+    const encoded = encodeBase64UrlNoPadUtf8(JSON.stringify(offer));
+
+    expect(parseConnectionOfferFromUrl(`https://app.paseo.sh/#offer=${encoded}`)).toEqual({
+      v: 2,
+      serverId: "server-123",
+      daemonPublicKeyB64: "pubkey",
+      relay: { endpoint: "relay.example.com:443", useTls: true },
+    });
+  });
+
   it("returns null when the URL has no offer fragment", () => {
     expect(parseConnectionOfferFromUrl("https://app.paseo.sh/pair")).toBeNull();
   });
