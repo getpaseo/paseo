@@ -459,6 +459,37 @@ const x = 1;
     expect(shortstat).toEqual({ additions: 1, deletions: 0 });
   });
 
+  it("includes untracked file lines in shortstat additions", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git checkout -b feature", { cwd: repoDir });
+    commitFile(repoDir, "committed.txt", "one\n", "add committed");
+    writeFileSync(join(repoDir, "untracked.txt"), "line1\nline2\nline3\n");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 4, deletions: 0 });
+  });
+
+  it("reports untracked-only additions when no tracked changes exist", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    writeFileSync(join(repoDir, "newfile.txt"), "a\nb\n");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 2, deletions: 0 });
+  });
+
+  it("counts empty untracked files as 0 additions", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git checkout -b feature", { cwd: repoDir });
+    commitFile(repoDir, "committed.txt", "one\n", "add committed");
+    writeFileSync(join(repoDir, "empty.txt"), "");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
   it("uses the merge-base for shortstat when a feature branch diverged from its tracked remote", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     execSync("git checkout -b feature", { cwd: repoDir });

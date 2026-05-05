@@ -1492,6 +1492,41 @@ function parseCheckoutShortstat(text: string): CheckoutShortstat | null {
   return { additions, deletions };
 }
 
+const UNTRACKED_SHORTSTAT_MAX_FILES = 500;
+
+async function countUntrackedAdditions(cwd: string): Promise<number> {
+  try {
+    const { stdout } = await runGitCommand(["ls-files", "--others", "--exclude-standard"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const files = stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    let additions = 0;
+    for (const file of files.slice(0, UNTRACKED_SHORTSTAT_MAX_FILES)) {
+      const absolutePath = resolve(cwd, file);
+      try {
+        const metadata = await statFile(absolutePath);
+        if (metadata.size > PER_FILE_DIFF_MAX_BYTES) continue;
+        if (await isLikelyBinaryFile(absolutePath)) continue;
+        const content = await readFile(absolutePath, "utf-8");
+        if (content.length === 0) continue;
+        const normalized = content.replace(/\r\n/g, "\n");
+        const lineCount = normalized.split("\n").length;
+        additions += normalized.endsWith("\n") ? lineCount - 1 : lineCount;
+      } catch {
+        // Skip unreadable files.
+      }
+    }
+    return additions;
+  } catch {
+    return 0;
+  }
+}
+
 async function getCheckoutShortstatUncached(
   cwd: string,
   context?: CheckoutContext,
@@ -1533,11 +1568,23 @@ async function getCheckoutShortstatUncached(
       return null;
     }
 
-    const { stdout } = await runGitCommand(["diff", "--shortstat", mergeBase], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    return parseCheckoutShortstat(stdout);
+    const [{ stdout }, untrackedAdditions] = await Promise.all([
+      runGitCommand(["diff", "--shortstat", mergeBase], {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+      }),
+      countUntrackedAdditions(cwd),
+    ]);
+
+    const tracked = parseCheckoutShortstat(stdout);
+
+    if (tracked) {
+      return { additions: tracked.additions + untrackedAdditions, deletions: tracked.deletions };
+    }
+    if (untrackedAdditions > 0) {
+      return { additions: untrackedAdditions, deletions: 0 };
+    }
+    return null;
   } catch {
     return null;
   }
