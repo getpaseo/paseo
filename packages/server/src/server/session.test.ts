@@ -32,6 +32,21 @@ import type {
   TurnDetectionProvider,
   TurnDetectionSession,
 } from "./speech/turn-detection-provider.js";
+import {
+  asSessionInternals as asSessionInternalsHelper,
+  asAgentManager,
+  asAgentStorage,
+  asDownloadTokenStore,
+  asPushTokenStore,
+  asChatService,
+  asScheduleService,
+  asLoopService,
+  asCheckoutDiffManager,
+  asGitHubService,
+  asWorkspaceGitService,
+  asDaemonConfigStore,
+  createProviderSnapshotManagerStub,
+} from "./test-utils/session-stubs.js";
 
 interface SessionHandlerInternals {
   startVoiceTurnController(): Promise<void>;
@@ -64,10 +79,14 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+  getProviderRegistry(): unknown;
+  sttManager: {
+    transcribe(audio: Buffer, format: string): Promise<unknown>;
+  };
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
-  return session as unknown as SessionHandlerInternals;
+  return asSessionInternalsHelper<SessionHandlerInternals>(session);
 }
 
 function createBinaryMessageHandler(
@@ -250,9 +269,9 @@ interface SessionForTestOptions {
   };
   workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
-  terminalManager?: unknown;
-  scriptRouteStore?: unknown;
-  scriptRuntimeStore?: unknown;
+  terminalManager?: SessionOptions["terminalManager"];
+  scriptRouteStore?: SessionOptions["scriptRouteStore"];
+  scriptRuntimeStore?: SessionOptions["scriptRuntimeStore"];
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
   providerSnapshotManager?: ProviderSnapshotManager;
@@ -290,17 +309,17 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     onMessage: (message) => messages.push(message),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
-    downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
-    pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
+    downloadTokenStore: asDownloadTokenStore(),
+    pushTokenStore: asPushTokenStore(),
     paseoHome: "/tmp/paseo-home",
-    agentManager: {
+    agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
-    } as unknown as SessionOptions["agentManager"],
-    agentStorage: {
+    }),
+    agentStorage: asAgentStorage({
       list: vi.fn().mockResolvedValue([]),
-    } as unknown as SessionOptions["agentStorage"],
-    projectRegistry: (options.projectRegistry ?? {
+    }),
+    projectRegistry: options.projectRegistry ?? {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
       upsert: vi.fn(),
@@ -308,30 +327,30 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       remove: vi.fn(),
       initialize: vi.fn(),
       existsOnDisk: vi.fn(),
-    }) as unknown as SessionOptions["projectRegistry"],
-    workspaceRegistry: (options.workspaceRegistry ?? {
+    },
+    workspaceRegistry: options.workspaceRegistry ?? {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
-    }) as unknown as SessionOptions["workspaceRegistry"],
-    chatService: {} as unknown as SessionOptions["chatService"],
-    scheduleService: {} as unknown as SessionOptions["scheduleService"],
-    loopService: {} as unknown as SessionOptions["loopService"],
-    checkoutDiffManager: checkoutDiffManager as unknown as SessionOptions["checkoutDiffManager"],
-    github: github as unknown as SessionOptions["github"],
-    workspaceGitService: workspaceGitService as unknown as SessionOptions["workspaceGitService"],
-    daemonConfigStore: {
+    },
+    chatService: asChatService(),
+    scheduleService: asScheduleService(),
+    loopService: asLoopService(),
+    checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
+    github: asGitHubService(github),
+    workspaceGitService: asWorkspaceGitService(workspaceGitService),
+    daemonConfigStore: asDaemonConfigStore({
       get: vi.fn(() => ({
         mcp: { injectIntoAgents: false },
         providers: {},
       })),
       onChange: vi.fn(() => () => {}),
-    } as unknown as SessionOptions["daemonConfigStore"],
+    }),
     stt: options.stt ?? null,
     tts: null,
-    terminalManager: (options.terminalManager ?? null) as SessionOptions["terminalManager"],
+    terminalManager: options.terminalManager ?? null,
     providerSnapshotManager: options.providerSnapshotManager,
-    scriptRouteStore: options.scriptRouteStore as SessionOptions["scriptRouteStore"],
-    scriptRuntimeStore: options.scriptRuntimeStore as SessionOptions["scriptRuntimeStore"],
+    scriptRouteStore: options.scriptRouteStore,
+    scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
     voice: options.voice,
@@ -399,16 +418,7 @@ function createVoiceSessionHarness() {
   const sendAgentMessage = vi
     .spyOn(internals, "handleSendAgentMessage")
     .mockResolvedValue({ ok: true });
-  const transcribe = vi.spyOn(
-    (
-      session as unknown as {
-        sttManager: {
-          transcribe(audio: Buffer, format: string): Promise<unknown>;
-        };
-      }
-    ).sttManager,
-    "transcribe",
-  );
+  const transcribe = vi.spyOn(asSessionInternals(session).sttManager, "transcribe");
 
   return {
     session,
@@ -906,20 +916,6 @@ function createWorkspaceGitSnapshot(
   };
 }
 
-function createProviderSnapshotManagerStub(): ProviderSnapshotManager {
-  const stub = {
-    getSnapshot: vi.fn(() => []),
-    refreshSnapshotForCwd: vi.fn(async () => {}),
-    refreshSettingsSnapshot: vi.fn(async () => {}),
-    warmUpSnapshotForCwd: vi.fn(async () => {}),
-    on: vi.fn(),
-    off: vi.fn(),
-  };
-  stub.on.mockImplementation(() => stub);
-  stub.off.mockImplementation(() => stub);
-  return stub as unknown as ProviderSnapshotManager;
-}
-
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -1039,7 +1035,11 @@ describe("session PR status payload normalization", () => {
 
 describe("session provider refresh cwd routing", () => {
   test("routes no-cwd provider snapshot refreshes through settings refresh", async () => {
-    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    const {
+      manager: providerSnapshotManager,
+      refreshSettingsSnapshot,
+      refreshSnapshotForCwd,
+    } = createProviderSnapshotManagerStub();
     const session = createSessionForTest({ providerSnapshotManager });
 
     await session.handleMessage({
@@ -1048,14 +1048,18 @@ describe("session provider refresh cwd routing", () => {
       requestId: "refresh-settings",
     });
 
-    expect(providerSnapshotManager.refreshSettingsSnapshot).toHaveBeenCalledWith({
+    expect(refreshSettingsSnapshot).toHaveBeenCalledWith({
       providers: ["codex"],
     });
-    expect(providerSnapshotManager.refreshSnapshotForCwd).not.toHaveBeenCalled();
+    expect(refreshSnapshotForCwd).not.toHaveBeenCalled();
   });
 
   test("routes cwd provider snapshot refreshes through workspace refresh", async () => {
-    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    const {
+      manager: providerSnapshotManager,
+      refreshSnapshotForCwd,
+      refreshSettingsSnapshot,
+    } = createProviderSnapshotManagerStub();
     const session = createSessionForTest({ providerSnapshotManager });
 
     await session.handleMessage({
@@ -1065,11 +1069,11 @@ describe("session provider refresh cwd routing", () => {
       requestId: "refresh-workspace",
     });
 
-    expect(providerSnapshotManager.refreshSnapshotForCwd).toHaveBeenCalledWith({
+    expect(refreshSnapshotForCwd).toHaveBeenCalledWith({
       cwd: "/tmp/workspace-refresh",
       providers: ["codex"],
     });
-    expect(providerSnapshotManager.refreshSettingsSnapshot).not.toHaveBeenCalled();
+    expect(refreshSettingsSnapshot).not.toHaveBeenCalled();
   });
 
   test("normalizes legacy model and mode list requests without cwd to home", async () => {
@@ -1077,7 +1081,7 @@ describe("session provider refresh cwd routing", () => {
     const session = createSessionForTest({ messages });
     const fetchModels = vi.fn(async () => []);
     const fetchModes = vi.fn(async () => []);
-    (session as unknown as { getProviderRegistry: () => unknown }).getProviderRegistry = () => ({
+    asSessionInternals(session).getProviderRegistry = () => ({
       codex: createTestProviderDefinition({
         fetchModels,
         fetchModes,
@@ -1101,7 +1105,8 @@ describe("session provider refresh cwd routing", () => {
 
   test("legacy model list request treats disabled snapshot entries as unavailable without warming", async () => {
     const messages: unknown[] = [];
-    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    const { manager: providerSnapshotManager, warmUpSnapshotForCwd } =
+      createProviderSnapshotManagerStub();
     providerSnapshotManager.getSnapshot = vi.fn(() => [
       {
         provider: "codex",
@@ -1117,7 +1122,7 @@ describe("session provider refresh cwd routing", () => {
       requestId: "models-disabled",
     });
 
-    expect(providerSnapshotManager.warmUpSnapshotForCwd).not.toHaveBeenCalled();
+    expect(warmUpSnapshotForCwd).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
       type: "list_provider_models_response",
       payload: {
@@ -1131,7 +1136,8 @@ describe("session provider refresh cwd routing", () => {
 
   test("legacy mode list request treats disabled snapshot entries as unavailable without warming", async () => {
     const messages: unknown[] = [];
-    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    const { manager: providerSnapshotManager, warmUpSnapshotForCwd } =
+      createProviderSnapshotManagerStub();
     providerSnapshotManager.getSnapshot = vi.fn(() => [
       {
         provider: "codex",
@@ -1147,7 +1153,7 @@ describe("session provider refresh cwd routing", () => {
       requestId: "modes-disabled",
     });
 
-    expect(providerSnapshotManager.warmUpSnapshotForCwd).not.toHaveBeenCalled();
+    expect(warmUpSnapshotForCwd).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
       type: "list_provider_modes_response",
       payload: {
@@ -1175,7 +1181,7 @@ describe("session provider refresh cwd routing", () => {
         label: "Should not fetch",
       },
     ]);
-    (session as unknown as { getProviderRegistry: () => unknown }).getProviderRegistry = () => ({
+    asSessionInternals(session).getProviderRegistry = () => ({
       codex: createTestProviderDefinition({
         enabled: false,
         fetchModels,
