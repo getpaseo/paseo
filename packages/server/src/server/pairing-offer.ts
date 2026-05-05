@@ -32,7 +32,7 @@ export async function generateLocalPairingOffer(args: {
 
   const relayEndpoint = args.relayEndpoint ?? "relay.paseo.sh:443";
   const relayPublicEndpoint = args.relayPublicEndpoint ?? relayEndpoint;
-  const relayUseTls = args.relayUseTls ?? false;
+  const relayUseTls = args.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
   const appBaseUrl = args.appBaseUrl ?? "https://app.paseo.sh";
   const serverId = getOrCreateServerId(args.paseoHome, { logger: args.logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(args.paseoHome, args.logger);

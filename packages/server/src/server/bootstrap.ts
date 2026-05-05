@@ -773,7 +773,7 @@ export async function createPaseoDaemon(
           const relayEnabled = config.relayEnabled ?? true;
           const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
           const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-          const relayUseTls = config.relayUseTls ?? true;
+          const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
           const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
 
           if (boundListenTarget.type === "tcp") {
