@@ -20,6 +20,7 @@ import type {
   CreateAgentRequestMessage,
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
+  WorkspaceFileSaveResponse,
   FileExplorerResponse,
   FetchAgentTimelineResponseMessage,
   GitSetupOptions,
@@ -291,6 +292,7 @@ export interface FileReadResult {
   modifiedAt: string;
 }
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
+export type WorkspaceFileSavePayload = WorkspaceFileSaveResponse["payload"];
 type ListProviderFeaturesPayload = ListProviderFeaturesResponseMessage["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
@@ -692,6 +694,16 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function encodeBytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return globalThis.btoa(binary);
 }
 
 function legacyExplorerFileToBytes(file: LegacyFileExplorerFilePayload): FileReadResult {
@@ -3047,6 +3059,35 @@ export class DaemonClient {
       responseType: "file_download_token_response",
       timeout: 10000,
     });
+  }
+
+  async saveFile(
+    cwd: string,
+    path: string,
+    bytes: Uint8Array,
+    options: {
+      requestId?: string;
+      expectedModifiedAt?: string;
+      expectedSize?: number;
+    } = {},
+  ): Promise<WorkspaceFileSavePayload> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workspace_file_save_request",
+        cwd,
+        path,
+        contentBase64: encodeBytesToBase64(bytes),
+        ...(options.expectedModifiedAt ? { expectedModifiedAt: options.expectedModifiedAt } : {}),
+        ...(options.expectedSize !== undefined ? { expectedSize: options.expectedSize } : {}),
+      },
+      responseType: "workspace_file_save_response",
+      timeout: 10000,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
   }
 
   async requestProjectIcon(

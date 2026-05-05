@@ -16,6 +16,14 @@ export interface ReadFileParams {
   relativePath: string;
 }
 
+export interface WriteFileParams {
+  root: string;
+  relativePath: string;
+  contentBase64: string;
+  expectedModifiedAt?: string;
+  expectedSize?: number;
+}
+
 export interface FileExplorerEntry {
   name: string;
   path: string;
@@ -45,6 +53,12 @@ export interface FileExplorerFileBytes {
   encoding: "utf-8" | "binary";
   bytes: Uint8Array;
   mimeType: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface FileExplorerWriteResult {
+  path: string;
   size: number;
   modifiedAt: string;
 }
@@ -215,6 +229,44 @@ export async function readExplorerFileBytes({
   };
 }
 
+export async function writeExplorerFile({
+  root,
+  relativePath,
+  contentBase64,
+  expectedModifiedAt,
+  expectedSize,
+}: WriteFileParams): Promise<FileExplorerWriteResult> {
+  const filePath = await resolveScopedWritableFilePath({ root, relativePath });
+
+  try {
+    const existing = await fs.stat(filePath);
+    if (!existing.isFile()) {
+      throw new Error("Requested path is not a file");
+    }
+    const changedSize = expectedSize !== undefined && existing.size !== expectedSize;
+    const changedModifiedAt =
+      expectedModifiedAt !== undefined && existing.mtime.toISOString() !== expectedModifiedAt;
+    if (changedSize || changedModifiedAt) {
+      throw new Error("File changed on disk");
+    }
+  } catch (error) {
+    if (!isMissingEntryError(error)) {
+      throw error;
+    }
+    if (expectedSize !== undefined || expectedModifiedAt !== undefined) {
+      throw new Error("File changed on disk", { cause: error });
+    }
+  }
+
+  await fs.writeFile(filePath, Buffer.from(contentBase64, "base64"));
+  const stats = await fs.stat(filePath);
+  return {
+    path: normalizeRelativePath({ root, targetPath: filePath }),
+    size: stats.size,
+    modifiedAt: stats.mtime.toISOString(),
+  };
+}
+
 export async function getDownloadableFileInfo({ root, relativePath }: ReadFileParams): Promise<{
   path: string;
   absolutePath: string;
@@ -281,6 +333,21 @@ async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams)
     }
     throw error;
   }
+}
+
+async function resolveScopedWritableFilePath({
+  root,
+  relativePath,
+}: {
+  root: string;
+  relativePath: string;
+}): Promise<string> {
+  const parentPath = await resolveScopedPath({ root, relativePath: path.dirname(relativePath) });
+  const parentStats = await fs.stat(parentPath);
+  if (!parentStats.isDirectory()) {
+    throw new Error("Requested parent path is not a directory");
+  }
+  return path.join(parentPath, path.basename(relativePath));
 }
 
 async function buildEntryPayload({

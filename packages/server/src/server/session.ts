@@ -19,6 +19,7 @@ import {
   type SessionOutboundMessage,
   type FileExplorerRequest,
   type FileDownloadTokenRequest,
+  type WorkspaceFileSaveRequest,
   type GitSetupOptions,
   type CheckoutPrStatusResponse,
   type CheckoutStatusResponse,
@@ -156,6 +157,7 @@ import {
   readExplorerFile,
   readExplorerFileBytes,
   getDownloadableFileInfo,
+  writeExplorerFile,
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -2085,6 +2087,8 @@ export class Session {
         return this.handleProjectIconRequest(msg);
       case "file_download_token_request":
         return this.handleFileDownloadTokenRequest(msg);
+      case "workspace_file_save_request":
+        return this.handleWorkspaceFileSaveRequest(msg);
       default:
         return undefined;
     }
@@ -5557,6 +5561,63 @@ export class Session {
           mode,
           directory: null,
           file: null,
+          error: getErrorMessage(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceFileSaveRequest(request: WorkspaceFileSaveRequest): Promise<void> {
+    const { cwd: workspaceCwd, path: requestedPath, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.emit({
+        type: "workspace_file_save_response",
+        payload: {
+          cwd: workspaceCwd,
+          path: requestedPath,
+          size: null,
+          modifiedAt: null,
+          error: "cwd is required",
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const file = await writeExplorerFile({
+        root: cwd,
+        relativePath: requestedPath,
+        contentBase64: request.contentBase64,
+        expectedModifiedAt: request.expectedModifiedAt,
+        expectedSize: request.expectedSize,
+      });
+
+      this.emit({
+        type: "workspace_file_save_response",
+        payload: {
+          cwd,
+          path: file.path,
+          size: file.size,
+          modifiedAt: file.modifiedAt,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, cwd, path: requestedPath },
+        `Failed to save workspace file for ${cwd}`,
+      );
+      this.emit({
+        type: "workspace_file_save_response",
+        payload: {
+          cwd,
+          path: requestedPath,
+          size: null,
+          modifiedAt: null,
           error: getErrorMessage(error),
           requestId,
         },

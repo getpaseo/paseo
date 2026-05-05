@@ -1,5 +1,5 @@
-import React, { useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useCallback, useMemo, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FileReadResult } from "@server/client/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
@@ -23,7 +23,10 @@ import {
   type HighlightStyle,
 } from "@getpaseo/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import {
+  getWorkspaceFilePreviewMode,
+  isRenderedMarkdownFile,
+} from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import type { AttachmentMetadata } from "@/attachments/types";
@@ -31,6 +34,9 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { WorkspaceDrawioPreview } from "@/components/workspace-file-previews/drawio-preview";
+import { WorkspaceDocxPreview } from "@/components/workspace-file-previews/docx-preview";
+import { WorkspaceSpreadsheetPreview } from "@/components/workspace-file-previews/spreadsheet-preview";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -352,29 +358,41 @@ export function FilePane({
 }) {
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
+  const queryClient = useQueryClient();
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(filePath), [filePath]);
+  const workspaceFileQueryKey = useMemo(
+    () => ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
+    [normalizedFilePath, normalizedWorkspaceRoot, serverId],
+  );
 
   const query = useQuery({
-    queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
+    queryKey: workspaceFileQueryKey,
     enabled: Boolean(client && normalizedWorkspaceRoot && normalizedFilePath),
     queryFn: async () => {
       if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
-        return { file: null as ExplorerFile | null, error: "Host is not connected" };
+        return {
+          file: null as ExplorerFile | null,
+          readResult: null as FileReadResult | null,
+          imageAttachment: null as AttachmentMetadata | null,
+          error: "Host is not connected",
+        };
       }
       try {
         const file = await client.readFile(normalizedWorkspaceRoot, normalizedFilePath);
         const preview = await createFilePanePreview(file);
         return {
           file: preview.file,
+          readResult: file,
           imageAttachment: preview.imageAttachment,
           error: null,
         };
       } catch (error) {
         return {
           file: null,
+          readResult: null,
           imageAttachment: null,
           error: error instanceof Error ? error.message : "Failed to load file",
         };
@@ -384,6 +402,73 @@ export function FilePane({
     refetchOnMount: true,
   });
   const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);
+  const previewMode = useMemo(
+    () => (normalizedFilePath ? getWorkspaceFilePreviewMode(normalizedFilePath) : "default"),
+    [normalizedFilePath],
+  );
+  const handleSaveBytes = useCallback(
+    async ({
+      bytes,
+      expectedModifiedAt,
+      expectedSize,
+    }: {
+      bytes: Uint8Array;
+      expectedModifiedAt: string;
+      expectedSize: number;
+    }) => {
+      if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
+        throw new Error("Host is not connected");
+      }
+      await client.saveFile(normalizedWorkspaceRoot, normalizedFilePath, bytes, {
+        expectedModifiedAt,
+        expectedSize,
+      });
+      await queryClient.invalidateQueries({ queryKey: workspaceFileQueryKey });
+    },
+    [client, normalizedFilePath, normalizedWorkspaceRoot, queryClient, workspaceFileQueryKey],
+  );
+
+  const readResult = query.data?.readResult ?? null;
+  const specialPreview = useMemo(() => {
+    if (!readResult) {
+      return null;
+    }
+    if (previewMode === "drawio") {
+      return (
+        <WorkspaceDrawioPreview
+          filePath={filePath}
+          bytes={readResult.bytes}
+          mimeType={readResult.mime}
+          size={readResult.size}
+          modifiedAt={readResult.modifiedAt}
+          onSave={handleSaveBytes}
+        />
+      );
+    }
+    if (previewMode === "docx") {
+      return (
+        <WorkspaceDocxPreview
+          filePath={filePath}
+          bytes={readResult.bytes}
+          mimeType={readResult.mime}
+          size={readResult.size}
+          modifiedAt={readResult.modifiedAt}
+        />
+      );
+    }
+    if (previewMode === "spreadsheet") {
+      return (
+        <WorkspaceSpreadsheetPreview
+          filePath={filePath}
+          bytes={readResult.bytes}
+          mimeType={readResult.mime}
+          size={readResult.size}
+          modifiedAt={readResult.modifiedAt}
+        />
+      );
+    }
+    return null;
+  }, [filePath, handleSaveBytes, previewMode, readResult]);
 
   return (
     <View style={styles.container} testID="workspace-file-pane">
@@ -393,14 +478,16 @@ export function FilePane({
         </View>
       ) : null}
 
-      <FilePreviewBody
-        preview={query.data?.file ?? null}
-        isLoading={query.isFetching}
-        showDesktopWebScrollbar={showDesktopWebScrollbar}
-        isMobile={isMobile}
-        filePath={filePath}
-        imagePreviewUri={imagePreviewUri}
-      />
+      {specialPreview ?? (
+        <FilePreviewBody
+          preview={query.data?.file ?? null}
+          isLoading={query.isFetching}
+          showDesktopWebScrollbar={showDesktopWebScrollbar}
+          isMobile={isMobile}
+          filePath={filePath}
+          imagePreviewUri={imagePreviewUri}
+        />
+      )}
     </View>
   );
 }
