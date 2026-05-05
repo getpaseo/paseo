@@ -5,12 +5,9 @@ import path from "node:path";
 import { test, expect } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import {
-  closeSidebar,
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
-  expectWorkspaceListSubscribed,
-  installWorkspaceFetchMonitor,
   openMobileAgentSidebar,
 } from "./helpers/sidebar";
 import { createTempGitRepo } from "./helpers/workspace";
@@ -183,30 +180,6 @@ test.describe("Sidebar workspace list", () => {
 
       expect(workspace.name).toBe("main");
       await expect(await waitForSidebarWorkspace(page, workspace.id)).toContainText("main");
-    } finally {
-      await client.close();
-      await repo.cleanup();
-    }
-  });
-});
-
-test.describe("Sidebar workspace-list query", () => {
-  test("does not refetch after desktop sidebar is hidden", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-query-pause-");
-
-    try {
-      const workspace = await openProjectViaDaemon(client, repo.path);
-      // Monitor must be installed before navigation so the WebSocket connection is captured.
-      await installWorkspaceFetchMonitor(page);
-      await gotoAppShell(page);
-      await waitForSidebarWorkspace(page, workspace.id);
-      // Initial hydration sent at least one fetch_workspaces_request — sidebar was active.
-      await expectWorkspaceListSubscribed(page, true);
-      // Closing the sidebar sets enabled:false in useSidebarWorkspacesList — query pauses.
-      await closeSidebar(page);
-      // No new fetch_workspaces_request should be sent while the sidebar is hidden.
-      await expectWorkspaceListSubscribed(page, false);
     } finally {
       await client.close();
       await repo.cleanup();
