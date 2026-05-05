@@ -24,9 +24,9 @@ import {
   openGithubWorkspace,
 } from "./helpers/composer";
 import {
+  clickNewWorkspaceButton,
   connectNewWorkspaceDaemonClient,
   delayBrowserAgentCreatedStatus,
-  openNewWorkspaceComposer,
   openProjectViaDaemon,
 } from "./helpers/new-workspace";
 import { gotoAppShell } from "./helpers/app";
@@ -34,7 +34,6 @@ import { waitForSidebarHydration, switchWorkspaceViaSidebar } from "./helpers/wo
 import { createTempGitRepo } from "./helpers/workspace";
 import { hasGithubAuth, createTempGithubRepo } from "./helpers/github-fixtures";
 
-/** Minimal 1×1 transparent PNG. */
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
@@ -256,16 +255,10 @@ test.describe("Composer attachments", () => {
         targetWorkspacePath: openedProject.workspaceId,
       });
 
-      await openNewWorkspaceComposer(page, {
+      await clickNewWorkspaceButton(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-
-      const createButton = page
-        .getByTestId("message-input-root")
-        .getByRole("button", { name: "Create" });
-      await expect(createButton).toBeVisible({ timeout: 30_000 });
-      await createButton.click();
 
       await agentCreatedDelay.waitForCreateRequest();
       await agentCreatedDelay.waitForDelayedCreatedStatus();

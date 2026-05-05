@@ -41,9 +41,7 @@ export async function submitMessage(page: Page, text: string): Promise<void> {
 }
 
 export async function fillComposerDraft(page: Page, text: string): Promise<void> {
-  const input = composerInput(page);
-  await input.click();
-  await input.fill(text);
+  await composerInput(page).fill(text);
 }
 
 export async function sendDraftToQueue(page: Page): Promise<void> {
@@ -129,8 +127,7 @@ export async function openGithubPickerFromMenu(page: Page): Promise<void> {
   await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 5_000 });
 }
 
-/** Open picker, type a query, wait for the matching option by id, and click it.
- *  optionId examples: "issue:3", "pr:1" */
+/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "pr:1"), and click it. */
 export async function selectGithubOption(
   page: Page,
   searchTerm: string,
@@ -140,10 +137,9 @@ export async function selectGithubOption(
   const searchInput = page.getByPlaceholder("Search issues and PRs...");
   await expect(searchInput).toBeVisible({ timeout: 5_000 });
   await searchInput.fill(searchTerm);
-  await expect(page.getByTestId(`composer-github-option-${optionId}`)).toBeVisible({
-    timeout: 15_000,
-  });
-  await page.getByTestId(`composer-github-option-${optionId}`).click();
+  const option = page.getByTestId(`composer-github-option-${optionId}`);
+  await expect(option).toBeVisible({ timeout: 15_000 });
+  await option.click();
 }
 
 export interface MockAgentSetup {
