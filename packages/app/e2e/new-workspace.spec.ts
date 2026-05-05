@@ -8,16 +8,22 @@ import {
   archiveLocalWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
   clickNewWorkspaceButton,
+  closeBranchPicker,
   connectNewWorkspaceDaemonClient,
   createWorktreeViaDaemon,
   delayBrowserAgentCreatedStatus,
   expectComposerGithubAttachmentPill,
+  expectPickerClosed,
+  expectPickerOpen,
+  expectPickerSelected,
   expectStartingRefPickerTriggerPr,
+  openBranchPicker,
   openNewWorkspaceComposer,
-  openStartingRefPicker,
   openProjectViaDaemon,
+  openStartingRefPicker,
   selectBranchInPicker,
   selectGitHubPrInPicker,
+  selectPickerOptionByKeyboard,
 } from "./helpers/new-workspace";
 import { createTempGitRepo, readWorktreeBranchInfo } from "./helpers/workspace";
 import {
@@ -399,6 +405,55 @@ test.describe("New workspace flow", () => {
       expect(branchInfo.currentBranch).toBe(path.basename(createdWorkspace.workspaceId));
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.main)).toBe(true);
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.dev)).toBe(true);
+    } finally {
+      await tempRepo.cleanup();
+    }
+  });
+
+  test("branch picker opens via keyboard, navigates options, and selects on Enter", async ({
+    page,
+  }) => {
+    const tempRepo = await createTempGitRepo("picker-keyboard-", { branches: ["main", "dev"] });
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+
+      await openBranchPicker(page);
+      await expectPickerOpen(page);
+      await selectPickerOptionByKeyboard(page, "dev");
+      await expectPickerSelected(page, "dev");
+      await expectPickerClosed(page);
+    } finally {
+      await tempRepo.cleanup();
+    }
+  });
+
+  test("branch picker closes on Escape without selecting an option", async ({ page }) => {
+    const tempRepo = await createTempGitRepo("picker-escape-");
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+
+      await openBranchPicker(page);
+      await expectPickerOpen(page);
+      await closeBranchPicker(page);
+      await expectPickerClosed(page);
     } finally {
       await tempRepo.cleanup();
     }

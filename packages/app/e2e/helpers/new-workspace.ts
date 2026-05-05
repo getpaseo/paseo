@@ -208,6 +208,39 @@ export async function expectStartingRefPickerTriggerPr(
   await expect(trigger).not.toContainText(input.headRef);
 }
 
+export async function openBranchPicker(page: Page): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Starting ref" });
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.focus();
+  await page.keyboard.press("Space");
+}
+
+export async function selectPickerOptionByKeyboard(page: Page, label: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search branches and PRs");
+  await expect(searchInput).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.type(label);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+}
+
+export async function closeBranchPicker(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+}
+
+export async function expectPickerOpen(page: Page): Promise<void> {
+  await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 30_000 });
+}
+
+export async function expectPickerClosed(page: Page): Promise<void> {
+  await expect(page.getByTestId("combobox-desktop-container")).not.toBeVisible();
+}
+
+export async function expectPickerSelected(page: Page, label: string): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Starting ref" });
+  await expect(trigger).toContainText(label);
+}
+
 export async function expectComposerGithubAttachmentPill(
   page: Page,
   input: { number: number; title: string },
