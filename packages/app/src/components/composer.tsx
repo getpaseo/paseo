@@ -461,6 +461,7 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
           onPress={handleEdit}
           style={styles.queueActionButton}
           accessibilityLabel="Edit queued message"
+          accessibilityRole="button"
         >
           <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
         </Pressable>
@@ -468,6 +469,7 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
           onPress={handleSendNow}
           style={QUEUE_SEND_BUTTON_STYLE}
           accessibilityLabel="Send queued message now"
+          accessibilityRole="button"
         >
           <ArrowUp size={ICON_SIZE.sm} color="white" />
         </Pressable>
