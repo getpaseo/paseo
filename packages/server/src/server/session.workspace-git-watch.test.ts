@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type pino from "pino";
 import { Session, type SessionOptions } from "./session.js";
+import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import type {
   WorkspaceGitListener,
   WorkspaceGitRuntimeSnapshot,
@@ -150,20 +151,20 @@ function createSessionForWorkspaceGitWatchTests(): {
   const session = new Session({
     clientId: "test-client",
     onMessage: (message) => emitted.push(message as { type: string; payload: unknown }),
-    logger: logger as unknown as pino.Logger,
-    downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
-    pushTokenStore: {} as SessionOptions["pushTokenStore"],
+    logger: createStub<pino.Logger>(logger),
+    downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),
+    pushTokenStore: createStub<SessionOptions["pushTokenStore"]>({}),
     paseoHome: "/tmp/paseo-test",
-    agentManager: {
+    agentManager: createStub<SessionOptions["agentManager"]>({
       subscribe: () => () => {},
       listAgents: () => [],
       getAgent: () => null,
-    } as unknown as SessionOptions["agentManager"],
-    agentStorage: {
+    }),
+    agentStorage: createStub<SessionOptions["agentStorage"]>({
       list: async () => [],
       get: async () => null,
-    } as unknown as SessionOptions["agentStorage"],
-    projectRegistry: {
+    }),
+    projectRegistry: createStub<SessionOptions["projectRegistry"]>({
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(projects.values()),
@@ -179,8 +180,8 @@ function createSessionForWorkspaceGitWatchTests(): {
       remove: async (projectId: string) => {
         projects.delete(projectId);
       },
-    } as unknown as SessionOptions["projectRegistry"],
-    workspaceRegistry: {
+    }),
+    workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(workspaces.values()),
@@ -196,8 +197,8 @@ function createSessionForWorkspaceGitWatchTests(): {
       remove: async (workspaceId: string) => {
         workspaces.delete(workspaceId);
       },
-    } as unknown as SessionOptions["workspaceRegistry"],
-    checkoutDiffManager: {
+    }),
+    checkoutDiffManager: createStub<SessionOptions["checkoutDiffManager"]>({
       subscribe: async () => ({
         initial: { cwd: "/tmp", files: [], error: null },
         unsubscribe: () => {},
@@ -210,15 +211,15 @@ function createSessionForWorkspaceGitWatchTests(): {
         checkoutDiffFallbackRefreshTargetCount: 0,
       }),
       dispose: () => {},
-    } as unknown as SessionOptions["checkoutDiffManager"],
+    }),
     workspaceGitService,
     mcpBaseUrl: null,
     stt: null,
     tts: null,
     terminalManager: null,
-  } as unknown as SessionOptions);
+  });
 
-  (session as unknown as SessionInternals).listAgentPayloads = async () => [];
+  asInternals<SessionInternals>(session).listAgentPayloads = async () => [];
 
   return {
     session,
@@ -267,7 +268,7 @@ describe("workspace git watch targets", () => {
   test("emits one workspace_update when the workspace git service emits a changed snapshot", async () => {
     const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
-    const sessionAny = session as unknown as SessionInternals;
+    const sessionAny = asInternals<SessionInternals>(session);
     seedGitWorkspace({
       projects,
       workspaces,
@@ -342,7 +343,7 @@ describe("workspace git watch targets", () => {
   test("emits checkout_status_update to a client subscribed to the workspace git target", async () => {
     const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
-    const sessionAny = session as unknown as SessionInternals;
+    const sessionAny = asInternals<SessionInternals>(session);
     seedGitWorkspace({
       projects,
       workspaces,
@@ -405,7 +406,7 @@ describe("workspace git watch targets", () => {
   test("embeds PR status in checkout_status_update for GitHub-inclusive snapshot pushes", async () => {
     const { session, emitted, projects, workspaces, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
-    const sessionAny = session as unknown as SessionInternals;
+    const sessionAny = asInternals<SessionInternals>(session);
     seedGitWorkspace({
       projects,
       workspaces,

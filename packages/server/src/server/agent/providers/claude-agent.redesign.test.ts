@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Logger } from "pino";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { asInternals } from "../../test-utils/class-mocks.js";
 import { ClaudeAgentClient, readEventIdentifiers } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
@@ -124,7 +125,7 @@ function createSpyLogger(): {
   loggerLike.child.mockReturnValue(loggerLike);
 
   return {
-    logger: loggerLike as unknown as Logger,
+    logger: asInternals<Logger>(loggerLike),
     calls,
     debug,
     info,
@@ -261,7 +262,7 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
 test("interruptActiveTurn only interrupts the active query without info logs", async () => {
   const spy = createSpyLogger();
   const session = await createSessionWithLogger(spy.logger);
-  const internal = session as unknown as {
+  const internal: {
     query: {
       interrupt: () => Promise<void>;
       return?: () => Promise<void>;
@@ -270,7 +271,7 @@ test("interruptActiveTurn only interrupts the active query without info logs", a
     input: { end: () => void } | null;
     queryRestartNeeded: boolean;
     interruptActiveTurn: () => Promise<void>;
-  };
+  } = asInternals(session);
   const interrupt = vi.fn(async () => undefined);
   const queryReturn = vi.fn(async () => undefined);
   const end = vi.fn(() => undefined);
@@ -383,7 +384,7 @@ test("extracts identifiers from fixture-driven protocol shape variants", () => {
   for (const fixture of fixtures) {
     expect(
       readEventIdentifiers(
-        fixture.message as unknown as Parameters<typeof readEventIdentifiers>[0],
+        asInternals<Parameters<typeof readEventIdentifiers>[0]>(fixture.message),
       ),
     ).toEqual(fixture.expected);
   }
@@ -411,12 +412,12 @@ test("captures session IDs from fixture-driven init message variants", async () 
   await Promise.all(
     fixtures.map(async (fixture) => {
       const session = await createSession();
-      const internal = session as unknown as {
+      const internal: {
         handleSystemMessage: (message: Record<string, unknown>) => {
           threadStartedSessionId: string | null;
           notice: AgentTimelineItem | null;
         };
-      };
+      } = asInternals(session);
       try {
         const started = internal.handleSystemMessage({
           type: "system",
@@ -439,12 +440,12 @@ test("captures session IDs from fixture-driven init message variants", async () 
 
 test("waits for complete JSON values before updating tool input from input_json_delta", async () => {
   const session = await createSession();
-  const internal = session as unknown as {
+  const internal: {
     mapPartialEvent: (event: Record<string, unknown>) => AgentTimelineItem[];
     toolUseCache: Map<string, { input?: Record<string, unknown> }>;
     toolUseIndexToId: Map<number, string>;
     toolUseInputBuffers: Map<string, string>;
-  };
+  } = asInternals(session);
 
   const toolUseId = "tool-input-delta";
   const index = 7;
@@ -501,7 +502,7 @@ test("waits for complete JSON values before updating tool input from input_json_
     ] as const;
 
     for (const fixture of deltaFixtures) {
-      internal.mapPartialEvent(fixture.event as unknown as Record<string, unknown>);
+      internal.mapPartialEvent(asInternals<Record<string, unknown>>(fixture.event));
       expect(readCommand()).toBe(fixture.expectedCommand);
     }
 
@@ -518,10 +519,10 @@ test("waits for complete JSON values before updating tool input from input_json_
 
 test("does not surface incomplete string values from input_json_delta", async () => {
   const session = await createSession();
-  const internal = session as unknown as {
+  const internal: {
     mapPartialEvent: (event: Record<string, unknown>) => AgentTimelineItem[];
     toolUseCache: Map<string, { input?: Record<string, unknown> }>;
-  };
+  } = asInternals(session);
 
   const toolUseId = "tool-input-preview";
   const index = 8;
@@ -555,12 +556,12 @@ test("does not surface incomplete string values from input_json_delta", async ()
 
 test("maps tool_result content shapes into deterministic string output", async () => {
   const session = await createSession();
-  const internal = session as unknown as {
+  const internal: {
     buildToolOutput: (
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
     ) => Record<string, unknown> | undefined;
-  };
+  } = asInternals(session);
 
   const toolEntry = {
     id: "tool-1",
@@ -628,12 +629,12 @@ test("maps tool_result content shapes into deterministic string output", async (
 
 test("Grep tool_result string content flows to a search detail with content", async () => {
   const session = await createSession();
-  const internal = session as unknown as {
+  const internal: {
     buildToolOutput: (
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
     ) => Record<string, unknown> | undefined;
-  };
+  } = asInternals(session);
 
   const grepEntry = {
     id: "tool-grep-1",
@@ -890,13 +891,13 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
     await session.setMode("bypassPermissions");
     await session.setMode("plan");
 
-    const internal = session as unknown as {
+    const internal: {
       handlePermissionRequest: (
         toolName: string,
         input: Record<string, unknown>,
         options: Record<string, unknown>,
       ) => Promise<unknown>;
-    };
+    } = asInternals(session);
 
     const pendingResolution = internal.handlePermissionRequest(
       "ExitPlanMode",
@@ -956,12 +957,12 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
 
 test("reuses one autonomous run for unbound stream_event bursts with no foreground run", async () => {
   const session = await createSession();
-  const internal = session as unknown as {
+  const internal: {
     turnState: "idle" | "foreground" | "autonomous";
     nextTurnOrdinal: number;
     routeSdkMessageFromPump: (message: Record<string, unknown>) => void;
     autonomousTurn: { id: string } | null;
-  };
+  } = asInternals(session);
 
   internal.turnState = "idle";
   internal.routeSdkMessageFromPump({
@@ -1352,9 +1353,9 @@ test("does not use stream_event uuid as assistant message identity when message_
 
   expect(assistantText).toContain("HELLO WORLD");
 
-  const assembler = session as unknown as {
+  const assembler: {
     timelineAssembler: { messages: Map<string, unknown> };
-  };
+  } = asInternals(session);
   expect(assembler.timelineAssembler.messages.size).toBe(0);
 
   await session.close();

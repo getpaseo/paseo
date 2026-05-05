@@ -4,78 +4,99 @@ import type { ProviderSnapshotEntry } from "../agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "../session.js";
 import type { SessionOutboundMessage } from "../../shared/messages.js";
+import { asInternals, createStub } from "./class-mocks.js";
 
 // ---------------------------------------------------------------------------
-// Unsafe stub wrappers — as unknown as is ONLY here, never in scope test files
+// Typed stub wrappers — unsafe cast is in createStub (class-mocks.ts), never
+// directly in test files. Wrapper signatures narrow the accepted key set so
+// callers get compile-time feedback on typos in method names.
 // ---------------------------------------------------------------------------
 
-export function asSessionLogger(stub: object): SessionOptions["logger"] {
-  return stub as unknown as SessionOptions["logger"];
+export function asSessionLogger(stub: {
+  [K in keyof SessionOptions["logger"]]?: unknown;
+}): SessionOptions["logger"] {
+  return createStub<SessionOptions["logger"]>(stub);
 }
 
-export function asAgentManager(stub: object): SessionOptions["agentManager"] {
-  return stub as unknown as SessionOptions["agentManager"];
+export function asAgentManager(stub: {
+  [K in keyof SessionOptions["agentManager"]]?: unknown;
+}): SessionOptions["agentManager"] {
+  return createStub<SessionOptions["agentManager"]>(stub);
 }
 
-export function asAgentStorage(stub: object): SessionOptions["agentStorage"] {
-  return stub as unknown as SessionOptions["agentStorage"];
+export function asAgentStorage(stub: {
+  [K in keyof SessionOptions["agentStorage"]]?: unknown;
+}): SessionOptions["agentStorage"] {
+  return createStub<SessionOptions["agentStorage"]>(stub);
 }
 
 export function asDownloadTokenStore(): SessionOptions["downloadTokenStore"] {
-  return {} as unknown as SessionOptions["downloadTokenStore"];
+  return createStub<SessionOptions["downloadTokenStore"]>({});
 }
 
 export function asPushTokenStore(): SessionOptions["pushTokenStore"] {
-  return {} as unknown as SessionOptions["pushTokenStore"];
+  return createStub<SessionOptions["pushTokenStore"]>({});
 }
 
 export function asChatService(): SessionOptions["chatService"] {
-  return {} as unknown as SessionOptions["chatService"];
+  return createStub<SessionOptions["chatService"]>({});
 }
 
 export function asScheduleService(): SessionOptions["scheduleService"] {
-  return {} as unknown as SessionOptions["scheduleService"];
+  return createStub<SessionOptions["scheduleService"]>({});
 }
 
 export function asLoopService(): SessionOptions["loopService"] {
-  return {} as unknown as SessionOptions["loopService"];
+  return createStub<SessionOptions["loopService"]>({});
 }
 
-export function asCheckoutDiffManager(stub: object): SessionOptions["checkoutDiffManager"] {
-  return stub as unknown as SessionOptions["checkoutDiffManager"];
+export function asCheckoutDiffManager(stub: {
+  [K in keyof SessionOptions["checkoutDiffManager"]]?: unknown;
+}): SessionOptions["checkoutDiffManager"] {
+  return createStub<SessionOptions["checkoutDiffManager"]>(stub);
 }
 
-export function asDaemonConfigStore(stub: object): SessionOptions["daemonConfigStore"] {
-  return stub as unknown as SessionOptions["daemonConfigStore"];
+export function asDaemonConfigStore(stub: {
+  [K in keyof SessionOptions["daemonConfigStore"]]?: unknown;
+}): SessionOptions["daemonConfigStore"] {
+  return createStub<SessionOptions["daemonConfigStore"]>(stub);
 }
 
-export function asTerminalManager(stub: object): NonNullable<SessionOptions["terminalManager"]> {
-  return stub as unknown as NonNullable<SessionOptions["terminalManager"]>;
+export function asTerminalManager(stub: {
+  [K in keyof NonNullable<SessionOptions["terminalManager"]>]?: unknown;
+}): NonNullable<SessionOptions["terminalManager"]> {
+  return createStub<NonNullable<SessionOptions["terminalManager"]>>(stub);
 }
 
-export function asGitHubService(stub: object): NonNullable<SessionOptions["github"]> {
-  return stub as unknown as NonNullable<SessionOptions["github"]>;
+export function asGitHubService(stub: {
+  [K in keyof NonNullable<SessionOptions["github"]>]?: unknown;
+}): NonNullable<SessionOptions["github"]> {
+  return createStub<NonNullable<SessionOptions["github"]>>(stub);
 }
 
-export function asWorkspaceGitService(stub: object): SessionOptions["workspaceGitService"] {
-  return stub as unknown as SessionOptions["workspaceGitService"];
+export function asWorkspaceGitService(stub: {
+  [K in keyof SessionOptions["workspaceGitService"]]?: unknown;
+}): SessionOptions["workspaceGitService"] {
+  return createStub<SessionOptions["workspaceGitService"]>(stub);
 }
 
-export function asScriptRouteStore(stub: object): SessionOptions["scriptRouteStore"] {
-  return stub as unknown as SessionOptions["scriptRouteStore"];
+export function asScriptRouteStore(stub: {
+  [K in keyof SessionOptions["scriptRouteStore"]]?: unknown;
+}): SessionOptions["scriptRouteStore"] {
+  return createStub<SessionOptions["scriptRouteStore"]>(stub);
 }
 
-export function asWorkspaceScriptRuntimeStore(stub: object): SessionOptions["scriptRuntimeStore"] {
-  return stub as unknown as SessionOptions["scriptRuntimeStore"];
+export function asWorkspaceScriptRuntimeStore(stub: {
+  [K in keyof SessionOptions["scriptRuntimeStore"]]?: unknown;
+}): SessionOptions["scriptRuntimeStore"] {
+  return createStub<SessionOptions["scriptRuntimeStore"]>(stub);
 }
 
 // ---------------------------------------------------------------------------
-// Private session access — moves the unsafe cast out of scope files
+// Private session access — delegates to asInternals so test files need no cast
 // ---------------------------------------------------------------------------
 
-export function asSessionInternals<T>(session: unknown): T {
-  return session as unknown as T;
-}
+export { asInternals as asSessionInternals };
 
 // ---------------------------------------------------------------------------
 // Type guard for SessionOutboundMessage — avoids casting unknown in test emit overrides
@@ -134,7 +155,7 @@ export function createProviderSnapshotManagerStub(): {
   };
   on.mockImplementation(() => stub);
   off.mockImplementation(() => stub);
-  const manager = stub as unknown as ProviderSnapshotManager;
+  const manager = createStub<ProviderSnapshotManager>(stub);
   return {
     manager,
     getSnapshot,

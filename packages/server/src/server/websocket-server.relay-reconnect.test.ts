@@ -9,6 +9,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import {
   asUint8Array,
   decodeTerminalStreamFrame,
@@ -191,10 +192,10 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     onChange: vi.fn(() => () => {}),
   };
   return new VoiceAssistantWebSocketServer(
-    {} as unknown as HTTPServer,
-    createLogger() as unknown as pino.Logger,
+    createStub<HTTPServer>({}),
+    createStub<pino.Logger>(createLogger()),
     "srv_test",
-    {
+    createStub<AgentManager>({
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
@@ -204,11 +205,11 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
         pendingPermissionAgents: 0,
         erroredAgents: 0,
       })),
-    } as unknown as AgentManager,
-    {} as unknown as AgentStorage,
-    {} as unknown as DownloadTokenStore,
+    }),
+    createStub<AgentStorage>({}),
+    createStub<DownloadTokenStore>({}),
     "/tmp/paseo-test",
-    daemonConfigStore as unknown as DaemonConfigStore,
+    createStub<DaemonConfigStore>(daemonConfigStore),
     null,
     { allowedOrigins: new Set() },
     undefined,
@@ -227,10 +228,10 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     undefined,
     undefined,
     undefined,
-    {} as unknown as FileBackedChatService,
-    {} as unknown as LoopService,
-    {} as unknown as ScheduleService,
-    {
+    createStub<FileBackedChatService>({}),
+    createStub<LoopService>({}),
+    createStub<ScheduleService>({}),
+    createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
       scheduleRefreshForCwd: vi.fn(),
       getMetrics: vi.fn(() => ({
@@ -240,7 +241,7 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
         checkoutDiffFallbackRefreshTargetCount: 0,
       })),
       dispose: vi.fn(),
-    } as unknown as CheckoutDiffManager,
+    }),
   );
 }
 
@@ -366,7 +367,7 @@ async function attachDirectAndHello(params: {
   socket: MockSocket;
   clientId: string;
 }) {
-  await (params.server as unknown as WebSocketServerInternals).attachSocket(
+  await asInternals<WebSocketServerInternals>(params.server).attachSocket(
     params.socket,
     createDirectRequest(),
   );
@@ -426,10 +427,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     const socket = new MockSocket();
 
-    await (server as unknown as WebSocketServerInternals).attachSocket(
-      socket,
-      createDirectRequest(),
-    );
+    await asInternals<WebSocketServerInternals>(server).attachSocket(socket, createDirectRequest());
     socket.emit(
       "message",
       JSON.stringify(
@@ -460,10 +458,7 @@ describe("relay external socket reconnect behavior", () => {
       closeReason = typeof reason === "string" ? reason : "";
     });
 
-    await (server as unknown as WebSocketServerInternals).attachSocket(
-      socket,
-      createDirectRequest(),
-    );
+    await asInternals<WebSocketServerInternals>(server).attachSocket(socket, createDirectRequest());
     await vi.advanceTimersByTimeAsync(15_000);
 
     expect(closeCode).toBe(4001);

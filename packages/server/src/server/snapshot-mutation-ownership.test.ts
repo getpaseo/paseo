@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { asInternals, createStub } from "./test-utils/class-mocks.js";
 
 interface SessionInternals {
   archiveAgentForClose(agentId: string): Promise<{ archivedAt: string }>;
@@ -90,51 +91,53 @@ describe("snapshot mutation ownership boundary", () => {
       error: vi.fn(),
     };
 
-    const session = new Session({
-      clientId: "test-client",
-      onMessage,
-      logger: logger as unknown as SessionOptions["logger"],
-      downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
-      pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
-      paseoHome: "/tmp/paseo-test",
-      agentManager: {
-        subscribe: () => () => {},
-        listAgents: () => [],
-        getAgent: () => null,
-        archiveSnapshot,
-        updateAgentMetadata,
-      } as unknown as SessionOptions["agentManager"],
-      agentStorage: {
-        list: async () => [],
-        get: async () => storedRecord,
-        applySnapshot: directStorageWrite,
-        upsert: directStorageWrite,
-      } as unknown as SessionOptions["agentStorage"],
-      projectRegistry: {
-        initialize: async () => {},
-        existsOnDisk: async () => true,
-        list: async () => [],
-        get: async () => null,
-        upsert: async () => {},
-        archive: async () => {},
-        remove: async () => {},
-      } as unknown as SessionOptions["projectRegistry"],
-      workspaceRegistry: {
-        initialize: async () => {},
-        existsOnDisk: async () => true,
-        list: async () => [],
-        get: async () => null,
-        upsert: async () => {},
-        archive: async () => {},
-        remove: async () => {},
-      } as unknown as SessionOptions["workspaceRegistry"],
-      createAgentMcpTransport: async () => {
-        throw new Error("not used");
-      },
-      stt: null,
-      tts: null,
-      terminalManager: null,
-    }) as unknown as SessionInternals;
+    const session = asInternals<SessionInternals>(
+      new Session({
+        clientId: "test-client",
+        onMessage,
+        logger: createStub<SessionOptions["logger"]>(logger),
+        downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),
+        pushTokenStore: createStub<SessionOptions["pushTokenStore"]>({}),
+        paseoHome: "/tmp/paseo-test",
+        agentManager: createStub<SessionOptions["agentManager"]>({
+          subscribe: () => () => {},
+          listAgents: () => [],
+          getAgent: () => null,
+          archiveSnapshot,
+          updateAgentMetadata,
+        }),
+        agentStorage: createStub<SessionOptions["agentStorage"]>({
+          list: async () => [],
+          get: async () => storedRecord,
+          applySnapshot: directStorageWrite,
+          upsert: directStorageWrite,
+        }),
+        projectRegistry: createStub<SessionOptions["projectRegistry"]>({
+          initialize: async () => {},
+          existsOnDisk: async () => true,
+          list: async () => [],
+          get: async () => null,
+          upsert: async () => {},
+          archive: async () => {},
+          remove: async () => {},
+        }),
+        workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
+          initialize: async () => {},
+          existsOnDisk: async () => true,
+          list: async () => [],
+          get: async () => null,
+          upsert: async () => {},
+          archive: async () => {},
+          remove: async () => {},
+        }),
+        createAgentMcpTransport: async () => {
+          throw new Error("not used");
+        },
+        stt: null,
+        tts: null,
+        terminalManager: null,
+      }),
+    );
 
     const archiveResult = await session.archiveAgentForClose("agent-1");
     expect(archiveSnapshot).toHaveBeenCalledTimes(1);

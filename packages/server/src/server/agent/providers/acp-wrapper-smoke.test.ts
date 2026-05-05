@@ -14,6 +14,7 @@ import type {
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
 import { ACPAgentSession } from "./acp-agent.js";
+import { asInternals } from "../../test-utils/class-mocks.js";
 
 const smokeSelection = new Set(
   (process.env.ACP_SMOKE ?? "")
@@ -117,7 +118,7 @@ function createSmokeLogger(): SmokeLogger {
     error: vi.fn(),
     fatal: vi.fn(),
   };
-  return logger as unknown as SmokeLogger;
+  return asInternals<SmokeLogger>(logger);
 }
 
 function createTrace(config: WrapperSmokeConfig): SmokeTrace {
@@ -365,7 +366,7 @@ async function bootSession(
 }
 
 async function captureFinalState(session: ACPAgentSession, trace: SmokeTrace): Promise<void> {
-  const internals = session as unknown as SessionInternals;
+  const internals = asInternals<SessionInternals>(session);
   trace.finalState = {
     runtime: await session.getRuntimeInfo(),
     availableModes: await session.getAvailableModes(),
@@ -376,7 +377,7 @@ async function captureFinalState(session: ACPAgentSession, trace: SmokeTrace): P
 }
 
 function getModelIds(session: ACPAgentSession): string[] {
-  const internals = session as unknown as SessionInternals;
+  const internals = asInternals<SessionInternals>(session);
   return internals.availableModels?.map((model) => model.modelId) ?? [];
 }
 
@@ -384,7 +385,7 @@ function getSelectOption(
   session: ACPAgentSession,
   category: string,
 ): Extract<SessionConfigOption, { type: "select" }> | null {
-  const internals = session as unknown as SessionInternals;
+  const internals = asInternals<SessionInternals>(session);
   return (
     internals.configOptions.find(
       (option): option is Extract<SessionConfigOption, { type: "select" }> =>
@@ -515,7 +516,7 @@ for (const config of wrappers) {
 
         const modeAfterSuccess = await session.getCurrentMode();
         originalSessionId = session.id;
-        (session as unknown as { sessionId: string }).sessionId = `${originalSessionId}-missing`;
+        asInternals<{ sessionId: string }>(session).sessionId = `${originalSessionId}-missing`;
         await expect(session.setMode(mode.id)).rejects.toThrow();
         expect(await session.getCurrentMode()).toBe(modeAfterSuccess);
         trace.notes.push(
@@ -523,7 +524,7 @@ for (const config of wrappers) {
         );
       } finally {
         if (session && originalSessionId) {
-          (session as unknown as { sessionId: string }).sessionId = originalSessionId;
+          asInternals<{ sessionId: string }>(session).sessionId = originalSessionId;
         }
         await captureFinalStateIfOpen(session, trace);
         emitEvidence(`${config.id}:b`, trace);
@@ -622,7 +623,7 @@ for (const config of wrappers) {
         expect(
           trace.notifications.some((entry) => JSON.stringify(entry).includes("tool_call_update")),
         ).toBe(true);
-        expect((session as unknown as SessionInternals).toolCalls.size).toBeGreaterThan(0);
+        expect(asInternals<SessionInternals>(session).toolCalls.size).toBeGreaterThan(0);
         trace.criteria.toolSnapshot = {
           outcome: "PASS",
           detail:

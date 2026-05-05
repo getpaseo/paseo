@@ -18,6 +18,7 @@ import {
   codexAppServerTurnInputFromPrompt,
 } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 
 interface CollaborationModeRecord {
   name: string;
@@ -71,7 +72,7 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}): Codex
     () => {
       throw new Error("Test session cannot spawn Codex app-server");
     },
-  ) as unknown as CodexTestSession;
+  ) as CodexTestSession;
   session.connected = true;
   session.currentThreadId = "test-thread";
   session.activeForegroundTurnId = "test-turn";
@@ -79,7 +80,7 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}): Codex
 }
 
 function asInternals(session: CodexTestSession): CodexSessionTestAccess {
-  return session as unknown as CodexSessionTestAccess;
+  return castInternals<CodexSessionTestAccess>(session);
 }
 
 describe("Codex app-server provider", () => {
@@ -105,9 +106,9 @@ describe("Codex app-server provider", () => {
       {},
       true,
     );
-    (session as unknown as { client: CodexClientLike }).client = fakeClient;
+    castInternals<{ client: CodexClientLike }>(session).client = fakeClient;
 
-    await (session as unknown as { ensureThread: () => Promise<void> }).ensureThread();
+    await castInternals<{ ensureThread: () => Promise<void> }>(session).ensureThread();
 
     const startCall = requests.find((req) => req.method === "thread/start");
     expect(startCall).toBeDefined();
@@ -134,9 +135,9 @@ describe("Codex app-server provider", () => {
         throw new Error("Test session cannot spawn Codex app-server");
       },
     );
-    (session as unknown as { client: CodexClientLike }).client = fakeClient;
+    castInternals<{ client: CodexClientLike }>(session).client = fakeClient;
 
-    await (session as unknown as { ensureThread: () => Promise<void> }).ensureThread();
+    await castInternals<{ ensureThread: () => Promise<void> }>(session).ensureThread();
 
     const startCall = requests.find((req) => req.method === "thread/start");
     expect(startCall).toBeDefined();
@@ -349,7 +350,7 @@ describe("Codex app-server provider", () => {
     });
 
     session.activeForegroundTurnId = null;
-    session.client = { request } as unknown as CodexClientLike;
+    session.client = createStub<CodexClientLike>({ request });
 
     await session.startTurn("Return JSON", {
       outputSchema: {
@@ -405,7 +406,7 @@ describe("Codex app-server provider", () => {
     });
 
     session.activeForegroundTurnId = null;
-    session.client = { request } as unknown as CodexClientLike;
+    session.client = createStub<CodexClientLike>({ request });
 
     await session.startTurn("/paseo-implement in a worktree, remember to use Claude for the UI");
 
@@ -1439,7 +1440,7 @@ describe("Codex app-server provider", () => {
     });
 
     session.activeForegroundTurnId = null;
-    session.client = { request } as unknown as CodexClientLike;
+    session.client = createStub<CodexClientLike>({ request });
 
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));

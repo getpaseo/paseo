@@ -11,6 +11,7 @@ import { expect, test, vi } from "vitest";
 import { Session, type SessionOptions } from "./session.js";
 import type { SessionOutboundMessage } from "../shared/messages.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -87,11 +88,11 @@ function createHarness(input: {
     clientId: "test",
     appVersion: null,
     onMessage: (m) => emitted.push(m),
-    logger: logger as unknown as SessionOptions["logger"],
-    downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
-    pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
+    logger: createStub<SessionOptions["logger"]>(logger),
+    downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),
+    pushTokenStore: createStub<SessionOptions["pushTokenStore"]>({}),
     paseoHome: mkdtempSync(path.join(tmpdir(), "paseo-invariant-test-")),
-    agentManager: {
+    agentManager: createStub<SessionOptions["agentManager"]>({
       subscribe: () => () => {},
       listAgents: () => [],
       getAgent: () => null,
@@ -99,12 +100,12 @@ function createHarness(input: {
       archiveSnapshot: async () => ({}),
       clearAgentAttention: async () => {},
       notifyAgentState: () => {},
-    } as unknown as SessionOptions["agentManager"],
-    agentStorage: {
+    }),
+    agentStorage: createStub<SessionOptions["agentStorage"]>({
       list: async () => [],
       get: async () => null,
-    } as unknown as SessionOptions["agentStorage"],
-    projectRegistry: {
+    }),
+    projectRegistry: createStub<SessionOptions["projectRegistry"]>({
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(projects.values()),
@@ -119,8 +120,8 @@ function createHarness(input: {
       remove: async (id: string) => {
         projects.delete(id);
       },
-    } as unknown as SessionOptions["projectRegistry"],
-    workspaceRegistry: {
+    }),
+    workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
       initialize: async () => {},
       existsOnDisk: async () => true,
       list: async () => Array.from(workspaces.values()),
@@ -135,11 +136,11 @@ function createHarness(input: {
       remove: async (id: string) => {
         workspaces.delete(id);
       },
-    } as unknown as SessionOptions["workspaceRegistry"],
-    chatService: {} as unknown as SessionOptions["chatService"],
-    scheduleService: {} as unknown as SessionOptions["scheduleService"],
-    loopService: {} as unknown as SessionOptions["loopService"],
-    checkoutDiffManager: {
+    }),
+    chatService: createStub<SessionOptions["chatService"]>({}),
+    scheduleService: createStub<SessionOptions["scheduleService"]>({}),
+    loopService: createStub<SessionOptions["loopService"]>({}),
+    checkoutDiffManager: createStub<SessionOptions["checkoutDiffManager"]>({
       subscribe: async () => ({
         initial: { cwd: "/tmp", files: [], error: null },
         unsubscribe: () => {},
@@ -152,12 +153,12 @@ function createHarness(input: {
         checkoutDiffFallbackRefreshTargetCount: 0,
       }),
       dispose: () => {},
-    } as unknown as SessionOptions["checkoutDiffManager"],
+    }),
     workspaceGitService,
-    daemonConfigStore: {
+    daemonConfigStore: createStub<SessionOptions["daemonConfigStore"]>({
       get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
       onChange: () => () => {},
-    } as unknown as SessionOptions["daemonConfigStore"],
+    }),
     mcpBaseUrl: null,
     stt: null,
     tts: null,
@@ -168,7 +169,7 @@ function createHarness(input: {
 }
 
 async function openProject(session: Session, cwd: string, requestId = "req-1") {
-  await (session as unknown as { handleMessage(m: unknown): Promise<unknown> }).handleMessage({
+  await asInternals<{ handleMessage(m: unknown): Promise<unknown> }>(session).handleMessage({
     type: "open_project_request",
     cwd,
     requestId,
@@ -436,11 +437,9 @@ test("S12: findWorkspaceByDirectory does not return archived ancestor via prefix
     workspaces: [dirWorkspace("/parent", archivedAt)],
     projects: [dirProject("/parent", archivedAt)],
   });
-  const found = await (
-    h.session as unknown as {
-      findWorkspaceByDirectory(cwd: string): Promise<unknown>;
-    }
-  ).findWorkspaceByDirectory("/parent/child");
+  const found = await asInternals<{
+    findWorkspaceByDirectory(cwd: string): Promise<unknown>;
+  }>(h.session).findWorkspaceByDirectory("/parent/child");
   expect(found).toBeNull();
 });
 
