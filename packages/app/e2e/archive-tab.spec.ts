@@ -21,6 +21,10 @@ import {
   reloadWorkspace,
 } from "./helpers/archive-tab";
 
+// NOTE: This describe block must stay FIRST in this file.
+// Sessions history is global to the daemon — the archive-tab reconciliation tests below
+// each call createIdleAgent, which would pollute the empty-state check.
+// If the precondition fails, move this block back to the top or see expectSessionsEmptyState.
 test.describe("Sessions screen empty state", () => {
   test("shows empty placeholder when there is no session history", async ({
     page,

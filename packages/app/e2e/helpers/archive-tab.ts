@@ -265,8 +265,10 @@ export async function openSessions(page: Page): Promise<void> {
   });
 }
 
+const AGENT_ROW_SELECTOR = '[data-testid^="agent-row-"]';
+
 function getSessionRowByTitle(page: Page, title: string) {
-  return page.locator('[data-testid^="agent-row-"]').filter({ hasText: title }).first();
+  return page.locator(AGENT_ROW_SELECTOR).filter({ hasText: title }).first();
 }
 
 export async function expectSessionRowVisible(page: Page, title: string): Promise<void> {
@@ -284,6 +286,8 @@ export async function clickSessionRow(page: Page, title: string): Promise<void> 
 }
 
 export async function expectSessionsEmptyState(page: Page): Promise<void> {
+  // Guard: if session rows appear, a prior test polluted the shared daemon — see archive-tab.spec.ts ordering note.
+  await expect(page.locator(AGENT_ROW_SELECTOR)).toHaveCount(0, { timeout: 5_000 });
   await expect(page.getByText("No sessions yet")).toBeVisible({ timeout: 30_000 });
 }
 
