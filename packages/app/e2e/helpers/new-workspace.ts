@@ -211,8 +211,7 @@ export async function expectStartingRefPickerTriggerPr(
 export async function openBranchPicker(page: Page): Promise<void> {
   const trigger = page.getByRole("button", { name: "Starting ref" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
-  await trigger.focus();
-  await page.keyboard.press("Space");
+  await trigger.click();
 }
 
 export async function selectPickerOptionByKeyboard(page: Page, label: string): Promise<void> {
