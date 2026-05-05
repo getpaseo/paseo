@@ -1424,6 +1424,7 @@ export class HostRuntimeStore {
     if (!daemonPublicKeyB64) {
       throw new Error("daemonPublicKeyB64 is required");
     }
+    const explicitUseTls = input.useTls !== undefined;
     return this.upsertHostConnection({
       serverId: input.serverId,
       label: input.label,
@@ -1431,7 +1432,7 @@ export class HostRuntimeStore {
         id: useTls ? `relay:wss:${relayEndpoint}` : `relay:${relayEndpoint}`,
         type: "relay",
         relayEndpoint,
-        ...(useTls ? { useTls } : {}),
+        ...(explicitUseTls ? { useTls } : {}),
         daemonPublicKeyB64,
       },
     });
@@ -1987,6 +1988,7 @@ export interface HostMutations {
   upsertRelayConnection: (input: {
     serverId: string;
     relayEndpoint: string;
+    useTls?: boolean;
     daemonPublicKeyB64: string;
     label?: string;
   }) => Promise<HostProfile>;
