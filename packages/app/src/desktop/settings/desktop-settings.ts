@@ -1,11 +1,14 @@
 import { useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getIsElectron } from "@/constants/platform";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
-import { useDesktopMutation, useDesktopQuery } from "@/desktop/hooks/use-desktop-ipc";
+import {
+  useDesktopIpcErrorReporter,
+  useDesktopIpcQueryErrorToast,
+} from "@/desktop/hooks/desktop-ipc-error";
 import type { ReleaseChannel } from "@/hooks/use-settings";
 
-export const DESKTOP_SETTINGS_QUERY_KEY = ["desktop-settings"] as const;
+const DESKTOP_SETTINGS_QUERY_KEY = ["desktop-settings"] as const;
 
 export interface DesktopSettings {
   releaseChannel: ReleaseChannel;
@@ -31,26 +34,36 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
 export function useDesktopSettings(): {
   settings: DesktopSettings;
   isLoading: boolean;
+  isSaving: boolean;
   error: unknown;
   updateSettings: (updates: DesktopSettingsPatch) => Promise<void>;
 } {
   const queryClient = useQueryClient();
-  const { data, isPending, error } = useDesktopQuery({
+  const reportError = useDesktopIpcErrorReporter();
+  const {
+    data,
+    isPending,
+    error: loadError,
+  } = useQuery<DesktopSettings, Error>({
     queryKey: DESKTOP_SETTINGS_QUERY_KEY,
     queryFn: loadDesktopSettings,
     staleTime: Infinity,
     gcTime: Infinity,
-    errorMessage: "Unable to load desktop settings.",
+    retry: false,
+  });
+  useDesktopIpcQueryErrorToast({
+    error: loadError,
+    message: "Unable to load desktop settings.",
     logLabel: "[DesktopSettings] Failed to load settings",
   });
-  const { mutateAsync: saveDesktopSettings } = useDesktopMutation<
+
+  const { mutateAsync: saveDesktopSettings, isPending: isSaving } = useMutation<
     DesktopSettings,
+    Error,
     DesktopSettingsPatch,
     DesktopSettingsMutationContext
   >({
     mutationFn: updatePersistedDesktopSettings,
-    errorMessage: "Unable to save desktop settings.",
-    logLabel: "[DesktopSettings] Failed to save settings",
     onMutate: (updates) => {
       const previous =
         queryClient.getQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY) ??
@@ -64,10 +77,15 @@ export function useDesktopSettings(): {
     onSuccess: (persisted) => {
       queryClient.setQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY, persisted);
     },
-    onError: (_error, _updates, context) => {
+    onError: (saveError, _updates, context) => {
       if (context) {
         queryClient.setQueryData<DesktopSettings>(DESKTOP_SETTINGS_QUERY_KEY, context.previous);
       }
+      reportError({
+        error: saveError,
+        message: "Unable to save desktop settings.",
+        logLabel: "[DesktopSettings] Failed to save settings",
+      });
     },
   });
 
@@ -85,7 +103,8 @@ export function useDesktopSettings(): {
   return {
     settings: data ?? DEFAULT_DESKTOP_SETTINGS,
     isLoading: isPending,
-    error: error ?? null,
+    isSaving,
+    error: loadError ?? null,
     updateSettings,
   };
 }

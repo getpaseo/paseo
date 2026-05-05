@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import {
   checkDesktopAppUpdate,
   formatVersionWithPrefix,
@@ -8,7 +9,7 @@ import {
   type DesktopAppUpdateInstallResult,
 } from "@/desktop/updates/desktop-updates";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
-import { useDesktopMutation } from "@/desktop/hooks/use-desktop-ipc";
+import { useDesktopIpcErrorReporter } from "@/desktop/hooks/desktop-ipc-error";
 
 export type DesktopAppUpdateStatus =
   | "idle"
@@ -87,18 +88,26 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const isDesktopApp = shouldShowDesktopUpdateSection();
   const { settings: desktopSettings } = useDesktopSettings();
   const releaseChannel = desktopSettings.releaseChannel;
+  const reportError = useDesktopIpcErrorReporter();
   const requestVersionRef = useRef(0);
   const [status, setStatus] = useState<DesktopAppUpdateStatus>("idle");
   const [availableUpdate, setAvailableUpdate] = useState<DesktopAppUpdateCheckResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
-  const { mutateAsync: installAppUpdate, isPending: isInstallingAppUpdate } =
-    useDesktopMutation<DesktopAppUpdateInstallResult>({
-      mutationFn: () => installDesktopAppUpdate({ releaseChannel }),
-      errorMessage: "Unable to install the desktop app update.",
-      logLabel: "[DesktopUpdater] Failed to install app update",
-    });
+  const { mutateAsync: installAppUpdate, isPending: isInstallingAppUpdate } = useMutation<
+    DesktopAppUpdateInstallResult,
+    Error
+  >({
+    mutationFn: () => installDesktopAppUpdate({ releaseChannel }),
+    onError: (error) => {
+      reportError({
+        error,
+        message: "Unable to install the desktop app update.",
+        logLabel: "[DesktopUpdater] Failed to install app update",
+      });
+    },
+  });
 
   const checkForUpdates = useCallback(
     async (options: { silent?: boolean } = {}) => {

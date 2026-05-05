@@ -2,88 +2,52 @@ import { useCallback, useMemo } from "react";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Terminal, Blocks, Check } from "lucide-react-native";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
-import {
-  shouldUseDesktopDaemon,
-  getCliInstallStatus,
-  installCli,
-  getSkillsInstallStatus,
-  installSkills,
-  type InstallStatus,
-} from "@/desktop/daemon/desktop-daemon";
-import { useDesktopMutation, useDesktopQuery } from "@/desktop/hooks/use-desktop-ipc";
+import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { useCliInstall, useSkillsInstall } from "@/desktop/hooks/use-install-status";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
-const CLI_INSTALL_STATUS_QUERY_KEY = ["desktop", "integrations", "cli-install-status"] as const;
-const SKILLS_INSTALL_STATUS_QUERY_KEY = [
-  "desktop",
-  "integrations",
-  "skills-install-status",
-] as const;
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();
-  const queryClient = useQueryClient();
   const showSection = shouldUseDesktopDaemon();
-
-  const { data: cliStatus, refetch: refetchCliStatus } = useDesktopQuery({
-    queryKey: CLI_INSTALL_STATUS_QUERY_KEY,
-    queryFn: getCliInstallStatus,
-    enabled: showSection,
-    errorMessage: "Unable to check CLI install status.",
-    logLabel: "[Integrations] Failed to load CLI status",
-  });
-  const { data: skillsStatus, refetch: refetchSkillsStatus } = useDesktopQuery({
-    queryKey: SKILLS_INSTALL_STATUS_QUERY_KEY,
-    queryFn: getSkillsInstallStatus,
-    enabled: showSection,
-    errorMessage: "Unable to check orchestration skills install status.",
-    logLabel: "[Integrations] Failed to load skills status",
-  });
-
-  const { mutate: runCliInstall, isPending: isInstallingCli } = useDesktopMutation<InstallStatus>({
-    mutationFn: installCli,
-    errorMessage: "Unable to install the Paseo CLI.",
-    logLabel: "[Integrations] Failed to install CLI",
-    onSuccess: (status) => {
-      queryClient.setQueryData<InstallStatus>(CLI_INSTALL_STATUS_QUERY_KEY, status);
-    },
-  });
-  const { mutate: runSkillsInstall, isPending: isInstallingSkills } =
-    useDesktopMutation<InstallStatus>({
-      mutationFn: installSkills,
-      errorMessage: "Unable to install orchestration skills.",
-      logLabel: "[Integrations] Failed to install skills",
-      onSuccess: (status) => {
-        queryClient.setQueryData<InstallStatus>(SKILLS_INSTALL_STATUS_QUERY_KEY, status);
-      },
-    });
+  const {
+    status: cliStatus,
+    isInstalling: isInstallingCli,
+    install: installCli,
+    refresh: refreshCliStatus,
+  } = useCliInstall();
+  const {
+    status: skillsStatus,
+    isInstalling: isInstallingSkills,
+    install: installSkills,
+    refresh: refreshSkillsStatus,
+  } = useSkillsInstall();
 
   useFocusEffect(
     useCallback(() => {
       if (!showSection) return undefined;
-      void refetchCliStatus();
-      void refetchSkillsStatus();
+      refreshCliStatus();
+      refreshSkillsStatus();
       return undefined;
-    }, [refetchCliStatus, refetchSkillsStatus, showSection]),
+    }, [refreshCliStatus, refreshSkillsStatus, showSection]),
   );
 
   const handleInstallCli = useCallback(() => {
     if (isInstallingCli) return;
-    runCliInstall();
-  }, [isInstallingCli, runCliInstall]);
+    installCli();
+  }, [installCli, isInstallingCli]);
 
   const handleInstallSkills = useCallback(() => {
     if (isInstallingSkills) return;
-    runSkillsInstall();
-  }, [isInstallingSkills, runSkillsInstall]);
+    installSkills();
+  }, [installSkills, isInstallingSkills]);
 
   const handleOpenCliDocs = useCallback(() => {
     void openExternalUrl(CLI_DOCS_URL);
