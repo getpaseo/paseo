@@ -20,7 +20,7 @@ const IS_WEB = platformIsWeb;
 
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 
-const EMPTY_COMBOBOX_OPTIONS: ReadonlyArray<ComboboxOption> = [];
+const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 
 function noop() {}
 
@@ -446,12 +446,11 @@ function ProviderSearchInput({
   const InputComponent = isMobile ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
-    if (autoFocus && platformIsWeb && inputRef.current) {
-      const timer = setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-      return () => clearTimeout(timer);
-    }
+    if (!autoFocus || !platformIsWeb || !inputRef.current) return () => {};
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+    return () => clearTimeout(timer);
   }, [autoFocus]);
 
   const inputStyle = useMemo(
@@ -699,12 +698,12 @@ export function CombinedModelSelector({
 
   useEffect(() => {
     if (platformIsWeb) {
-      return;
+      return () => {};
     }
 
     if (!isOpen) {
       setIsContentReady(false);
-      return;
+      return () => {};
     }
 
     const frame = requestAnimationFrame(() => {
@@ -791,7 +790,7 @@ export function CombinedModelSelector({
         )}
       </Pressable>
       <Combobox
-        options={EMPTY_COMBOBOX_OPTIONS as ComboboxOption[]}
+        options={EMPTY_COMBOBOX_OPTIONS}
         value=""
         onSelect={noop}
         open={isOpen}

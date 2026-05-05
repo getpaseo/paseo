@@ -44,6 +44,18 @@ interface PullRequestStatusLookupTarget {
   headRepositoryOwner?: string;
 }
 
+function getErrorStderr(error: Error): string {
+  return "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
+}
+
+function getErrorStdout(error: Error): string {
+  return "stdout" in error && typeof error.stdout === "string" ? error.stdout : "";
+}
+
+function throwBranchNotFound(branch: string | undefined): never {
+  throw new Error(`Branch not found: ${branch ?? "unknown"}`);
+}
+
 function createPullRequestStatusCache(ttlMs: number) {
   return new TTLCache<string, PullRequestStatusResult>({
     ttl: ttlMs,
@@ -380,8 +392,8 @@ export async function checkoutResolvedBranch(
         cwd,
       });
       return { source: "remote" };
-    case "not-found":
-      throw new Error(`Branch not found: ${input.requestedBranch ?? "unknown"}`);
+    default:
+      return throwBranchNotFound(input.requestedBranch);
   }
 }
 
@@ -1967,7 +1979,7 @@ async function detectAndThrowMergeToBaseConflict(
   const { operationCwd, error, baseRef, currentBranch } = input;
   const errorDetails =
     error instanceof Error
-      ? `${error.message}\n${(error as { stderr?: string }).stderr ?? ""}\n${(error as { stdout?: string }).stdout ?? ""}`
+      ? `${error.message}\n${getErrorStderr(error)}\n${getErrorStdout(error)}`
       : String(error);
   try {
     const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
@@ -1990,7 +2002,7 @@ async function detectAndThrowMergeToBaseConflict(
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
-        .map((line) => line.split("\t").pop() as string),
+        .map((line) => line.split("\t").at(-1) ?? ""),
       ...statusConflicts,
     ].filter(Boolean);
     const conflictDetected =
@@ -2150,7 +2162,7 @@ async function detectAndThrowMergeFromBaseConflict(
   const { cwd, error, baseRef, currentBranch } = input;
   const errorDetails =
     error instanceof Error
-      ? `${error.message}\n${(error as { stderr?: string }).stderr ?? ""}\n${(error as { stdout?: string }).stdout ?? ""}`
+      ? `${error.message}\n${getErrorStderr(error)}\n${getErrorStdout(error)}`
       : String(error);
   try {
     const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
@@ -2173,7 +2185,7 @@ async function detectAndThrowMergeFromBaseConflict(
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
-        .map((line) => line.split("\t").pop() as string),
+        .map((line) => line.split("\t").at(-1) ?? ""),
       ...statusConflicts,
     ].filter(Boolean);
     const conflictDetected =

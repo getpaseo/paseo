@@ -30,7 +30,7 @@ import type {
 import type { Logger } from "pino";
 import { homedir } from "node:os";
 
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
 import fs from "node:fs/promises";
@@ -64,6 +64,18 @@ import {
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+
+function assertChildWithPipes(
+  child: ChildProcess,
+): asserts child is ChildProcessWithoutNullStreams {
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error("Child process did not expose stdio pipes");
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_START_TIMEOUT_MS = 90 * 1000;
@@ -564,29 +576,24 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
-type JsonRpcMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotification;
-
-function isJsonRpcResponse(msg: JsonRpcMessage): msg is JsonRpcResponse {
-  const m = msg as unknown as Record<string, unknown>;
-  if (typeof m.id !== "number") return false;
-  return m.result !== undefined || !!m.error;
+function isJsonRpcResponse(msg: unknown): msg is JsonRpcResponse {
+  if (!isRecord(msg)) return false;
+  if (typeof msg.id !== "number") return false;
+  return msg.result !== undefined || !!msg.error;
 }
 
-function isJsonRpcRequest(msg: JsonRpcMessage): msg is JsonRpcRequest {
-  const m = msg as unknown as Record<string, unknown>;
-  return typeof m.id === "number" && typeof m.method === "string";
+function isJsonRpcRequest(msg: unknown): msg is JsonRpcRequest {
+  if (!isRecord(msg)) return false;
+  return typeof msg.id === "number" && typeof msg.method === "string";
 }
 
-function isJsonRpcNotification(msg: JsonRpcMessage): msg is JsonRpcNotification {
-  const m = msg as unknown as Record<string, unknown>;
-  return typeof m.method === "string" && typeof m.id !== "number";
+function isJsonRpcNotification(msg: unknown): msg is JsonRpcNotification {
+  if (!isRecord(msg)) return false;
+  return typeof msg.method === "string" && typeof msg.id !== "number";
 }
 
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
+  return isRecord(value) ? value : undefined;
 }
 
 interface PendingRequest {
@@ -615,9 +622,28 @@ interface CodexModel {
   supportedReasoningEfforts?: CodexReasoningEffortEntry[];
 }
 
-interface CodexModelListResponse {
-  data?: CodexModel[];
-}
+const CodexModelListResponseSchema = z.object({
+  data: z
+    .array(
+      z.object({
+        id: z.string(),
+        displayName: z.string().optional(),
+        description: z.string().optional(),
+        isDefault: z.boolean().optional(),
+        model: z.string().optional(),
+        defaultReasoningEffort: z.string().optional(),
+        supportedReasoningEfforts: z
+          .array(
+            z.object({
+              reasoningEffort: z.string().optional(),
+              description: z.string().optional(),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+});
 
 class CodexAppServerClient {
   private readonly rl: readline.Interface;
@@ -740,31 +766,30 @@ class CodexAppServerClient {
 
   private async handleLine(line: string): Promise<void> {
     if (!line.trim()) return;
-    const raw = JSON.parse(line);
-    const msg = toObjectRecord(raw) as unknown as JsonRpcMessage;
-    if (!msg) {
+    const raw: unknown = JSON.parse(line);
+    if (!isRecord(raw)) {
       this.logger.warn({ line }, "Parsed JSON is not an object");
       return;
     }
 
-    if (isJsonRpcResponse(msg)) {
-      const id = msg.id;
-      if (msg.result !== undefined || msg.error) {
+    if (isJsonRpcResponse(raw)) {
+      const id = raw.id;
+      if (raw.result !== undefined || raw.error) {
         const pending = this.pending.get(id);
         if (!pending) return;
         clearTimeout(pending.timer);
         this.pending.delete(id);
-        if (msg.error) {
-          pending.reject(new Error(msg.error.message ?? "Unknown error"));
+        if (raw.error) {
+          pending.reject(new Error(raw.error.message ?? "Unknown error"));
         } else {
-          pending.resolve(msg.result);
+          pending.resolve(raw.result);
         }
         return;
       }
 
       // Server-initiated request
-      if (isJsonRpcRequest(msg)) {
-        const request = msg;
+      if (isJsonRpcRequest(raw)) {
+        const request = raw;
         const handler = this.requestHandlers.get(request.method);
         try {
           const result = handler ? await handler(request.params) : {};
@@ -779,8 +804,8 @@ class CodexAppServerClient {
       }
     }
 
-    if (isJsonRpcNotification(msg)) {
-      this.notificationHandler?.(msg.method, msg.params);
+    if (isJsonRpcNotification(raw)) {
+      this.notificationHandler?.(raw.method, raw.params);
     }
   }
 }
@@ -4322,14 +4347,16 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleCommandApprovalRequest(params: unknown): Promise<unknown> {
-    const parsed = params as {
-      itemId: string;
-      threadId: string;
-      turnId: string;
-      command?: string | null;
-      cwd?: string | null;
-      reason?: string | null;
-    };
+    const parsed = z
+      .object({
+        itemId: z.string(),
+        threadId: z.string(),
+        turnId: z.string(),
+        command: z.string().nullable().optional(),
+        cwd: z.string().nullable().optional(),
+        reason: z.string().nullable().optional(),
+      })
+      .parse(params);
     const commandPreview = mapCodexExecNotificationToToolCall({
       callId: parsed.itemId,
       command: parsed.command,
@@ -4371,12 +4398,14 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
-    const parsed = params as {
-      itemId: string;
-      threadId: string;
-      turnId: string;
-      reason?: string | null;
-    };
+    const parsed = z
+      .object({
+        itemId: z.string(),
+        threadId: z.string(),
+        turnId: z.string(),
+        reason: z.string().nullable().optional(),
+      })
+      .parse(params);
     const requestId = `permission-${parsed.itemId}`;
     const request: AgentPermissionRequest = {
       id: requestId,
@@ -4406,12 +4435,14 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleToolApprovalRequest(params: unknown): Promise<unknown> {
-    const parsed = params as {
-      itemId: string;
-      threadId: string;
-      turnId: string;
-      questions: unknown[];
-    };
+    const parsed = z
+      .object({
+        itemId: z.string(),
+        threadId: z.string(),
+        turnId: z.string(),
+        questions: z.array(z.unknown()),
+      })
+      .parse(params);
     const requestId = `permission-${parsed.itemId}`;
     const questions = normalizeCodexQuestionPrompts(parsed.questions);
     const request: AgentPermissionRequest = {
@@ -4475,14 +4506,16 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "Spawning Codex app server",
     );
-    return spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
+    const child = spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
         overlays: [launchEnv],
       }),
-    }) as ChildProcessWithoutNullStreams;
+    });
+    assertChildWithPipes(child);
+    return child;
   }
 
   async createSession(
@@ -4508,7 +4541,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const storedConfig = (handle.metadata ?? {}) as unknown as AgentSessionConfig;
+    const storedConfig = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const merged: AgentSessionConfig = {
       ...storedConfig,
       ...overrides,
@@ -4599,8 +4632,9 @@ export class CodexAppServerAgentClient implements AgentClient {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
 
-      const response = (await client.request("model/list", {})) as CodexModelListResponse;
-      const models = Array.isArray(response?.data) ? response.data : [];
+      const rawResponse = await client.request("model/list", {});
+      const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
+      const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
       const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;

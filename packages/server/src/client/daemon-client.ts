@@ -601,8 +601,8 @@ export interface WaitForFinishResult {
 
 interface Waiter<T> {
   predicate: (msg: SessionOutboundMessage) => T | null;
-  resolve: (value: T) => void;
-  reject: (error: Error) => void;
+  resolve(value: T): void;
+  reject(error: Error): void;
   timeoutHandle: ReturnType<typeof setTimeout> | null;
 }
 
@@ -1160,7 +1160,7 @@ export class DaemonClient {
     }
 
     const type = arg1;
-    const handler = arg2 as (message: SessionOutboundMessage) => void;
+    const handler = arg2!;
 
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, new Set());
@@ -4043,7 +4043,13 @@ export class DaemonClient {
 
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
     if (!parsed.success) {
-      const msgType = (parsedJson as { type?: string })?.type ?? "unknown";
+      const msgType =
+        parsedJson != null &&
+        typeof parsedJson === "object" &&
+        "type" in parsedJson &&
+        typeof parsedJson.type === "string"
+          ? parsedJson.type
+          : "unknown";
       this.logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
       return;
     }
@@ -4405,7 +4411,7 @@ export class DaemonClient {
         timeout > 0
           ? setTimeout(() => {
               if (waiter) {
-                this.waiters.delete(waiter as Waiter<unknown>);
+                this.waiters.delete(waiter);
               }
               wrappedReject(timeoutError);
             }, timeout)
@@ -4417,7 +4423,7 @@ export class DaemonClient {
         reject: wrappedReject,
         timeoutHandle,
       };
-      this.waiters.add(waiter as Waiter<unknown>);
+      this.waiters.add(waiter);
     });
 
     const cancel = (error: Error) => {
@@ -4426,7 +4432,7 @@ export class DaemonClient {
       }
 
       if (waiter) {
-        this.waiters.delete(waiter as Waiter<unknown>);
+        this.waiters.delete(waiter);
         if (waiter.timeoutHandle) {
           clearTimeout(waiter.timeoutHandle);
         }

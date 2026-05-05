@@ -865,11 +865,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   }, [client, isConnected, serverId]);
 
   useEffect(() => {
-    if (!voiceRuntime) {
-      return;
-    }
-
-    return voiceRuntime.registerSession({
+    const unregister = voiceRuntime?.registerSession({
       serverId,
       setVoiceMode: async (enabled, agentId) => {
         if (!client) {
@@ -899,6 +895,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         setIsPlayingAudio(serverId, isPlaying);
       },
     });
+    return () => unregister?.();
   }, [client, serverId, setIsPlayingAudio, voiceRuntime]);
 
   useEffect(() => {
@@ -916,7 +913,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   useEffect(() => {
     if (!client || !isConnected) {
-      return;
+      return () => {};
     }
 
     let cancelled = false;
@@ -1242,10 +1239,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.payload.kind === "remove") {
         clearWorkspaceArchivePending({
           serverId,
-          workspaceId: String(message.payload.id),
+          workspaceId: message.payload.id,
         });
-        removeWorkspaceSetup({ serverId, workspaceId: String(message.payload.id) });
-        removeWorkspace(serverId, String(message.payload.id));
+        removeWorkspaceSetup({ serverId, workspaceId: message.payload.id });
+        removeWorkspace(serverId, message.payload.id);
         return;
       }
       const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
@@ -1403,15 +1400,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       if (data.type === "tool_call" && data.metadata) {
-        const {
-          toolCallId,
-          toolName,
-          arguments: args,
-        } = data.metadata as {
-          toolCallId: string;
-          toolName: string;
-          arguments: unknown;
-        };
+        const toolCallId =
+          typeof data.metadata.toolCallId === "string" ? data.metadata.toolCallId : "";
+        const toolName = typeof data.metadata.toolName === "string" ? data.metadata.toolName : "";
+        const args = data.metadata.arguments;
 
         setMessages(serverId, (prev) => [
           ...prev,
@@ -1428,10 +1420,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       if (data.type === "tool_result" && data.metadata) {
-        const { toolCallId, result } = data.metadata as {
-          toolCallId: string;
-          result: unknown;
-        };
+        const toolCallId =
+          typeof data.metadata.toolCallId === "string" ? data.metadata.toolCallId : "";
+        const result = data.metadata.result;
 
         const applyToolResult = applyToolResultToMessages(toolCallId, result);
         setMessages(serverId, applyToolResult);
@@ -1439,10 +1430,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       if (data.type === "error" && data.metadata && "toolCallId" in data.metadata) {
-        const { toolCallId, error } = data.metadata as {
-          toolCallId: string;
-          error: unknown;
-        };
+        const toolCallId =
+          typeof data.metadata.toolCallId === "string" ? data.metadata.toolCallId : "";
+        const error = data.metadata.error;
 
         const applyToolError = applyToolErrorToMessages(toolCallId, error);
         setMessages(serverId, applyToolError);
@@ -1800,7 +1790,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       } catch (error) {
         console.error("[Session] Failed to prepare images for agent creation:", error);
       }
-      return client.createAgent({
+      await client.createAgent({
         config,
         ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
