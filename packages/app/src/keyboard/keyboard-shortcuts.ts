@@ -1055,6 +1055,8 @@ function resolvePayload(
       return { delta: def.delta };
     case "message-input":
       return { kind: def.kind };
+    default:
+      throw new Error("unreachable");
   }
 }
 

@@ -1647,7 +1647,7 @@ export class AgentManager {
         { agentId, foregroundTurnId },
         "cancelAgentRun: foreground turn still active after timeout, force-canceling",
       );
-      this.dispatchSessionEvent(agent, {
+      void this.dispatchSessionEvent(agent, {
         type: "turn_canceled",
         provider: agent.provider,
         reason: "interrupted",

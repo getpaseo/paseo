@@ -116,6 +116,8 @@ export class WorkspaceDirectory {
           return workspace.name.toLocaleLowerCase();
         case "project_id":
           return workspace.projectId.toLocaleLowerCase();
+        default:
+          throw new Error("unreachable");
       }
     },
   });

@@ -432,7 +432,7 @@ async function waitForDaemonReadyWithUi(args: {
     } else {
       log.error(message);
     }
-    process.exit(1);
+    return process.exit(1);
   }
 }
 

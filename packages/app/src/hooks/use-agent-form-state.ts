@@ -459,7 +459,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   }, []);
 
   const refreshProviderModels = useCallback(() => {
-    refreshSnapshot();
+    void refreshSnapshot();
   }, [refreshSnapshot]);
 
   const refetchProviderModelsIfStale = useCallback(() => {

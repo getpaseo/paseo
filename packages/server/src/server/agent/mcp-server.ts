@@ -2104,6 +2104,8 @@ function mcpCreateWorktreeInput(
       return {
         input: { ...base, action: "checkout", githubPrNumber: target.prNumber },
       };
+    default:
+      throw new Error("unreachable");
   }
 }
 

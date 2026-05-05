@@ -134,6 +134,8 @@ export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
             Boolean(process.env.OPENROUTER_API_KEY) ||
             existsSync(join(homedir(), ".pi", "agent", "auth.json")))
         );
+      default:
+        return false;
     }
   })();
 

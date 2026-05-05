@@ -54,6 +54,8 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
       });
       return lines.join("\n");
     }
+    default:
+      throw new Error("unreachable");
   }
 }
 

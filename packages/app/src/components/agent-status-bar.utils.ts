@@ -11,6 +11,8 @@ export function getStatusSelectorHint(selector: ExplainedStatusSelector): string
       return "Change model";
     case "mode":
       return "Change permission mode";
+    default:
+      throw new Error("unreachable");
   }
 }
 

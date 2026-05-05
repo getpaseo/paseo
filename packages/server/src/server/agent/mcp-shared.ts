@@ -327,11 +327,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "error") {
-          notify("errored");
+          void notify("errored");
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          notify("finished");
+          void notify("finished");
           return;
         }
         if (event.agent.lifecycle === "closed") {
@@ -343,7 +343,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.event.type === "permission_requested") {
-        notify("needs permission");
+        void notify("needs permission");
       }
     },
     { agentId: childAgentId, replayState: false },
@@ -362,7 +362,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   if (childSnapshot.lifecycle === "running") {
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
-    notify("errored");
+    void notify("errored");
   }
 }
 

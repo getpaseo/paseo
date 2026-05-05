@@ -145,6 +145,8 @@ export class TerminalSessionController {
         return this.handleKillTerminalRequest(msg);
       case "capture_terminal_request":
         return this.handleCaptureTerminalRequest(msg);
+      default:
+        return undefined;
     }
   }
 

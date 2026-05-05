@@ -122,6 +122,8 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
       };
     case "unknown":
       return {};
+    default:
+      throw new Error("unreachable");
   }
 }
 

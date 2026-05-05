@@ -123,6 +123,8 @@ export function toDaemonCreateInput(parsed: ParsedWorktreeCreateInput) {
         action: "checkout" as const,
         githubPrNumber: parsed.target.prNumber,
       };
+    default:
+      throw new Error("unreachable");
   }
 }
 

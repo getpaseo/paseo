@@ -553,5 +553,7 @@ export function resolveAgentForm(
 
     case "RESET":
       return { ...state, userModified: INITIAL_USER_MODIFIED };
+    default:
+      throw new Error("unreachable");
   }
 }

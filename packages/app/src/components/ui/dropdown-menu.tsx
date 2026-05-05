@@ -445,7 +445,7 @@ export function DropdownMenuContent({
       setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
-      return;
+      return undefined;
     }
 
     // Capture status bar height synchronously before async measurement.
@@ -454,8 +454,8 @@ export function DropdownMenuContent({
     const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
-    measureElement(triggerRef.current).then((rect) => {
-      if (cancelled) return;
+    void measureElement(triggerRef.current).then((rect) => {
+      if (cancelled) return undefined;
       // On Android with statusBarTranslucent, measureInWindow returns coordinates
       // relative to below the status bar, but Modal content starts from screen top.
       // Add status bar height to align coordinate systems (same as react-native-popover-view).
@@ -463,7 +463,7 @@ export function DropdownMenuContent({
         ...rect,
         y: rect.y + statusBarHeight,
       });
-      return;
+      return undefined;
     });
 
     return () => {
