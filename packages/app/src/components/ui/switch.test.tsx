@@ -32,6 +32,7 @@ vi.mock("react-native-reanimated", () => ({
 
 vi.mock("react-native", () => ({
   Pressable: ({
+    "aria-checked": ariaChecked,
     accessibilityLabel,
     accessibilityRole,
     accessibilityState,
@@ -40,6 +41,7 @@ vi.mock("react-native", () => ({
     onPress,
     testID,
   }: {
+    "aria-checked"?: boolean;
     accessibilityLabel?: string;
     accessibilityRole?: string;
     accessibilityState?: { checked?: boolean; disabled?: boolean };
@@ -51,7 +53,7 @@ vi.mock("react-native", () => ({
     React.createElement(
       "button",
       {
-        "aria-checked": accessibilityState?.checked,
+        "aria-checked": ariaChecked ?? accessibilityState?.checked,
         "aria-disabled": accessibilityState?.disabled,
         "aria-label": accessibilityLabel,
         "data-disabled": disabled,
