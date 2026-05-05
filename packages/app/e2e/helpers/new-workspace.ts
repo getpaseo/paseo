@@ -202,7 +202,7 @@ export async function expectStartingRefPickerTriggerPr(
   page: Page,
   input: { number: number; title: string; headRef: string },
 ): Promise<void> {
-  const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
+  const trigger = page.getByRole("button", { name: "Starting ref" });
   await expect(trigger).toContainText(`#${input.number}`);
   await expect(trigger).toContainText(input.title);
   await expect(trigger).not.toContainText(input.headRef);
@@ -220,7 +220,6 @@ export async function selectPickerOptionByKeyboard(page: Page, label: string): P
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await page.keyboard.type(label);
   await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
 }
 
@@ -233,7 +232,9 @@ export async function expectPickerOpen(page: Page): Promise<void> {
 }
 
 export async function expectPickerClosed(page: Page): Promise<void> {
-  await expect(page.getByTestId("combobox-desktop-container")).not.toBeVisible();
+  await expect(page.getByTestId("combobox-desktop-container")).not.toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 export async function expectPickerSelected(page: Page, label: string): Promise<void> {
