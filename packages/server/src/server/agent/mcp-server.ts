@@ -1012,7 +1012,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
       },
     },
-    async ({ agentId, prompt, sessionMode, background, notifyOnFinish }) => {
+    async ({ agentId, prompt, sessionMode, background = false, notifyOnFinish = false }) => {
       if (agentManager.hasInFlightRun(agentId)) {
         waitTracker.cancel(agentId, "Agent run interrupted by new prompt");
       }
@@ -1150,7 +1150,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         agents: z.array(AgentListItemPayloadSchema),
       },
     },
-    async ({ includeArchived, cwd, sinceHours, statuses, limit }) => {
+    async ({ includeArchived = false, cwd, sinceHours = 48, statuses, limit = 50 }) => {
       const callerCwd = callerAgentId ? resolveCallerAgent()?.cwd : undefined;
       const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
       const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
@@ -1428,7 +1428,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         totalLines: z.number().int().nonnegative(),
       },
     },
-    async ({ terminalId, start, end, scrollback, stripAnsi }) => {
+    async ({ terminalId, start, end, scrollback, stripAnsi = true }) => {
       if (!terminalManager) {
         throw new Error("Terminal manager is not configured");
       }
