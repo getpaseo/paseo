@@ -484,6 +484,51 @@ test("readFile resolves from binary file frames when the daemon supports them", 
   expect(new TextDecoder().decode(result.bytes)).toBe("hello");
 });
 
+test("readFile allows longer-running file content transfers", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  vi.useFakeTimers();
+  try {
+    let settled = false;
+    let rejection: Error | null = null;
+    const responsePromise = client.readFile("/tmp/project", "report.docx", "req-slow-file").then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        settled = true;
+        rejection = error instanceof Error ? error : new Error(String(error));
+        return undefined;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(50_000);
+    await responsePromise;
+    expect(settled).toBe(true);
+    expect(rejection?.message).toContain("Timeout waiting for message (60000ms)");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("saveFile sends workspace file save request and returns saved metadata", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

@@ -674,6 +674,7 @@ const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
 const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = 15000;
 const DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000;
+const FILE_CONTENT_OPERATION_TIMEOUT_MS = 60000;
 
 function isWaiterTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("Timeout waiting for message");
@@ -3002,7 +3003,7 @@ export class DaemonClient {
         ...(acceptBinary ? { acceptBinary: true } : {}),
       },
       responseType: "file_explorer_response",
-      timeout: 10000,
+      timeout: mode === "file" ? FILE_CONTENT_OPERATION_TIMEOUT_MS : 10000,
     });
   }
 
@@ -3057,7 +3058,7 @@ export class DaemonClient {
         path,
       },
       responseType: "file_download_token_response",
-      timeout: 10000,
+      timeout: FILE_CONTENT_OPERATION_TIMEOUT_MS,
     });
   }
 
@@ -3082,7 +3083,7 @@ export class DaemonClient {
         ...(options.expectedSize !== undefined ? { expectedSize: options.expectedSize } : {}),
       },
       responseType: "workspace_file_save_response",
-      timeout: 10000,
+      timeout: FILE_CONTENT_OPERATION_TIMEOUT_MS,
     });
     if (payload.error) {
       throw new Error(payload.error);
