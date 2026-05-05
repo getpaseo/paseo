@@ -22,7 +22,9 @@ export async function expectComposerVisible(
 }
 
 export async function expectComposerDisabled(page: Page): Promise<void> {
-  await expect(composerInput(page)).toBeDisabled({ timeout: 10_000 });
+  // React Native TextInput with editable={false} renders as <textarea readonly> on web,
+  // not <textarea disabled>. Use not.toBeEditable() to match either form.
+  await expect(composerInput(page)).not.toBeEditable({ timeout: 10_000 });
 }
 
 export async function expectComposerDraft(page: Page, text: string): Promise<void> {

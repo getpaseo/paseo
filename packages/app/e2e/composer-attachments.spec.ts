@@ -24,9 +24,9 @@ import {
   openGithubWorkspace,
 } from "./helpers/composer";
 import {
-  clickNewWorkspaceButton,
   connectNewWorkspaceDaemonClient,
   delayBrowserAgentCreatedStatus,
+  openNewWorkspaceComposer,
   openProjectViaDaemon,
 } from "./helpers/new-workspace";
 import { gotoAppShell } from "./helpers/app";
@@ -255,10 +255,16 @@ test.describe("Composer attachments", () => {
         targetWorkspacePath: openedProject.workspaceId,
       });
 
-      await clickNewWorkspaceButton(page, {
+      await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
+      await fillComposerDraft(page, "lock test prompt");
+      const createButton = page
+        .getByTestId("message-input-root")
+        .getByRole("button", { name: "Create" });
+      await expect(createButton).toBeVisible({ timeout: 30_000 });
+      await createButton.click();
 
       await agentCreatedDelay.waitForCreateRequest();
       await agentCreatedDelay.waitForDelayedCreatedStatus();

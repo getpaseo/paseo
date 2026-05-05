@@ -30,10 +30,15 @@ export function buildSeededHost(input: {
   };
 }
 
+export const TEST_MOCK_PROVIDER_PREFERENCES = {
+  ...TEST_PROVIDER_PREFERENCES,
+  mock: { model: "ten-second-stream" },
+} as const;
+
 export function buildCreateAgentPreferences(serverId: string) {
   return {
     serverId,
-    provider: "codex" as const,
-    providerPreferences: TEST_PROVIDER_PREFERENCES,
+    provider: "mock" as const,
+    providerPreferences: TEST_MOCK_PROVIDER_PREFERENCES,
   };
 }
