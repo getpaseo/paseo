@@ -4,10 +4,9 @@ import {
   expectAgentIdle,
   expectInlineWorkingIndicator,
   expectTurnCopyButton,
-  expectScrolledToBottom,
+  expectScrollFollowsNewContent,
 } from "./helpers/agent-stream";
 import { startRunningMockAgent } from "./helpers/composer";
-import { readScrollMetrics, waitForContentGrowth } from "./helpers/agent-bottom-anchor";
 
 test.describe("Agent stream UI", () => {
   test("auto-scroll sticks to bottom across token bursts", async ({ page }) => {
@@ -19,11 +18,7 @@ test.describe("Agent stream UI", () => {
     });
     try {
       await awaitAssistantMessage(page);
-      await expectScrolledToBottom(page);
-
-      const { contentHeight } = await readScrollMetrics(page);
-      await waitForContentGrowth(page, contentHeight);
-      await expectScrolledToBottom(page);
+      await expectScrollFollowsNewContent(page);
     } finally {
       await client.close();
       await repo.cleanup();
@@ -38,6 +33,7 @@ test.describe("Agent stream UI", () => {
       prompt: "Stream briefly for indicator transition test.",
     });
     try {
+      await awaitAssistantMessage(page);
       await expectInlineWorkingIndicator(page);
       await expectAgentIdle(page, 30_000);
       await expectTurnCopyButton(page);
