@@ -21,6 +21,18 @@ import {
   reloadWorkspace,
 } from "./helpers/archive-tab";
 
+test.describe("Sessions screen empty state", () => {
+  test("shows empty placeholder when there is no session history", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "sessions-empty-" });
+    await workspace.navigateTo();
+    await openSessions(page);
+    await expectSessionsEmptyState(page);
+  });
+});
+
 test.describe("Archive tab reconciliation", () => {
   let client: Awaited<ReturnType<typeof connectArchiveTabDaemonClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
@@ -126,17 +138,5 @@ test.describe("Archive tab reconciliation", () => {
     await clickSessionRow(page, archived.title);
 
     await expectArchivedAgentFocused(page, archived.id);
-  });
-});
-
-test.describe("Sessions screen empty state", () => {
-  test("shows empty placeholder when there is no session history", async ({
-    page,
-    withWorkspace,
-  }) => {
-    const workspace = await withWorkspace({ prefix: "sessions-empty-" });
-    await workspace.navigateTo();
-    await openSessions(page);
-    await expectSessionsEmptyState(page);
   });
 });
