@@ -1,14 +1,4 @@
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
 import { expect, type Page } from "@playwright/test";
-
-export async function seedPrFixture(repoPath: string, data: object): Promise<void> {
-  await writeFile(path.join(repoPath, ".paseo-e2e-pr.json"), JSON.stringify(data));
-}
-
-export async function seedTimelineFixture(repoPath: string, data: object): Promise<void> {
-  await writeFile(path.join(repoPath, ".paseo-e2e-timeline.json"), JSON.stringify(data));
-}
 
 export async function openPrPane(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open explorer" }).first().click();

@@ -215,7 +215,27 @@ async function createFakeGhBin(): Promise<string> {
   await writeFile(
     ghPath,
     `#!/usr/bin/env node
+const { spawnSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 const args = process.argv.slice(2);
+
+function findRealGh() {
+  const fakeBinDir = __dirname;
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    if (dir === fakeBinDir) continue;
+    const candidate = path.join(dir, "gh");
+    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch {}
+  }
+  return null;
+}
+
+function forwardToRealGh() {
+  const realGh = findRealGh();
+  if (!realGh) { console.error("[fake-gh] real gh not found in PATH"); process.exit(1); }
+  const result = spawnSync(realGh, process.argv.slice(2), { stdio: "inherit", env: process.env });
+  process.exit(result.status ?? 1);
+}
 
 if (args[0] === "auth" && args[1] === "status") {
   process.exit(0);
@@ -237,17 +257,13 @@ if (args[0] === "pr" && args[1] === "list") {
   process.exit(0);
 }
 
-const fs = require("fs");
-const path = require("path");
-
 if (args[0] === "pr" && args[1] === "view" && args[2] === "--json" && args[3]) {
   const fixture = path.join(process.cwd(), ".paseo-e2e-pr.json");
   if (fs.existsSync(fixture)) {
     console.log(fs.readFileSync(fixture, "utf8"));
     process.exit(0);
   }
-  console.error("no pull requests found for branch");
-  process.exit(1);
+  forwardToRealGh();
 }
 
 if (args[0] === "api" && args[1] === "graphql") {
@@ -256,17 +272,7 @@ if (args[0] === "api" && args[1] === "graphql") {
     console.log(fs.readFileSync(fixture, "utf8"));
     process.exit(0);
   }
-  console.log(JSON.stringify({
-    data: {
-      repository: {
-        pullRequest: {
-          reviews: { nodes: [], pageInfo: { hasNextPage: false } },
-          comments: { nodes: [], pageInfo: { hasNextPage: false } },
-        },
-      },
-    },
-  }));
-  process.exit(0);
+  forwardToRealGh();
 }
 
 if (args[0] === "issue" && args[1] === "list") {
@@ -274,8 +280,7 @@ if (args[0] === "issue" && args[1] === "list") {
   process.exit(0);
 }
 
-console.error("Unsupported fake gh invocation: " + args.join(" "));
-process.exit(1);
+forwardToRealGh();
 `,
   );
   await chmod(ghPath, 0o755);

@@ -5,210 +5,77 @@ import {
   expectPrPaneState,
   expectPrPaneCheckSummary,
   expectPrPaneActivityCount,
-  seedPrFixture,
-  seedTimelineFixture,
 } from "./helpers/pr-pane";
 import { gotoWorkspace } from "./helpers/launcher";
-import { createTempGitRepo } from "./helpers/workspace";
+import { hasGithubAuth, createTempGithubRepo, type GhRepoFixture } from "./helpers/github-fixtures";
 import {
   connectWorkspaceSetupClient,
   type WorkspaceSetupDaemonClient,
 } from "./helpers/workspace-setup";
 
-function buildPrFixture(overrides: {
-  title: string;
-  state: string;
-  isDraft?: boolean;
-  mergedAt?: string | null;
-  statusCheckRollup?: unknown[];
-}) {
-  return {
-    number: 515,
-    url: "https://github.com/getpaseo/paseo/pull/515",
-    title: overrides.title,
-    state: overrides.state,
-    isDraft: overrides.isDraft ?? false,
-    baseRefName: "main",
-    headRefName: "",
-    mergedAt: overrides.mergedAt ?? null,
-    statusCheckRollup: overrides.statusCheckRollup ?? [],
-    reviewDecision: null,
-    headRepositoryOwner: { login: "getpaseo" },
-  };
-}
+const GITHUB_AUTH = hasGithubAuth();
 
-function buildCheckRun(
-  name: string,
-  conclusion: "SUCCESS" | "FAILURE" | null,
-  status = conclusion === null ? "IN_PROGRESS" : "COMPLETED",
-) {
-  return {
-    __typename: "CheckRun",
-    name,
-    status,
-    conclusion,
-    detailsUrl: `https://github.com/getpaseo/paseo/actions/runs/1/jobs/${name}`,
-    workflowName: "CI",
-  };
-}
-
-const TIMELINE_WITH_3_ACTIVITIES = {
-  data: {
-    repository: {
-      pullRequest: {
-        number: 515,
-        reviews: {
-          nodes: [
-            {
-              id: "rev1",
-              state: "APPROVED",
-              body: "LGTM",
-              url: "https://github.com/getpaseo/paseo/pull/515#pullrequestreview-1",
-              submittedAt: "2024-01-01T10:00:00Z",
-              author: { login: "alice", url: "https://github.com/alice" },
-            },
-            {
-              id: "rev2",
-              state: "CHANGES_REQUESTED",
-              body: "Please fix the tests",
-              url: "https://github.com/getpaseo/paseo/pull/515#pullrequestreview-2",
-              submittedAt: "2024-01-01T11:00:00Z",
-              author: { login: "bob", url: "https://github.com/bob" },
-            },
-          ],
-          pageInfo: { hasNextPage: false },
-        },
-        comments: {
-          nodes: [
-            {
-              id: "cmt1",
-              body: "Nice work!",
-              url: "https://github.com/getpaseo/paseo/pull/515#issuecomment-1",
-              createdAt: "2024-01-01T09:00:00Z",
-              author: { login: "charlie", url: "https://github.com/charlie" },
-            },
-          ],
-          pageInfo: { hasNextPage: false },
-        },
-      },
-    },
-  },
-};
-
-interface WorkspaceState {
-  workspaceId: string;
-  cleanup: () => Promise<void>;
-}
-
-async function setupPrWorkspace(
-  client: WorkspaceSetupDaemonClient,
-  prefix: string,
-  prFixture: object,
-  timelineFixture?: object,
-): Promise<WorkspaceState> {
-  const repo = await createTempGitRepo(prefix, {
-    originUrl: "https://github.com/getpaseo/paseo.git",
-  });
-  await seedPrFixture(repo.path, prFixture);
-  if (timelineFixture) {
-    await seedTimelineFixture(repo.path, timelineFixture);
-  }
-  const result = await client.openProject(repo.path);
-  if (!result.workspace) {
-    await repo.cleanup();
-    throw new Error(result.error ?? `Failed to open project ${repo.path}`);
-  }
-  return {
-    workspaceId: result.workspace.id,
-    cleanup: repo.cleanup,
-  };
-}
+// Index constants matching the prs array order in beforeAll
+const IDX_OPEN = 0;
+const IDX_MERGED = 1;
+const IDX_CLOSED = 2;
+const IDX_DRAFT = 3;
+const IDX_CHECKS = 4;
+const IDX_ACTIVITY = 5;
+const IDX_EMPTY = 6;
 
 test.describe("PR pane", () => {
   test.describe.configure({ retries: 1 });
 
   let seedClient: WorkspaceSetupDaemonClient;
-  let openPrWs: WorkspaceState;
-  let mergedPrWs: WorkspaceState;
-  let closedPrWs: WorkspaceState;
-  let draftPrWs: WorkspaceState;
-  let checkPillsWs: WorkspaceState;
-  let activityWs: WorkspaceState;
-  let emptyChecksWs: WorkspaceState;
+  let repoFixture: GhRepoFixture;
+  const workspaceIds: string[] = [];
 
   test.beforeAll(async () => {
+    if (!GITHUB_AUTH) return;
+
     seedClient = await connectWorkspaceSetupClient();
 
-    [openPrWs, mergedPrWs, closedPrWs, draftPrWs, checkPillsWs, activityWs, emptyChecksWs] =
-      await Promise.all([
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-open-",
-          buildPrFixture({ title: "Review selected start ref", state: "OPEN" }),
-        ),
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-merged-",
-          buildPrFixture({
-            title: "Merged feature branch",
-            state: "MERGED",
-            mergedAt: "2024-01-01T12:00:00Z",
-          }),
-        ),
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-closed-",
-          buildPrFixture({ title: "Closed without merge", state: "CLOSED" }),
-        ),
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-draft-",
-          buildPrFixture({ title: "Work in progress", state: "OPEN", isDraft: true }),
-        ),
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-checks-",
-          buildPrFixture({
-            title: "PR with mixed checks",
-            state: "OPEN",
-            statusCheckRollup: [
-              buildCheckRun("build-1", "SUCCESS"),
-              buildCheckRun("build-2", "SUCCESS"),
-              buildCheckRun("deploy", "FAILURE"),
-              buildCheckRun("security", null),
-            ],
-          }),
-        ),
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-activity-",
-          buildPrFixture({ title: "PR with reviews", state: "OPEN" }),
-          TIMELINE_WITH_3_ACTIVITIES,
-        ),
-        setupPrWorkspace(
-          seedClient,
-          "pr-pane-empty-",
-          buildPrFixture({ title: "PR with no checks", state: "OPEN", statusCheckRollup: [] }),
-        ),
-      ]);
+    repoFixture = await createTempGithubRepo({
+      prefix: "paseo-e2e-pr-",
+      prs: [
+        { title: "Review selected start ref", state: "open" },
+        { title: "Merged feature branch", state: "merged" },
+        { title: "Closed without merge", state: "closed" },
+        { title: "Work in progress", state: "draft" },
+        {
+          title: "PR with mixed checks",
+          state: "open",
+          checks: [
+            { context: "build-1", state: "success" },
+            { context: "build-2", state: "success" },
+            { context: "deploy", state: "failure" },
+            { context: "security", state: "pending" },
+          ],
+        },
+        { title: "PR with reviews", state: "open", commentCount: 3 },
+        { title: "PR with no checks", state: "open" },
+      ],
+    });
+
+    for (const pr of repoFixture.prs) {
+      const result = await seedClient.openProject(pr.localPath);
+      if (!result.workspace) {
+        throw new Error(result.error ?? `Failed to open project ${pr.localPath}`);
+      }
+      workspaceIds.push(result.workspace.id);
+    }
   });
 
   test.afterAll(async () => {
-    await Promise.all([
-      openPrWs?.cleanup(),
-      mergedPrWs?.cleanup(),
-      closedPrWs?.cleanup(),
-      draftPrWs?.cleanup(),
-      checkPillsWs?.cleanup(),
-      activityWs?.cleanup(),
-      emptyChecksWs?.cleanup(),
-    ]);
+    await repoFixture?.cleanup().catch(() => undefined);
     await seedClient?.close().catch(() => undefined);
   });
 
   test("renders an open PR with title, state, and repo line", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, openPrWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_OPEN]);
     await openPrPane(page);
 
     await expectPrPaneTitle(page, "Review selected start ref");
@@ -216,8 +83,9 @@ test.describe("PR pane", () => {
   });
 
   test("renders merged state label and icon", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, mergedPrWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_MERGED]);
     await openPrPane(page);
 
     await expectPrPaneState(page, "merged");
@@ -225,8 +93,9 @@ test.describe("PR pane", () => {
   });
 
   test("renders closed state label and icon", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, closedPrWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_CLOSED]);
     await openPrPane(page);
 
     await expectPrPaneState(page, "closed");
@@ -234,8 +103,9 @@ test.describe("PR pane", () => {
   });
 
   test("renders draft state label and icon", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, draftPrWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_DRAFT]);
     await openPrPane(page);
 
     await expectPrPaneState(page, "draft");
@@ -243,24 +113,27 @@ test.describe("PR pane", () => {
   });
 
   test("renders check pills with correct passed/failed/pending counts", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, checkPillsWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_CHECKS]);
     await openPrPane(page);
 
     await expectPrPaneCheckSummary(page, { passed: 2, failed: 1, pending: 1 });
   });
 
   test("renders activity rows with correct count", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, activityWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_ACTIVITY]);
     await openPrPane(page);
 
     await expectPrPaneActivityCount(page, 3);
   });
 
   test("renders gracefully with zero checks", async ({ page }) => {
+    test.skip(!GITHUB_AUTH, "Requires GitHub authentication (gh auth login)");
     test.setTimeout(60_000);
-    await gotoWorkspace(page, emptyChecksWs.workspaceId);
+    await gotoWorkspace(page, workspaceIds[IDX_EMPTY]);
     await openPrPane(page);
 
     await expectPrPaneCheckSummary(page, { passed: 0, failed: 0, pending: 0 });
