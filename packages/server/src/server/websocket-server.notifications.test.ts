@@ -181,7 +181,8 @@ function connectClient(
 function readAttentionRequiredMessage(ws: ReturnType<typeof createOpenSocket>) {
   const rawMessage = ws.send.mock.calls[0]?.[0];
   expect(typeof rawMessage).toBe("string");
-  const message = JSON.parse(rawMessage as string);
+  if (typeof rawMessage !== "string") throw new Error("Expected string WebSocket frame");
+  const message = JSON.parse(rawMessage);
   expect(message.type).toBe("session");
   expect(message.message.type).toBe("agent_stream");
   expect(message.message.payload.event.type).toBe("attention_required");

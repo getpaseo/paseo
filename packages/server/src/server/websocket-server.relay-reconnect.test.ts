@@ -96,6 +96,7 @@ vi.mock("./push/push-service.js", () => ({
   },
 }));
 
+import { z } from "zod";
 import { VoiceAssistantWebSocketServer } from "./websocket-server";
 import { parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -105,6 +106,27 @@ interface WebSocketServerInternals {
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
+
+const WireEnvelopeSchema = z.object({
+  type: z.string().optional(),
+  message: z
+    .object({
+      type: z.string().optional(),
+      payload: z.unknown().optional(),
+    })
+    .optional(),
+});
+
+function parseSentEnvelope(data: unknown): z.infer<typeof WireEnvelopeSchema> {
+  if (typeof data !== "string") throw new Error("Expected string frame");
+  return WireEnvelopeSchema.parse(JSON.parse(data));
+}
+
+const BinaryFrameSchema = z.object({
+  opcode: z.number(),
+  slot: z.number(),
+  payload: z.instanceof(Uint8Array),
+});
 
 class MockSocket {
   readyState = 1;
@@ -331,10 +353,7 @@ async function attachRelayAndHello(params: {
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
   await Promise.resolve();
   expect(params.socket.sent.length).toBeGreaterThan(0);
-  const envelope = JSON.parse(params.socket.sent[0] as string) as {
-    type?: unknown;
-    message?: { type?: unknown; payload?: unknown };
-  };
+  const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
   const serverInfo = parseServerInfoStatusPayload(envelope.message?.payload);
   expect(envelope.message?.type).toBe("status");
@@ -354,10 +373,7 @@ async function attachDirectAndHello(params: {
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
   await Promise.resolve();
   expect(params.socket.sent.length).toBeGreaterThan(0);
-  const envelope = JSON.parse(params.socket.sent[0] as string) as {
-    type?: unknown;
-    message?: { type?: unknown; payload?: unknown };
-  };
+  const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
   const serverInfo = parseServerInfoStatusPayload(envelope.message?.payload);
   expect(envelope.message?.type).toBe("status");
@@ -441,7 +457,7 @@ describe("relay external socket reconnect behavior", () => {
     let closeReason = "";
     socket.on("close", (code: unknown, reason: unknown) => {
       closeCode = typeof code === "number" ? code : null;
-      closeReason = typeof reason === "string" ? reason : String(reason ?? "");
+      closeReason = typeof reason === "string" ? reason : "";
     });
 
     await (server as unknown as WebSocketServerInternals).attachSocket(
@@ -509,7 +525,7 @@ describe("relay external socket reconnect behavior", () => {
     let closeReason = "";
     socket.on("close", (code: unknown, reason: unknown) => {
       closeCode = typeof code === "number" ? code : null;
-      closeReason = typeof reason === "string" ? reason : String(reason ?? "");
+      closeReason = typeof reason === "string" ? reason : "";
     });
 
     await server.attachExternalSocket(socket, { transport: "relay" });
@@ -583,14 +599,14 @@ describe("relay external socket reconnect behavior", () => {
     });
     expect(sessionMock.instances).toHaveLength(1);
 
-    const onMessage = session.args.onMessage as
-      | ((msg: { type: "status"; payload: { status: string } }) => void)
-      | undefined;
+    const { onMessage } = session.args;
     expect(onMessage).toBeTypeOf("function");
-    onMessage?.({
-      type: "status",
-      payload: { status: "ok" },
-    });
+    if (typeof onMessage === "function") {
+      onMessage({
+        type: "status",
+        payload: { status: "ok" },
+      });
+    }
 
     expect(directSocket.sent.length).toBeGreaterThan(0);
     expect(relaySocket.sent.length).toBeGreaterThan(0);
@@ -672,9 +688,7 @@ describe("relay external socket reconnect behavior", () => {
     server.publishSpeechReadiness(speechReadiness);
     expect(socket.sent).toHaveLength(2);
 
-    const secondEnvelope = JSON.parse(socket.sent[1] as string) as {
-      message?: { payload?: unknown };
-    };
+    const secondEnvelope = parseSentEnvelope(socket.sent[1]);
     const secondPayload = parseServerInfoStatusPayload(secondEnvelope.message?.payload);
     expect(secondPayload?.capabilities?.voice?.dictation.enabled).toBe(true);
     expect(secondPayload?.capabilities?.voice?.voice.enabled).toBe(true);
@@ -699,9 +713,7 @@ describe("relay external socket reconnect behavior", () => {
     server.publishSpeechReadiness(createDownloadInProgressSpeechReadinessSnapshot());
     expect(socket.sent).toHaveLength(2);
 
-    const envelope = JSON.parse(socket.sent[1] as string) as {
-      message?: { payload?: unknown };
-    };
+    const envelope = parseSentEnvelope(socket.sent[1]);
     const payload = parseServerInfoStatusPayload(envelope.message?.payload);
     expect(payload?.capabilities?.voice?.dictation.enabled).toBe(true);
     expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
@@ -736,11 +748,7 @@ describe("relay external socket reconnect behavior", () => {
     await Promise.resolve();
 
     expect(session.handleBinaryFrame).toHaveBeenCalledTimes(1);
-    const frame = session.handleBinaryFrame.mock.calls[0]?.[0] as {
-      opcode: number;
-      slot: number;
-      payload: Uint8Array;
-    };
+    const frame = BinaryFrameSchema.parse(session.handleBinaryFrame.mock.calls[0]?.[0]);
     expect(frame.opcode).toBe(TerminalStreamOpcode.Input);
     expect(frame.slot).toBe(9);
     expect(new TextDecoder().decode(frame.payload)).toBe("ls\r");
@@ -760,12 +768,11 @@ describe("relay external socket reconnect behavior", () => {
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0];
 
-    const onBinaryMessage = session.args.onBinaryMessage as
-      | ((frame: Uint8Array) => void)
-      | undefined;
+    const { onBinaryMessage } = session.args;
     expect(onBinaryMessage).toBeTypeOf("function");
-
-    onBinaryMessage?.(new Uint8Array([TerminalStreamOpcode.Output, 12, 0x6f, 0x6b]));
+    if (typeof onBinaryMessage === "function") {
+      onBinaryMessage(new Uint8Array([TerminalStreamOpcode.Output, 12, 0x6f, 0x6b]));
+    }
 
     expect(socket.sent).toHaveLength(2);
     const binaryPayload = asUint8Array(socket.sent[1]);

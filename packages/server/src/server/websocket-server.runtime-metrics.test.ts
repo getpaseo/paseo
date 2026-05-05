@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { Server as HTTPServer } from "http";
 import type pino from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -42,17 +43,19 @@ interface WebSocketServerInternals {
   sessions: Map<unknown, unknown>;
 }
 
-interface RuntimeMetricsLog {
-  outboundMessageTypesTop: Array<[string, number]>;
-  outboundSessionMessageTypesTop: Array<[string, number]>;
-  outboundAgentStreamTypesTop: Array<[string, number]>;
-  outboundAgentStreamAgentsTop: Array<[string, number]>;
-  outboundBinaryFrameTypesTop: Array<[string, number]>;
-  bufferedAmount: {
-    p95: number;
-    max: number;
-  };
-}
+const RuntimeMetricsLogSchema = z.object({
+  outboundMessageTypesTop: z.array(z.tuple([z.string(), z.number()])),
+  outboundSessionMessageTypesTop: z.array(z.tuple([z.string(), z.number()])),
+  outboundAgentStreamTypesTop: z.array(z.tuple([z.string(), z.number()])),
+  outboundAgentStreamAgentsTop: z.array(z.tuple([z.string(), z.number()])),
+  outboundBinaryFrameTypesTop: z.array(z.tuple([z.string(), z.number()])),
+  bufferedAmount: z.object({
+    p95: z.number(),
+    max: z.number(),
+  }),
+});
+
+type RuntimeMetricsLog = z.infer<typeof RuntimeMetricsLogSchema>;
 
 interface TestSocket {
   readyState: number;
@@ -155,7 +158,7 @@ function flushRuntimeMetrics(server: VoiceAssistantWebSocketServer): void {
 function getRuntimeMetricsLog(logger: ReturnType<typeof createLogger>): RuntimeMetricsLog {
   const metricsCall = logger.info.mock.calls.find((call) => call[1] === "ws_runtime_metrics");
   expect(metricsCall).toBeDefined();
-  return metricsCall![0] as RuntimeMetricsLog;
+  return RuntimeMetricsLogSchema.parse(metricsCall![0]);
 }
 
 function sendToClient(
@@ -350,11 +353,11 @@ describe("VoiceAssistantWebSocketServer runtime metrics", () => {
     const logger = createLogger();
     const server = createServer(logger);
     const socket = createSocket([12, 24]);
-    const frame = new Proxy(Buffer.from([0xff, 0xfe, 0xfd, 0x00, 0xc0]), {
+    const frame: Uint8Array = new Proxy(Buffer.from([0xff, 0xfe, 0xfd, 0x00, 0xc0]), {
       get(_target, property) {
         throw new Error(`Binary frame payload was unexpectedly accessed via ${String(property)}`);
       },
-    }) as unknown as Uint8Array;
+    });
 
     expect(() => sendBinaryToClient(server, socket, frame)).not.toThrow();
 
