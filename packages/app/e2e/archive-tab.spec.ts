@@ -11,7 +11,6 @@ import {
   expectArchivedAgentFocused,
   expectSessionRowArchived,
   expectSessionRowVisible,
-  expectSessionsEmptyState,
   expectWorkspaceArchiveOutcome,
   expectWorkspaceTabHidden,
   openSessions,
@@ -20,22 +19,6 @@ import {
   resetSeededPageState,
   reloadWorkspace,
 } from "./helpers/archive-tab";
-
-// NOTE: This describe block must stay FIRST in this file.
-// Sessions history is global to the daemon — the archive-tab reconciliation tests below
-// each call createIdleAgent, which would pollute the empty-state check.
-// If the precondition fails, move this block back to the top or see expectSessionsEmptyState.
-test.describe("Sessions screen empty state", () => {
-  test("shows empty placeholder when there is no session history", async ({
-    page,
-    withWorkspace,
-  }) => {
-    const workspace = await withWorkspace({ prefix: "sessions-empty-" });
-    await workspace.navigateTo();
-    await openSessions(page);
-    await expectSessionsEmptyState(page);
-  });
-});
 
 test.describe("Archive tab reconciliation", () => {
   let client: Awaited<ReturnType<typeof connectArchiveTabDaemonClient>>;

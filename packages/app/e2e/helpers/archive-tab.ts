@@ -36,6 +36,9 @@ interface ArchiveTabDaemonClient {
     predicate: (snapshot: { status: string }) => boolean,
     timeout?: number,
   ): Promise<{ status: string }>;
+  fetchAgentHistory(options?: {
+    page?: { limit: number };
+  }): Promise<{ entries: Array<{ id: string }> }>;
 }
 
 function getDaemonPort(): string {
@@ -286,7 +289,7 @@ export async function clickSessionRow(page: Page, title: string): Promise<void> 
 }
 
 export async function expectSessionsEmptyState(page: Page): Promise<void> {
-  // Guard: if session rows appear, a prior test polluted the shared daemon — see archive-tab.spec.ts ordering note.
+  // Guard: if session rows appear, a prior spec polluted the shared daemon — see 00-sessions-empty.spec.ts.
   await expect(page.locator(AGENT_ROW_SELECTOR)).toHaveCount(0, { timeout: 5_000 });
   await expect(page.getByText("No sessions yet")).toBeVisible({ timeout: 30_000 });
 }
