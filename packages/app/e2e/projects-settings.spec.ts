@@ -253,8 +253,8 @@ test.describe("Projects settings — error UX", () => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
 
-    // Closing with code 1001 (Going Away) and no reason text causes the host-runtime
-    // to transition to "offline" immediately, emptying editableHosts.
+    // Closing with code 1001 (Going Away) transitions DaemonClient to "error" state.
+    // The NoEditableTarget UI renders via isHostGone check regardless of state.
     await gate.drop();
 
     await expectNoEditableTarget(page);
