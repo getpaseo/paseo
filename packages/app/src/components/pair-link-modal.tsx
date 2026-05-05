@@ -137,6 +137,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           id: "probe",
           type: "relay",
           relayEndpoint: normalizeHostPort(parsedOffer.relay.endpoint),
+          useTls: parsedOffer.relay.useTls,
           daemonPublicKeyB64: parsedOffer.daemonPublicKeyB64,
         },
         { serverId: parsedOffer.serverId },

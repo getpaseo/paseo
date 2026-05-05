@@ -491,6 +491,7 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     relayEnabled: config.relayEnabled,
     relayEndpoint: config.relayEndpoint,
     relayPublicEndpoint: config.relayPublicEndpoint,
+    relayUseTls: config.relayUseTls,
     appBaseUrl: config.appBaseUrl,
     includeQr: true,
   });

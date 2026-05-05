@@ -28,6 +28,7 @@ export async function runPairCommand(options: PairOptions): Promise<void> {
     relayEnabled: config.relayEnabled,
     relayEndpoint: config.relayEndpoint,
     relayPublicEndpoint: config.relayPublicEndpoint,
+    relayUseTls: config.relayUseTls,
     appBaseUrl: config.appBaseUrl,
     includeQr: true,
   });

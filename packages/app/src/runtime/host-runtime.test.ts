@@ -1617,6 +1617,43 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("stores relay TLS from a pairing offer", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertConnectionFromOffer(
+      makeOffer({
+        relay: {
+          endpoint: "relay.example.com:443",
+          useTls: true,
+        },
+      }),
+      "tls relay",
+    );
+
+    const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    expect(pairedHost?.connections).toEqual([
+      {
+        id: "relay:wss:relay.example.com:443",
+        type: "relay",
+        relayEndpoint: "relay.example.com:443",
+        useTls: true,
+        daemonPublicKeyB64: "pk_test_offer",
+      },
+    ]);
+
+    store.syncHosts([]);
+  });
+
   it("uses the latest advertised hostname when re-pairing an existing relay host", async () => {
     const store = new HostRuntimeStore({
       deps: {
