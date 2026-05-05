@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { z } from "zod";
 
 import { AGENT_WAIT_TIMEOUT_MS } from "./mcp-shared.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -20,8 +21,20 @@ interface McpToolResult {
 }
 
 interface McpClient {
-  callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
+  callTool: (input: { name: string; args?: StructuredContent }) => Promise<McpToolResult>;
   close: () => Promise<void>;
+}
+
+function str(val: unknown): string {
+  return z.string().parse(val);
+}
+
+function recordArr(val: unknown): StructuredContent[] {
+  return z.array(z.record(z.unknown())).parse(val);
+}
+
+function strArrOptional(val: unknown): string[] | undefined {
+  return z.array(z.string()).optional().parse(val);
 }
 
 function formatHostForHttpUrl(host: string): string {
@@ -43,20 +56,21 @@ function getStructuredContent(result: McpToolResult): StructuredContent | null {
   }
   const content = result.content?.[0];
   if (content && typeof content === "object" && "structuredContent" in content) {
-    const structured = (content as { structuredContent?: StructuredContent }).structuredContent;
-    if (structured) {
-      return structured;
+    if (content.structuredContent) {
+      return content.structuredContent;
     }
   }
   if (content && typeof content === "object") {
-    return content as StructuredContent;
+    return content;
   }
   return null;
 }
 
 async function createMcpClient(url: string): Promise<McpClient> {
   const transport = new StreamableHTTPClientTransport(new URL(url));
-  return (await experimental_createMCPClient({ transport })) as McpClient;
+  const rawClient = await experimental_createMCPClient({ transport });
+  const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
+  return { callTool: boundCallTool, close: () => rawClient.close() };
 }
 
 async function callToolStructured(
@@ -64,7 +78,7 @@ async function callToolStructured(
   name: string,
   args?: StructuredContent,
 ): Promise<StructuredContent> {
-  const result = (await client.callTool({ name, args: args ?? {} })) as McpToolResult;
+  const result = await client.callTool({ name, args: args ?? {} });
   const payload = getStructuredContent(result);
   if (!payload) {
     throw new Error(`${name} returned no structured payload`);
@@ -78,10 +92,14 @@ async function expectToolError(
   args: StructuredContent,
   pattern: RegExp,
 ): Promise<void> {
-  const result = (await client.callTool({ name, args })) as McpToolResult;
+  const result = await client.callTool({ name, args });
   expect(result.isError).toBe(true);
-  const content = result.content?.[0] as { text?: string } | undefined;
-  expect(content?.text ?? "").toMatch(pattern);
+  const contentItem = result.content?.[0];
+  const contentText: string | undefined =
+    contentItem != null && typeof contentItem === "object"
+      ? Reflect.get(contentItem, "text")
+      : undefined;
+  expect(contentText ?? "").toMatch(pattern);
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -118,7 +136,7 @@ async function makeCwd(prefix: string): Promise<string> {
 }
 
 async function createTopLevelAgent(args?: Partial<StructuredContent>): Promise<string> {
-  const cwd = (args?.cwd as string | undefined) ?? (await makeCwd("agent-cwd"));
+  const cwd = typeof args?.cwd === "string" ? args.cwd : await makeCwd("agent-cwd");
   const payload = await callToolStructured(topLevelClient, "create_agent", {
     cwd,
     title: "Parity agent",
@@ -128,7 +146,7 @@ async function createTopLevelAgent(args?: Partial<StructuredContent>): Promise<s
     background: true,
     ...args,
   });
-  return payload.agentId as string;
+  return str(payload.agentId);
 }
 
 async function createChildAgent(args?: Partial<StructuredContent>): Promise<string> {
@@ -139,7 +157,7 @@ async function createChildAgent(args?: Partial<StructuredContent>): Promise<stri
     background: true,
     ...args,
   });
-  return payload.agentId as string;
+  return str(payload.agentId);
 }
 
 async function archiveAgentIfPresent(agentId: string | null | undefined): Promise<void> {
@@ -213,7 +231,7 @@ beforeAll(async () => {
     mode: "bypassPermissions",
     background: true,
   });
-  parentAgentId = parentPayload.agentId as string;
+  parentAgentId = str(parentPayload.agentId);
 
   agentScopedClient = await createMcpClient(
     `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${parentAgentId}`,
@@ -362,10 +380,10 @@ describe("Suite B: Terminal Tools", () => {
       const created = await callToolStructured(agentScopedClient, "create_terminal", {
         name: "Parity terminal",
       });
-      terminalId = created.id as string;
+      terminalId = str(created.id);
 
       const listed = await callToolStructured(agentScopedClient, "list_terminals");
-      const terminals = listed.terminals as Array<StructuredContent>;
+      const terminals = recordArr(listed.terminals);
       expect(terminals).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -386,7 +404,7 @@ describe("Suite B: Terminal Tools", () => {
       const created = await callToolStructured(agentScopedClient, "create_terminal", {
         name: "Parity capture terminal",
       });
-      terminalId = created.id as string;
+      terminalId = str(created.id);
 
       await callToolStructured(agentScopedClient, "send_terminal_keys", {
         terminalId,
@@ -404,7 +422,7 @@ describe("Suite B: Terminal Tools", () => {
             terminalId,
             scrollback: true,
           });
-          const lines = (payload.lines as string[] | undefined) ?? [];
+          const lines = strArrOptional(payload.lines) ?? [];
           return lines.some((line) => line.includes("hello")) ? payload : null;
         },
       });
@@ -421,7 +439,7 @@ describe("Suite B: Terminal Tools", () => {
       const created = await callToolStructured(agentScopedClient, "create_terminal", {
         name: "Parity kill terminal",
       });
-      terminalId = created.id as string;
+      terminalId = str(created.id);
 
       await callToolStructured(agentScopedClient, "kill_terminal", { terminalId });
       terminalId = null;
@@ -432,11 +450,11 @@ describe("Suite B: Terminal Tools", () => {
         label: "terminal removal",
         check: async () => {
           const payload = await callToolStructured(agentScopedClient, "list_terminals");
-          const terminals = payload.terminals as Array<StructuredContent>;
+          const terminals = recordArr(payload.terminals);
           return terminals.some((terminal) => terminal.id === created.id) ? null : payload;
         },
       });
-      const terminals = listed.terminals as Array<StructuredContent>;
+      const terminals = recordArr(listed.terminals);
       expect(terminals.some((terminal) => terminal.id === created.id)).toBe(false);
     } finally {
       await killTerminalIfPresent(terminalId);
@@ -462,10 +480,10 @@ describe("Suite C: Schedule Tools", () => {
         every: "5m",
         name: "Parity schedule list",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
 
       const listed = await callToolStructured(topLevelClient, "list_schedules");
-      const schedules = listed.schedules as Array<StructuredContent>;
+      const schedules = recordArr(listed.schedules);
       expect(schedules).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -488,7 +506,7 @@ describe("Suite C: Schedule Tools", () => {
         name: "Parity provider schedule",
         provider: "codex/gpt-5.4",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
       expect(created.target).toMatchObject({
         type: "new-agent",
         config: {
@@ -509,7 +527,7 @@ describe("Suite C: Schedule Tools", () => {
         every: "5m",
         name: "Parity inspect schedule",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
 
       const inspected = await callToolStructured(topLevelClient, "inspect_schedule", {
         id: scheduleId,
@@ -533,7 +551,7 @@ describe("Suite C: Schedule Tools", () => {
         every: "5m",
         name: "Parity pause schedule",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
 
       await callToolStructured(topLevelClient, "pause_schedule", { id: scheduleId });
       const paused = await callToolStructured(topLevelClient, "inspect_schedule", {
@@ -559,13 +577,13 @@ describe("Suite C: Schedule Tools", () => {
         every: "5m",
         name: "Parity delete schedule",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
 
       await callToolStructured(topLevelClient, "delete_schedule", { id: scheduleId });
       scheduleId = null;
 
       const listed = await callToolStructured(topLevelClient, "list_schedules");
-      const schedules = listed.schedules as Array<StructuredContent>;
+      const schedules = recordArr(listed.schedules);
       expect(schedules.some((schedule) => schedule.id === created.id)).toBe(false);
     } finally {
       await deleteScheduleIfPresent(scheduleId);
@@ -581,7 +599,7 @@ describe("Suite C: Schedule Tools", () => {
         name: "Parity self schedule",
         target: "self",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
       expect(created.target).toMatchObject({
         type: "agent",
         agentId: parentAgentId,
@@ -599,7 +617,7 @@ describe("Suite C: Schedule Tools", () => {
         every: "5m",
         provider: "codex/gpt-5.4",
       });
-      scheduleId = created.id as string;
+      scheduleId = str(created.id);
       expect(created.target).toMatchObject({
         type: "new-agent",
         config: {
@@ -629,7 +647,7 @@ describe("Suite C: Schedule Tools", () => {
 describe("Suite D: Provider Tools", () => {
   test("list_providers returns providers", async () => {
     const payload = await callToolStructured(topLevelClient, "list_providers");
-    const providers = payload.providers as Array<StructuredContent>;
+    const providers = recordArr(payload.providers);
     expect(Array.isArray(providers)).toBe(true);
     expect(providers.length).toBeGreaterThan(0);
     expect(providers[0]).toEqual(
@@ -667,12 +685,12 @@ describe("Suite E: Worktree Tools", () => {
         branchName,
         baseBranch: "main",
       });
-      worktreePath = created.worktreePath as string;
+      worktreePath = str(created.worktreePath);
 
       const listed = await callToolStructured(topLevelClient, "list_worktrees", {
         cwd: worktreeRepoCwd,
       });
-      const worktrees = listed.worktrees as Array<StructuredContent>;
+      const worktrees = recordArr(listed.worktrees);
       expect(worktrees).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -695,7 +713,7 @@ describe("Suite E: Worktree Tools", () => {
         branchName,
         baseBranch: "main",
       });
-      worktreePath = created.worktreePath as string;
+      worktreePath = str(created.worktreePath);
 
       await callToolStructured(topLevelClient, "archive_worktree", {
         cwd: worktreeRepoCwd,
@@ -706,7 +724,7 @@ describe("Suite E: Worktree Tools", () => {
       const listed = await callToolStructured(topLevelClient, "list_worktrees", {
         cwd: worktreeRepoCwd,
       });
-      const worktrees = listed.worktrees as Array<StructuredContent>;
+      const worktrees = recordArr(listed.worktrees);
       expect(worktrees.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
     } finally {
       await archiveWorktreeIfPresent({ cwd: worktreeRepoCwd, worktreePath });

@@ -23,11 +23,12 @@ const mockState = vi.hoisted(() => {
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     reset() {
-      for (const key of Object.keys(this.constructorArgs) as Array<
-        keyof typeof this.constructorArgs
-      >) {
-        this.constructorArgs[key] = [];
-      }
+      this.constructorArgs.claude = [];
+      this.constructorArgs.codex = [];
+      this.constructorArgs.copilot = [];
+      this.constructorArgs.opencode = [];
+      this.constructorArgs.pi = [];
+      this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
@@ -76,8 +77,10 @@ vi.mock("./providers/claude-agent.js", () => ({
     }
 
     async isAvailable(): Promise<boolean> {
-      const command = (this.runtimeSettings as { command?: { mode?: string; argv?: string[] } })
-        ?.command;
+      const command: { mode?: string; argv?: string[] } | undefined =
+        typeof this.runtimeSettings === "object" && this.runtimeSettings !== null
+          ? Reflect.get(this.runtimeSettings, "command")
+          : undefined;
       if (command?.mode === "replace") {
         const { isCommandAvailable } = await import("../../utils/executable.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
@@ -122,8 +125,10 @@ vi.mock("./providers/codex-app-server-agent.js", () => ({
     }
 
     async isAvailable(): Promise<boolean> {
-      const command = (this.runtimeSettings as { command?: { mode?: string; argv?: string[] } })
-        ?.command;
+      const command: { mode?: string; argv?: string[] } | undefined =
+        typeof this.runtimeSettings === "object" && this.runtimeSettings !== null
+          ? Reflect.get(this.runtimeSettings, "command")
+          : undefined;
       if (command?.mode === "replace") {
         const { isCommandAvailable } = await import("../../utils/executable.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
@@ -170,8 +175,10 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
     }
 
     async isAvailable(): Promise<boolean> {
-      const command = (this.runtimeSettings as { command?: { mode?: string; argv?: string[] } })
-        ?.command;
+      const command: { mode?: string; argv?: string[] } | undefined =
+        typeof this.runtimeSettings === "object" && this.runtimeSettings !== null
+          ? Reflect.get(this.runtimeSettings, "command")
+          : undefined;
       if (command?.mode === "replace") {
         const { isCommandAvailable } = await import("../../utils/executable.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
@@ -545,18 +552,19 @@ test("derived provider inherits and merges disallowedTools from base", () => {
     },
   });
 
-  const zaiArgs = mockState.constructorArgs.claude.find(
-    (entry) =>
-      Array.isArray((entry.runtimeSettings as { disallowedTools?: string[] })?.disallowedTools) &&
-      (entry.runtimeSettings as { disallowedTools: string[] }).disallowedTools.includes(
-        "ComputerUse",
-      ),
-  );
+  const zaiArgs = mockState.constructorArgs.claude.find((entry) => {
+    const disallowedTools: string[] | undefined =
+      typeof entry.runtimeSettings === "object" && entry.runtimeSettings !== null
+        ? Reflect.get(entry.runtimeSettings, "disallowedTools")
+        : undefined;
+    return Array.isArray(disallowedTools) && disallowedTools.includes("ComputerUse");
+  });
   expect(zaiArgs).toBeDefined();
-  expect((zaiArgs!.runtimeSettings as { disallowedTools: string[] }).disallowedTools).toEqual([
-    "WebSearch",
-    "ComputerUse",
-  ]);
+  const zaiDisallowedTools: string[] =
+    typeof zaiArgs!.runtimeSettings === "object" && zaiArgs!.runtimeSettings !== null
+      ? Reflect.get(zaiArgs!.runtimeSettings, "disallowedTools")
+      : [];
+  expect(zaiDisallowedTools).toEqual(["WebSearch", "ComputerUse"]);
 });
 
 test("extension inherits base override — override claude command, zai extends claude gets overridden command", () => {
@@ -574,11 +582,13 @@ test("extension inherits base override — override claude command, zai extends 
 
   expect(mockState.constructorArgs.claude).toHaveLength(2);
   expect(
-    mockState.constructorArgs.claude.every(
-      (entry) =>
-        (entry.runtimeSettings as { command?: { argv?: string[] } }).command?.argv?.[0] ===
-        "/opt/custom-claude",
-    ),
+    mockState.constructorArgs.claude.every((entry) => {
+      const command: { argv?: string[] } | undefined =
+        typeof entry.runtimeSettings === "object" && entry.runtimeSettings !== null
+          ? Reflect.get(entry.runtimeSettings, "command")
+          : undefined;
+      return command?.argv?.[0] === "/opt/custom-claude";
+    }),
   ).toBe(true);
 });
 

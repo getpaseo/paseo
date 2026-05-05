@@ -1,6 +1,6 @@
-import type { Logger } from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { resolveAgentModel } from "./model-resolver.js";
 
 vi.mock("./provider-registry.js", () => ({
@@ -11,9 +11,19 @@ vi.mock("./provider-registry.js", () => ({
 import { buildProviderRegistry } from "./provider-registry.js";
 
 const mockedBuildProviderRegistry = vi.mocked(buildProviderRegistry);
-const testLoggerWarn = vi.fn();
-const testLogger = { warn: testLoggerWarn } as unknown as Logger;
+const testLogger = createTestLogger();
+const testLoggerWarn = vi.spyOn(testLogger, "warn");
 type ProviderRegistryMock = ReturnType<typeof buildProviderRegistry>;
+
+function makeMockRegistry(
+  entries: Record<string, { enabled: boolean; fetchModels: ReturnType<typeof vi.fn> }>,
+): ProviderRegistryMock {
+  const registry: ProviderRegistryMock = Object.create(null);
+  for (const [key, val] of Object.entries(entries)) {
+    Reflect.set(registry, key, val);
+  }
+  return registry;
+}
 
 describe("resolveAgentModel", () => {
   beforeEach(() => {
@@ -22,11 +32,13 @@ describe("resolveAgentModel", () => {
   });
 
   it("returns the trimmed requested model when provided", async () => {
-    mockedBuildProviderRegistry.mockReturnValue({
-      claude: { enabled: true, fetchModels: vi.fn() },
-      codex: { enabled: true, fetchModels: vi.fn() },
-      opencode: { enabled: true, fetchModels: vi.fn() },
-    } as unknown as ProviderRegistryMock);
+    mockedBuildProviderRegistry.mockReturnValue(
+      makeMockRegistry({
+        claude: { enabled: true, fetchModels: vi.fn() },
+        codex: { enabled: true, fetchModels: vi.fn() },
+        opencode: { enabled: true, fetchModels: vi.fn() },
+      }),
+    );
 
     const result = await resolveAgentModel({
       provider: "codex",
@@ -44,11 +56,13 @@ describe("resolveAgentModel", () => {
       { id: "claude-3.5-haiku", isDefault: false },
       { id: "claude-3.5-sonnet", isDefault: true },
     ]);
-    mockedBuildProviderRegistry.mockReturnValue({
-      claude: { enabled: true, fetchModels },
-      codex: { enabled: true, fetchModels: vi.fn() },
-      opencode: { enabled: true, fetchModels: vi.fn() },
-    } as unknown as ProviderRegistryMock);
+    mockedBuildProviderRegistry.mockReturnValue(
+      makeMockRegistry({
+        claude: { enabled: true, fetchModels },
+        codex: { enabled: true, fetchModels: vi.fn() },
+        opencode: { enabled: true, fetchModels: vi.fn() },
+      }),
+    );
 
     const result = await resolveAgentModel({
       provider: "claude",
@@ -68,11 +82,13 @@ describe("resolveAgentModel", () => {
       { id: "model-a", isDefault: false },
       { id: "model-b", isDefault: false },
     ]);
-    mockedBuildProviderRegistry.mockReturnValue({
-      claude: { enabled: true, fetchModels: vi.fn() },
-      codex: { enabled: true, fetchModels },
-      opencode: { enabled: true, fetchModels: vi.fn() },
-    } as unknown as ProviderRegistryMock);
+    mockedBuildProviderRegistry.mockReturnValue(
+      makeMockRegistry({
+        claude: { enabled: true, fetchModels: vi.fn() },
+        codex: { enabled: true, fetchModels },
+        opencode: { enabled: true, fetchModels: vi.fn() },
+      }),
+    );
 
     const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
@@ -81,11 +97,13 @@ describe("resolveAgentModel", () => {
 
   it("returns undefined when the catalog lookup fails", async () => {
     const fetchModels = vi.fn().mockRejectedValue(new Error("boom"));
-    mockedBuildProviderRegistry.mockReturnValue({
-      claude: { enabled: true, fetchModels: vi.fn() },
-      codex: { enabled: true, fetchModels },
-      opencode: { enabled: true, fetchModels: vi.fn() },
-    } as unknown as ProviderRegistryMock);
+    mockedBuildProviderRegistry.mockReturnValue(
+      makeMockRegistry({
+        claude: { enabled: true, fetchModels: vi.fn() },
+        codex: { enabled: true, fetchModels },
+        opencode: { enabled: true, fetchModels: vi.fn() },
+      }),
+    );
 
     const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
@@ -95,11 +113,13 @@ describe("resolveAgentModel", () => {
 
   it("returns undefined for a disabled provider without fetching default models", async () => {
     const fetchModels = vi.fn().mockResolvedValue([{ id: "model-a", isDefault: true }]);
-    mockedBuildProviderRegistry.mockReturnValue({
-      claude: { enabled: true, fetchModels: vi.fn() },
-      codex: { enabled: false, fetchModels },
-      opencode: { enabled: true, fetchModels: vi.fn() },
-    } as unknown as ProviderRegistryMock);
+    mockedBuildProviderRegistry.mockReturnValue(
+      makeMockRegistry({
+        claude: { enabled: true, fetchModels: vi.fn() },
+        codex: { enabled: false, fetchModels },
+        opencode: { enabled: true, fetchModels: vi.fn() },
+      }),
+    );
 
     const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
@@ -110,11 +130,13 @@ describe("resolveAgentModel", () => {
 
   it("returns undefined for a requested model from a disabled provider", async () => {
     const fetchModels = vi.fn();
-    mockedBuildProviderRegistry.mockReturnValue({
-      claude: { enabled: true, fetchModels: vi.fn() },
-      codex: { enabled: false, fetchModels },
-      opencode: { enabled: true, fetchModels: vi.fn() },
-    } as unknown as ProviderRegistryMock);
+    mockedBuildProviderRegistry.mockReturnValue(
+      makeMockRegistry({
+        claude: { enabled: true, fetchModels: vi.fn() },
+        codex: { enabled: false, fetchModels },
+        opencode: { enabled: true, fetchModels: vi.fn() },
+      }),
+    );
 
     const result = await resolveAgentModel({
       provider: "codex",

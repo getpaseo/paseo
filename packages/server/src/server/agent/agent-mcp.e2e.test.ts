@@ -22,7 +22,7 @@ interface McpToolResult {
 }
 
 interface McpClient {
-  callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
+  callTool: (input: { name: string; args?: StructuredContent }) => Promise<McpToolResult>;
   close: () => Promise<void>;
 }
 
@@ -61,23 +61,29 @@ function getStructuredContent(result: McpToolResult): StructuredContent | null {
   }
   const content = result.content?.[0];
   if (content && typeof content === "object" && "structuredContent" in content) {
-    const structured = (content as { structuredContent?: StructuredContent }).structuredContent;
-    if (structured) return structured;
+    if (content.structuredContent) return content.structuredContent;
   }
   if (content && typeof content === "object") {
-    return content as StructuredContent;
+    return content;
   }
   return null;
+}
+
+async function createMcpClient(url: string): Promise<McpClient> {
+  const transport = new StreamableHTTPClientTransport(new URL(url));
+  const rawClient = await experimental_createMCPClient({ transport });
+  const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
+  return { callTool: boundCallTool, close: () => rawClient.close() };
 }
 
 async function waitForAgentCompletion(options: {
   client: McpClient;
   agentId: string;
 }): Promise<void> {
-  const waitResult = (await options.client.callTool({
+  const waitResult = await options.client.callTool({
     name: "wait_for_agent",
     args: { agentId: options.agentId },
-  })) as McpToolResult;
+  });
   const payload = getStructuredContent(waitResult);
   if (!payload) {
     throw new Error("wait_for_agent returned no structured payload");
@@ -87,7 +93,7 @@ async function waitForAgentCompletion(options: {
   }
   const status = payload.status;
   if (status === "running" || status === "initializing") {
-    throw new Error(`Agent still running after wait_for_agent (status=${String(status)})`);
+    throw new Error(`Agent still running after wait_for_agent (status=${status})`);
   }
 }
 
@@ -113,10 +119,7 @@ describe("agent MCP end-to-end (offline)", () => {
     const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp/agents`),
-    );
-    const client = (await experimental_createMCPClient({ transport })) as McpClient;
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
     let agentId: string | null = null;
     try {
@@ -129,7 +132,7 @@ describe("agent MCP end-to-end (offline)", () => {
         "Do not respond before the command finishes.",
       ].join("\n");
 
-      const result = (await client.callTool({
+      const result = await client.callTool({
         name: "create_agent",
         args: {
           cwd: agentCwd,
@@ -139,10 +142,10 @@ describe("agent MCP end-to-end (offline)", () => {
           initialPrompt,
           background: false,
         },
-      })) as McpToolResult;
+      });
 
       const payload = getStructuredContent(result);
-      agentId = (payload?.agentId as string | undefined) ?? null;
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
       await waitForAgentCompletion({ client, agentId: agentId! });
@@ -186,10 +189,7 @@ describe("agent MCP end-to-end (offline)", () => {
     const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp/agents`),
-    );
-    const client = (await experimental_createMCPClient({ transport })) as McpClient;
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
     const disabledPaseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-disabled-"));
     const disabledStaticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-disabled-"));
@@ -210,17 +210,12 @@ describe("agent MCP end-to-end (offline)", () => {
     const disabledDaemon = await createPaseoDaemon(disabledDaemonConfig, pino({ level: "silent" }));
     await disabledDaemon.start();
 
-    const disabledTransport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${disabledPort}/mcp/agents`),
-    );
-    const disabledClient = (await experimental_createMCPClient({
-      transport: disabledTransport,
-    })) as McpClient;
+    const disabledClient = await createMcpClient(`http://127.0.0.1:${disabledPort}/mcp/agents`);
 
     let agentId: string | null = null;
     let disabledAgentId: string | null = null;
     try {
-      const result = (await client.callTool({
+      const result = await client.callTool({
         name: "create_agent",
         args: {
           cwd: agentCwd,
@@ -230,9 +225,9 @@ describe("agent MCP end-to-end (offline)", () => {
           initialPrompt: "reply with done and stop",
           background: true,
         },
-      })) as McpToolResult;
+      });
       const payload = getStructuredContent(result);
-      agentId = (payload?.agentId as string | undefined) ?? null;
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
       const injectedAgent = daemon.agentManager.getAgent(agentId!);
@@ -243,7 +238,7 @@ describe("agent MCP end-to-end (offline)", () => {
         },
       });
 
-      const disabledResult = (await disabledClient.callTool({
+      const disabledResult = await disabledClient.callTool({
         name: "create_agent",
         args: {
           cwd: disabledAgentCwd,
@@ -253,9 +248,10 @@ describe("agent MCP end-to-end (offline)", () => {
           initialPrompt: "reply with done and stop",
           background: true,
         },
-      })) as McpToolResult;
+      });
       const disabledPayload = getStructuredContent(disabledResult);
-      disabledAgentId = (disabledPayload?.agentId as string | undefined) ?? null;
+      disabledAgentId =
+        typeof disabledPayload?.agentId === "string" ? disabledPayload.agentId : null;
       expect(disabledAgentId).toBeTruthy();
 
       const disabledAgent = disabledDaemon.agentManager.getAgent(disabledAgentId!);
@@ -301,10 +297,7 @@ describe("agent MCP end-to-end (offline)", () => {
     const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp/agents`),
-    );
-    const client = (await experimental_createMCPClient({ transport })) as McpClient;
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
     let agentId: string | null = null;
     try {
@@ -339,7 +332,7 @@ describe("agent MCP end-to-end (offline)", () => {
         stdio: "pipe",
       });
 
-      const result = (await withTimeout({
+      const result = await withTimeout({
         promise: client.callTool({
           name: "create_agent",
           args: {
@@ -355,12 +348,12 @@ describe("agent MCP end-to-end (offline)", () => {
         }),
         timeoutMs: 2500,
         label: "create_agent should not block on setup",
-      })) as McpToolResult;
+      });
 
       const payload = getStructuredContent(result);
-      agentId = (payload?.agentId as string | undefined) ?? null;
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
-      const worktreePath = (payload?.cwd as string | undefined) ?? "";
+      const worktreePath = typeof payload?.cwd === "string" ? payload.cwd : "";
       expect(worktreePath).toContain(`${path.sep}worktrees${path.sep}`);
       expect(existsSync(path.join(worktreePath, "setup-done.txt"))).toBe(false);
       expect(existsSync(path.join(worktreePath, "dev-terminal.txt"))).toBe(false);
