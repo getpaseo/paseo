@@ -195,7 +195,6 @@ export function WorkspaceSetupDialog() {
         serverId: pendingWorkspaceSetup.serverId,
         workspaceId,
         target,
-        navigationMethod: pendingWorkspaceSetup.navigationMethod,
       });
     },
     [clearWorkspaceSetup, pendingWorkspaceSetup],

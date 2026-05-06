@@ -377,7 +377,6 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     serverId,
     workspaceId,
     target: { kind: "draft", draftId },
-    navigationMethod: "replace",
   });
   useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
 }

@@ -13,7 +13,6 @@ describe("workspace-setup-store", () => {
       sourceWorkspaceId: "42",
       displayName: "project",
       creationMethod: "open_project",
-      navigationMethod: "replace",
     });
 
     expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toEqual({
@@ -22,7 +21,6 @@ describe("workspace-setup-store", () => {
       sourceWorkspaceId: "42",
       displayName: "project",
       creationMethod: "open_project",
-      navigationMethod: "replace",
     });
   });
 
@@ -31,7 +29,6 @@ describe("workspace-setup-store", () => {
       serverId: "server-1",
       sourceDirectory: "/Users/test/project",
       creationMethod: "create_worktree",
-      navigationMethod: "navigate",
     });
 
     useWorkspaceSetupStore.getState().clearWorkspaceSetup();

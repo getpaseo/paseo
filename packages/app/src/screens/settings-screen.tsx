@@ -83,8 +83,7 @@ import {
   buildSettingsSectionRoute,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
-import { getLastNavigationWorkspaceRouteSelection } from "@/stores/navigation-active-workspace-store";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { navigateToLastWorkspace } from "@/stores/navigation-active-workspace-store";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -961,9 +960,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   }, [router]);
 
   const handleBackToWorkspace = useCallback(() => {
-    const lastWorkspaceRoute = getLastNavigationWorkspaceRouteSelection();
-    if (lastWorkspaceRoute) {
-      navigateToWorkspace(lastWorkspaceRoute.serverId, lastWorkspaceRoute.workspaceId);
+    if (navigateToLastWorkspace()) {
       return;
     }
     if (anyOnlineServerId) {

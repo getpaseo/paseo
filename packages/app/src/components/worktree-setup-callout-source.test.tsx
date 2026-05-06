@@ -67,7 +67,7 @@ vi.mock("expo-router", () => ({
 }));
 
 vi.mock("@/stores/navigation-active-workspace-store", () => ({
-  useNavigationActiveWorkspaceSelection: () => activeSelection.value,
+  useActiveWorkspaceSelection: () => activeSelection.value,
 }));
 
 vi.mock("@/stores/session-store-hooks", () => ({

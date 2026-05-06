@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import { StyleSheet, View } from "react-native";
 import {
@@ -9,9 +9,8 @@ import {
 } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import {
-  activateNavigationWorkspaceSelection,
   type ActiveWorkspaceSelection,
-  useNavigationActiveWorkspaceSelection,
+  useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
@@ -105,24 +104,6 @@ function HostWorkspaceLayoutContent() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(globalParams.open);
-  const routeWorkspaceSelection = useMemo(
-    () =>
-      serverId && workspaceId
-        ? {
-            serverId,
-            workspaceId,
-          }
-        : null,
-    [serverId, workspaceId],
-  );
-
-  useEffect(() => {
-    if (!routeWorkspaceSelection) {
-      return;
-    }
-    activateNavigationWorkspaceSelection(routeWorkspaceSelection);
-  }, [routeWorkspaceSelection]);
-
   useEffect(() => {
     if (!openValue) {
       return;
@@ -186,7 +167,7 @@ function HostWorkspaceLayoutContent() {
     return null;
   }
 
-  return <WorkspaceDeck fallbackSelection={routeWorkspaceSelection} />;
+  return <WorkspaceDeck />;
 }
 
 function areWorkspaceSelectionsEqual(
@@ -196,12 +177,8 @@ function areWorkspaceSelectionsEqual(
   return left?.serverId === right?.serverId && left?.workspaceId === right?.workspaceId;
 }
 
-function WorkspaceDeck({
-  fallbackSelection,
-}: {
-  fallbackSelection: ActiveWorkspaceSelection | null;
-}) {
-  const activeSelection = useNavigationActiveWorkspaceSelection() ?? fallbackSelection;
+function WorkspaceDeck() {
+  const activeSelection = useActiveWorkspaceSelection();
   const [mountedSelections, setMountedSelections] = useState<ActiveWorkspaceSelection[]>(() =>
     activeSelection ? [activeSelection] : [],
   );

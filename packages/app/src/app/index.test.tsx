@@ -18,7 +18,6 @@ const { redirectMock, state } = vi.hoisted(() => {
       storeReady: false,
     } as HostRuntimeBootstrapState,
     anyOnlineHostServerId: null as string | null,
-    isWorkspaceSelectionLoaded: true,
     workspaceSelection: null as ActiveWorkspaceSelection | null,
   };
 
@@ -50,8 +49,7 @@ vi.mock("@/screens/startup-splash-screen", () => ({
 }));
 
 vi.mock("@/stores/navigation-active-workspace-store", () => ({
-  getLastNavigationWorkspaceRouteSelection: () => state.workspaceSelection,
-  useIsLastNavigationWorkspaceRouteSelectionLoaded: () => state.isWorkspaceSelectionLoaded,
+  useActiveWorkspaceSelection: () => state.workspaceSelection,
 }));
 
 describe("Index route startup navigation", () => {
@@ -68,7 +66,6 @@ describe("Index route startup navigation", () => {
       storeReady: false,
     };
     state.anyOnlineHostServerId = null;
-    state.isWorkspaceSelectionLoaded = true;
     state.workspaceSelection = null;
     redirectMock.mockReset();
 
@@ -92,16 +89,6 @@ describe("Index route startup navigation", () => {
   }
 
   it("shows the startup splash while no host is online and the welcome timer has not fired", async () => {
-    await renderIndex();
-
-    expect(container.querySelector("[data-testid='startup-splash']")).not.toBeNull();
-    expect(redirectMock).not.toHaveBeenCalled();
-  });
-
-  it("shows the startup splash while the workspace selection has not loaded", async () => {
-    state.anyOnlineHostServerId = "server-1";
-    state.isWorkspaceSelectionLoaded = false;
-
     await renderIndex();
 
     expect(container.querySelector("[data-testid='startup-splash']")).not.toBeNull();

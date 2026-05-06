@@ -19,7 +19,6 @@ function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRouti
     isMobile: false,
     sidebarShortcutTargets: SIDEBAR_TARGETS,
     navigationActiveWorkspace: null,
-    lastNavigationWorkspaceRoute: null,
     commandCenterOpen: false,
     shortcutsDialogOpen: false,
     ...overrides,
@@ -253,39 +252,25 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
     ).toEqual<ShortcutAction>({ kind: "router-push", route: "/settings" });
   });
 
-  it("replaces to the retained workspace route when leaving settings on desktop", () => {
+  it("navigates to the last workspace when leaving settings on desktop", () => {
     expect(
       routeKeyboardShortcut(
         { action: "settings.toggle", payload: null },
         makeCtx({
           pathname: "/settings/general",
           isMobile: false,
-          lastNavigationWorkspaceRoute: { serverId: "srv", workspaceId: "ws-2" },
         }),
       ),
-    ).toEqual<ShortcutAction>({
-      kind: "router-replace",
-      route: "/h/srv/workspace/ws-2",
-    });
+    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
   });
 
-  it("falls back to router.back() when no retained workspace exists", () => {
-    expect(
-      routeKeyboardShortcut(
-        { action: "settings.toggle", payload: null },
-        makeCtx({ pathname: "/settings/general", lastNavigationWorkspaceRoute: null }),
-      ),
-    ).toEqual<ShortcutAction>({ kind: "router-back" });
-  });
-
-  it("falls back to router.back() on mobile even if a retained workspace exists", () => {
+  it("falls back to router.back() on mobile", () => {
     expect(
       routeKeyboardShortcut(
         { action: "settings.toggle", payload: null },
         makeCtx({
           pathname: "/settings/general",
           isMobile: true,
-          lastNavigationWorkspaceRoute: { serverId: "srv", workspaceId: "ws-2" },
         }),
       ),
     ).toEqual<ShortcutAction>({ kind: "router-back" });

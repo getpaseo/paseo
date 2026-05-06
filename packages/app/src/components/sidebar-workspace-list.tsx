@@ -97,10 +97,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { type PrHint, useWorkspacePrHint } from "@/hooks/use-checkout-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
-import {
-  useIsNavigationProjectActive,
-  useIsNavigationWorkspaceSelected,
-} from "@/stores/navigation-active-workspace-store";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -1482,6 +1479,7 @@ function WorkspaceRowWithMenu({
   isCreating?: boolean;
 }) {
   const toast = useToast();
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const workspaceDirectory = resolveWorkspaceExecutionDirectory({
@@ -1502,8 +1500,9 @@ function WorkspaceRowWithMenu({
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
+      activeWorkspaceSelection,
     });
-  }, [workspace.serverId, workspace.workspaceId]);
+  }, [activeWorkspaceSelection, workspace.serverId, workspace.workspaceId]);
 
   const handleArchiveWorktree = useCallback(() => {
     if (isArchiving) {
@@ -1686,13 +1685,15 @@ function NonGitProjectRowWithMenuContent({
 }) {
   const toast = useToast();
   const contextMenu = useContextMenu();
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
+      activeWorkspaceSelection,
     });
-  }, [workspace.serverId, workspace.workspaceId]);
+  }, [activeWorkspaceSelection, workspace.serverId, workspace.workspaceId]);
 
   const handleArchiveWorkspace = useCallback(() => {
     if (isArchivingWorkspace) {
@@ -1839,11 +1840,11 @@ function FlattenedProjectRow({
   selectionEnabled: boolean;
 }) {
   const workspace = useSidebarWorkspaceEntry(serverId, rowModel.workspace.workspaceId);
-  const selected = useIsNavigationWorkspaceSelected({
-    serverId,
-    workspaceId: rowModel.workspace.workspaceId,
-    enabled: selectionEnabled,
-  });
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const selected =
+    selectionEnabled &&
+    activeWorkspaceSelection?.serverId === serverId &&
+    activeWorkspaceSelection.workspaceId === rowModel.workspace.workspaceId;
 
   if (!workspace) {
     return null;
@@ -1970,11 +1971,11 @@ function WorkspaceRow({
   selectionEnabled: boolean;
 }) {
   const hydratedWorkspace = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
-  const selected = useIsNavigationWorkspaceSelected({
-    serverId: workspace.serverId,
-    workspaceId: workspace.workspaceId,
-    enabled: selectionEnabled,
-  });
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const selected =
+    selectionEnabled &&
+    activeWorkspaceSelection?.serverId === workspace.serverId &&
+    activeWorkspaceSelection.workspaceId === workspace.workspaceId;
 
   if (!hydratedWorkspace) {
     return null;
@@ -2050,11 +2051,11 @@ function ProjectBlock({
     () => project.workspaces.map((workspace) => workspace.workspaceId),
     [project.workspaces],
   );
-  const isProjectActive = useIsNavigationProjectActive({
-    serverId,
-    workspaceIds: projectWorkspaceIds,
-    enabled: selectionEnabled,
-  });
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const isProjectActive =
+    selectionEnabled &&
+    activeWorkspaceSelection?.serverId === serverId &&
+    projectWorkspaceIds.includes(activeWorkspaceSelection.workspaceId);
 
   const renderWorkspaceRow = useCallback(
     (

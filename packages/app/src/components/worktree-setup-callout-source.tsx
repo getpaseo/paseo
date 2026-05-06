@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { useNavigationActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
@@ -45,7 +45,7 @@ function hasSetupCommands(config: PaseoConfigRaw): boolean {
 }
 
 export function WorktreeSetupCalloutSource() {
-  const selection = useNavigationActiveWorkspaceSelection();
+  const selection = useActiveWorkspaceSelection();
   const activeProject = useWorkspaceFields(
     selection?.serverId ?? null,
     selection?.workspaceId ?? null,

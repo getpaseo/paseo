@@ -1,59 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * @vitest-environment jsdom
+ */
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
-const { dismissToMock } = vi.hoisted(() => ({
-  dismissToMock: vi.fn(),
+const navigateToWorkspaceMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/stores/navigation-active-workspace-store", () => ({
+  navigateToWorkspace: navigateToWorkspaceMock,
 }));
 
-vi.mock("expo-router", () => ({
-  router: {
-    dismissTo: dismissToMock,
-  },
-}));
+import { navigateToWorkspace, useWorkspaceNavigation } from "@/hooks/use-workspace-navigation";
 
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
-import {
-  activateNavigationWorkspaceSelection,
-  getNavigationActiveWorkspaceSelection,
-  syncNavigationActiveWorkspace,
-} from "@/stores/navigation-active-workspace-store";
-
-describe("navigateToWorkspace", () => {
-  beforeEach(() => {
-    dismissToMock.mockReset();
-    syncNavigationActiveWorkspace({ current: null });
+describe("useWorkspaceNavigation", () => {
+  it("re-exports the workspace navigation action", () => {
+    expect(navigateToWorkspace).toBe(navigateToWorkspaceMock);
   });
 
-  it("dismisses to the workspace route from a non-workspace route even when active selection is stale", () => {
-    activateNavigationWorkspaceSelection({
-      serverId: "server-1",
-      workspaceId: "workspace-a",
-    });
+  it("returns a stable callback wrapper", () => {
+    const { result } = renderHook(() => useWorkspaceNavigation());
 
-    navigateToWorkspace("server-1", "workspace-b", {
-      currentPathname: "/h/server-1/sessions",
-    });
+    result.current.navigateToWorkspace("server-1", "workspace-a");
 
-    expect(dismissToMock).toHaveBeenCalledWith("/h/server-1/workspace/workspace-b");
-    expect(getNavigationActiveWorkspaceSelection()).toEqual({
-      serverId: "server-1",
-      workspaceId: "workspace-a",
-    });
-  });
-
-  it("keeps retained workspace switching on a workspace route", () => {
-    activateNavigationWorkspaceSelection({
-      serverId: "server-1",
-      workspaceId: "workspace-a",
-    });
-
-    navigateToWorkspace("server-1", "workspace-b", {
-      currentPathname: "/h/server-1/workspace/workspace-a",
-    });
-
-    expect(dismissToMock).not.toHaveBeenCalled();
-    expect(getNavigationActiveWorkspaceSelection()).toEqual({
-      serverId: "server-1",
-      workspaceId: "workspace-b",
-    });
+    expect(navigateToWorkspaceMock).toHaveBeenCalledWith("server-1", "workspace-a", undefined);
   });
 });

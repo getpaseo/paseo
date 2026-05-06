@@ -24,8 +24,8 @@ import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
 import {
-  getLastNavigationWorkspaceRouteSelection,
-  getNavigationActiveWorkspaceSelection,
+  navigateToLastWorkspace,
+  useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 
 export function useKeyboardShortcuts({
@@ -55,6 +55,7 @@ export function useKeyboardShortcuts({
   });
   const activeServerId = useActiveServerId();
   const openProjectPickerAction = useOpenProjectPicker(activeServerId);
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
 
   useEffect(() => {
     if (!enabled) return;
@@ -96,6 +97,8 @@ export function useKeyboardShortcuts({
         case "navigate-workspace":
           navigateToWorkspace(action.serverId, action.workspaceId, { currentPathname: pathname });
           return true;
+        case "navigate-last-workspace":
+          return navigateToLastWorkspace();
         case "router-replace":
           router.replace(action.route as Parameters<typeof router.replace>[0]);
           return true;
@@ -194,8 +197,7 @@ export function useKeyboardShortcuts({
           pathname,
           isMobile,
           sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
-          navigationActiveWorkspace: getNavigationActiveWorkspaceSelection(),
-          lastNavigationWorkspaceRoute: getLastNavigationWorkspaceRouteSelection(),
+          navigationActiveWorkspace: activeWorkspaceSelection,
           commandCenterOpen: store.commandCenterOpen,
           shortcutsDialogOpen: store.shortcutsDialogOpen,
         },
@@ -275,6 +277,7 @@ export function useKeyboardShortcuts({
     bindings,
     cycleTheme,
     enabled,
+    activeWorkspaceSelection,
     isMobile,
     openProjectPickerAction,
     pathname,

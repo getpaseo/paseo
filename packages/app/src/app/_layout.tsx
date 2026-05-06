@@ -3,13 +3,7 @@ import { PortalProvider } from "@gorhom/portal";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
-import {
-  Stack,
-  useGlobalSearchParams,
-  useNavigationContainerRef,
-  usePathname,
-  useRouter,
-} from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import {
   createContext,
   type ReactNode,
@@ -76,10 +70,6 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import {
-  addBrowserActiveWorkspaceLocationListener,
-  syncNavigationActiveWorkspace,
-} from "@/stores/navigation-active-workspace-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
@@ -863,28 +853,6 @@ function RootStack() {
   );
 }
 
-function NavigationActiveWorkspaceObserver() {
-  const navigationRef = useNavigationContainerRef();
-
-  useEffect(() => {
-    syncNavigationActiveWorkspace(navigationRef);
-    const unsubscribeBrowserLocation = addBrowserActiveWorkspaceLocationListener();
-    const unsubscribeState = navigationRef.addListener("state", () => {
-      syncNavigationActiveWorkspace(navigationRef);
-    });
-    const unsubscribeReady = navigationRef.addListener("ready" as never, () => {
-      syncNavigationActiveWorkspace(navigationRef);
-    });
-    return () => {
-      unsubscribeBrowserLocation();
-      unsubscribeState();
-      unsubscribeReady();
-    };
-  }, [navigationRef]);
-
-  return null;
-}
-
 function AppShell() {
   return (
     <SidebarAnimationProvider>
@@ -927,7 +895,6 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={flexStyle}>
       <View style={layoutStyles.surfaceFill}>
-        <NavigationActiveWorkspaceObserver />
         <RootProviders>
           <RuntimeProviders>
             <AppShell />

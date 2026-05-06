@@ -1,16 +1,16 @@
 import { router } from "expo-router";
-import { getNavigationActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 
 export function redirectIfArchivingActiveWorkspace(input: {
   serverId: string;
   workspaceId: string;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
 }): boolean {
-  const activeWorkspaceSelection = getNavigationActiveWorkspaceSelection();
   if (
-    activeWorkspaceSelection?.serverId !== input.serverId ||
-    activeWorkspaceSelection.workspaceId !== input.workspaceId
+    input.activeWorkspaceSelection?.serverId !== input.serverId ||
+    input.activeWorkspaceSelection.workspaceId !== input.workspaceId
   ) {
     return false;
   }
