@@ -92,6 +92,18 @@ function parseImportLabels(labelFlags: string[] | undefined): Record<string, str
   return labels;
 }
 
+export function resolveImportCwd(explicitCwd: string | undefined, defaultCwd: string): string {
+  const cwd = explicitCwd?.trim() ?? defaultCwd;
+  if (!cwd.trim()) {
+    throw {
+      code: "INVALID_CWD",
+      message: "--cwd cannot be empty",
+      details: "Provide a working directory path or omit --cwd",
+    } satisfies CommandError;
+  }
+  return cwd;
+}
+
 async function connectToDaemonOrThrow(
   hostOption: string | undefined,
   host: string,
@@ -124,14 +136,7 @@ export async function runImportCommand(
   }
 
   const provider = parseImportProvider(options.provider);
-  const cwd = options.cwd?.trim();
-  if (options.cwd !== undefined && !cwd) {
-    throw {
-      code: "INVALID_CWD",
-      message: "--cwd cannot be empty",
-      details: "Provide a working directory path or omit --cwd",
-    } satisfies CommandError;
-  }
+  const cwd = resolveImportCwd(options.cwd, process.cwd());
 
   const labels = parseImportLabels(options.label);
   const client = await connectToDaemonOrThrow(options.host, host);
@@ -140,7 +145,7 @@ export async function runImportCommand(
     const agent = await client.importAgent({
       provider,
       sessionId,
-      ...(cwd ? { cwd } : {}),
+      cwd,
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
     });
 

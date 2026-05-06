@@ -35,6 +35,7 @@ const sitemapPages = [
   "/",
   "/changelog",
   "/claude-code",
+  "/cloud",
   "/codex",
   "/download",
   "/opencode",

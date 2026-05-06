@@ -14,6 +14,7 @@ import { Route as OpencodeRouteImport } from "./routes/opencode";
 import { Route as DownloadRouteImport } from "./routes/download";
 import { Route as DocsRouteImport } from "./routes/docs";
 import { Route as CodexRouteImport } from "./routes/codex";
+import { Route as CloudRouteImport } from "./routes/cloud";
 import { Route as ClaudeCodeRouteImport } from "./routes/claude-code";
 import { Route as ChangelogRouteImport } from "./routes/changelog";
 import { Route as BlogRouteImport } from "./routes/blog";
@@ -46,6 +47,11 @@ const DocsRoute = DocsRouteImport.update({
 const CodexRoute = CodexRouteImport.update({
   id: "/codex",
   path: "/codex",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const CloudRoute = CloudRouteImport.update({
+  id: "/cloud",
+  path: "/cloud",
   getParentRoute: () => rootRouteImport,
 } as any);
 const ClaudeCodeRoute = ClaudeCodeRouteImport.update({
@@ -94,6 +100,7 @@ export interface FileRoutesByFullPath {
   "/blog": typeof BlogRouteWithChildren;
   "/changelog": typeof ChangelogRoute;
   "/claude-code": typeof ClaudeCodeRoute;
+  "/cloud": typeof CloudRoute;
   "/codex": typeof CodexRoute;
   "/docs": typeof DocsRouteWithChildren;
   "/download": typeof DownloadRoute;
@@ -108,6 +115,7 @@ export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/changelog": typeof ChangelogRoute;
   "/claude-code": typeof ClaudeCodeRoute;
+  "/cloud": typeof CloudRoute;
   "/codex": typeof CodexRoute;
   "/download": typeof DownloadRoute;
   "/opencode": typeof OpencodeRoute;
@@ -123,6 +131,7 @@ export interface FileRoutesById {
   "/blog": typeof BlogRouteWithChildren;
   "/changelog": typeof ChangelogRoute;
   "/claude-code": typeof ClaudeCodeRoute;
+  "/cloud": typeof CloudRoute;
   "/codex": typeof CodexRoute;
   "/docs": typeof DocsRouteWithChildren;
   "/download": typeof DownloadRoute;
@@ -140,6 +149,7 @@ export interface FileRouteTypes {
     | "/blog"
     | "/changelog"
     | "/claude-code"
+    | "/cloud"
     | "/codex"
     | "/docs"
     | "/download"
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
     | "/"
     | "/changelog"
     | "/claude-code"
+    | "/cloud"
     | "/codex"
     | "/download"
     | "/opencode"
@@ -168,6 +179,7 @@ export interface FileRouteTypes {
     | "/blog"
     | "/changelog"
     | "/claude-code"
+    | "/cloud"
     | "/codex"
     | "/docs"
     | "/download"
@@ -184,6 +196,7 @@ export interface RootRouteChildren {
   BlogRoute: typeof BlogRouteWithChildren;
   ChangelogRoute: typeof ChangelogRoute;
   ClaudeCodeRoute: typeof ClaudeCodeRoute;
+  CloudRoute: typeof CloudRoute;
   CodexRoute: typeof CodexRoute;
   DocsRoute: typeof DocsRouteWithChildren;
   DownloadRoute: typeof DownloadRoute;
@@ -226,6 +239,13 @@ declare module "@tanstack/react-router" {
       path: "/codex";
       fullPath: "/codex";
       preLoaderRoute: typeof CodexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/cloud": {
+      id: "/cloud";
+      path: "/cloud";
+      fullPath: "/cloud";
+      preLoaderRoute: typeof CloudRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/claude-code": {
@@ -316,6 +336,7 @@ const rootRouteChildren: RootRouteChildren = {
   BlogRoute: BlogRouteWithChildren,
   ChangelogRoute: ChangelogRoute,
   ClaudeCodeRoute: ClaudeCodeRoute,
+  CloudRoute: CloudRoute,
   CodexRoute: CodexRoute,
   DocsRoute: DocsRouteWithChildren,
   DownloadRoute: DownloadRoute,
