@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { searchHomeDirectories, searchWorkspaceEntries } from "./directory-suggestions.js";
 
+const isWindows = process.platform === "win32";
+
 describe("searchHomeDirectories", () => {
   let tempRoot: string;
   let homeDir: string;
@@ -101,7 +103,7 @@ describe("searchHomeDirectories", () => {
     expect(earlierIndex).toBeLessThan(laterIndex);
   });
 
-  it("returns home-root suggestions when query is '~'", async () => {
+  it.skipIf(isWindows)("returns home-root suggestions when query is '~'", async () => {
     const results = await searchHomeDirectories({
       homeDir,
       query: "~",
@@ -262,5 +264,35 @@ describe("searchWorkspaceEntries", () => {
       kind: "file",
     });
     expect(results.some((entry) => entry.path.startsWith("node_modules/"))).toBe(false);
+  });
+
+  it("ignores common build/cache directories so large generated trees do not exhaust scan budget", async () => {
+    mkdirSync(path.join(workspaceDir, "packages", "app", "src"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "packages", "app", "src", "needle.ts"), "");
+
+    const heavyDirs = ["dist", "build", "target", "out", "coverage", "vendor", "__pycache__"];
+    for (const heavyDir of heavyDirs) {
+      for (let index = 0; index < 30; index += 1) {
+        mkdirSync(path.join(workspaceDir, heavyDir, `bundle-${index}`), { recursive: true });
+        writeFileSync(path.join(workspaceDir, heavyDir, `bundle-${index}`, "needle.ts"), "");
+      }
+    }
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "needle.ts",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+      maxEntriesScanned: 80,
+    });
+
+    expect(results).toContainEqual({
+      path: "packages/app/src/needle.ts",
+      kind: "file",
+    });
+    for (const heavyDir of heavyDirs) {
+      expect(results.some((entry) => entry.path.startsWith(`${heavyDir}/`))).toBe(false);
+    }
   });
 });

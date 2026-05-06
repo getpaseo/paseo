@@ -1,60 +1,100 @@
 import { z } from "zod";
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentProvider, AgentPermissionRequest } from "./agent-sdk-types.js";
+import type {
+  AgentPromptInput,
+  AgentPermissionRequest,
+  AgentRunOptions,
+} from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent, WaitForAgentResult } from "./agent-manager.js";
 import { curateAgentActivity } from "./activity-curator.js";
-import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
+import { selectItemsByProjectedLimit } from "./timeline-projection.js";
 import type { AgentStorage } from "./agent-storage.js";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import { serializeAgentSnapshot } from "../messages.js";
 import { StoredScheduleSchema } from "../schedule/types.js";
+import type { AgentProvider } from "./agent-sdk-types.js";
 
-export const AgentProviderEnum = z.enum(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => definition.id) as [
-    AgentProvider,
-    ...AgentProvider[],
-  ],
-);
+export const AgentProviderEnum = z.string();
 
 export const AgentStatusEnum = z.enum(["initializing", "idle", "running", "error", "closed"]);
 
-export const ProviderModeSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-});
+export const ProviderModeSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    icon: z.string().nullish(),
+    colorTier: z.string().nullish(),
+  })
+  .passthrough();
 
-export const ProviderSummarySchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  modes: z.array(ProviderModeSchema),
-});
+export const ProviderSummarySchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    enabled: z.boolean().optional().default(true),
+    modes: z.array(ProviderModeSchema).nullish(),
+  })
+  .passthrough();
 
-export const AgentSelectOptionSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
-});
+export const AgentSelectOptionSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    isDefault: z.boolean().nullish(),
+    metadata: z.record(z.string(), z.unknown()).nullish(),
+  })
+  .passthrough();
 
-export const AgentModelSchema = z.object({
-  provider: z.string(),
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
-  thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
-  defaultThinkingOptionId: z.string().optional(),
-});
+export const AgentModelSchema = z
+  .object({
+    provider: z.string(),
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    isDefault: z.boolean().nullish(),
+    metadata: z.record(z.string(), z.unknown()).nullish(),
+    thinkingOptions: z.array(AgentSelectOptionSchema).nullish(),
+    defaultThinkingOptionId: z.string().nullish(),
+  })
+  .passthrough();
 
 // 30 seconds - surface friendly message before SDK tool timeout (~60s)
 export const AGENT_WAIT_TIMEOUT_MS = 30000;
 
-export type StartAgentRunOptions = {
+export interface ResolvedProviderModel {
+  provider: AgentProvider;
+  model: string | undefined;
+}
+
+export function resolveRequiredProviderModel(
+  providerValue: string,
+): Required<ResolvedProviderModel> {
+  const providerInput = providerValue.trim();
+  const slashIndex = providerInput.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === providerInput.length - 1) {
+    throw new Error("provider must be provider/model, for example codex/gpt-5.4");
+  }
+
+  const provider = providerInput.slice(0, slashIndex).trim();
+  const model = providerInput.slice(slashIndex + 1).trim();
+  if (!provider || !model) {
+    throw new Error("provider must be provider/model, for example codex/gpt-5.4");
+  }
+
+  return {
+    provider: provider,
+    model,
+  };
+}
+
+export interface StartAgentRunOptions {
   replaceRunning?: boolean;
-};
+  runOptions?: AgentRunOptions;
+}
 
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.
@@ -108,7 +148,12 @@ export async function waitForAgentWithTimeout(
     if (error instanceof Error && error.message === "wait timeout") {
       const snapshot = agentManager.getAgent(agentId);
       const timeline = agentManager.getTimeline(agentId);
-      const recentActivity = curateAgentActivity(timeline.slice(-5));
+      const recent = selectItemsByProjectedLimit({
+        items: timeline,
+        direction: "tail",
+        limit: 5,
+      });
+      const recentActivity = curateAgentActivity(recent.items);
       const waitedSeconds = Math.round(AGENT_WAIT_TIMEOUT_MS / 1000);
       const message = `Awaiting the agent timed out after ${waitedSeconds}s. This does not mean the agent failed - call wait_for_agent again to continue waiting.\n\nRecent activity:\n${recentActivity}`;
       return {
@@ -129,11 +174,18 @@ export function startAgentRun(
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): void {
+): { outOfBand: boolean } {
+  // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
+  // in-flight turn — replaceAgentRun would interrupt the running turn. The
+  // intercept lives at this layer so it covers every prompt entrypoint.
+  if (agentManager.tryRunOutOfBand(agentId, prompt)) {
+    return { outOfBand: true };
+  }
   const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  const runOptions = options?.runOptions;
   const iterator = shouldReplace
-    ? agentManager.replaceAgentRun(agentId, prompt)
-    : agentManager.streamAgent(agentId, prompt);
+    ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
+    : agentManager.streamAgent(agentId, prompt, runOptions);
   void (async () => {
     try {
       for await (const _ of iterator) {
@@ -143,22 +195,112 @@ export function startAgentRun(
       logger.error({ err: error, agentId }, "Agent stream failed");
     }
   })();
+  return { outOfBand: false };
+}
+
+/**
+ * Clear the archived flag from a stored agent record.
+ * Shared across Session (app/WS), MCP, and CLI so every surface that acts on
+ * an archived agent unarchives it the same way.
+ */
+export async function unarchiveAgentState(
+  agentStorage: AgentStorage,
+  agentManager: AgentManager,
+  agentId: string,
+): Promise<boolean> {
+  const record = await agentStorage.get(agentId);
+  if (!record || !record.archivedAt) {
+    return false;
+  }
+  const updatedAt = new Date().toISOString();
+  await agentStorage.upsert({
+    ...record,
+    archivedAt: null,
+    updatedAt,
+  });
+  agentManager.notifyAgentState(agentId);
+  return true;
+}
+
+export interface SendPromptToAgentParams {
+  agentManager: AgentManager;
+  agentStorage: AgentStorage;
+  agentId: string;
+  /** Raw user text to record in the timeline. */
+  userMessageText: string;
+  /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
+  prompt: AgentPromptInput;
+  messageId?: string;
+  runOptions?: AgentRunOptions;
+  /** Optional mode to set on the agent before the run starts. */
+  sessionMode?: string;
+  logger: Logger;
+}
+
+/**
+ * Full send-prompt orchestration: unarchive → load → (optional mode change) →
+ * record user message → start run.
+ *
+ * Every surface that sends a prompt to an agent (Session/WS, MCP, CLI-through-MCP)
+ * MUST go through this so behavior can never drift between them.
+ */
+export async function sendPromptToAgent(
+  params: SendPromptToAgentParams,
+): Promise<{ outOfBand: boolean }> {
+  const {
+    agentManager,
+    agentStorage,
+    agentId,
+    userMessageText,
+    prompt,
+    messageId,
+    runOptions,
+    sessionMode,
+    logger,
+  } = params;
+
+  await unarchiveAgentState(agentStorage, agentManager, agentId);
+
+  await ensureAgentLoaded(agentId, {
+    agentManager,
+    agentStorage,
+    logger,
+  });
+
+  if (sessionMode) {
+    await agentManager.setAgentMode(agentId, sessionMode);
+  }
+
+  try {
+    agentManager.recordUserMessage(agentId, userMessageText, {
+      messageId,
+      emitState: false,
+    });
+  } catch (error) {
+    logger.error({ err: error, agentId }, "Failed to record user message");
+  }
+
+  return startAgentRun(agentManager, agentId, prompt, logger, {
+    replaceRunning: true,
+    runOptions,
+  });
 }
 
 interface SetupFinishNotificationParams {
   agentManager: AgentManager;
+  agentStorage: AgentStorage;
   childAgentId: string;
   callerAgentId: string;
   logger: Logger;
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
-  const { agentManager, childAgentId, callerAgentId, logger } = params;
+  const { agentManager, agentStorage, childAgentId, callerAgentId, logger } = params;
   let hasSeenRunning = false;
   let fired = false;
   let unsubscribe: (() => void) | null = null;
 
-  function notify(reason: "finished" | "errored" | "needs permission"): void {
+  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
     if (fired) {
       return;
     }
@@ -166,6 +308,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     unsubscribe?.();
 
     if (!agentManager.getAgent(callerAgentId)) {
+      return;
+    }
+
+    const callerRecord = await agentStorage.get(callerAgentId);
+    if (callerRecord?.archivedAt) {
       return;
     }
 
@@ -189,11 +336,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "error") {
-          notify("errored");
+          void notify("errored");
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          notify("finished");
+          void notify("finished");
           return;
         }
         if (event.agent.lifecycle === "closed") {
@@ -205,7 +352,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.event.type === "permission_requested") {
-        notify("needs permission");
+        void notify("needs permission");
       }
     },
     { agentId: childAgentId, replayState: false },
@@ -224,7 +371,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   if (childSnapshot.lifecycle === "running") {
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
-    notify("errored");
+    void notify("errored");
   }
 }
 

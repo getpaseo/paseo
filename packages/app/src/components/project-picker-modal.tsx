@@ -1,49 +1,79 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, TextInput, View, Platform } from "react-native";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
 import { Folder } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
-import { usePathname } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { shortenPath } from "@/utils/shorten-path";
-import { useSessionStore } from "@/stores/session-store";
-import { useHosts, useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
-import { parseServerIdFromPathname } from "@/utils/host-routes";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
+import { isNative } from "@/constants/platform";
+import { useActiveServerId } from "@/hooks/use-active-server-id";
+
+interface PathRowProps {
+  path: string;
+  active: boolean;
+  onSelect: (path: string) => void;
+}
+
+function PathRow({ path, active, onSelect }: PathRowProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    onSelect(path);
+  }, [onSelect, path]);
+  const pressableStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.row,
+      (Boolean(hovered) || pressed || active) && {
+        backgroundColor: theme.colors.surface1,
+      },
+    ],
+    [active, theme.colors.surface1],
+  );
+  const rowTextStyle = useMemo(
+    () => [styles.rowText, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  return (
+    <Pressable style={pressableStyle} onPress={handlePress}>
+      <View style={styles.rowContent}>
+        <View style={styles.iconSlot}>
+          <Folder size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+        </View>
+        <Text style={rowTextStyle} numberOfLines={1}>
+          {shortenPath(path)}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
 
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
-  const pathname = usePathname();
-  const daemons = useHosts();
+  const serverId = useActiveServerId();
 
   const open = useKeyboardShortcutsStore((s) => s.projectPickerOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setProjectPickerOpen);
 
-  const serverId = useMemo(() => {
-    const fromPath = parseServerIdFromPathname(pathname);
-    if (fromPath) return fromPath;
-    return daemons[0]?.serverId ?? null;
-  }, [pathname, daemons]);
-
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
-  const workspaces = useSessionStore((state) =>
-    serverId ? state.sessions[serverId]?.workspaces : undefined,
-  );
+  const recommendedPaths = useRecommendedProjectPaths(serverId);
 
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const openProject = useOpenProject(serverId);
-
-  const recommendedPaths = useMemo(() => {
-    if (!workspaces) return [];
-    return Array.from(workspaces.values()).map(
-      (workspace) => workspace.projectRootPath || workspace.id,
-    );
-  }, [workspaces]);
 
   const directorySuggestionsQuery = useQuery({
     queryKey: ["project-picker-directory-suggestions", serverId, query],
@@ -102,6 +132,11 @@ export function ProjectPickerModal() {
     void handleSelectPath(trimmed);
   }, [handleSelectPath, query]);
 
+  const handleChangeQuery = useCallback((text: string) => {
+    setQuery(text);
+    setActiveIndex(0);
+  }, []);
+
   // Reset state when opening/closing
   useEffect(() => {
     if (open) {
@@ -122,7 +157,7 @@ export function ProjectPickerModal() {
 
   // Keyboard navigation
   useEffect(() => {
-    if (!open || Platform.OS !== "web") return;
+    if (!open || isNative) return;
 
     function handler(event: KeyboardEvent) {
       const key = event.key;
@@ -137,7 +172,7 @@ export function ProjectPickerModal() {
       if (key === "Enter") {
         event.preventDefault();
         if (options.length > 0 && activeIndex < options.length) {
-          void handleSelectPath(options[activeIndex]!);
+          void handleSelectPath(options[activeIndex]);
         } else if (query.trim()) {
           handleSubmitCustom();
         }
@@ -161,6 +196,29 @@ export function ProjectPickerModal() {
     return () => window.removeEventListener("keydown", handler, true);
   }, [activeIndex, handleSelectPath, handleSubmitCustom, open, options, query, setOpen]);
 
+  const panelStyle = useMemo(
+    () => [
+      styles.panel,
+      {
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface0,
+      },
+    ],
+    [theme.colors.border, theme.colors.surface0],
+  );
+  const headerStyle = useMemo(
+    () => [styles.header, { borderBottomColor: theme.colors.border }],
+    [theme.colors.border],
+  );
+  const inputStyle = useMemo(
+    () => [styles.input, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const emptyTextStyle = useMemo(
+    () => [styles.emptyText, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+
   if (!serverId) return null;
 
   return (
@@ -168,26 +226,15 @@ export function ProjectPickerModal() {
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={handleClose} />
 
-        <View
-          style={[
-            styles.panel,
-            {
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surface0,
-            },
-          ]}
-        >
-          <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View style={panelStyle}>
+          <View style={headerStyle}>
             <TextInput
               ref={inputRef}
               value={query}
-              onChangeText={(text) => {
-                setQuery(text);
-                setActiveIndex(0);
-              }}
+              onChangeText={handleChangeQuery}
               placeholder="Type a directory path..."
               placeholderTextColor={theme.colors.foregroundMuted}
-              style={[styles.input, { color: theme.colors.foreground }]}
+              style={inputStyle}
               autoCapitalize="none"
               autoCorrect={false}
               autoFocus
@@ -201,49 +248,22 @@ export function ProjectPickerModal() {
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
-            {isSubmitting ? (
-              <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                Opening project...
-              </Text>
-            ) : options.length === 0 && !query.trim() ? (
-              <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                Start typing a path
-              </Text>
-            ) : (
+            {isSubmitting ? <Text style={emptyTextStyle}>Opening project...</Text> : null}
+            {!isSubmitting && options.length === 0 && !query.trim() ? (
+              <Text style={emptyTextStyle}>Start typing a path</Text>
+            ) : null}
+            {!isSubmitting && !(options.length === 0 && !query.trim()) ? (
               <>
-                {options.map((path, index) => {
-                  const active = index === activeIndex;
-                  return (
-                    <Pressable
-                      key={path}
-                      style={({ hovered, pressed }) => [
-                        styles.row,
-                        (hovered || pressed || active) && {
-                          backgroundColor: theme.colors.surface1,
-                        },
-                      ]}
-                      onPress={() => void handleSelectPath(path)}
-                    >
-                      <View style={styles.rowContent}>
-                        <View style={styles.iconSlot}>
-                          <Folder
-                            size={16}
-                            strokeWidth={2.2}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        </View>
-                        <Text
-                          style={[styles.rowText, { color: theme.colors.foreground }]}
-                          numberOfLines={1}
-                        >
-                          {shortenPath(path)}
-                        </Text>
-                      </View>
-                    </Pressable>
-                  );
-                })}
+                {options.map((path, index) => (
+                  <PathRow
+                    key={path}
+                    path={path}
+                    active={index === activeIndex}
+                    onSelect={handleSelectPath}
+                  />
+                ))}
               </>
-            )}
+            ) : null}
           </ScrollView>
         </View>
       </View>
@@ -280,7 +300,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
-  } as any,
+  } as object,
   results: {
     flexGrow: 0,
   },

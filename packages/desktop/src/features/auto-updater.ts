@@ -1,24 +1,40 @@
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { app } from "electron";
+import { UUID } from "builder-util-runtime";
 import { autoUpdater, type UpdateInfo } from "electron-updater";
+import { z } from "zod";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type AppUpdateCheckResult = {
+export interface AppUpdateCheckResult {
   hasUpdate: boolean;
   readyToInstall: boolean;
   currentVersion: string;
   latestVersion: string;
   body: string | null;
   date: string | null;
-};
+}
 
-export type AppUpdateInstallResult = {
+export interface AppUpdateInstallResult {
   installed: boolean;
   version: string | null;
   message: string;
-};
+}
+
+export type AppReleaseChannel = "stable" | "beta";
+
+export const rolloutManifestSchema = z.object({
+  rolloutHours: z
+    .union([z.number(), z.string().transform(Number)])
+    .pipe(z.number().finite().nonnegative())
+    .optional()
+    .catch(undefined),
+  releaseDate: z.string().optional().catch(undefined),
+});
 
 // ---------------------------------------------------------------------------
 // State
@@ -28,18 +44,105 @@ let cachedUpdateInfo: UpdateInfo | null = null;
 let downloadedUpdateVersion: string | null = null;
 let downloading = false;
 let autoUpdaterConfigured = false;
+let configuredReleaseChannel: AppReleaseChannel | null = null;
+let cachedStagingUserIdPromise: Promise<string> | null = null;
+
+export function shouldAdmitToRollout(args: {
+  channel: AppReleaseChannel;
+  rolloutHours: number | undefined;
+  releaseDate: string | undefined;
+  now: number;
+  bucket: number;
+}): boolean {
+  if (args.channel !== "stable") return true;
+  if (args.rolloutHours == null) return true;
+  if (args.rolloutHours === 0) return true;
+  if (!args.releaseDate) return true;
+
+  const releaseTime = new Date(args.releaseDate).getTime();
+  if (Number.isNaN(releaseTime)) return true;
+
+  const ageHours = (args.now - releaseTime) / 3_600_000;
+  if (ageHours < 0) return false;
+
+  const pct = Math.min(100, (ageHours / args.rolloutHours) * 100);
+  return args.bucket * 100 < pct;
+}
+
+export function bucketFromStagingUserId(stagingUserId: string): number {
+  return UUID.parse(stagingUserId).readUInt32BE(12) / 0x100000000;
+}
+
+export async function resolveStagingUserId(filePath: string): Promise<string> {
+  try {
+    const id = (await readFile(filePath, "utf8")).trim();
+    if (UUID.check(id)) {
+      return id;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`[auto-updater] Couldn't read staging user ID, creating a blank one: ${error}`);
+    }
+  }
+
+  const id = UUID.v5(randomBytes(4096), UUID.OID);
+
+  try {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, id);
+  } catch (error) {
+    console.warn(`[auto-updater] Couldn't write out staging user ID: ${error}`);
+  }
+
+  return id;
+}
+
+export function getStagingUserId(): Promise<string> {
+  if (cachedStagingUserIdPromise == null) {
+    cachedStagingUserIdPromise = resolveStagingUserId(
+      path.join(app.getPath("userData"), ".updaterId"),
+    );
+  }
+  return cachedStagingUserIdPromise;
+}
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-function configureAutoUpdater(): void {
+function configureAutoUpdater(releaseChannel: AppReleaseChannel): void {
   // Download updates in the background and only prompt once they are ready to install.
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   // Suppress built-in dialogs; the renderer handles UI.
   autoUpdater.autoRunAppAfterInstall = true;
+  autoUpdater.allowPrerelease = releaseChannel === "beta";
+  autoUpdater.channel = releaseChannel === "beta" ? "beta" : "latest";
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.isUserWithinRollout = async (info) => {
+    try {
+      const parsed = rolloutManifestSchema.parse(info);
+      const stagingUserId = await getStagingUserId();
+
+      return shouldAdmitToRollout({
+        channel: releaseChannel,
+        rolloutHours: parsed.rolloutHours,
+        releaseDate: parsed.releaseDate,
+        now: Date.now(),
+        bucket: bucketFromStagingUserId(stagingUserId),
+      });
+    } catch {
+      return true;
+    }
+  };
+
+  if (configuredReleaseChannel !== releaseChannel) {
+    cachedUpdateInfo = null;
+    downloadedUpdateVersion = null;
+    downloading = false;
+    configuredReleaseChannel = releaseChannel;
+  }
 
   if (autoUpdaterConfigured) {
     return;
@@ -109,7 +212,13 @@ function scheduleQuitAndInstall(onBeforeQuit?: () => Promise<void>): void {
 // Public API
 // ---------------------------------------------------------------------------
 
-export async function checkForAppUpdate(currentVersion: string): Promise<AppUpdateCheckResult> {
+export async function checkForAppUpdate({
+  currentVersion,
+  releaseChannel,
+}: {
+  currentVersion: string;
+  releaseChannel: AppReleaseChannel;
+}): Promise<AppUpdateCheckResult> {
   if (!app.isPackaged) {
     return buildCheckResult({
       currentVersion,
@@ -118,7 +227,7 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
     });
   }
 
-  configureAutoUpdater();
+  configureAutoUpdater(releaseChannel);
 
   const cachedVersion = cachedUpdateInfo?.version ?? null;
   if (cachedVersion && cachedVersion !== currentVersion) {
@@ -176,7 +285,13 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
 }
 
 export async function downloadAndInstallUpdate(
-  currentVersion: string,
+  {
+    currentVersion,
+    releaseChannel,
+  }: {
+    currentVersion: string;
+    releaseChannel: AppReleaseChannel;
+  },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
   if (!app.isPackaged) {
@@ -195,7 +310,7 @@ export async function downloadAndInstallUpdate(
     };
   }
 
-  configureAutoUpdater();
+  configureAutoUpdater(releaseChannel);
 
   const readyVersion = cachedUpdateInfo.version;
   if (isReadyToInstallVersion(readyVersion)) {

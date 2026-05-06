@@ -51,7 +51,7 @@ export function resolveKeyboardFocusScope(input: {
     candidates.some((element) =>
       Boolean(
         element.closest("[data-testid='command-center-panel']") ||
-          element.closest("[data-testid='command-center-input']"),
+        element.closest("[data-testid='command-center-input']"),
       ),
     )
   ) {

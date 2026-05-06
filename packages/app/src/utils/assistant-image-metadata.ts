@@ -1,11 +1,17 @@
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
+import { createImageSourceCacheKey } from "@/attachments/utils";
 
 export interface AssistantImageMetadata {
   width: number;
   height: number;
   aspectRatio: number;
 }
+
+export type AssistantImageLoadState =
+  | { status: "loading" }
+  | { status: "ready"; aspectRatio: number }
+  | { status: "error" };
 
 const assistantImageMetadataCache = new Map<string, AssistantImageMetadata>();
 const assistantImageParseCache = new Map<string, { sources: string[]; hasNonImageText: boolean }>();
@@ -48,8 +54,25 @@ function normalizeAssistantImageSourceToken(value: string): string | null {
   return source || null;
 }
 
+function parseAssistantImageMarkdown(markdown: string): {
+  sources: string[];
+  hasNonImageText: boolean;
+} {
+  const sources: string[] = [];
+  for (const match of markdown.matchAll(MARKDOWN_IMAGE_PATTERN)) {
+    const normalized = normalizeAssistantImageSourceToken(match[1] ?? "");
+    if (normalized) {
+      sources.push(normalized);
+    }
+  }
+  return {
+    sources,
+    hasNonImageText: markdown.replace(MARKDOWN_IMAGE_PATTERN, "").trim().length > 0,
+  };
+}
+
 function createSourceAliasKey(source: string): string {
-  return `source:${source}`;
+  return `source:${createImageSourceCacheKey(source)}`;
 }
 
 function createResolutionKey(input: {
@@ -65,7 +88,7 @@ function createResolutionKey(input: {
     return null;
   }
   if (resolution.kind === "direct") {
-    return `direct:${resolution.uri}`;
+    return `direct:${createImageSourceCacheKey(resolution.uri)}`;
   }
   return `file:${input.serverId ?? "unknown-server"}:${resolution.cwd}:${resolution.path}`;
 }
@@ -108,6 +131,15 @@ export function getAssistantImageMetadata(input: {
   return null;
 }
 
+export function getAssistantImageLoadStateFromMetadata(
+  metadata: AssistantImageMetadata | null,
+): AssistantImageLoadState {
+  if (!metadata) {
+    return { status: "loading" };
+  }
+  return { status: "ready", aspectRatio: metadata.aspectRatio };
+}
+
 export function setAssistantImageMetadata(
   input: {
     source: string;
@@ -140,7 +172,8 @@ export function setAssistantImageMetadata(
 }
 
 export function extractAssistantImageSources(markdown: string): string[] {
-  const cachedParse = assistantImageParseCache.get(markdown);
+  const shouldCacheParse = !/data:image\//i.test(markdown);
+  const cachedParse = shouldCacheParse ? assistantImageParseCache.get(markdown) : undefined;
   if (cachedParse) {
     touchCacheEntry(
       assistantImageParseCache,
@@ -151,32 +184,15 @@ export function extractAssistantImageSources(markdown: string): string[] {
     return cachedParse.sources;
   }
 
-  const sources: string[] = [];
-  for (const match of markdown.matchAll(MARKDOWN_IMAGE_PATTERN)) {
-    const normalized = normalizeAssistantImageSourceToken(match[1] ?? "");
-    if (normalized) {
-      sources.push(normalized);
-    }
+  const parsed = parseAssistantImageMarkdown(markdown);
+  if (shouldCacheParse) {
+    touchCacheEntry(assistantImageParseCache, markdown, parsed, ASSISTANT_IMAGE_PARSE_CACHE_LIMIT);
   }
-  const hasNonImageText = markdown.replace(MARKDOWN_IMAGE_PATTERN, "").trim().length > 0;
-  touchCacheEntry(
-    assistantImageParseCache,
-    markdown,
-    { sources, hasNonImageText },
-    ASSISTANT_IMAGE_PARSE_CACHE_LIMIT,
-  );
-  return sources;
+  return parsed.sources;
 }
 
 export function estimateAssistantMessageHeightFromCache(markdown: string): number | null {
-  const cachedParse = assistantImageParseCache.get(markdown);
-  const parsed =
-    cachedParse ??
-    (() => {
-      const sources = extractAssistantImageSources(markdown);
-      const nextParsed = assistantImageParseCache.get(markdown);
-      return nextParsed ?? { sources, hasNonImageText: true };
-    })();
+  const parsed = assistantImageParseCache.get(markdown) ?? parseAssistantImageMarkdown(markdown);
   if (parsed.sources.length === 0) {
     return null;
   }

@@ -88,6 +88,21 @@ describe("opencode tool-call mapper", () => {
       query: "opencode mapper",
       toolName: "web_search",
     });
+
+    const globItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "glob",
+        callId: "opencode-running-glob",
+        status: "running",
+        input: { pattern: "**/*.md" },
+        output: null,
+      }),
+    );
+    expect(globItem.detail).toEqual({
+      type: "search",
+      query: "**/*.md",
+      toolName: "glob",
+    });
   });
 
   it("maps completed read calls", () => {
@@ -232,6 +247,106 @@ describe("opencode tool-call mapper", () => {
       type: "unknown",
       input: { foo: "bar" },
       output: { ok: true },
+    });
+  });
+
+  it("maps running task calls with subagent input to sub_agent detail", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "task",
+        callId: "opencode-task-running",
+        status: "running",
+        input: {
+          subagent_type: "explore",
+          description: "Explore agent-tools codebase",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.status).toBe("running");
+    expect(item.error).toBeNull();
+    expect(item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore agent-tools codebase",
+      log: "",
+      actions: [],
+    });
+  });
+
+  it("maps completed task calls with final output log to sub_agent detail", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "task",
+        callId: "opencode-task-completed",
+        status: "completed",
+        input: {
+          subagent_type: "explore",
+          description: "Explore agent-tools codebase",
+        },
+        output: { result: "Found the CLI entrypoint and provider registry." },
+      }),
+    );
+
+    expect(item.status).toBe("completed");
+    expect(item.error).toBeNull();
+    expect(item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore agent-tools codebase",
+      log: "Found the CLI entrypoint and provider registry.",
+      actions: [],
+    });
+  });
+
+  it("extracts child session ids from completed task output", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "task",
+        callId: "opencode-task-completed-with-id",
+        status: "completed",
+        input: {
+          subagent_type: "explore",
+          description: "Explore current directory",
+        },
+        output: "task_id: ses_2268db431ffe299vL1bbot8R7Z\n\n<task_result>done</task_result>",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore current directory",
+      childSessionId: "ses_2268db431ffe299vL1bbot8R7Z",
+      log: "task_id: ses_2268db431ffe299vL1bbot8R7Z\n\n<task_result>done</task_result>",
+      actions: [],
+    });
+  });
+
+  it("maps aborted task calls with preserved error log to sub_agent detail", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "task",
+        callId: "opencode-task-aborted",
+        status: "aborted",
+        input: {
+          subagent_type: "explore",
+          description: "Explore agent-tools codebase",
+        },
+        output: null,
+        error: "Tool execution aborted",
+      }),
+    );
+
+    expect(item.status).toBe("failed");
+    expect(item.error).toBe("Tool execution aborted");
+    expect(item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore agent-tools codebase",
+      log: "Tool execution aborted",
+      actions: [],
     });
   });
 

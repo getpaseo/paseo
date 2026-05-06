@@ -8,7 +8,7 @@ appId: sh.paseo
 - eraseText
 - inputText: ${PAIRING_OFFER_URL}
 - tapOn:
-    point: "75%,36%"
+    id: "pair-link-submit"
 
 - extendedWaitUntil:
     visible: "New agent"

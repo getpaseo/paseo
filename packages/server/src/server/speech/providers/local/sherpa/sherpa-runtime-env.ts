@@ -3,11 +3,11 @@ import path from "node:path";
 
 export type SherpaLoaderEnvKey = "LD_LIBRARY_PATH" | "DYLD_LIBRARY_PATH" | "PATH";
 
-export type SherpaLoaderEnvResolution = {
+export interface SherpaLoaderEnvResolution {
   key: SherpaLoaderEnvKey;
   libDir: string;
   packageName: string;
-};
+}
 
 export function sherpaPlatformArch(
   platform: NodeJS.Platform = process.platform,

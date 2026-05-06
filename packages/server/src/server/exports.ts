@@ -4,14 +4,39 @@ export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolvePaseoHome } from "./paseo-home.js";
 export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
-export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+export {
+  loadPersistedConfig,
+  savePersistedConfig,
+  type PersistedConfig,
+} from "./persisted-config.js";
+export { hashDaemonPassword, isBearerTokenValid } from "./auth.js";
 export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";
+export {
+  ConnectionOfferSchema,
+  decodeOfferFragmentPayload,
+  parseConnectionOfferFromUrl,
+  type ConnectionOffer,
+} from "../shared/connection-offer.js";
+export { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 export {
   DaemonClient,
   type DaemonClientConfig,
   type ConnectionState,
   type DaemonEvent,
 } from "../client/daemon-client.js";
+export type { WebSocketFactory, WebSocketLike } from "../client/daemon-client-transport-types.js";
+export {
+  buildDaemonWebSocketUrl,
+  deriveLabelFromEndpoint,
+  normalizeHostPort,
+  parseConnectionUri,
+  shouldUseTlsForDefaultHostedRelay,
+} from "../shared/daemon-endpoints.js";
+export {
+  DirectTcpHostConnectionSchema,
+  type DirectTcpHostConnection,
+  type NormalizedDirectTcpHostConnection,
+} from "../shared/host-connection-schema.js";
 export {
   ensureLocalSpeechModels,
   listLocalSpeechModels,
@@ -30,18 +55,17 @@ export {
 } from "./speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 // Provider binary resolution
-export { applyProviderEnv } from "./agent/provider-launch-config.js";
 export {
-  findExecutable,
-  findExecutableSync,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../utils/executable.js";
-export { spawnProcess } from "../utils/spawn.js";
+  type ProviderOverride,
+  type ProviderProfileModel,
+} from "./agent/provider-launch-config.js";
+export { findExecutable } from "../utils/executable.js";
+export { execCommand, spawnProcess } from "../utils/spawn.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {
   AGENT_PROVIDER_DEFINITIONS,
+  BUILTIN_PROVIDER_IDS,
   type AgentProviderDefinition,
 } from "./agent/provider-manifest.js";
 
@@ -52,6 +76,7 @@ export type {
   AgentCapabilityFlags,
   AgentPermissionRequest,
   AgentTimelineItem,
+  ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 
 // Agent activity curator for CLI logs

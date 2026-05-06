@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -17,6 +18,8 @@ interface ScreenHeaderProps {
   leftStyle?: StyleProp<ViewStyle>;
   rightStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
+  windowControlsPaddingRole?: "header" | "detailHeader";
+  onRowLayout?: (event: LayoutChangeEvent) => void;
 }
 
 /**
@@ -29,31 +32,42 @@ export function ScreenHeader({
   leftStyle,
   rightStyle,
   borderless,
+  windowControlsPaddingRole = "header",
+  onRowLayout,
 }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
-  const padding = useWindowControlsPadding("header");
+  const padding = useWindowControlsPadding(windowControlsPaddingRole);
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = theme.spacing[2];
 
+  const innerStyle = useMemo(
+    () => [styles.inner, { paddingTop: insets.top + topPadding }],
+    [insets.top, topPadding],
+  );
+  const rowStyle = useMemo(
+    () => [
+      styles.row,
+      {
+        paddingLeft: baseHorizontalPadding + padding.left,
+        paddingRight: baseHorizontalPadding + padding.right,
+      },
+      borderless && styles.borderless,
+    ],
+    [baseHorizontalPadding, padding.left, padding.right, borderless],
+  );
+  const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
+  const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
+
   return (
     <View style={styles.header}>
-      <View style={[styles.inner, { paddingTop: insets.top + topPadding }]}>
-        <View
-          style={[
-            styles.row,
-            {
-              paddingLeft: baseHorizontalPadding + padding.left,
-              paddingRight: baseHorizontalPadding + padding.right,
-            },
-            borderless && styles.borderless,
-          ]}
-        >
+      <View style={innerStyle}>
+        <View onLayout={onRowLayout} style={rowStyle}>
           <TitlebarDragRegion />
-          <View style={[styles.left, leftStyle]}>{left}</View>
-          <View style={[styles.right, rightStyle]}>{right}</View>
+          <View style={leftCombinedStyle}>{left}</View>
+          <View style={rightCombinedStyle}>{right}</View>
         </View>
       </View>
     </View>
@@ -84,11 +98,13 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    minWidth: 0,
   },
   right: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    flexShrink: 0,
   },
   borderless: {
     borderBottomColor: "transparent",

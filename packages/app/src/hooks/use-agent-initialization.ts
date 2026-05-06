@@ -1,5 +1,4 @@
 import { useCallback } from "react";
-import { Platform } from "react-native";
 import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClient } from "@server/client/daemon-client";
 import {
@@ -9,20 +8,9 @@ import {
   getInitKey,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
-import { deriveInitialTimelineRequest } from "@/contexts/session-timeline-bootstrap-policy";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 
-const INIT_TIMEOUT_MS = 5 * 60_000;
-const NATIVE_INITIAL_TIMELINE_LIMIT = 200;
-const UNBOUNDED_TIMELINE_LIMIT = 0;
-
-function resolveInitialTimelineLimit(): number {
-  return Platform.OS === "web" ? UNBOUNDED_TIMELINE_LIMIT : NATIVE_INITIAL_TIMELINE_LIMIT;
-}
-
-export const __private__ = {
-  deriveInitialTimelineRequest,
-  resolveInitialTimelineLimit,
-};
+const INIT_TIMEOUT_MS = 30_000;
 
 export function useAgentInitialization({
   serverId,
@@ -56,17 +44,23 @@ export function useAgentInitialization({
 
       const session = useSessionStore.getState().sessions[serverId];
       const cursor = session?.agentTimelineCursor.get(agentId);
-      const initialTimelineLimit = resolveInitialTimelineLimit();
       const hasAuthoritativeHistory =
         session?.agentAuthoritativeHistoryApplied.get(agentId) === true;
-      const timelineRequest = deriveInitialTimelineRequest({
-        cursor: cursor ? { epoch: cursor.epoch, seq: cursor.endSeq } : null,
-        hasAuthoritativeHistory,
-        initialTimelineLimit,
-      });
-      const initRequestDirection = timelineRequest.direction === "after" ? "after" : "tail";
+      const timelineRequest =
+        hasAuthoritativeHistory && cursor
+          ? {
+              direction: "after" as const,
+              cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
+              limit: TIMELINE_FETCH_PAGE_SIZE,
+              projection: "canonical" as const,
+            }
+          : {
+              direction: "tail" as const,
+              limit: TIMELINE_FETCH_PAGE_SIZE,
+              projection: "canonical" as const,
+            };
 
-      const deferred = createInitDeferred(key, initRequestDirection);
+      const deferred = createInitDeferred(key, timelineRequest.direction);
       const timeoutId = setTimeout(() => {
         setAgentInitializing(agentId, false);
         rejectInitDeferred(
@@ -103,10 +97,9 @@ export function useAgentInitialization({
 
       try {
         await client.refreshAgent(agentId);
-        const initialTimelineLimit = resolveInitialTimelineLimit();
         await client.fetchAgentTimeline(agentId, {
           direction: "tail",
-          limit: initialTimelineLimit,
+          limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "canonical",
         });
       } catch (error) {

@@ -1,13 +1,14 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { FolderOpen } from "lucide-react-native";
+import { FolderOpen, Smartphone } from "lucide-react-native";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useHasWorkspaces } from "@/stores/session-store-hooks";
 import {
   useIsCompactFormFactor,
   HEADER_INNER_HEIGHT,
@@ -15,20 +16,31 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 
 export function OpenProjectScreen({ serverId }: { serverId: string }) {
-  const openAgentList = usePanelStore((s) => s.openAgentList);
+  const openDesktopAgentList = usePanelStore((s) => s.openDesktopAgentList);
   const openProjectPicker = useOpenProjectPicker(serverId);
   const hasHydrated = useSessionStore((s) => s.sessions[serverId]?.hasHydratedWorkspaces ?? false);
-  const hasProjects = useSessionStore((s) => (s.sessions[serverId]?.workspaces?.size ?? 0) > 0);
+  const hasProjects = useHasWorkspaces(serverId);
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+  const [isPairDeviceOpen, setIsPairDeviceOpen] = useState(false);
 
   const isCompactLayout = useIsCompactFormFactor();
 
   useEffect(() => {
     if (!isCompactLayout) {
-      openAgentList();
+      openDesktopAgentList();
     }
-  }, [isCompactLayout, openAgentList]);
+  }, [isCompactLayout, openDesktopAgentList]);
+
+  const handleOpenPicker = useCallback(() => {
+    void openProjectPicker();
+  }, [openProjectPicker]);
+
+  const handleOpenPairDevice = useCallback(() => setIsPairDeviceOpen(true), []);
+  const handleClosePairDevice = useCallback(() => setIsPairDeviceOpen(false), []);
 
   return (
     <View style={styles.container}>
@@ -50,13 +62,28 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
           <Button
             variant="default"
             leftIcon={FolderOpen}
-            onPress={() => void openProjectPicker()}
+            onPress={handleOpenPicker}
             testID="open-project-submit"
           >
             Add a project
           </Button>
+          {isLocalDaemon ? (
+            <Button
+              variant="outline"
+              leftIcon={Smartphone}
+              onPress={handleOpenPairDevice}
+              testID="open-project-pair-device"
+            >
+              Pair device
+            </Button>
+          ) : null}
         </View>
       </View>
+      <PairDeviceModal
+        visible={isPairDeviceOpen}
+        onClose={handleClosePairDevice}
+        testID="open-project-pair-device-modal"
+      />
     </View>
   );
 }
@@ -88,6 +115,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   cta: {
     marginTop: theme.spacing[12],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   heading: {
     color: theme.colors.foreground,

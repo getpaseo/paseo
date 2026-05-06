@@ -44,7 +44,12 @@ describe("workspace bulk close helpers", () => {
     expect(groups).toEqual({
       agentTabs: [{ tabId: "agent_a1", agentId: "a1" }],
       terminalTabs: [{ tabId: "terminal_t1", terminalId: "t1" }],
-      otherTabs: [{ tabId: "file_/repo/README.md" }],
+      otherTabs: [
+        {
+          tabId: "file_/repo/README.md",
+          target: { kind: "file", path: "/repo/README.md" },
+        },
+      ],
     });
   });
 
@@ -119,7 +124,7 @@ describe("workspace bulk close helpers", () => {
       { tabId: "agent_a1", target: { kind: "agent", agentId: "a1" } },
       { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
       { tabId: "terminal_t2", target: { kind: "terminal", terminalId: "t2" } },
-      { tabId: "file_/repo/README.md" },
+      { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
     ]);
   });
 
@@ -158,7 +163,7 @@ describe("workspace bulk close helpers", () => {
     expect(cleanupCalls).toEqual([
       { tabId: "agent_a1", target: { kind: "agent", agentId: "a1" } },
       { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
-      { tabId: "file_/repo/README.md" },
+      { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
     ]);
   });
 });

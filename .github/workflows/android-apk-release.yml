@@ -51,7 +51,7 @@ jobs:
             release create "$RELEASE_TAG"
             --repo "${{ github.repository }}"
             --title "Paseo $RELEASE_TAG"
-            --generate-notes
+            --notes ""
           )
 
           if [[ "$IS_PRERELEASE" == "true" ]]; then

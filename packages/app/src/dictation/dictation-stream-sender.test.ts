@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
+import type { DaemonClient } from "@server/client/daemon-client";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
 
-type FakeFinish = { dictationId: string; finalSeq: number };
-type FakeStart = { dictationId: string; format: string };
-type FakeChunk = { dictationId: string; seq: number; audio: string; format: string };
+interface FakeFinish {
+  dictationId: string;
+  finalSeq: number;
+}
+interface FakeStart {
+  dictationId: string;
+  format: string;
+}
+interface FakeChunk {
+  dictationId: string;
+  seq: number;
+  audio: string;
+  format: string;
+}
 
 class FakeDaemonClient {
   isConnected = true;
@@ -44,7 +56,7 @@ describe("DictationStreamSender", () => {
     const client = new FakeDaemonClient();
     const ids = ["d1"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
@@ -65,7 +77,7 @@ describe("DictationStreamSender", () => {
     const client = new FakeDaemonClient();
     const ids = ["d1", "d2"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
@@ -88,7 +100,7 @@ describe("DictationStreamSender", () => {
     const client = new FakeDaemonClient();
     const ids = ["d1"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
@@ -109,7 +121,7 @@ describe("DictationStreamSender", () => {
     client.isConnected = false;
     const ids = ["d1"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });

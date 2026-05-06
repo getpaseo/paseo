@@ -1,47 +1,82 @@
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
 import { resolveLogConfig } from "./logger.js";
+import { loadConfig } from "./config.js";
 import type { PersistedConfig } from "./persisted-config.js";
 
+const repoRoot = path.resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
+const loggerModuleUrl = new URL("./logger.ts", import.meta.url).href;
+
+async function runLoggerFixture(source: string): Promise<{ stdout: string; stderr: string }> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "paseo-logger-fixture-"));
+  const runnerPath = path.join(tempDir, "runner.mjs");
+  await writeFile(
+    runnerPath,
+    `
+      import { createRootLogger } from ${JSON.stringify(loggerModuleUrl)};
+
+      ${source}
+    `,
+  );
+
+  const child = spawn(process.execPath, ["--import", "tsx", runnerPath], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  expect(code, stderr).toBe(0);
+  return { stdout, stderr };
+}
+
 describe("resolveLogConfig", () => {
-  const originalEnv = process.env;
   const paseoHome = "/tmp/paseo-logger-tests";
 
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-    delete process.env.PASEO_LOG;
-    delete process.env.PASEO_LOG_FORMAT;
-    delete process.env.PASEO_LOG_CONSOLE_LEVEL;
-    delete process.env.PASEO_LOG_FILE_LEVEL;
-    delete process.env.PASEO_LOG_FILE_PATH;
-    delete process.env.PASEO_LOG_FILE_ROTATE_SIZE;
-    delete process.env.PASEO_LOG_FILE_ROTATE_COUNT;
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
-  it("returns dual-sink defaults when no config or env vars", () => {
+  it("defaults to stdout JSON without file logging", () => {
     const result = resolveLogConfig(undefined, { paseoHome });
+
     expect(result).toEqual({
-      level: "debug",
+      level: "info",
       console: {
         level: "info",
-        format: "pretty",
-      },
-      file: {
-        level: "debug",
-        path: path.join(paseoHome, "daemon.log"),
-        rotate: {
-          maxSize: "10m",
-          maxFiles: 2,
-        },
+        format: "json",
       },
     });
   });
 
-  it("uses config.json destination-specific values over defaults", () => {
+  it("keeps legacy level and format as stdout configuration", () => {
+    const result = resolveLogConfig({ level: "warn", format: "pretty" }, { paseoHome });
+
+    expect(result).toEqual({
+      level: "warn",
+      console: {
+        level: "warn",
+        format: "pretty",
+      },
+    });
+  });
+
+  it("enables file output only when log.file is present", () => {
     const config: PersistedConfig = {
       log: {
         console: {
@@ -50,7 +85,7 @@ describe("resolveLogConfig", () => {
         },
         file: {
           level: "debug",
-          path: "/tmp/custom.log",
+          path: "logs/programmatic.log",
           rotate: {
             maxSize: "25m",
             maxFiles: 5,
@@ -58,9 +93,8 @@ describe("resolveLogConfig", () => {
         },
       },
     };
-    const result = resolveLogConfig(config, { paseoHome });
 
-    expect(result).toEqual({
+    expect(resolveLogConfig(config, { paseoHome })).toEqual({
       level: "debug",
       console: {
         level: "warn",
@@ -68,166 +102,98 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "debug",
-        path: "/tmp/custom.log",
-        rotate: {
-          maxSize: "25m",
-          maxFiles: 5,
-        },
+        path: path.join(paseoHome, "logs", "programmatic.log"),
       },
     });
   });
+});
 
-  it("uses env vars over config.json values", () => {
-    process.env.PASEO_LOG_CONSOLE_LEVEL = "error";
-    process.env.PASEO_LOG_FILE_LEVEL = "fatal";
-    process.env.PASEO_LOG_FORMAT = "json";
-    process.env.PASEO_LOG_FILE_PATH = "logs/daemon-custom.log";
-    process.env.PASEO_LOG_FILE_ROTATE_SIZE = "15m";
-    process.env.PASEO_LOG_FILE_ROTATE_COUNT = "4";
+describe("loadConfig logger config", () => {
+  it("applies log format env at the config boundary", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-logger-config-"));
+    const paseoHome = path.join(root, ".paseo");
+    await mkdir(paseoHome, { recursive: true });
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ version: 1, log: { format: "json" } }),
+    );
 
-    const config: PersistedConfig = {
-      log: {
-        console: {
-          level: "info",
-          format: "pretty",
-        },
-        file: {
-          level: "trace",
-          path: "/tmp/will-be-overridden.log",
-          rotate: {
-            maxSize: "30m",
-            maxFiles: 8,
-          },
-        },
-      },
-    };
-
-    const result = resolveLogConfig(config, { paseoHome });
-    expect(result).toEqual({
-      level: "error",
-      console: {
-        level: "error",
-        format: "json",
-      },
-      file: {
-        level: "fatal",
-        path: path.resolve(paseoHome, "logs/daemon-custom.log"),
-        rotate: {
-          maxSize: "15m",
-          maxFiles: 4,
-        },
-      },
+    const config = loadConfig(paseoHome, {
+      env: { PASEO_LOG_FORMAT: "pretty" },
     });
+
+    expect(config.log?.format).toBe("pretty");
+    expect(resolveLogConfig(config, { paseoHome }).console.format).toBe("pretty");
+  });
+});
+
+describe("createRootLogger", () => {
+  it("writes JSON to stdout by default and does not initialize file logging", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-default-"));
+    const missingLogDir = path.join(paseoHome, "logs");
+
+    const { stdout } = await runLoggerFixture(`
+      const logger = createRootLogger(undefined, { paseoHome: ${JSON.stringify(paseoHome)} });
+      logger.info({ proof: "stdout-default" }, "default logger");
+      logger.flush();
+    `);
+
+    expect(stdout).toContain('"proof":"stdout-default"');
+    expect(stdout).toContain('"msg":"default logger"');
+    expect(existsSync(path.join(paseoHome, "daemon.log"))).toBe(false);
+    expect(existsSync(missingLogDir)).toBe(false);
   });
 
-  it("keeps backwards compatibility for legacy log.level and log.format", () => {
-    const config: PersistedConfig = {
-      log: {
-        level: "warn",
-        format: "json",
-      },
-    };
+  it("writes to an explicit file target without creating rotation files", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-file-"));
+    const logPath = path.join(paseoHome, "logs", "programmatic.log");
 
-    const result = resolveLogConfig(config, { paseoHome });
-    expect(result).toEqual({
-      level: "warn",
-      console: {
-        level: "warn",
-        format: "json",
-      },
-      file: {
-        level: "warn",
-        path: path.join(paseoHome, "daemon.log"),
-        rotate: {
-          maxSize: "10m",
-          maxFiles: 2,
-        },
-      },
-    });
+    await runLoggerFixture(`
+      const logger = createRootLogger(
+        { log: { file: { path: ${JSON.stringify(logPath)} } } },
+        { paseoHome: ${JSON.stringify(paseoHome)} },
+      );
+      logger.info({ proof: "file-explicit" }, "explicit file logger");
+      logger.flush();
+    `);
+
+    const logText = await readFile(logPath, "utf8");
+    const files = await readdir(path.dirname(logPath));
+
+    expect(logText).toContain('"proof":"file-explicit"');
+    expect(logText).toContain('"msg":"explicit file logger"');
+    expect(files).toEqual(["programmatic.log"]);
   });
 
-  it("keeps backwards compatibility for legacy env vars", () => {
-    process.env.PASEO_LOG = "error";
-    process.env.PASEO_LOG_FORMAT = "json";
+  it("can disable file output for supervised workers", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-no-worker-file-"));
+    const logPath = path.join(paseoHome, "daemon.log");
 
-    const result = resolveLogConfig(undefined, { paseoHome });
-    expect(result).toEqual({
-      level: "error",
-      console: {
-        level: "error",
-        format: "json",
-      },
-      file: {
-        level: "error",
-        path: path.join(paseoHome, "daemon.log"),
-        rotate: {
-          maxSize: "10m",
-          maxFiles: 2,
-        },
-      },
-    });
+    const { stdout } = await runLoggerFixture(`
+      const logger = createRootLogger(
+        { log: { file: { path: ${JSON.stringify(logPath)} } } },
+        { paseoHome: ${JSON.stringify(paseoHome)}, file: false },
+      );
+      logger.info({ proof: "stdout-only" }, "worker logger");
+      logger.flush();
+    `);
+
+    expect(stdout).toContain('"proof":"stdout-only"');
+    expect(stdout).toContain('"msg":"worker logger"');
+    expect(existsSync(logPath)).toBe(false);
   });
 
-  it("supports partial destination config and retains defaults", () => {
-    const config: PersistedConfig = {
-      log: {
-        console: {
-          level: "warn",
-        },
-      },
-    };
+  it("keeps pretty output available as a format choice", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-pretty-"));
 
-    const result = resolveLogConfig(config, { paseoHome });
-    expect(result).toEqual({
-      level: "debug",
-      console: {
-        level: "warn",
-        format: "pretty",
-      },
-      file: {
-        level: "debug",
-        path: path.join(paseoHome, "daemon.log"),
-        rotate: {
-          maxSize: "10m",
-          maxFiles: 2,
-        },
-      },
-    });
-  });
+    const { stdout } = await runLoggerFixture(`
+      const logger = createRootLogger({ level: "info", format: "pretty" }, {
+        paseoHome: ${JSON.stringify(paseoHome)},
+      });
+      logger.info("pretty logger");
+      logger.flush();
+    `);
 
-  it("ignores invalid rotate count env var and falls back to config value", () => {
-    process.env.PASEO_LOG_FILE_ROTATE_COUNT = "0";
-    const config: PersistedConfig = {
-      log: {
-        file: {
-          rotate: {
-            maxFiles: 7,
-          },
-        },
-      },
-    };
-
-    const result = resolveLogConfig(config, { paseoHome });
-    expect(result.file.rotate.maxFiles).toBe(7);
-  });
-
-  it("supports all log levels for destination-specific env vars", () => {
-    const levels: Array<"trace" | "debug" | "info" | "warn" | "error" | "fatal"> = [
-      "trace",
-      "debug",
-      "info",
-      "warn",
-      "error",
-      "fatal",
-    ];
-
-    for (const level of levels) {
-      process.env.PASEO_LOG_CONSOLE_LEVEL = level;
-      process.env.PASEO_LOG_FILE_LEVEL = level;
-      const result = resolveLogConfig(undefined, { paseoHome });
-      expect(result.console.level).toBe(level);
-      expect(result.file.level).toBe(level);
-      expect(result.level).toBe(level);
-    }
+    expect(stdout).toContain("pretty logger");
   });
 });

@@ -54,7 +54,7 @@ describe("window-manager", () => {
 
     it("returns dark title bar overlay colors", () => {
       expect(getTitleBarOverlayOptions("dark")).toEqual({
-        color: "#18181c",
+        color: "#181B1A",
         symbolColor: "#e4e4e7",
         height: 29,
       });
@@ -66,11 +66,11 @@ describe("window-manager", () => {
       expect(
         readWindowControlsOverlayUpdate({
           height: 48,
-          backgroundColor: "#18181c",
+          backgroundColor: "#181B1A",
         }),
       ).toEqual({
         height: 48,
-        backgroundColor: "#18181c",
+        backgroundColor: "#181B1A",
       });
     });
 
@@ -107,7 +107,7 @@ describe("window-manager", () => {
         win: { setTitleBarOverlay },
         current: state,
         update: {
-          backgroundColor: "#18181c",
+          backgroundColor: "#181B1A",
           foregroundColor: "#e4e4e7",
         },
       });
@@ -120,16 +120,16 @@ describe("window-manager", () => {
 
       expect(state).toEqual({
         height: 48,
-        backgroundColor: "#18181c",
+        backgroundColor: "#181B1A",
         foregroundColor: "#e4e4e7",
       });
       expect(setTitleBarOverlay).toHaveBeenNthCalledWith(1, {
-        color: "#18181c",
+        color: "#181B1A",
         symbolColor: "#e4e4e7",
         height: 28,
       });
       expect(setTitleBarOverlay).toHaveBeenNthCalledWith(2, {
-        color: "#18181c",
+        color: "#181B1A",
         symbolColor: "#e4e4e7",
         height: 47,
       });
@@ -148,7 +148,7 @@ describe("window-manager", () => {
         frame: false,
         autoHideMenuBar: true,
         titleBarOverlay: {
-          color: "#18181c",
+          color: "#181B1A",
           symbolColor: "#e4e4e7",
           height: 29,
         },

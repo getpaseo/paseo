@@ -1,10 +1,8 @@
-import {
-  buildHostAgentDetailRoute,
-  buildHostRootRoute,
-  buildHostWorkspaceRoute,
-} from "@/utils/host-routes";
+import type { Href } from "expo-router";
+import { buildHostAgentDetailRoute, buildHostRootRoute } from "@/utils/host-routes";
 
 type NotificationData = Record<string, unknown> | null | undefined;
+type NotificationRoute = Extract<Href, string>;
 
 function readNonEmptyString(data: NotificationData, key: string): string | null {
   const value = data?.[key];
@@ -23,17 +21,13 @@ export function resolveNotificationTarget(data: NotificationData): {
   return {
     serverId: readNonEmptyString(data, "serverId"),
     agentId: readNonEmptyString(data, "agentId"),
-    workspaceId: readNonEmptyString(data, "workspaceId") ?? readNonEmptyString(data, "cwd"),
+    workspaceId: readNonEmptyString(data, "workspaceId"),
   };
 }
 
-export function buildNotificationRoute(data: NotificationData) {
-  const { serverId, agentId, workspaceId } = resolveNotificationTarget(data);
+export function buildNotificationRoute(data: NotificationData): NotificationRoute {
+  const { serverId, agentId } = resolveNotificationTarget(data);
   if (serverId && agentId) {
-    if (workspaceId) {
-      const base = buildHostWorkspaceRoute(serverId, workspaceId);
-      return `${base}?open=${encodeURIComponent(`agent:${agentId}`)}` as const;
-    }
     return buildHostAgentDetailRoute(serverId, agentId);
   }
   if (serverId) {

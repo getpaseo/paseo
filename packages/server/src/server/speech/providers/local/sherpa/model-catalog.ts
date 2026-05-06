@@ -4,7 +4,7 @@ export type SherpaOnnxModelKind = "stt-online" | "stt-offline" | "tts";
 
 type DefaultModelRole = "stt" | "tts";
 
-type SherpaOnnxCatalogEntry = {
+interface SherpaOnnxCatalogEntry {
   kind: SherpaOnnxModelKind;
   archiveUrl?: string;
   downloadFiles?: Array<{ url: string; relPath: string }>;
@@ -13,7 +13,7 @@ type SherpaOnnxCatalogEntry = {
   description: string;
   aliases?: readonly string[];
   defaultFor?: DefaultModelRole;
-};
+}
 
 export const SHERPA_ONNX_MODEL_CATALOG = {
   "zipformer-bilingual-zh-en-2023-02-20": {
@@ -134,15 +134,21 @@ type ModelIdByKind<K extends SherpaOnnxModelKind> = {
 export type LocalSttModelId = ModelIdByKind<"stt-online"> | ModelIdByKind<"stt-offline">;
 export type LocalTtsModelId = ModelIdByKind<"tts">;
 
-const ALL_MODEL_IDS = Object.keys(SHERPA_ONNX_MODEL_CATALOG) as SherpaOnnxModelId[];
-
-export const LOCAL_STT_MODEL_IDS = ALL_MODEL_IDS.filter(
-  (id): id is LocalSttModelId => SHERPA_ONNX_MODEL_CATALOG[id].kind !== "tts",
+const ALL_MODEL_IDS: SherpaOnnxModelId[] = Object.keys(SHERPA_ONNX_MODEL_CATALOG).filter(
+  (k): k is SherpaOnnxModelId => k in SHERPA_ONNX_MODEL_CATALOG,
 );
 
-export const LOCAL_TTS_MODEL_IDS = ALL_MODEL_IDS.filter(
-  (id): id is LocalTtsModelId => SHERPA_ONNX_MODEL_CATALOG[id].kind === "tts",
-);
+function isLocalSttModelId(id: SherpaOnnxModelId): id is LocalSttModelId {
+  return SHERPA_ONNX_MODEL_CATALOG[id].kind !== "tts";
+}
+
+function isLocalTtsModelId(id: SherpaOnnxModelId): id is LocalTtsModelId {
+  return SHERPA_ONNX_MODEL_CATALOG[id].kind === "tts";
+}
+
+export const LOCAL_STT_MODEL_IDS: LocalSttModelId[] = ALL_MODEL_IDS.filter(isLocalSttModelId);
+
+export const LOCAL_TTS_MODEL_IDS: LocalTtsModelId[] = ALL_MODEL_IDS.filter(isLocalTtsModelId);
 
 function resolveDefaultModelId(role: "stt"): LocalSttModelId;
 function resolveDefaultModelId(role: "tts"): LocalTtsModelId;
@@ -160,10 +166,10 @@ function resolveDefaultModelId(role: DefaultModelRole): SherpaOnnxModelId {
 export const DEFAULT_LOCAL_STT_MODEL = resolveDefaultModelId("stt");
 export const DEFAULT_LOCAL_TTS_MODEL = resolveDefaultModelId("tts");
 
-function buildAliasMap<T extends string>(modelIds: readonly T[]): Record<string, T> {
+function buildAliasMap<T extends SherpaOnnxModelId>(modelIds: readonly T[]): Record<string, T> {
   const aliasMap: Record<string, T> = {};
   for (const modelId of modelIds) {
-    const aliases = SHERPA_ONNX_MODEL_CATALOG[modelId as SherpaOnnxModelId].aliases ?? [];
+    const aliases = SHERPA_ONNX_MODEL_CATALOG[modelId].aliases ?? [];
     for (const alias of aliases) {
       aliasMap[alias.trim().toLowerCase()] = modelId;
     }
@@ -175,19 +181,19 @@ function createAliasedModelIdSchema<T extends string>(params: {
   modelIds: readonly T[];
   aliases: Record<string, T>;
 }): z.ZodType<T, z.ZodTypeDef, string> {
-  const validIds = new Set(params.modelIds);
+  const validIds = new Set<string>(params.modelIds);
   return z
     .string()
     .trim()
     .toLowerCase()
     .refine(
       (value): value is T =>
-        validIds.has(value as T) || Object.prototype.hasOwnProperty.call(params.aliases, value),
+        validIds.has(value) || Object.prototype.hasOwnProperty.call(params.aliases, value),
       {
         message: "Invalid model id",
       },
     )
-    .transform((value) => params.aliases[value] ?? (value as T));
+    .transform((value) => params.aliases[value] ?? value);
 }
 
 const STT_MODEL_ALIASES = buildAliasMap(LOCAL_STT_MODEL_IDS);
@@ -208,10 +214,7 @@ export type SherpaOnnxModelSpec = SherpaOnnxCatalogEntry & {
 };
 
 export function listSherpaOnnxModels(): SherpaOnnxModelSpec[] {
-  return ALL_MODEL_IDS.map((id) => ({
-    id,
-    ...SHERPA_ONNX_MODEL_CATALOG[id],
-  }));
+  return ALL_MODEL_IDS.map((id) => Object.assign({ id }, SHERPA_ONNX_MODEL_CATALOG[id]));
 }
 
 export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec {

@@ -19,27 +19,27 @@ const SILERO_MIN_SPEECH_DURATION = 0.1;
 const DEFAULT_CONFIRM_MS = 800;
 const DEFAULT_SILENCE_MS = 1000;
 
-type SherpaVadHandle = {
+interface SherpaVadHandle {
   acceptWaveform(samples: Float32Array): void;
   isDetected(): boolean;
   isEmpty(): boolean;
   flush(): void;
   reset(): void;
-};
+}
 
-type SherpaCircularBufferHandle = {
+interface SherpaCircularBufferHandle {
   push(samples: Float32Array): void;
   get(startIndex: number, n: number, enableExternalBuffer?: boolean): Float32Array;
   pop(n: number): void;
   size(): number;
   head(): number;
   reset(): void;
-};
+}
 
-type SherpaVadModule = {
+interface SherpaVadModule {
   Vad: new (config: Record<string, unknown>, bufferSizeInSeconds: number) => SherpaVadHandle;
   CircularBuffer: new (capacity: number) => SherpaCircularBufferHandle;
-};
+}
 
 export function resolveBundledSileroVadModelPath(): string {
   return fileURLToPath(new URL("./assets/silero_vad.onnx", import.meta.url));

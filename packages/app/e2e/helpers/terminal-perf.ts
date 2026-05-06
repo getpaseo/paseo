@@ -1,13 +1,17 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
-export type TerminalPerfDaemonClient = {
+export interface TerminalPerfDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
+  openProject(cwd: string): Promise<{
+    workspace: { id: string; name: string; projectRootPath: string } | null;
+    error: string | null;
+  }>;
   createTerminal(
     cwd: string,
     name?: string,
@@ -15,6 +19,17 @@ export type TerminalPerfDaemonClient = {
     terminal: { id: string; name: string; cwd: string } | null;
     error: string | null;
   }>;
+  createAgent(options: {
+    provider: string;
+    cwd: string;
+    title?: string;
+    modeId?: string;
+    model?: string;
+    thinkingOptionId?: string;
+    featureValues?: Record<string, unknown>;
+    initialPrompt?: string;
+  }): Promise<{ id: string; status: string }>;
+  sendAgentMessage(agentId: string, text: string): Promise<void>;
   subscribeTerminal(
     terminalId: string,
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;
@@ -26,7 +41,7 @@ export type TerminalPerfDaemonClient = {
     handler: (event: { terminalId: string; type: string; data?: Uint8Array }) => void,
   ): () => void;
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
-};
+}
 
 function getDaemonWsUrl(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -44,17 +59,15 @@ function getServerId(): string {
   return serverId;
 }
 
-type TerminalPerfDaemonClientConfig = {
+interface TerminalPerfDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-};
+}
 
 async function loadDaemonClientConstructor(): Promise<
-  new (
-    config: TerminalPerfDaemonClientConfig,
-  ) => TerminalPerfDaemonClient
+  new (config: TerminalPerfDaemonClientConfig) => TerminalPerfDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
@@ -79,19 +92,31 @@ export async function connectTerminalClient(): Promise<TerminalPerfDaemonClient>
   return client;
 }
 
-export function buildTerminalWorkspaceUrl(cwd: string, terminalId: string): string {
+export function buildTerminalWorkspaceUrl(workspaceId: string, terminalId: string): string {
   const serverId = getServerId();
-  const route = buildHostWorkspaceRoute(serverId, cwd);
+  const route = buildHostWorkspaceRoute(serverId, workspaceId);
   return `${route}?open=${encodeURIComponent(`terminal:${terminalId}`)}`;
 }
 
-function buildWorkspaceUrl(cwd: string): string {
-  return buildHostWorkspaceRoute(getServerId(), cwd);
+function buildWorkspaceUrl(workspaceId: string): string {
+  return buildHostWorkspaceRoute(getServerId(), workspaceId);
 }
 
 export async function getTerminalBufferText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__paseoTerminal;
+    const term = (
+      window as Window & {
+        __paseoTerminal?: {
+          buffer: {
+            active: {
+              length: number;
+              getLine: (i: number) => { translateToString: (trim: boolean) => string } | null;
+            };
+          };
+          onWriteParsed: (cb: () => void) => { dispose: () => void };
+        };
+      }
+    ).__paseoTerminal;
     if (!term) {
       return "";
     }
@@ -125,31 +150,35 @@ export async function waitForTerminalContent(
 
 export async function navigateToTerminal(
   page: Page,
-  input: { cwd: string; terminalId: string },
+  input: { workspaceId: string; terminalId: string },
 ): Promise<void> {
   // Boot the app at the workspace route directly.
   // The fixtures.ts beforeEach addInitScript seeds localStorage on every navigation,
   // so the daemon registry is already configured when the app starts.
-  const workspaceRoute = buildTerminalWorkspaceUrl(input.cwd, input.terminalId);
+  const workspaceRoute = buildTerminalWorkspaceUrl(input.workspaceId, input.terminalId);
   await page.goto(workspaceRoute);
 
   // The workspace layout consumes `?open=...`, returns null during the effect,
   // then replaces the URL with the clean workspace route after preparing the tab.
-  const cleanWorkspaceRoute = buildWorkspaceUrl(input.cwd);
+  // On CI, Expo Router's rootNavigationState may take time to initialize,
+  // so we allow a generous timeout here.
+  const cleanWorkspaceRoute = buildWorkspaceUrl(input.workspaceId);
   await page.waitForURL(
     (url) => url.pathname === cleanWorkspaceRoute && !url.searchParams.has("open"),
-    { timeout: 15_000 },
+    { timeout: 30_000 },
   );
 
   // Wait for daemon connection (sidebar shows host label)
   await page
     .getByText("localhost", { exact: true })
     .first()
-    .waitFor({ state: "visible", timeout: 15_000 });
+    .waitFor({ state: "visible", timeout: 30_000 });
 
   // The open intent should have prepared and focused the exact pre-created terminal tab.
+  // The tab reconciliation effect also auto-creates terminal tabs once hydration completes,
+  // so we give it enough time for the full workspace hydration + tab creation cycle.
   const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
-  await terminalTab.waitFor({ state: "visible", timeout: 15_000 });
+  await terminalTab.waitFor({ state: "visible", timeout: 30_000 });
   await terminalTab.click();
 
   const terminalSurface = page.locator('[data-testid="terminal-surface"]');
@@ -178,10 +207,10 @@ export async function setupDeterministicPrompt(page: Page, sentinel?: string): P
   await page.waitForTimeout(300);
 }
 
-export type LatencySample = {
+export interface LatencySample {
   char: string;
   latencyMs: number;
-};
+}
 
 /**
  * Measures keystroke echo round-trip latency.
@@ -192,12 +221,16 @@ export type LatencySample = {
  */
 export async function measureKeystrokeLatency(page: Page, char: string): Promise<number> {
   await page.evaluate(() => {
-    const term = (window as any).__paseoTerminal;
-    if (!term) {
+    const win = window as Window & {
+      __paseoTerminal?: { onWriteParsed: (cb: () => void) => { dispose: () => void } };
+      __perfKeystroke?: { promise: Promise<number> | null };
+    };
+    if (!win.__paseoTerminal) {
       throw new Error("__paseoTerminal not available");
     }
+    const term = win.__paseoTerminal;
 
-    const state = ((window as any).__perfKeystroke = {
+    const state = (win.__perfKeystroke = {
       promise: null as Promise<number> | null,
     });
 
@@ -223,7 +256,39 @@ export async function measureKeystrokeLatency(page: Page, char: string): Promise
 
   await page.keyboard.press(char);
 
-  return page.evaluate(() => (window as any).__perfKeystroke.promise);
+  return page.evaluate(
+    () =>
+      (window as unknown as { __perfKeystroke: { promise: Promise<number> } }).__perfKeystroke
+        .promise,
+  );
+}
+
+export async function expectTerminalSurfaceVisible(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(page.locator('[data-testid="terminal-surface"]').first()).toBeVisible({
+    timeout: options?.timeout ?? 20_000,
+  });
+}
+
+export async function focusTerminalSurface(page: Page): Promise<void> {
+  await expectTerminalSurfaceVisible(page);
+  await page.locator('[data-testid="terminal-surface"]').first().click();
+}
+
+export async function typeInTerminal(page: Page, text: string): Promise<void> {
+  await page
+    .locator('[data-testid="terminal-surface"]')
+    .first()
+    .pressSequentially(text, { delay: 0 });
+}
+
+export async function waitForTerminalAttached(page: Page): Promise<void> {
+  await page
+    .locator('[data-testid="terminal-attach-loading"]')
+    .waitFor({ state: "hidden", timeout: 10_000 })
+    .catch(() => undefined);
 }
 
 export function computePercentile(samples: number[], p: number): number {

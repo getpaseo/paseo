@@ -1,0 +1,30 @@
+# NOTE: Render through the workspace-create shell scripts before running when
+# using ${PASEO_MAESTRO_*}. Maestro does not substitute environment vars.
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Connect to the local daemon only when the app is on the welcome screen.
+
+- runFlow:
+    when:
+      visible:
+        id: "welcome-screen"
+    commands:
+      - tapOn:
+          id: "welcome-direct-connection"
+
+      - extendedWaitUntil:
+          visible:
+            id: "add-host-modal"
+          timeout: 10000
+
+      - tapOn:
+          id: "direct-host-input"
+      - eraseText
+      - inputText: ${PASEO_MAESTRO_DIRECT_ENDPOINT}
+
+      - assertVisible:
+          id: "direct-host-input"
+          text: ${PASEO_MAESTRO_DIRECT_ENDPOINT}
+
+      - tapOn:
+          id: "direct-host-submit"

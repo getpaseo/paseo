@@ -3,12 +3,14 @@ appId: sh.paseo.desktop
 productName: Paseo
 executableName: Paseo
 afterPack: ./scripts/after-pack.js
+afterSign: ./scripts/after-sign.js
 directories:
   output: release
 files:
   - dist/**/*
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
+  - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist
@@ -47,13 +49,20 @@ linux:
     - rpm
     - tar.gz
 win:
+  artifactName: "Paseo-Setup-${version}-${arch}.${ext}"
   icon: assets/icon.ico
   extraResources:
     - from: bin/paseo.cmd
       to: bin/paseo.cmd
   target:
-    - nsis
-    - zip
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
 nsis:
   oneClick: false
   perMachine: false

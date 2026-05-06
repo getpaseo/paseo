@@ -1,4 +1,4 @@
-import type { AgentSnapshotPayload } from "../messages.js";
+import type { AgentListItemPayload, AgentSnapshotPayload } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
@@ -7,25 +7,37 @@ import type {
   AgentMode,
   AgentPermissionRequest,
   AgentPersistenceHandle,
+  AgentProvider,
   AgentSessionConfig,
   AgentRuntimeInfo,
   AgentUsage,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
-
+import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "../persistence-hooks.js";
 export type { ManagedAgent };
 
-type ProjectionOptions = {
+interface ProjectionOptions {
   title?: string | null;
   createdAt?: string;
   internal?: boolean;
-};
+}
 
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeLabels(labels: Record<string, unknown> | undefined): Record<string, string> {
+  if (!labels) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(labels).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 export function resolveEffectiveThinkingOptionId(options: {
@@ -64,6 +76,7 @@ export function toStoredAgentRecord(
     runtimeInfo,
     features: normalizeFeatures(agent.features),
     persistence,
+    lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
     attentionTimestamp: agent.attention.requiresAttention
@@ -91,7 +104,7 @@ export function toAgentPayload(
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
-    runtimeInfo,
+    ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
@@ -126,6 +139,129 @@ export function toAgentPayload(
   }
 
   return payload;
+}
+
+function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | undefined {
+  if (!record.runtimeInfo) return undefined;
+  const ri = record.runtimeInfo;
+  const runtimeInfo: AgentRuntimeInfo = {
+    provider: ri.provider,
+    sessionId: ri.sessionId,
+  };
+  if (Object.prototype.hasOwnProperty.call(ri, "model")) {
+    runtimeInfo.model = ri.model ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(ri, "thinkingOptionId")) {
+    runtimeInfo.thinkingOptionId = ri.thinkingOptionId ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(ri, "modeId")) {
+    runtimeInfo.modeId = ri.modeId ?? null;
+  }
+  if (ri.extra) {
+    runtimeInfo.extra = ri.extra;
+  }
+  return runtimeInfo;
+}
+
+function buildStoredPersistenceHandle(
+  record: StoredAgentRecord,
+  validProviders: Iterable<AgentProvider>,
+): AgentPersistenceHandle | null {
+  if (!isStoredAgentProviderAvailable(record, validProviders)) {
+    return null;
+  }
+  return toAgentPersistenceHandle(validProviders, record.persistence);
+}
+
+export function buildStoredAgentPayload(
+  record: StoredAgentRecord,
+  validProviders: Iterable<AgentProvider>,
+): AgentSnapshotPayload {
+  const defaultCapabilities = {
+    supportsStreaming: false,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: true,
+  } as const;
+
+  const createdAt = new Date(record.createdAt);
+  const updatedAt = new Date(resolveStoredAgentPayloadUpdatedAt(record));
+  const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
+
+  const runtimeInfo = buildStoredRuntimeInfo(record);
+  const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
+  const persistence = buildStoredPersistenceHandle(record, validProviders);
+
+  return {
+    id: record.id,
+    provider: record.provider,
+    cwd: record.cwd,
+    model: record.config?.model ?? null,
+    thinkingOptionId: record.config?.thinkingOptionId ?? null,
+    effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
+      runtimeInfo,
+      configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
+    }),
+    ...(runtimeInfo ? { runtimeInfo } : {}),
+    createdAt: createdAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
+    lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
+    status: record.lastStatus,
+    capabilities: defaultCapabilities,
+    currentModeId: record.lastModeId ?? null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence,
+    title: record.title ?? record.config?.title ?? null,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionReason: record.attentionReason ?? null,
+    attentionTimestamp: record.attentionTimestamp ?? null,
+    archivedAt: record.archivedAt ?? null,
+    labels: normalizeLabels(record.labels),
+    ...(providerAvailable ? {} : { providerUnavailable: true }),
+  };
+}
+
+export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListItemPayload {
+  return {
+    id: agent.id,
+    shortId: agent.id.slice(0, 7),
+    title: agent.title,
+    provider: agent.provider,
+    model: agent.runtimeInfo?.model ?? agent.model,
+    thinkingOptionId: agent.thinkingOptionId,
+    effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
+    status: agent.status,
+    cwd: agent.cwd,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+    lastUserMessageAt: agent.lastUserMessageAt,
+    archivedAt: agent.archivedAt ?? null,
+    requiresAttention: agent.requiresAttention ?? false,
+    attentionReason: agent.attentionReason ?? null,
+    attentionTimestamp: agent.attentionTimestamp ?? null,
+    labels: agent.labels,
+    ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
+  };
+}
+
+export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
+  const timestamps = [record.updatedAt, record.lastActivityAt]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => ({
+      raw: value,
+      parsed: Date.parse(value),
+    }))
+    .filter((value) => !Number.isNaN(value.parsed));
+
+  if (timestamps.length === 0) {
+    return record.updatedAt;
+  }
+
+  timestamps.sort((a, b) => b.parsed - a.parsed);
+  return timestamps[0].raw;
 }
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
@@ -164,13 +300,14 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
 function sanitizePendingPermissions(
   pending: Map<string, AgentPermissionRequest>,
 ): AgentPermissionRequest[] {
-  return Array.from(pending.values()).map((request) => ({
-    ...request,
-    input: sanitizeMetadata(request.input),
-    suggestions: sanitizeMetadataArray(request.suggestions),
-    actions: request.actions?.map((action) => ({ ...action })),
-    metadata: sanitizeMetadata(request.metadata),
-  }));
+  return Array.from(pending.values()).map((request) =>
+    Object.assign({}, request, {
+      input: sanitizeMetadata(request.input),
+      suggestions: sanitizeMetadataArray(request.suggestions),
+      actions: request.actions?.map((action) => Object.assign({}, action)),
+      metadata: sanitizeMetadata(request.metadata),
+    }),
+  );
 }
 
 function sanitizePersistenceHandle(
@@ -259,47 +396,39 @@ function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
+type UsageNumericField = Exclude<keyof AgentUsage, never>;
+
+function assignFiniteNumber(
+  source: { [key: string]: JsonValue },
+  target: AgentUsage,
+  field: UsageNumericField,
+): boolean {
+  const raw = source[field];
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    target[field] = raw;
+    return true;
+  }
+  return raw === undefined || raw === null;
+}
+
 function sanitizeUsage(value: unknown): AgentUsage | undefined {
   const sanitized = sanitizeOptionalJson(value);
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
   const result: AgentUsage = {};
-  const inputTokens = sanitized.inputTokens;
-  if (typeof inputTokens === "number" && Number.isFinite(inputTokens)) {
-    result.inputTokens = inputTokens;
-  } else if (inputTokens !== undefined && inputTokens !== null) {
-    return undefined;
-  }
-  const cachedInputTokens = sanitized.cachedInputTokens;
-  if (typeof cachedInputTokens === "number" && Number.isFinite(cachedInputTokens)) {
-    result.cachedInputTokens = cachedInputTokens;
-  } else if (cachedInputTokens !== undefined && cachedInputTokens !== null) {
-    return undefined;
-  }
-  const outputTokens = sanitized.outputTokens;
-  if (typeof outputTokens === "number" && Number.isFinite(outputTokens)) {
-    result.outputTokens = outputTokens;
-  } else if (outputTokens !== undefined && outputTokens !== null) {
-    return undefined;
-  }
-  const totalCostUsd = sanitized.totalCostUsd;
-  if (typeof totalCostUsd === "number" && Number.isFinite(totalCostUsd)) {
-    result.totalCostUsd = totalCostUsd;
-  } else if (totalCostUsd !== undefined && totalCostUsd !== null) {
-    return undefined;
-  }
-  const contextWindowMaxTokens = sanitized.contextWindowMaxTokens;
-  if (typeof contextWindowMaxTokens === "number" && Number.isFinite(contextWindowMaxTokens)) {
-    result.contextWindowMaxTokens = contextWindowMaxTokens;
-  } else if (contextWindowMaxTokens !== undefined && contextWindowMaxTokens !== null) {
-    return undefined;
-  }
-  const contextWindowUsedTokens = sanitized.contextWindowUsedTokens;
-  if (typeof contextWindowUsedTokens === "number" && Number.isFinite(contextWindowUsedTokens)) {
-    result.contextWindowUsedTokens = contextWindowUsedTokens;
-  } else if (contextWindowUsedTokens !== undefined && contextWindowUsedTokens !== null) {
-    return undefined;
+  const fields: UsageNumericField[] = [
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "totalCostUsd",
+    "contextWindowMaxTokens",
+    "contextWindowUsedTokens",
+  ];
+  for (const field of fields) {
+    if (!assignFiniteNumber(sanitized, result, field)) {
+      return undefined;
+    }
   }
   return Object.keys(result).length ? result : undefined;
 }

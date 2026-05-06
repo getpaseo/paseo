@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { Task, TaskStore, CreateTaskOptions, TaskStatus, AgentType } from "./types.js";
+import type { Task, TaskStore, CreateTaskOptions, TaskStatus } from "./types.js";
 
 function generateId(): string {
   return randomBytes(4).toString("hex");
@@ -128,7 +128,7 @@ function parseTask(content: string): Task {
   }
   taskBody = taskBody.trim();
 
-  const assignee = getValue("assignee") as AgentType | "";
+  const assignee = getValue("assignee");
   const parentId = getValue("parentId");
   const priorityStr = getValue("priority");
   const priority = priorityStr ? parseInt(priorityStr, 10) : undefined;
@@ -181,16 +181,9 @@ export class FileTaskStore implements TaskStore {
     await this.ensureDir();
     try {
       const files = await readdir(this.dir);
-      const tasks: Task[] = [];
-      for (const file of files) {
-        if (file.endsWith(".md")) {
-          const id = file.slice(0, -3);
-          const task = await this.readTask(id);
-          if (task) {
-            tasks.push(task);
-          }
-        }
-      }
+      const ids = files.filter((file) => file.endsWith(".md")).map((file) => file.slice(0, -3));
+      const loaded = await Promise.all(ids.map((id) => this.readTask(id)));
+      const tasks: Task[] = loaded.filter((task): task is Task => task !== null);
       // Sort by created date (oldest first) for consistent ordering
       return tasks.sort((a, b) => a.created.localeCompare(b.created));
     } catch (error) {

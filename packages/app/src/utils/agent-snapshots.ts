@@ -1,4 +1,3 @@
-import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 
@@ -31,7 +30,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     serverId,
     id: snapshot.id,
     provider: snapshot.provider,
-    status: snapshot.status as AgentLifecycleStatus,
+    status: snapshot.status,
     createdAt,
     updatedAt,
     lastUserMessageAt,

@@ -132,7 +132,7 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
           "Notification was not delivered. Check System Settings > Notifications.",
         );
       }
-    } catch (error) {
+    } catch {
       setTestNotificationError("Failed to send notification.");
     } finally {
       if (isMountedRef.current) {

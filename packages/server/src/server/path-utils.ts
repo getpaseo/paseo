@@ -20,3 +20,17 @@ export function resolvePathFromBase(baseCwd: string, requestedPath: string): str
   }
   return resolve(baseCwd, trimmed);
 }
+
+export function isSameOrDescendantPath(basePath: string, candidatePath: string): boolean {
+  let normalizedBase = basePath.replace(/\\/g, "/").replace(/\/$/, "");
+  let normalizedCandidate = candidatePath.replace(/\\/g, "/").replace(/\/$/, "");
+
+  if (/^[a-zA-Z]:\//.test(normalizedBase) || /^[a-zA-Z]:\//.test(normalizedCandidate)) {
+    normalizedBase = normalizedBase.toLowerCase();
+    normalizedCandidate = normalizedCandidate.toLowerCase();
+  }
+
+  return (
+    normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(normalizedBase + "/")
+  );
+}

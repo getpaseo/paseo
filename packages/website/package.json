@@ -1,13 +1,13 @@
 {
   "name": "@getpaseo/website",
-  "version": "0.1.54",
+  "version": "0.1.69",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
@@ -20,6 +20,8 @@
     "react": "^19.1.4",
     "react-dom": "^19.1.4",
     "react-markdown": "^10.1.0",
+    "rehype-autolink-headings": "^7.1.0",
+    "rehype-slug": "^6.0.0",
     "wrangler": "^4.59.1"
   },
   "devDependencies": {
@@ -28,7 +30,6 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.1",
-    "tailwindcss": "^4.1.8",
     "typescript": "^5.9.3",
     "vite": "^7.0.0",
     "vite-tsconfig-paths": "^5.1.4"

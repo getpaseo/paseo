@@ -44,11 +44,11 @@ export async function runLoopStopCommand(
   options: LoopStopOptions,
   _command: Command,
 ): Promise<LoopStopResult> {
-  const host = getDaemonHost({ host: options.host as string | undefined });
+  const host = getDaemonHost({ host: options.host });
   let client;
   try {
     client = (await connectToDaemon({
-      host: options.host as string | undefined,
+      host: options.host,
     })) as unknown as LoopDaemonClient;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

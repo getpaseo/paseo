@@ -6,18 +6,22 @@ import type {
 
 export function defaultWebSocketFactory(
   url: string,
-  _options?: { headers?: Record<string, string> },
+  options?: { headers?: Record<string, string>; protocols?: string[] },
 ): WebSocketLike {
-  const globalWs = (globalThis as { WebSocket?: any }).WebSocket;
+  const globalWs = (
+    globalThis as {
+      WebSocket?: new (url: string, protocols?: string | string[]) => WebSocketLike;
+    }
+  ).WebSocket;
   if (!globalWs) {
     throw new Error("WebSocket is not available in this runtime");
   }
-  return new globalWs(url);
+  return new globalWs(url, options?.protocols);
 }
 
 export function createWebSocketTransportFactory(factory: WebSocketFactory): DaemonTransportFactory {
-  return ({ url, headers }) => {
-    const ws = factory(url, { headers });
+  return ({ url, headers, protocols }) => {
+    const ws = factory(url, { headers, protocols });
     if ("binaryType" in ws) {
       try {
         ws.binaryType = "arraybuffer";
@@ -102,7 +106,7 @@ function bindTemporaryEarlyCloseErrorHandler(ws: WebSocketLike): () => void {
 export function bindWsHandler(
   ws: WebSocketLike,
   event: "open" | "close" | "error" | "message",
-  handler: (...args: any[]) => void,
+  handler: (...args: unknown[]) => void,
 ): () => void {
   if (typeof ws.addEventListener === "function") {
     ws.addEventListener(event, handler);
@@ -124,12 +128,13 @@ export function bindWsHandler(
       }
     };
   }
-  const prop = `on${event}` as "onopen" | "onclose" | "onerror" | "onmessage";
-  const previous = (ws as any)[prop];
-  (ws as any)[prop] = handler;
+  const prop = `on${event}`;
+  const wsRecord = ws as unknown as Record<string, unknown>;
+  const previous = wsRecord[prop];
+  wsRecord[prop] = handler;
   return () => {
-    if ((ws as any)[prop] === handler) {
-      (ws as any)[prop] = previous ?? null;
+    if (wsRecord[prop] === handler) {
+      wsRecord[prop] = previous ?? null;
     }
   };
 }

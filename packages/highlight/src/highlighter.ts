@@ -62,7 +62,7 @@ export function highlightCode(code: string, filename: string): HighlightToken[][
   }
 
   // Build a map of character positions to styles
-  const styleMap: Array<HighlightStyle | null> = new Array(code.length).fill(null);
+  const styleMap: Array<HighlightStyle | null> = Array.from({ length: code.length }, () => null);
 
   highlightTree(tree, highlighter, (from, to, classes) => {
     for (let i = from; i < to && i < styleMap.length; i++) {

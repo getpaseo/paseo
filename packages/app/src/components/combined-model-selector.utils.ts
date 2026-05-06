@@ -13,7 +13,7 @@ export function resolveProviderLabel(
   );
 }
 
-export function buildSelectedTriggerLabel(providerLabel: string, modelLabel: string): string {
+export function buildSelectedTriggerLabel(modelLabel: string): string {
   return modelLabel;
 }
 

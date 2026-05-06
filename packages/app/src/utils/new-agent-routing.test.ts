@@ -2,24 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { CheckoutStatusPayload } from "@/hooks/use-checkout-status-query";
 import {
-  buildNewAgentRoute,
   parseAgentKey,
   resolveNewAgentWorkingDir,
   resolveSelectedAgentForNewAgent,
 } from "./new-agent-routing";
-
-describe("buildNewAgentRoute", () => {
-  it("falls back to server workspace route with dot workspace when no working directory is provided", () => {
-    expect(buildNewAgentRoute("srv-1", undefined)).toBe("/h/srv-1/workspace/Lg");
-    expect(buildNewAgentRoute("srv-1", "   ")).toBe("/h/srv-1/workspace/Lg");
-  });
-
-  it("encodes the working directory as a workspace path segment", () => {
-    expect(buildNewAgentRoute("srv-1", "/Users/me/dev/paseo")).toBe(
-      "/h/srv-1/workspace/L1VzZXJzL21lL2Rldi9wYXNlbw",
-    );
-  });
-});
 
 describe("resolveNewAgentWorkingDir", () => {
   it("returns the current cwd for regular checkouts", () => {

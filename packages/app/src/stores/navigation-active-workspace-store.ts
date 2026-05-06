@@ -1,96 +1,73 @@
-import { useSyncExternalStore } from "react";
+import { router, useLocalSearchParams, usePathname, type Href } from "expo-router";
 import {
+  buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 
-interface ActiveWorkspaceSelection {
+export interface ActiveWorkspaceSelection {
   serverId: string;
   workspaceId: string;
 }
 
-type NavigationRouteLike = {
-  name?: unknown;
-  params?: unknown;
-  path?: unknown;
-};
-
-interface NavigationObserverRef {
-  current: {
-    getCurrentRoute(): unknown;
-  } | null;
+interface NavigateToWorkspaceOptions {
+  currentPathname?: string | null;
 }
 
-let snapshot: ActiveWorkspaceSelection | null = null;
-const listeners = new Set<() => void>();
+let lastWorkspaceSelection: ActiveWorkspaceSelection | null = null;
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+function getParamValue(value: string | string[] | undefined): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    const firstValue = value[0];
+    return typeof firstValue === "string" ? firstValue.trim() : "";
+  }
+  return "";
 }
 
-function getSnapshot(): ActiveWorkspaceSelection | null {
-  return snapshot;
-}
-
-function emitIfChanged(next: ActiveWorkspaceSelection | null) {
-  if (snapshot?.serverId === next?.serverId && snapshot?.workspaceId === next?.workspaceId) {
-    return;
-  }
-  snapshot = next;
-  for (const listener of listeners) {
-    listener();
-  }
-}
-
-function extractActiveWorkspaceFromRoute(
-  route: NavigationRouteLike | undefined,
-): ActiveWorkspaceSelection | null {
-  if (!route) {
-    return null;
-  }
-
-  if (typeof route.path === "string") {
-    const parsed = parseHostWorkspaceRouteFromPathname(route.path);
-    if (parsed) {
-      return parsed;
-    }
-  }
-
-  const params =
-    route.params && typeof route.params === "object"
-      ? (route.params as {
-          serverId?: string | string[];
-          workspaceId?: string | string[];
-        })
-      : null;
-  const serverValue = Array.isArray(params?.serverId) ? params?.serverId[0] : params?.serverId;
-  const workspaceValue = Array.isArray(params?.workspaceId)
-    ? params?.workspaceId[0]
-    : params?.workspaceId;
-  const serverId = typeof serverValue === "string" ? serverValue.trim() : "";
-  const workspaceId =
-    typeof workspaceValue === "string"
-      ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
-      : "";
-
+function parseWorkspaceSelectionFromRouteParams(params: {
+  serverId?: string | string[];
+  workspaceId?: string | string[];
+}): ActiveWorkspaceSelection | null {
+  const serverId = getParamValue(params.serverId);
+  const workspaceValue = getParamValue(params.workspaceId);
+  const workspaceId = workspaceValue ? decodeWorkspaceIdFromPathSegment(workspaceValue) : null;
   if (!serverId || !workspaceId) {
     return null;
   }
-
   return { serverId, workspaceId };
 }
 
-export function syncNavigationActiveWorkspace(navigationRef: NavigationObserverRef) {
-  emitIfChanged(
-    extractActiveWorkspaceFromRoute(
-      navigationRef.current?.getCurrentRoute() as NavigationRouteLike | undefined,
-    ),
-  );
+export function navigateToWorkspace(
+  serverId: string,
+  workspaceId: string,
+  _options: NavigateToWorkspaceOptions = {},
+) {
+  lastWorkspaceSelection = { serverId, workspaceId };
+  const route = buildHostWorkspaceRoute(serverId, workspaceId) as Href;
+  router.dismissTo(route);
 }
 
-export function useNavigationActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+export function navigateToLastWorkspace(): boolean {
+  if (!lastWorkspaceSelection) {
+    return false;
+  }
+  navigateToWorkspace(lastWorkspaceSelection.serverId, lastWorkspaceSelection.workspaceId);
+  return true;
+}
+
+export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
+  const params = useLocalSearchParams<{
+    serverId?: string | string[];
+    workspaceId?: string | string[];
+  }>();
+  const selection =
+    parseHostWorkspaceRouteFromPathname(usePathname()) ??
+    parseWorkspaceSelectionFromRouteParams(params);
+  if (selection) {
+    lastWorkspaceSelection = selection;
+  }
+  return selection;
 }

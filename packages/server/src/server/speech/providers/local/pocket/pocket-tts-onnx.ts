@@ -16,11 +16,15 @@ type OrtModule = typeof import("onnxruntime-node");
 type OrtSession = import("onnxruntime-node").InferenceSession;
 type OrtTensor = import("onnxruntime-node").Tensor;
 
-type SentencePieceProcessor = {
+function createSessionFeed(feed: Record<string, OrtTensor>): Record<string, OrtTensor> {
+  return feed;
+}
+
+interface SentencePieceProcessor {
   encodeIds: (text: string) => number[];
   load?: (modelPath: string) => unknown;
   Load?: (modelPath: string) => unknown;
-};
+}
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {
@@ -52,27 +56,19 @@ function getSessionInputMeta(
   session: OrtSession,
   inputName: string,
 ): { type?: string; dims?: Array<number | string | null> } | undefined {
-  const metaAny = (session as any).inputMetadata as unknown;
-  if (Array.isArray(metaAny)) {
-    const entry = metaAny.find(
-      (m) => m && typeof m === "object" && (m as any).name === inputName,
-    ) as any;
-    if (!entry) return undefined;
-    return { type: entry.type, dims: entry.shape };
+  const metaAny = session.inputMetadata;
+  if (!Array.isArray(metaAny)) {
+    return undefined;
   }
-
-  if (metaAny && typeof metaAny === "object" && inputName in (metaAny as any)) {
-    const entry = (metaAny as any)[inputName] as any;
-    return { type: entry?.type, dims: entry?.dimensions ?? entry?.shape };
-  }
-
-  return undefined;
+  const entry = metaAny.find((m) => m.name === inputName);
+  if (!entry) return undefined;
+  return { type: String(entry.type), dims: entry.shape };
 }
 
 function toBigInt64(values: number[]): BigInt64Array {
   const out = new BigInt64Array(values.length);
   for (let i = 0; i < values.length; i += 1) {
-    out[i] = BigInt(values[i]!);
+    out[i] = BigInt(values[i]);
   }
   return out;
 }
@@ -95,29 +91,61 @@ function normalizeTextForPocket(text: string): string {
   if (out.length > 0 && /[A-Za-z0-9]$/.test(out)) {
     out = `${out}.`;
   }
-  if (out.length > 0 && /[a-z]/.test(out[0]!)) {
-    out = out[0]!.toUpperCase() + out.slice(1);
+  if (out.length > 0 && /[a-z]/.test(out[0])) {
+    out = out[0].toUpperCase() + out.slice(1);
   }
   return out;
 }
 
 async function loadOrt(): Promise<OrtModule> {
-  return (await import("onnxruntime-node")) as OrtModule;
+  return import("onnxruntime-node");
+}
+
+interface SentencePieceModule {
+  SentencePieceProcessor?: new () => SentencePieceProcessor;
+  default?:
+    | (new () => SentencePieceProcessor)
+    | { SentencePieceProcessor?: new () => SentencePieceProcessor };
+}
+
+function isSentencePieceModule(mod: unknown): mod is SentencePieceModule {
+  return mod !== null && typeof mod === "object";
+}
+
+function getSentencePieceProcessor(
+  mod: SentencePieceModule,
+): (new () => SentencePieceProcessor) | undefined {
+  if (mod.SentencePieceProcessor) {
+    return mod.SentencePieceProcessor;
+  }
+  const defaultValue = mod.default;
+  if (
+    defaultValue &&
+    typeof defaultValue === "object" &&
+    "SentencePieceProcessor" in defaultValue
+  ) {
+    return defaultValue.SentencePieceProcessor;
+  }
+  if (typeof defaultValue === "function") {
+    return defaultValue as new () => SentencePieceProcessor;
+  }
+  return undefined;
 }
 
 async function loadSentencePiece(tokenizerModelPath: string): Promise<SentencePieceProcessor> {
   const mod = await import("@sctg/sentencepiece-js");
 
-  const Processor =
-    (mod as any).SentencePieceProcessor ??
-    (mod as any).default?.SentencePieceProcessor ??
-    (mod as any).default;
+  if (!isSentencePieceModule(mod)) {
+    throw new Error("@sctg/sentencepiece-js module has unexpected shape");
+  }
+
+  const Processor = getSentencePieceProcessor(mod);
 
   if (!Processor) {
     throw new Error("Failed to load SentencePiece processor from @sctg/sentencepiece-js");
   }
 
-  const sp: SentencePieceProcessor = new Processor();
+  const sp = new Processor();
 
   if (typeof sp.load === "function") {
     await sp.load(tokenizerModelPath);
@@ -166,7 +194,7 @@ function createZeroTensorForInput(
 
 function initState(session: OrtSession, ort: OrtModule): Record<string, OrtTensor> {
   const out: Record<string, OrtTensor> = {};
-  for (const name of (session as any).inputNames as string[]) {
+  for (const name of session.inputNames) {
     if (name.startsWith("state_")) {
       out[name] = createZeroTensorForInput(ort, session, name);
     }
@@ -187,14 +215,19 @@ function updateStateFromOutputs(
   }
 }
 
+interface OrtTensorWithData {
+  data: unknown;
+}
+
 function tensorDataFloat32(t: OrtTensor): Float32Array {
-  const data = (t as any).data;
+  const tensorWithData = t as OrtTensorWithData;
+  const data = tensorWithData.data;
   if (data instanceof Float32Array) return data;
-  if (Array.isArray(data)) return Float32Array.from(data as number[]);
+  if (Array.isArray(data)) return Float32Array.from(data);
   throw new Error("Unexpected tensor data type (expected Float32Array)");
 }
 
-export type PocketTtsOnnxConfig = {
+export interface PocketTtsOnnxConfig {
   modelDir: string;
   precision?: "int8" | "fp32";
   device?: "auto" | "cpu" | "cuda";
@@ -206,7 +239,7 @@ export type PocketTtsOnnxConfig = {
   maxChunkFrames?: number;
   targetChunkMs?: number;
   referenceAudioFile?: string;
-};
+}
 
 class PocketTtsOnnxEngine {
   static readonly SAMPLE_RATE = 24000;
@@ -346,10 +379,9 @@ class PocketTtsOnnxEngine {
     const audioTensor = new ort.Tensor("float32", floatAudio, [1, 1, floatAudio.length]);
 
     const encoded = await mimiEncoder.run({ audio: audioTensor });
-    const firstOutName = (mimiEncoder as any).outputNames?.[0] as string | undefined;
-    const voiceEmb = firstOutName
-      ? (encoded as any)[firstOutName]
-      : (Object.values(encoded)[0] as any);
+    const firstOutName = mimiEncoder.outputNames?.[0];
+    const encodedRecord = encoded as Record<string, OrtTensor>;
+    const voiceEmb = firstOutName ? encodedRecord[firstOutName] : Object.values(encodedRecord)[0];
     if (!voiceEmb) {
       throw new Error("PocketTTS mimi_encoder: missing output");
     }
@@ -382,9 +414,11 @@ class PocketTtsOnnxEngine {
   }
 
   private async runTextConditioner(tokenIds: OrtTensor): Promise<OrtTensor> {
-    const out = await this.textConditioner.run({ token_ids: tokenIds } as any);
-    const firstOutName = (this.textConditioner as any).outputNames?.[0] as string | undefined;
-    const t = firstOutName ? (out as any)[firstOutName] : (Object.values(out)[0] as any);
+    const feed: Record<string, OrtTensor> = { token_ids: tokenIds };
+    const out = await this.textConditioner.run(feed);
+    const firstOutName = this.textConditioner.outputNames?.[0];
+    const outRecord = out as Record<string, OrtTensor>;
+    const t = firstOutName ? outRecord[firstOutName] : Object.values(outRecord)[0];
     if (!t) throw new Error("PocketTTS text_conditioner: missing output");
     return t;
   }
@@ -397,20 +431,24 @@ class PocketTtsOnnxEngine {
     const emptyText = new ort.Tensor("float32", new Float32Array(0), [1, 0, 1024]);
 
     // Voice conditioning pass
-    const resVoice = await this.flowLmMain.run({
-      sequence: emptySeq,
-      text_embeddings: this.voiceEmbeddings,
-      ...state,
-    } as any);
-    updateStateFromOutputs(state, resVoice as any);
+    const resVoice = await this.flowLmMain.run(
+      createSessionFeed({
+        sequence: emptySeq,
+        text_embeddings: this.voiceEmbeddings,
+        ...state,
+      }),
+    );
+    updateStateFromOutputs(state, resVoice as Record<string, OrtTensor>);
 
     // Text conditioning pass
-    const resText = await this.flowLmMain.run({
-      sequence: emptySeq,
-      text_embeddings: textEmbeddings,
-      ...state,
-    } as any);
-    updateStateFromOutputs(state, resText as any);
+    const resText = await this.flowLmMain.run(
+      createSessionFeed({
+        sequence: emptySeq,
+        text_embeddings: textEmbeddings,
+        ...state,
+      }),
+    );
+    updateStateFromOutputs(state, resText as Record<string, OrtTensor>);
 
     // Autoregressive generation
     const curr = new Float32Array(32);
@@ -421,25 +459,28 @@ class PocketTtsOnnxEngine {
     let eosStep: number | null = null;
 
     for (let step = 0; step < this.maxFrames; step += 1) {
-      const resStep = await this.flowLmMain.run({
-        sequence: currTensor,
-        text_embeddings: emptyText,
-        ...state,
-      } as any);
+      const resStep = await this.flowLmMain.run(
+        createSessionFeed({
+          sequence: currTensor,
+          text_embeddings: emptyText,
+          ...state,
+        }),
+      );
 
-      const outputNames = (this.flowLmMain as any).outputNames as string[] | undefined;
-      const conditioningName = outputNames?.[0] ?? Object.keys(resStep)[0]!;
-      const eosName = outputNames?.[1] ?? Object.keys(resStep)[1]!;
+      const outputNames = this.flowLmMain.outputNames;
+      const resStepRecord = resStep as Record<string, OrtTensor>;
+      const conditioningName = outputNames?.[0] ?? Object.keys(resStepRecord)[0];
+      const eosName = outputNames?.[1] ?? Object.keys(resStepRecord)[1];
 
-      const conditioning = (resStep as any)[conditioningName] as OrtTensor;
-      const eos = (resStep as any)[eosName] as OrtTensor;
+      const conditioning = resStepRecord[conditioningName];
+      const eos = resStepRecord[eosName];
       if (!conditioning || !eos) {
         throw new Error("PocketTTS flow_lm_main: missing conditioning/EOS outputs");
       }
-      updateStateFromOutputs(state, resStep as any);
+      updateStateFromOutputs(state, resStepRecord);
 
       const eosData = tensorDataFloat32(eos);
-      if (eosData[0]! > -4.0 && eosStep === null) {
+      if (eosData[0] > -4.0 && eosStep === null) {
         eosStep = step;
       }
       if (eosStep !== null && step >= eosStep + this.framesAfterEos) {
@@ -457,18 +498,21 @@ class PocketTtsOnnxEngine {
 
       for (const st of this.stBuffers) {
         const xTensor = new ort.Tensor("float32", x, [1, 32]);
-        const flowOut = await this.flowLmFlow.run({
-          c: conditioning,
-          s: st.s,
-          t: st.t,
-          x: xTensor,
-        } as any);
-        const first = (this.flowLmFlow as any).outputNames?.[0] as string | undefined;
-        const flowTensor = first ? (flowOut as any)[first] : (Object.values(flowOut)[0] as any);
+        const flowOut = await this.flowLmFlow.run(
+          createSessionFeed({
+            c: conditioning,
+            s: st.s,
+            t: st.t,
+            x: xTensor,
+          }),
+        );
+        const first = this.flowLmFlow.outputNames?.[0];
+        const flowOutRecord = flowOut as Record<string, OrtTensor>;
+        const flowTensor = first ? flowOutRecord[first] : Object.values(flowOutRecord)[0];
         if (!flowTensor) throw new Error("PocketTTS flow_lm_flow: missing output");
         const delta = tensorDataFloat32(flowTensor);
         for (let i = 0; i < x.length; i += 1) {
-          x[i] = x[i]! + delta[i]! * dt;
+          x[i] = x[i] + delta[i] * dt;
         }
       }
 
@@ -485,15 +529,16 @@ class PocketTtsOnnxEngine {
     const frameCount = frames.length;
     const flattened = new Float32Array(frameCount * 32);
     for (let i = 0; i < frameCount; i += 1) {
-      flattened.set(frames[i]!, i * 32);
+      flattened.set(frames[i], i * 32);
     }
     const latent = new ort.Tensor("float32", flattened, [1, frameCount, 32]);
 
-    const out = await this.mimiDecoder.run({ latent, ...state } as any);
-    updateStateFromOutputs(state, out as any);
+    const out = await this.mimiDecoder.run(createSessionFeed({ latent, ...state }));
+    const outRecord = out as Record<string, OrtTensor>;
+    updateStateFromOutputs(state, outRecord);
 
-    const firstOutName = (this.mimiDecoder as any).outputNames?.[0] as string | undefined;
-    const audioTensor = firstOutName ? (out as any)[firstOutName] : (Object.values(out)[0] as any);
+    const firstOutName = this.mimiDecoder.outputNames?.[0];
+    const audioTensor = firstOutName ? outRecord[firstOutName] : Object.values(outRecord)[0];
     if (!audioTensor) {
       throw new Error("PocketTTS mimi_decoder: missing audio output");
     }

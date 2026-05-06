@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 import Animated, {
   Easing,
@@ -37,9 +38,14 @@ export default function VolumeDisplay({
     };
   });
 
+  const composedStyle = useMemo(
+    () => [{ backgroundColor: color }, animatedStyle],
+    [color, animatedStyle],
+  );
+
   return (
     <View style={styles.container}>
-      <Animated.View style={[{ backgroundColor: color }, animatedStyle]} />
+      <Animated.View style={composedStyle} />
     </View>
   );
 }

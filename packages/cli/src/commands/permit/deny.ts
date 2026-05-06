@@ -89,21 +89,22 @@ export async function runDenyCommand(
     }
 
     // Deny permissions
-    const results: PermissionResponseItem[] = [];
-    for (const permission of permissionsToDeny) {
-      await client.respondToPermission(resolvedAgentId, permission.id, {
-        behavior: "deny",
-        ...(options.message ? { message: options.message } : {}),
-        ...(options.interrupt ? { interrupt: true } : {}),
-      });
-      results.push({
-        requestId: permission.id.slice(0, 8),
-        agentId: resolvedAgentId,
-        agentShortId: resolvedAgentId.slice(0, 7),
-        name: permission.name,
-        result: "denied",
-      });
-    }
+    const results: PermissionResponseItem[] = await Promise.all(
+      permissionsToDeny.map(async (permission) => {
+        await client.respondToPermission(resolvedAgentId, permission.id, {
+          behavior: "deny",
+          ...(options.message ? { message: options.message } : {}),
+          ...(options.interrupt ? { interrupt: true } : {}),
+        });
+        return {
+          requestId: permission.id.slice(0, 8),
+          agentId: resolvedAgentId,
+          agentShortId: resolvedAgentId.slice(0, 7),
+          name: permission.name,
+          result: "denied",
+        };
+      }),
+    );
 
     await client.close();
 

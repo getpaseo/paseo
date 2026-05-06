@@ -142,7 +142,7 @@ describe("generateStructuredAgentResponseWithFallback", () => {
   }
 
   it("uses the first available provider in the waterfall", async () => {
-    const calls: Array<{ provider: string; model?: string }> = [];
+    const calls: Array<{ provider: string; model?: string; persistSession?: boolean }> = [];
     const manager = createManager([
       { provider: "claude", available: true, error: null },
       { provider: "codex", available: true, error: null },
@@ -158,17 +158,19 @@ describe("generateStructuredAgentResponseWithFallback", () => {
         { provider: "claude", model: "haiku" },
         { provider: "codex", model: "gpt-5.4-mini" },
       ],
+      persistSession: false,
       runner: async (options) => {
         calls.push({
           provider: options.agentConfig.provider,
           model: options.agentConfig.model ?? undefined,
+          persistSession: options.persistSession,
         });
         return { summary: "ok" };
       },
     });
 
     expect(result).toEqual({ summary: "ok" });
-    expect(calls).toEqual([{ provider: "claude", model: "haiku" }]);
+    expect(calls).toEqual([{ provider: "claude", model: "haiku", persistSession: false }]);
   });
 
   it("skips unavailable providers and uses the next available one", async () => {

@@ -1,9 +1,9 @@
 import type { BottomAnchorRouteRequest } from "@/components/use-bottom-anchor-controller";
 
-export type RouteBottomAnchorIntent = {
+export interface RouteBottomAnchorIntent {
   routeKey: string;
   reason: BottomAnchorRouteRequest["reason"];
-};
+}
 
 export function deriveRouteBottomAnchorIntent(input: {
   cachedIntent: RouteBottomAnchorIntent | null;

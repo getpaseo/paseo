@@ -1,5 +1,5 @@
 import type pino from "pino";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import { EventEmitter } from "node:events";
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 
@@ -102,7 +102,8 @@ export class OpenAIRealtimeTranscriptionSession
 
     this.closing = false;
     this.ready = new Promise<void>((resolve, reject) => {
-      const url = "wss://api.openai.com/v1/realtime?intent=transcription";
+      const url =
+        process.env.OPENAI_REALTIME_URL ?? "wss://api.openai.com/v1/realtime?intent=transcription";
       const ws = new WebSocket(url, {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,

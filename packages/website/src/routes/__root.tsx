@@ -6,14 +6,24 @@ import { getStarCount } from "~/stars";
 
 interface ReleaseContext {
   version: string;
+  windowsX64Asset: string | null;
+  windowsArm64Asset: string | null;
 }
 
 interface StarsContext {
   stars: string;
 }
 
-const ReleaseCtx = createContext<ReleaseContext>({ version: "" });
+const ReleaseCtx = createContext<ReleaseContext>({
+  version: "",
+  windowsX64Asset: null,
+  windowsArm64Asset: null,
+});
 const StarsCtx = createContext<StarsContext>({ stars: "" });
+
+const PLAUSIBLE_INIT_SCRIPT = {
+  __html: `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()`,
+};
 
 export function useRelease(): ReleaseContext {
   return useContext(ReleaseCtx);
@@ -67,11 +77,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
       <head>
         <HeadContent />
         <script async src="https://plausible.io/js/pa-cKNUoWbeH_Iksb2fh82s3.js" />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()`,
-          }}
-        />
+        <script dangerouslySetInnerHTML={PLAUSIBLE_INIT_SCRIPT} />
       </head>
       <body className="antialiased bg-background text-foreground">
         {children}

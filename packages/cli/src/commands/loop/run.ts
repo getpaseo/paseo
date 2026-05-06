@@ -8,6 +8,7 @@ import type {
 } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { parseDuration } from "../../utils/duration.js";
+import { resolveProviderAndModel } from "../../utils/provider-model.js";
 import type { LoopDaemonClient, LoopRecord, LoopRunInput } from "./types.js";
 
 export interface LoopRunRow {
@@ -20,8 +21,10 @@ export interface LoopRunRow {
 export interface LoopRunOptions extends CommandOptions {
   provider?: string;
   model?: string;
+  mode?: string;
   verifyProvider?: string;
   verifyModel?: string;
+  verifyMode?: string;
   verify?: string;
   verifyCheck?: string[];
   archive?: boolean;
@@ -47,8 +50,13 @@ export function addLoopRunOptions(command: Command): Command {
     .argument("<prompt>", "Prompt for each fresh worker iteration")
     .option("--provider <provider>", "Default provider for worker and verifier agents")
     .option("--model <model>", "Default model for worker and verifier agents")
+    .option(
+      "--mode <mode>",
+      "Provider-specific mode for the worker agent (e.g. claude bypassPermissions, opencode build)",
+    )
     .option("--verify-provider <provider>", "Provider for the verifier agent")
     .option("--verify-model <model>", "Model for the verifier agent")
+    .option("--verify-mode <mode>", "Provider-specific mode for the verifier agent")
     .option("--verify <prompt>", "Verifier agent prompt")
     .option(
       "--verify-check <command>",
@@ -86,7 +94,8 @@ function parseMaxIterations(value: string | undefined): number | undefined {
   return parsed;
 }
 
-function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInput {
+// oxlint-disable complexity
+export function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInput {
   const verifyPrompt = options.verify?.trim();
   if (options.verify !== undefined && !verifyPrompt) {
     throw {
@@ -95,24 +104,62 @@ function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInpu
     } satisfies CommandError;
   }
 
-  return {
+  const result: LoopRunInput = {
     prompt,
     cwd: process.cwd(),
-    ...(options.provider ? { provider: options.provider } : {}),
-    ...(options.model?.trim() ? { model: options.model.trim() } : {}),
-    ...(options.verifyProvider ? { verifierProvider: options.verifyProvider } : {}),
-    ...(options.verifyModel?.trim() ? { verifierModel: options.verifyModel.trim() } : {}),
-    ...(verifyPrompt ? { verifyPrompt } : {}),
-    ...(options.verifyCheck && options.verifyCheck.length > 0
-      ? { verifyChecks: options.verifyCheck }
-      : {}),
-    ...(options.archive ? { archive: true } : {}),
-    ...(options.name?.trim() ? { name: options.name.trim() } : {}),
-    ...(options.sleep ? { sleepMs: parseDuration(options.sleep) } : {}),
-    ...(options.maxIterations ? { maxIterations: parseMaxIterations(options.maxIterations) } : {}),
-    ...(options.maxTime ? { maxTimeMs: parseDuration(options.maxTime) } : {}),
   };
+
+  // Resolve provider/model
+  if (options.provider) {
+    const { provider, model } = resolveProviderAndModel({ provider: options.provider });
+    if (provider) result.provider = provider;
+    // Explicit --model takes precedence over parsed model
+    if (options.model?.trim()) {
+      result.model = options.model.trim();
+    } else if (model) {
+      result.model = model;
+    }
+  } else if (options.model?.trim()) {
+    result.model = options.model.trim();
+  }
+
+  if (options.mode?.trim()) {
+    result.modeId = options.mode.trim();
+  }
+
+  // Resolve verifier provider/model
+  if (options.verifyProvider) {
+    const { provider, model } = resolveProviderAndModel({ provider: options.verifyProvider });
+    if (provider) result.verifierProvider = provider;
+    // Explicit --verify-model takes precedence over parsed model
+    if (options.verifyModel?.trim()) {
+      result.verifierModel = options.verifyModel.trim();
+    } else if (model) {
+      result.verifierModel = model;
+    }
+  } else if (options.verifyModel?.trim()) {
+    result.verifierModel = options.verifyModel.trim();
+  }
+
+  if (options.verifyMode?.trim()) {
+    result.verifierModeId = options.verifyMode.trim();
+  }
+
+  if (verifyPrompt) result.verifyPrompt = verifyPrompt;
+  if (options.verifyCheck && options.verifyCheck.length > 0) {
+    result.verifyChecks = options.verifyCheck;
+  }
+  if (options.archive) result.archive = true;
+  if (options.name?.trim()) result.name = options.name.trim();
+  if (options.sleep) result.sleepMs = parseDuration(options.sleep);
+  if (options.maxIterations) {
+    result.maxIterations = parseMaxIterations(options.maxIterations);
+  }
+  if (options.maxTime) result.maxTimeMs = parseDuration(options.maxTime);
+
+  return result;
 }
+// oxlint-enable complexity
 
 export type LoopRunResult = SingleResult<LoopRunRow>;
 
@@ -121,12 +168,12 @@ export async function runLoopRunCommand(
   options: LoopRunOptions,
   _command: Command,
 ): Promise<LoopRunResult> {
-  const host = getDaemonHost({ host: options.host as string | undefined });
+  const host = getDaemonHost({ host: options.host });
   const input = buildLoopRunInput(prompt, options);
   let client;
   try {
     client = (await connectToDaemon({
-      host: options.host as string | undefined,
+      host: options.host,
     })) as unknown as LoopDaemonClient;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

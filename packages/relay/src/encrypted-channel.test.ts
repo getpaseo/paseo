@@ -40,8 +40,8 @@ describe("EncryptedChannel", () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
 
     // Daemon generates keypair (public key goes in QR)
-    const daemonKeyPair = await generateKeyPair();
-    const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
 
     let clientOpenedResolve: (() => void) | null = null;
     const clientOpened = new Promise<void>((resolve) => {
@@ -67,8 +67,8 @@ describe("EncryptedChannel", () => {
   it("exchanges encrypted messages bidirectionally", async () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
 
-    const daemonKeyPair = await generateKeyPair();
-    const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
 
     const daemonMessages: (string | ArrayBuffer)[] = [];
     const clientMessages: (string | ArrayBuffer)[] = [];
@@ -105,8 +105,8 @@ describe("EncryptedChannel", () => {
   it("encrypted messages are opaque to transport", async () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
 
-    const daemonKeyPair = await generateKeyPair();
-    const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
 
     let clientOpenedResolve: (() => void) | null = null;
     const clientOpened = new Promise<void>((resolve) => {
@@ -142,8 +142,8 @@ describe("EncryptedChannel", () => {
   it("does not throw uncaught when handshake hello retry send fails", async () => {
     vi.useFakeTimers();
     try {
-      const daemonKeyPair = await generateKeyPair();
-      const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+      const daemonKeyPair = generateKeyPair();
+      const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
 
       const transport: Transport = {
         send: vi.fn(),
@@ -183,7 +183,7 @@ describe("EncryptedChannel", () => {
   it("fails handshake on invalid hello", async () => {
     const [daemonTransport] = createMockTransportPair();
 
-    const daemonKeyPair = await generateKeyPair();
+    const daemonKeyPair = generateKeyPair();
 
     const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair);
 

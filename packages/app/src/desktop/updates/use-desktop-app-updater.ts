@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import {
   checkDesktopAppUpdate,
   formatVersionWithPrefix,
@@ -7,6 +8,8 @@ import {
   type DesktopAppUpdateCheckResult,
   type DesktopAppUpdateInstallResult,
 } from "@/desktop/updates/desktop-updates";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
+import { useDesktopIpcErrorReporter } from "@/desktop/hooks/desktop-ipc-error";
 
 export type DesktopAppUpdateStatus =
   | "idle"
@@ -83,12 +86,28 @@ function formatStatusText(input: {
 
 export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const isDesktopApp = shouldShowDesktopUpdateSection();
+  const { settings: desktopSettings } = useDesktopSettings();
+  const releaseChannel = desktopSettings.releaseChannel;
+  const reportError = useDesktopIpcErrorReporter();
   const requestVersionRef = useRef(0);
   const [status, setStatus] = useState<DesktopAppUpdateStatus>("idle");
   const [availableUpdate, setAvailableUpdate] = useState<DesktopAppUpdateCheckResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const { mutateAsync: installAppUpdate, isPending: isInstallingAppUpdate } = useMutation<
+    DesktopAppUpdateInstallResult,
+    Error
+  >({
+    mutationFn: () => installDesktopAppUpdate({ releaseChannel }),
+    onError: (error) => {
+      reportError({
+        error,
+        message: "Unable to install the desktop app update.",
+        logLabel: "[DesktopUpdater] Failed to install app update",
+      });
+    },
+  });
 
   const checkForUpdates = useCallback(
     async (options: { silent?: boolean } = {}) => {
@@ -105,7 +124,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       setErrorMessage(null);
 
       try {
-        const result = await checkDesktopAppUpdate();
+        const result = await checkDesktopAppUpdate({ releaseChannel });
         if (requestVersion !== requestVersionRef.current) {
           return result;
         }
@@ -140,8 +159,16 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
         return null;
       }
     },
-    [isDesktopApp],
+    [isDesktopApp, releaseChannel],
   );
+
+  useEffect(() => {
+    if (!isDesktopApp) {
+      return;
+    }
+
+    void checkForUpdates({ silent: true });
+  }, [checkForUpdates, isDesktopApp]);
 
   useEffect(() => {
     if (!isDesktopApp || status !== "pending") {
@@ -166,7 +193,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     setErrorMessage(null);
 
     try {
-      const result = await installDesktopAppUpdate();
+      const result = await installAppUpdate();
       setLastCheckedAt(Date.now());
 
       if (result.installed) {
@@ -186,7 +213,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       setErrorMessage(message);
       return null;
     }
-  }, [isDesktopApp]);
+  }, [installAppUpdate, isDesktopApp]);
 
   return {
     isDesktopApp,
@@ -200,7 +227,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     errorMessage,
     lastCheckedAt,
     isChecking: status === "checking",
-    isInstalling: status === "installing",
+    isInstalling: status === "installing" || isInstallingAppUpdate,
     checkForUpdates,
     installUpdate,
   };

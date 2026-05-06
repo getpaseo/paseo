@@ -12,7 +12,7 @@ export function pairCommand(): Command {
   return addJsonOption(new Command("pair").description("Print the daemon pairing QR code and link"))
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .action(async (_options: PairOptions, command: Command) => {
-      await runPairCommand(command.optsWithGlobals() as PairOptions);
+      await runPairCommand(command.optsWithGlobals());
     });
 }
 
@@ -28,6 +28,7 @@ export async function runPairCommand(options: PairOptions): Promise<void> {
     relayEnabled: config.relayEnabled,
     relayEndpoint: config.relayEndpoint,
     relayPublicEndpoint: config.relayPublicEndpoint,
+    relayUseTls: config.relayUseTls,
     appBaseUrl: config.appBaseUrl,
     includeQr: true,
   });

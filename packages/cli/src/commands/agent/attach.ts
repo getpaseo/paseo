@@ -105,7 +105,7 @@ export async function runAttachCommand(
   options: AgentAttachOptions,
   _command: Command,
 ): Promise<void> {
-  const host = getDaemonHost({ host: options.host as string | undefined });
+  const host = getDaemonHost({ host: options.host });
 
   if (!id) {
     console.error("Error: Agent ID required");
@@ -115,7 +115,7 @@ export async function runAttachCommand(
 
   let client: DaemonClient;
   try {
-    client = await connectToDaemon({ host: options.host as string | undefined });
+    client = await connectToDaemon({ host: options.host });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Error: Cannot connect to daemon at ${host}: ${message}`);

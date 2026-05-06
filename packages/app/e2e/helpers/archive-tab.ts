@@ -11,13 +11,13 @@ import {
   buildHostWorkspaceRoute,
 } from "@/utils/host-routes";
 
-export type ArchiveTabAgent = {
+export interface ArchiveTabAgent {
   id: string;
   title: string;
   cwd: string;
-};
+}
 
-type ArchiveTabDaemonClient = {
+interface ArchiveTabDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
   createAgent(options: {
@@ -27,11 +27,19 @@ type ArchiveTabDaemonClient = {
     modeId: string;
     cwd: string;
     title: string;
-    initialPrompt: string;
+    initialPrompt?: string;
   }): Promise<{ id: string }>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   waitForFinish(agentId: string, timeout?: number): Promise<{ status: string }>;
-};
+  waitForAgentUpsert(
+    agentId: string,
+    predicate: (snapshot: { status: string }) => boolean,
+    timeout?: number,
+  ): Promise<{ status: string }>;
+  fetchAgentHistory(options?: {
+    page?: { limit: number };
+  }): Promise<{ entries: Array<{ id: string }> }>;
+}
 
 function getDaemonPort(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -68,17 +76,15 @@ function buildSeededStoragePayload() {
   };
 }
 
-type ArchiveTabDaemonClientConfig = {
+interface ArchiveTabDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-};
+}
 
 async function loadDaemonClientConstructor(): Promise<
-  new (
-    config: ArchiveTabDaemonClientConfig,
-  ) => ArchiveTabDaemonClient
+  new (config: ArchiveTabDaemonClientConfig) => ArchiveTabDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
@@ -110,16 +116,17 @@ export async function createIdleAgent(
   const created = await client.createAgent({
     provider: "opencode",
     model: "opencode/gpt-5-nano",
-    modeId: "default",
+    modeId: "bypassPermissions",
     cwd: input.cwd,
     title: input.title,
-    initialPrompt: "Reply with exactly READY.",
   });
-  const finished = await client.waitForFinish(created.id, 120_000);
-  if (finished.status !== "idle") {
-    throw new Error(
-      `Expected agent ${created.id} to become idle, got ${finished.status}. Error: ${JSON.stringify((finished as Record<string, unknown>).error ?? "unknown")}`,
-    );
+  const snapshot = await client.waitForAgentUpsert(
+    created.id,
+    (agent) => agent.status === "idle",
+    30_000,
+  );
+  if (snapshot.status !== "idle") {
+    throw new Error(`Expected agent ${created.id} to become idle, got ${snapshot.status}.`);
   }
   return {
     id: created.id,
@@ -144,21 +151,21 @@ export async function primeAdditionalPage(page: Page): Promise<void> {
     await ws.close({ code: 1008, reason: "Blocked connection to localhost:6767 during e2e." });
   });
   await page.addInitScript(
-    ({ daemon, preferences, seedNonce }) => {
+    ({ daemon: seededDaemon, preferences: seededPreferences, seedNonce: nonce }) => {
       const disableOnceKey = "@paseo:e2e-disable-default-seed-once";
       const disableValue = localStorage.getItem(disableOnceKey);
       if (disableValue) {
         localStorage.removeItem(disableOnceKey);
-        if (disableValue === seedNonce) {
+        if (disableValue === nonce) {
           return;
         }
       }
 
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:e2e-seed-nonce", seedNonce);
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
+      localStorage.setItem("@paseo:e2e-seed-nonce", nonce);
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
       localStorage.removeItem("@paseo:settings");
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
     },
     { daemon, preferences, seedNonce },
   );
@@ -169,11 +176,11 @@ export async function resetSeededPageState(page: Page): Promise<void> {
   const { daemon, preferences } = buildSeededStoragePayload();
   await page.goto("/");
   await page.evaluate(
-    ({ daemon, preferences }) => {
+    ({ daemon: seededDaemon, preferences: seededPreferences }) => {
       localStorage.clear();
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
       localStorage.removeItem("@paseo:settings");
     },
     { daemon, preferences },
@@ -188,19 +195,31 @@ export async function openWorkspaceWithAgents(
   const serverId = getServerId();
   for (const agent of agents) {
     await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.cwd));
+
+    // The workspace layout consumes `?open=agent:xxx`, returns null during the effect,
+    // then replaces the URL with the clean workspace route after preparing the tab.
+    // On CI, Expo Router's rootNavigationState may take time to initialize,
+    // so we allow a generous timeout here (matching terminal-perf pattern).
+    await page.waitForURL(
+      (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
+      { timeout: 60_000 },
+    );
+
     await waitForWorkspaceTabsVisible(page);
     await expectWorkspaceTabVisible(page, agent.id);
   }
 }
 
 export async function expectWorkspaceTabVisible(page: Page, agentId: string): Promise<void> {
-  await expect(page.getByTestId(`workspace-tab-agent_${agentId}`).first()).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(
+    page.getByTestId(`workspace-tab-agent_${agentId}`).filter({ visible: true }).first(),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 export async function expectWorkspaceTabHidden(page: Page, agentId: string): Promise<void> {
-  await expect(page.getByTestId(`workspace-tab-agent_${agentId}`)).toHaveCount(0, {
+  await expect(
+    page.getByTestId(`workspace-tab-agent_${agentId}`).filter({ visible: true }),
+  ).toHaveCount(0, {
     timeout: 30_000,
   });
 }
@@ -211,6 +230,24 @@ export async function expectWorkspaceArchiveOutcome(
 ): Promise<void> {
   await expectWorkspaceTabHidden(page, input.archivedAgentId);
   await expectWorkspaceTabVisible(page, input.survivingAgentId);
+}
+
+export async function closeWorkspaceAgentTab(page: Page, agentId: string): Promise<void> {
+  const closeButton = page.getByTestId(`workspace-agent-close-${agentId}`).filter({
+    visible: true,
+  });
+  await expect(closeButton.first()).toBeVisible({ timeout: 30_000 });
+  await closeButton.first().click();
+  await expectWorkspaceTabHidden(page, agentId);
+}
+
+export async function expectArchivedAgentFocused(page: Page, agentId: string): Promise<void> {
+  await expectWorkspaceTabVisible(page, agentId);
+  await expect(
+    page.getByText("This agent is archived").filter({ visible: true }).first(),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 export async function reloadWorkspace(page: Page, workspaceId: string): Promise<void> {
@@ -231,8 +268,10 @@ export async function openSessions(page: Page): Promise<void> {
   });
 }
 
+const AGENT_ROW_SELECTOR = '[data-testid^="agent-row-"]';
+
 function getSessionRowByTitle(page: Page, title: string) {
-  return page.locator('[data-testid^="agent-row-"]').filter({ hasText: title }).first();
+  return page.locator(AGENT_ROW_SELECTOR).filter({ hasText: title }).first();
 }
 
 export async function expectSessionRowVisible(page: Page, title: string): Promise<void> {
@@ -241,6 +280,18 @@ export async function expectSessionRowVisible(page: Page, title: string): Promis
 
 export async function expectSessionRowArchived(page: Page, title: string): Promise<void> {
   await expect(getSessionRowByTitle(page, title)).toContainText("Archived", { timeout: 30_000 });
+}
+
+export async function clickSessionRow(page: Page, title: string): Promise<void> {
+  const row = getSessionRowByTitle(page, title);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.click();
+}
+
+export async function expectSessionsEmptyState(page: Page): Promise<void> {
+  // Guard: if session rows appear, a prior spec polluted the shared daemon — see 00-sessions-empty.spec.ts.
+  await expect(page.locator(AGENT_ROW_SELECTOR)).toHaveCount(0, { timeout: 5_000 });
+  await expect(page.getByText("No sessions yet")).toBeVisible({ timeout: 30_000 });
 }
 
 export async function archiveAgentFromSessions(
@@ -254,13 +305,19 @@ export async function archiveAgentFromSessions(
     throw new Error(`Could not read bounding box for session row ${input.agentId}.`);
   }
 
+  // Long-press the row. Idle agents are archived immediately (no modal).
+  // Running/initializing agents show a confirmation modal instead.
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.waitForTimeout(900);
   await page.mouse.up();
 
+  // If a confirmation modal appears (running agent), click the archive button.
   const archiveButton = page.getByTestId("agent-action-archive").first();
-  await expect(archiveButton).toBeVisible({ timeout: 10_000 });
-  await archiveButton.click();
+  const modalVisible = await archiveButton.isVisible().catch(() => false);
+  if (modalVisible) {
+    await archiveButton.click();
+  }
+
   await expectSessionRowArchived(page, input.title);
 }

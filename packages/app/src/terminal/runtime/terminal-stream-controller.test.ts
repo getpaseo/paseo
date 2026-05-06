@@ -6,13 +6,13 @@ import {
   type TerminalStreamControllerStatus,
 } from "./terminal-stream-controller";
 
-type TerminalSnapshot = {
+interface TerminalSnapshot {
   rows: number;
   cols: number;
   grid: Array<Array<{ char: string }>>;
   scrollback: Array<Array<{ char: string }>>;
   cursor: { row: number; col: number };
-};
+}
 
 type TerminalStreamEvent =
   | { terminalId: string; type: "output"; data: Uint8Array }

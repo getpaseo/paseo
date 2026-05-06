@@ -20,7 +20,7 @@ describe("daemon E2E - timeline window", () => {
     await ctx.cleanup();
   }, 60_000);
 
-  test("canonical tail limit keeps assistant chunks intact at the window boundary", async () => {
+  test("canonical tail limit returns one finalized committed assistant row at the window boundary", async () => {
     const cwd = tmpCwd();
     try {
       const agent = await ctx.client.createAgent({
@@ -30,7 +30,7 @@ describe("daemon E2E - timeline window", () => {
         modeId: "full-access",
       });
 
-      const expected = "1234567890ABCDEFGHIJ";
+      const expected = "READY";
       await ctx.client.sendMessage(agent.id, `Respond with exactly: ${expected}`);
       const finalState = await ctx.client.waitForFinish(agent.id, 5_000);
       expect(finalState.status).toBe("idle");
@@ -45,9 +45,8 @@ describe("daemon E2E - timeline window", () => {
         .filter((entry) => entry.item.type === "assistant_message")
         .map((entry) => entry.item.text);
 
-      expect(assistantTexts).toHaveLength(2);
-      expect(assistantTexts.join("")).toBe(expected);
-      expect(timeline.startCursor?.seq).toBeLessThan(timeline.endCursor?.seq ?? 0);
+      expect(assistantTexts).toEqual([expected]);
+      expect(timeline.startCursor?.seq).toBe(timeline.endCursor?.seq);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -63,10 +62,10 @@ describe("daemon E2E - timeline window", () => {
         modeId: "full-access",
       });
 
-      await ctx.client.sendMessage(agent.id, "Respond with exactly: FIRST-RESPONSE");
+      await ctx.client.sendMessage(agent.id, "Respond with exactly: FIRST");
       expect((await ctx.client.waitForFinish(agent.id, 5_000)).status).toBe("idle");
 
-      const expected = "SECOND-RESPONSE";
+      const expected = "SECOND";
       await ctx.client.sendMessage(agent.id, `Respond with exactly: ${expected}`);
       expect((await ctx.client.waitForFinish(agent.id, 5_000)).status).toBe("idle");
 

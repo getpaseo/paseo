@@ -1,18 +1,22 @@
 import { z } from "zod";
 
 import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
-import { extractCodexShellOutput, truncateDiffText } from "../tool-call-mapper-utils.js";
+import {
+  extractCodexShellOutput,
+  normalizeToolCallStatus,
+  truncateDiffText,
+} from "../tool-call-mapper-utils.js";
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
 import { isSpeakToolName } from "../../tool-name-normalization.js";
 
-type CodexMapperOptions = { cwd?: string | null };
+interface CodexMapperOptions {
+  cwd?: string | null;
+}
 
-const FAILED_STATUSES = new Set(["failed", "error", "errored", "rejected", "denied"]);
-const CANCELED_STATUSES = new Set(["canceled", "cancelled", "interrupted", "aborted"]);
-const COMPLETED_STATUSES = new Set(["completed", "complete", "done", "success", "succeeded"]);
 const CodexCommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const CodexToolCallStatusSchema = z.enum(["running", "completed", "failed", "canceled"]);
+type CodexToolCallStatus = z.infer<typeof CodexToolCallStatusSchema>;
 
 const CodexRolloutToolCallParamsSchema = z
   .object({
@@ -24,128 +28,55 @@ const CodexRolloutToolCallParamsSchema = z
   })
   .passthrough();
 
-type CodexNormalizedToolCallEnvelope = {
+interface CodexNormalizedToolCallEnvelope {
   callId: string;
   name: string;
-  input?: unknown | null;
-  output?: unknown | null;
+  input?: unknown;
+  output?: unknown;
   status?: ToolCallTimelineItem["status"];
-  error?: unknown | null;
+  error?: unknown;
   metadata?: Record<string, unknown>;
   cwd?: string | null;
-};
+}
 
-const CodexNormalizedToolCallPass1Schema = z
-  .object({
-    callId: z.string().min(1),
-    name: z.string().min(1),
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    status: CodexToolCallStatusSchema,
-    error: z.unknown().nullable(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
-    cwd: z.string().nullable().optional(),
-  })
-  .passthrough();
+type CodexToolKind = "shell" | "read" | "write" | "edit" | "search" | "speak" | "unknown";
 
-const CodexShellToolNameSchema = z.union([
-  z.literal("Bash"),
-  z.literal("shell"),
-  z.literal("bash"),
-  z.literal("exec"),
-  z.literal("exec_command"),
-  z.literal("command"),
-]);
-const CodexReadToolNameSchema = z.union([z.literal("read"), z.literal("read_file")]);
-const CodexWriteToolNameSchema = z.union([
-  z.literal("write"),
-  z.literal("write_file"),
-  z.literal("create_file"),
-]);
-const CodexEditToolNameSchema = z.union([
-  z.literal("edit"),
-  z.literal("apply_patch"),
-  z.literal("apply_diff"),
-]);
-const CodexSearchToolNameSchema = z.union([z.literal("search"), z.literal("web_search")]);
-const CodexSpeakToolNameSchema = z
-  .string()
-  .min(1)
-  .refine((name) => isSpeakToolName(name.trim()));
-
-const CodexToolKindSchema = z.enum([
+const CODEX_SHELL_NAMES: ReadonlySet<string> = new Set([
+  "Bash",
   "shell",
-  "read",
-  "write",
-  "edit",
-  "search",
-  "speak",
-  "unknown",
+  "bash",
+  "exec",
+  "exec_command",
+  "command",
 ]);
+const CODEX_READ_NAMES: ReadonlySet<string> = new Set(["read", "read_file"]);
+const CODEX_WRITE_NAMES: ReadonlySet<string> = new Set(["write", "write_file", "create_file"]);
+const CODEX_EDIT_NAMES: ReadonlySet<string> = new Set(["edit", "apply_patch", "apply_diff"]);
+const CODEX_SEARCH_NAMES: ReadonlySet<string> = new Set(["search", "web_search"]);
 
-const CodexToolCallPass2BaseSchema = CodexNormalizedToolCallPass1Schema.extend({
-  toolKind: CodexToolKindSchema,
-});
+function resolveCodexToolKind(name: string): CodexToolKind {
+  if (CODEX_SHELL_NAMES.has(name)) return "shell";
+  if (CODEX_READ_NAMES.has(name)) return "read";
+  if (CODEX_WRITE_NAMES.has(name)) return "write";
+  if (CODEX_EDIT_NAMES.has(name)) return "edit";
+  if (CODEX_SEARCH_NAMES.has(name)) return "search";
+  if (isSpeakToolName(name)) return "speak";
+  return "unknown";
+}
 
-const CodexToolCallPass2EnvelopeSchema = z.union([
-  CodexNormalizedToolCallPass1Schema.extend({
-    name: CodexShellToolNameSchema,
-  }).transform((envelope) => ({ ...envelope, toolKind: "shell" as const })),
-  CodexNormalizedToolCallPass1Schema.extend({
-    name: CodexReadToolNameSchema,
-  }).transform((envelope) => ({ ...envelope, toolKind: "read" as const })),
-  CodexNormalizedToolCallPass1Schema.extend({
-    name: CodexWriteToolNameSchema,
-  }).transform((envelope) => ({ ...envelope, toolKind: "write" as const })),
-  CodexNormalizedToolCallPass1Schema.extend({
-    name: CodexEditToolNameSchema,
-  }).transform((envelope) => ({ ...envelope, toolKind: "edit" as const })),
-  CodexNormalizedToolCallPass1Schema.extend({
-    name: CodexSearchToolNameSchema,
-  }).transform((envelope) => ({ ...envelope, toolKind: "search" as const })),
-  CodexNormalizedToolCallPass1Schema.extend({
-    name: CodexSpeakToolNameSchema,
-  }).transform((envelope) => ({ ...envelope, toolKind: "speak" as const })),
-  CodexNormalizedToolCallPass1Schema.transform((envelope) => ({
-    ...envelope,
-    name: envelope.name.trim(),
-    toolKind: "unknown" as const,
-  })),
-]);
+interface CodexResolvedToolCall {
+  callId: string;
+  name: string;
+  toolKind: CodexToolKind;
+  input: unknown;
+  output: unknown;
+  status: CodexToolCallStatus;
+  error: unknown;
+  metadata?: Record<string, unknown>;
+  cwd: string | null;
+}
 
-const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("shell"),
-    name: CodexShellToolNameSchema,
-  }),
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("read"),
-    name: CodexReadToolNameSchema,
-  }),
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("write"),
-    name: CodexWriteToolNameSchema,
-  }),
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("edit"),
-    name: CodexEditToolNameSchema,
-  }),
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("search"),
-    name: CodexSearchToolNameSchema,
-  }),
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("speak"),
-    name: CodexSpeakToolNameSchema,
-  }),
-  CodexToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("unknown"),
-  }),
-]);
-
-type CodexNormalizedToolCallPass2 = z.infer<typeof CodexNormalizedToolCallPass2Schema>;
-
-function toToolCallTimelineItem(envelope: CodexNormalizedToolCallPass2): ToolCallTimelineItem {
+function toToolCallTimelineItem(envelope: CodexResolvedToolCall): ToolCallTimelineItem {
   const name = envelope.toolKind === "speak" ? ("speak" as const) : envelope.name;
   const parsedDetail = deriveCodexToolDetail({
     name,
@@ -239,11 +170,32 @@ const CodexWebSearchItemSchema = z
   })
   .passthrough();
 
+const CodexCollabAgentToolCallItemSchema = z
+  .object({
+    type: z.literal("collabAgentToolCall"),
+    id: z.string().min(1),
+    status: z.string().optional(),
+    error: z.unknown().optional(),
+    prompt: z.string().optional(),
+    tool: z.string().optional(),
+    receiverThreadIds: z.array(z.string()).optional(),
+    agentsStates: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+const CodexToolThreadItemSchema = z.discriminatedUnion("type", [
+  CodexCommandExecutionItemSchema,
+  CodexFileChangeItemSchema,
+  CodexMcpToolCallItemSchema,
+  CodexWebSearchItemSchema,
+]);
+
 const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
   CodexMcpToolCallItemSchema,
   CodexWebSearchItemSchema,
+  CodexCollabAgentToolCallItemSchema,
 ]);
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
@@ -300,10 +252,10 @@ function looksLikeUnifiedDiff(text: string): boolean {
   );
 }
 
-type CodexApplyPatchDirective = {
+interface CodexApplyPatchDirective {
   kind: "add" | "update" | "delete";
   path: string;
-};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -445,33 +397,22 @@ function asEditTextFields(text: string | undefined): { unifiedDiff?: string; new
   return { newString: text };
 }
 
-function normalizeRolloutEditInput(input: unknown): unknown {
-  if (typeof input === "string") {
-    const textFields = asEditTextFields(input);
-    const path = extractPatchPrimaryFilePath(input);
-    return {
-      ...(path ? { path } : {}),
-      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
-      ...(textFields.newString ? { content: textFields.newString } : {}),
-    };
-  }
-  if (!isRecord(input)) {
-    return input;
-  }
-
-  const candidatePatchText =
+function findRolloutEditPatchText(input: Record<string, unknown>): string | undefined {
+  return (
     (typeof input.patch === "string" && input.patch) ||
     (typeof input.diff === "string" && input.diff) ||
     (typeof input.unified_diff === "string" && input.unified_diff) ||
     (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
     (typeof input.content === "string" && input.content) ||
-    undefined;
-  if (!candidatePatchText) {
-    return input;
-  }
+    undefined
+  );
+}
 
-  const textFields = asEditTextFields(candidatePatchText);
-  const rawPath =
+function findRolloutEditInputPath(
+  input: Record<string, unknown>,
+  patchText: string,
+): string | undefined {
+  return (
     (typeof input.path === "string" && input.path.trim().length > 0 ? input.path : undefined) ||
     (typeof input.file_path === "string" && input.file_path.trim().length > 0
       ? input.file_path
@@ -479,7 +420,18 @@ function normalizeRolloutEditInput(input: unknown): unknown {
     (typeof input.filePath === "string" && input.filePath.trim().length > 0
       ? input.filePath
       : undefined) ||
-    extractPatchPrimaryFilePath(candidatePatchText);
+    extractPatchPrimaryFilePath(patchText)
+  );
+}
+
+function normalizeRolloutEditRecordInput(input: Record<string, unknown>): unknown {
+  const candidatePatchText = findRolloutEditPatchText(input);
+  if (!candidatePatchText) {
+    return input;
+  }
+
+  const textFields = asEditTextFields(candidatePatchText);
+  const rawPath = findRolloutEditInputPath(input, candidatePatchText);
 
   const {
     patch: _patch,
@@ -501,6 +453,22 @@ function normalizeRolloutEditInput(input: unknown): unknown {
   }
 
   return normalized;
+}
+
+function normalizeRolloutEditInput(input: unknown): unknown {
+  if (typeof input === "string") {
+    const textFields = asEditTextFields(input);
+    const path = extractPatchPrimaryFilePath(input);
+    return {
+      ...(path ? { path } : {}),
+      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+      ...(textFields.newString ? { content: textFields.newString } : {}),
+    };
+  }
+  if (!isRecord(input)) {
+    return input;
+  }
+  return normalizeRolloutEditRecordInput(input);
 }
 
 function asEditFileOutputFields(text: string | undefined): { patch?: string; content?: string } {
@@ -534,32 +502,36 @@ function hasRenderableEditDetail(detail: ToolCallTimelineItem["detail"]): boolea
   );
 }
 
-function resolveStatus(
-  rawStatus: string | undefined,
-  error: unknown,
-  output: unknown,
+function readStatus(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return typeof value.status === "string" ? value.status : undefined;
+}
+
+function resolveCollabAgentStatus(
+  item: z.infer<typeof CodexCollabAgentToolCallItemSchema>,
 ): ToolCallTimelineItem["status"] {
-  if (error !== undefined && error !== null) {
+  if (item.error !== undefined && item.error !== null) {
     return "failed";
   }
 
-  if (typeof rawStatus === "string") {
-    const normalized = rawStatus.trim().toLowerCase();
-    if (normalized.length > 0) {
-      if (FAILED_STATUSES.has(normalized)) {
-        return "failed";
-      }
-      if (CANCELED_STATUSES.has(normalized)) {
-        return "canceled";
-      }
-      if (COMPLETED_STATUSES.has(normalized)) {
-        return "completed";
-      }
-      return "running";
-    }
+  const childStatuses = Object.values(item.agentsStates ?? {})
+    .map(readStatus)
+    .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
+    .map((status) => normalizeToolCallStatus(status, null, null));
+
+  if (childStatuses.some((status) => status === "failed")) {
+    return "failed";
+  }
+  if (childStatuses.some((status) => status === "canceled")) {
+    return "canceled";
+  }
+  if (childStatuses.length > 0) {
+    return childStatuses.every((status) => status === "completed") ? "completed" : "running";
   }
 
-  return output !== null && output !== undefined ? "completed" : "running";
+  return normalizeToolCallStatus(item.status, item.error ?? null, null);
 }
 
 function buildMcpToolName(server: string | undefined, tool: string): string {
@@ -583,15 +555,24 @@ function toNullableObject(value: Record<string, unknown>): Record<string, unknow
 function toToolCallFromNormalizedEnvelope(
   envelope: CodexNormalizedToolCallEnvelope,
 ): ToolCallTimelineItem | null {
-  const pass2Envelope = CodexToolCallPass2EnvelopeSchema.safeParse(envelope);
-  if (!pass2Envelope.success) {
+  if (envelope.callId.length === 0 || envelope.name.length === 0 || !envelope.status) {
     return null;
   }
-  const parsed = CodexNormalizedToolCallPass2Schema.safeParse(pass2Envelope.data);
-  if (!parsed.success) {
+  const trimmedName = envelope.name.trim();
+  if (trimmedName.length === 0) {
     return null;
   }
-  return toToolCallTimelineItem(parsed.data);
+  return toToolCallTimelineItem({
+    callId: envelope.callId,
+    name: trimmedName,
+    toolKind: resolveCodexToolKind(trimmedName),
+    input: envelope.input ?? null,
+    output: envelope.output ?? null,
+    status: envelope.status,
+    error: envelope.error ?? null,
+    ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    cwd: envelope.cwd ?? null,
+  });
 }
 
 function mapCommandExecutionItem(
@@ -615,7 +596,7 @@ function mapCommandExecutionItem(
 
   const name = "shell";
   const error = item.error ?? null;
-  const status = resolveStatus(item.status, error, output);
+  const status = normalizeToolCallStatus(item.status, error, output);
 
   return {
     callId: item.id,
@@ -628,11 +609,11 @@ function mapCommandExecutionItem(
   };
 }
 
-type CodexFileChangeEntry = {
+interface CodexFileChangeEntry {
   path: string;
   kind?: string;
   diff?: string;
-};
+}
 
 function parseFileChangePath(
   entry: Record<string, unknown>,
@@ -764,19 +745,18 @@ function mapFileChangeItem(
 ): CodexNormalizedToolCallEnvelope {
   const files = parseFileChangeEntries(item.changes, options);
 
-  const inputBase = {
-    ...(files.length > 0
+  const inputBase =
+    files.length > 0
       ? {
           files: files.map((file) => ({
             path: file.path,
             ...(file.kind !== undefined ? { kind: file.kind } : {}),
           })),
         }
-      : {}),
-  };
+      : {};
 
-  const output = toNullableObject({
-    ...(files.length > 0
+  const output = toNullableObject(
+    files.length > 0
       ? {
           files: files.map((file) => ({
             path: file.path,
@@ -786,12 +766,12 @@ function mapFileChangeItem(
               : asEditFileOutputFields(file.diff)),
           })),
         }
-      : {}),
-  });
+      : {},
+  );
 
   const name = "apply_patch";
   const error = item.error ?? null;
-  const status = resolveStatus(item.status, error, output);
+  const status = normalizeToolCallStatus(item.status, error, output);
   const firstFile = files[0];
   const firstTextFields = resolveFileChangeTextFields(firstFile);
   const hasFirstTextFields = Object.keys(firstTextFields).length > 0;
@@ -829,7 +809,7 @@ function mapMcpToolCallItem(
   const input = item.arguments ?? null;
   const output = item.result ?? null;
   const error = item.error ?? null;
-  const status = resolveStatus(item.status, error, output);
+  const status = normalizeToolCallStatus(item.status, error, output);
 
   return {
     callId: item.id,
@@ -849,7 +829,7 @@ function mapWebSearchItem(
   const output = item.action ?? null;
   const name = "web_search";
   const error = item.error ?? null;
-  const status = resolveStatus(item.status ?? "completed", error, output);
+  const status = normalizeToolCallStatus(item.status ?? "completed", error, output);
 
   return {
     callId: item.id,
@@ -862,8 +842,41 @@ function mapWebSearchItem(
   };
 }
 
+function mapCollabAgentToolCallItem(
+  item: z.infer<typeof CodexCollabAgentToolCallItemSchema>,
+): ToolCallTimelineItem {
+  const status = resolveCollabAgentStatus(item);
+  const detail: ToolCallTimelineItem["detail"] = {
+    type: "sub_agent",
+    subAgentType: "Sub-agent",
+    ...(item.prompt ? { description: item.prompt } : {}),
+    log: "",
+    actions: [],
+  };
+
+  if (status === "failed") {
+    return {
+      type: "tool_call",
+      callId: item.id,
+      name: "Sub-agent",
+      status,
+      error: item.error ?? { message: "Sub-agent failed" },
+      detail,
+    };
+  }
+
+  return {
+    type: "tool_call",
+    callId: item.id,
+    name: "Sub-agent",
+    status,
+    error: null,
+    detail,
+  };
+}
+
 function mapThreadItemToNormalizedEnvelope(
-  item: z.infer<typeof CodexThreadItemSchema>,
+  item: z.infer<typeof CodexToolThreadItemSchema>,
   options?: CodexMapperOptions,
 ): CodexNormalizedToolCallEnvelope | null {
   switch (item.type) {
@@ -894,6 +907,9 @@ export function mapCodexToolCallFromThreadItem(
   if (!parsed.success) {
     return null;
   }
+  if (parsed.data.type === "collabAgentToolCall") {
+    return mapCollabAgentToolCallItem(parsed.data);
+  }
   const envelope = mapThreadItemToNormalizedEnvelope(parsed.data, options);
   if (!envelope) {
     return null;
@@ -915,28 +931,29 @@ export function mapCodexRolloutToolCall(params: {
   }
 
   const normalizedName = parsed.data.name.trim();
+  if (normalizedName.length === 0) {
+    return null;
+  }
+  const callId = typeof parsed.data.callId === "string" ? parsed.data.callId.trim() : "";
+  if (callId.length === 0) {
+    return null;
+  }
   const normalizedInput =
     normalizedName === "apply_patch" || normalizedName === "apply_diff"
       ? normalizeRolloutEditInput(parsed.data.input ?? null)
       : (parsed.data.input ?? null);
 
-  const pass1 = CodexNormalizedToolCallPass1Schema.safeParse({
-    callId: typeof parsed.data.callId === "string" ? parsed.data.callId.trim() : "",
+  return toToolCallFromNormalizedEnvelope({
+    callId,
     name: normalizedName,
     input: normalizedInput,
     output: parsed.data.output ?? null,
     error: parsed.data.error ?? null,
-    status: resolveStatus("completed", parsed.data.error ?? null, parsed.data.output ?? null),
+    status: normalizeToolCallStatus(
+      "completed",
+      parsed.data.error ?? null,
+      parsed.data.output ?? null,
+    ),
     cwd: params.cwd ?? null,
   });
-  if (!pass1.success) {
-    return null;
-  }
-
-  const mapped = toToolCallFromNormalizedEnvelope(pass1.data);
-  if (!mapped) {
-    return null;
-  }
-
-  return mapped;
 }

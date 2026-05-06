@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,33 +29,41 @@ async function createHarness(): Promise<{
 }
 
 describe("daemon E2E (real opencode) - invalid model handling", () => {
-  test.runIf(isProviderAvailable("opencode"))(
-    "initial prompt with a nonexistent OpenCode model fails instead of hanging forever",
-    async () => {
-      const cwd = tmpCwd();
-      const { client, daemon } = await createHarness();
+  let canRun = false;
 
-      try {
-        const agent = await client.createAgent({
-          provider: "opencode",
-          cwd,
-          title: "OpenCode invalid model regression",
-          model: "opencode/adklasldkdas",
-          initialPrompt: "hello",
-        });
+  beforeAll(async () => {
+    canRun = await isProviderAvailable("opencode");
+  });
 
-        const finish = await client.waitForFinish(agent.id, 30_000);
-        expect(finish.status).toBe("error");
-        expect(finish.error).toBeTruthy();
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
 
-        const snapshot = await client.fetchAgent(agent.id);
-        expect(snapshot.agent?.status).toBe("error");
-      } finally {
-        await client.close().catch(() => undefined);
-        await daemon.close();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    },
-    60_000,
-  );
+  test("initial prompt with a nonexistent OpenCode model fails instead of hanging forever", async () => {
+    const cwd = tmpCwd();
+    const { client, daemon } = await createHarness();
+
+    try {
+      const agent = await client.createAgent({
+        provider: "opencode",
+        cwd,
+        title: "OpenCode invalid model regression",
+        model: "opencode/adklasldkdas",
+        initialPrompt: "hello",
+      });
+
+      const finish = await client.waitForFinish(agent.id, 30_000);
+      expect(finish.status).toBe("error");
+      expect(finish.error).toBeTruthy();
+
+      const snapshot = await client.fetchAgent(agent.id);
+      expect(snapshot.agent?.status).toBe("error");
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

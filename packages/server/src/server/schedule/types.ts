@@ -90,6 +90,24 @@ export interface CreateScheduleInput {
   target: ScheduleTarget;
   maxRuns?: number | null;
   expiresAt?: string | null;
+  runOnCreate?: boolean | null;
+}
+
+export interface UpdateScheduleNewAgentConfig {
+  provider?: string;
+  model?: string | null;
+  modeId?: string | null;
+  cwd?: string;
+}
+
+export interface UpdateScheduleInput {
+  id: string;
+  name?: string | null;
+  prompt?: string;
+  cadence?: ScheduleCadence;
+  newAgentConfig?: UpdateScheduleNewAgentConfig;
+  maxRuns?: number | null;
+  expiresAt?: string | null;
 }
 
 export interface ScheduleExecutionResult {

@@ -6,8 +6,8 @@ function toolCallItem(params: {
   callId: string;
   name: string;
   status?: "running" | "completed" | "failed" | "canceled";
-  input?: unknown | null;
-  output?: unknown | null;
+  input?: unknown;
+  output?: unknown;
   error?: unknown;
   metadata?: Record<string, unknown>;
   detail?: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"];
@@ -153,13 +153,6 @@ second line'`,
           subAgentType: "Explore",
           description: "Investigate repository",
           log: "[Read] README.md",
-          actions: [
-            {
-              index: 1,
-              toolName: "Read",
-              summary: "README.md",
-            },
-          ],
         },
       }),
       toolCallItem({
@@ -171,18 +164,6 @@ second line'`,
           subAgentType: "Explore",
           description: "Investigate repository",
           log: "[Read] README.md\n[Bash] ls",
-          actions: [
-            {
-              index: 1,
-              toolName: "Read",
-              summary: "README.md",
-            },
-            {
-              index: 2,
-              toolName: "Bash",
-              summary: "ls",
-            },
-          ],
         },
       }),
     ];

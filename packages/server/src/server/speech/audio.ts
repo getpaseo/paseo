@@ -59,7 +59,7 @@ export function parsePcmRateFromFormat(
   if (!match) {
     return fallback;
   }
-  const rate = Number.parseInt(match[1]!, 10);
+  const rate = Number.parseInt(match[1], 10);
   return Number.isFinite(rate) && rate > 0 ? rate : fallback;
 }
 
@@ -73,7 +73,7 @@ export function pcm16lePeakAbs(pcm16le: Buffer): number {
   const samples = new Int16Array(pcm16le.buffer, pcm16le.byteOffset, pcm16le.byteLength / 2);
   let peak = 0;
   for (let i = 0; i < samples.length; i += 1) {
-    const v = samples[i]!;
+    const v = samples[i];
     const abs = v < 0 ? -v : v;
     if (abs > peak) {
       peak = abs;
@@ -92,8 +92,8 @@ export function pcm16leToFloat32(pcm16le: Buffer, gain: number = 1): Float32Arra
   const int16 = new Int16Array(pcm16le.buffer, pcm16le.byteOffset, pcm16le.byteLength / 2);
   const out = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i += 1) {
-    const v = (int16[i]! / 32768.0) * gain;
-    out[i] = v > 1 ? 1 : v < -1 ? -1 : v;
+    const v = (int16[i] / 32768.0) * gain;
+    out[i] = Math.max(-1, Math.min(1, v));
   }
   return out;
 }
@@ -101,7 +101,7 @@ export function pcm16leToFloat32(pcm16le: Buffer, gain: number = 1): Float32Arra
 export function float32ToPcm16le(samples: Float32Array): Buffer {
   const out = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i += 1) {
-    const clamped = Math.max(-1, Math.min(1, samples[i]!));
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
     out[i] = Math.round(clamped * 32767);
   }
   return Buffer.from(out.buffer, out.byteOffset, out.byteLength);

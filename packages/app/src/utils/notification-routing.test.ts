@@ -28,17 +28,31 @@ describe("resolveNotificationTarget", () => {
       workspaceId: null,
     });
   });
+
+  it("does not treat cwd as a workspace id alias", () => {
+    expect(
+      resolveNotificationTarget({
+        serverId: "srv-1",
+        agentId: "agent-1",
+        cwd: "/tmp/repo",
+      }),
+    ).toEqual({
+      serverId: "srv-1",
+      agentId: "agent-1",
+      workspaceId: null,
+    });
+  });
 });
 
 describe("buildNotificationRoute", () => {
-  it("routes to workspace with one-shot open intent when workspace id is present", () => {
+  it("routes to the agent path when workspace id is present", () => {
     expect(
       buildNotificationRoute({
         serverId: "srv-1",
         agentId: "agent-1",
-        workspaceId: "/tmp/repo",
+        workspaceId: "ws-main",
       }),
-    ).toBe("/h/srv-1/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1");
+    ).toBe("/h/srv-1/agent/agent-1");
   });
 
   it("routes directly to server-scoped agent path when both ids are present", () => {

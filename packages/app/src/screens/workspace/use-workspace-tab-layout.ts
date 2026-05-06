@@ -5,7 +5,7 @@ import {
   type WorkspaceTabLayoutResult,
 } from "@/screens/workspace/workspace-tab-layout";
 
-type UseWorkspaceTabLayoutInput = {
+interface UseWorkspaceTabLayoutInput {
   tabLabelLengths: number[];
   viewportWidthOverride?: number | null;
   metrics: {
@@ -19,11 +19,11 @@ type UseWorkspaceTabLayoutInput = {
     estimatedCharWidth: number;
     closeButtonWidth: number;
   };
-};
+}
 
-type UseWorkspaceTabLayoutResult = {
+interface UseWorkspaceTabLayoutResult {
   layout: WorkspaceTabLayoutResult;
-};
+}
 
 export function useWorkspaceTabLayout(
   input: UseWorkspaceTabLayoutInput,

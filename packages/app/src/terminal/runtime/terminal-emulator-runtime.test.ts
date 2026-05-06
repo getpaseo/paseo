@@ -1,8 +1,63 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@xterm/addon-clipboard", () => ({
+  ClipboardAddon: class ClipboardAddon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class FitAddon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-image", () => ({
+  ImageAddon: class ImageAddon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-ligatures/lib/addon-ligatures.mjs", () => ({
+  LigaturesAddon: class LigaturesAddon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class SearchAddon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-unicode11", () => ({
+  Unicode11Addon: class Unicode11Addon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-web-links", () => ({
+  WebLinksAddon: class WebLinksAddon {
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: class WebglAddon {
+    onContextLoss(): void {}
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class Terminal {
+    dispose(): void {}
+  },
+}));
+
 import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
-type StubTerminal = {
+interface StubTerminal {
   write: (text: string, callback?: () => void) => void;
   reset: () => void;
   resize?: (cols: number, rows: number) => void;
@@ -11,7 +66,7 @@ type StubTerminal = {
   options?: { theme?: unknown };
   rows?: number;
   cols?: number;
-};
+}
 
 function createRuntimeWithTerminal(): {
   runtime: TerminalEmulatorRuntime;
@@ -166,6 +221,31 @@ describe("terminal-emulator-runtime", () => {
 
     expect(onCommittedA).toHaveBeenCalledTimes(1);
     expect(onCommittedB).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays snapshots through a single write without first painting a reset terminal", () => {
+    const { runtime, terminal, writeTexts } = createRuntimeWithTerminal();
+
+    runtime.renderSnapshot({
+      state: {
+        rows: 2,
+        cols: 8,
+        scrollback: [],
+        grid: [
+          [{ char: "h" }, { char: "i" }],
+          [{ char: "$" }, { char: " " }],
+        ],
+        cursor: {
+          row: 1,
+          col: 2,
+        },
+      },
+    });
+
+    expect(terminal.resetCalls).toBe(0);
+    expect(writeTexts).toHaveLength(1);
+    expect(writeTexts[0]?.startsWith("\u001bc")).toBe(true);
+    expect(writeTexts[0]).toContain("hi");
   });
 
   it("forces a refit when resize is requested", () => {

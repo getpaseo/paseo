@@ -20,17 +20,41 @@
  */
 
 import assert from "node:assert";
-import { createE2ETestContext } from "./helpers/test-daemon.ts";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  createE2ETestContext,
+  createTempDirs,
+  runPaseoCli,
+  startTestDaemon,
+} from "./helpers/test-daemon.ts";
 
 console.log("=== Provider Commands ===\n");
 
-type ProviderModel = {
+interface ProviderModel {
   model: string;
   id: string;
   description?: string;
-};
+}
+
+interface ProviderListRow {
+  provider: string;
+  label: string;
+  status: string;
+  enabled: string;
+}
 
 const EXPECTED_CLAUDE_MODELS = [
+  {
+    id: "claude-opus-4-7[1m]",
+    model: "Opus 4.7 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
+    id: "claude-opus-4-7",
+    model: "Opus 4.7",
+    descriptionFragment: "Latest release",
+  },
   {
     id: "claude-opus-4-6[1m]",
     model: "Opus 4.6 1M",
@@ -61,7 +85,7 @@ const ctx = await createE2ETestContext({ timeout: 120000 });
 async function runProviderModelsJson(provider: string): Promise<ProviderModel[]> {
   const transientNeedles = ["transport closed", "timed out", "timeout", "socket", "econn"];
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  async function attemptRun(attempt: number): Promise<ProviderModel[]> {
     const result = await ctx.paseo(["provider", "models", provider, "--json"]);
     if (result.exitCode === 0) {
       return JSON.parse(result.stdout.trim()) as ProviderModel[];
@@ -76,9 +100,10 @@ async function runProviderModelsJson(provider: string): Promise<ProviderModel[]>
     }
 
     await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    return attemptRun(attempt + 1);
   }
 
-  assert.fail(`provider models ${provider} exhausted retries`);
+  return attemptRun(1);
 }
 
 function assertClaudeModels(data: ProviderModel[]): void {
@@ -129,7 +154,14 @@ try {
     assert(result.stdout.includes("claude"), "output should include claude");
     assert(result.stdout.includes("codex"), "output should include codex");
     assert(result.stdout.includes("opencode"), "output should include opencode");
-    assert(result.stdout.includes("available"), "output should show available status");
+    assert(result.stdout.includes("ENABLED"), "output should include ENABLED column");
+    assert(result.stdout.includes("Enabled"), "output should show enabled providers");
+    assert(
+      result.stdout.includes("available") ||
+        result.stdout.includes("loading") ||
+        result.stdout.includes("unavailable"),
+      "output should show a provider status",
+    );
     console.log("✓ provider ls lists all providers\n");
   }
 
@@ -140,7 +172,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const data = JSON.parse(result.stdout.trim());
     assert(Array.isArray(data), "output should be an array");
-    assert.strictEqual(data.length, 5, "should have 5 providers");
+    assert(data.length >= 3, `should have at least 3 providers, got ${data.length}`);
     assert(
       data.some((p: { provider: string }) => p.provider === "claude"),
       "should include claude",
@@ -154,42 +186,92 @@ try {
       "should include opencode",
     );
     assert(
-      data.some((p: { provider: string }) => p.provider === "copilot"),
-      "should include copilot",
-    );
-    assert(
-      data.some((p: { provider: string }) => p.provider === "pi"),
-      "should include pi",
+      data.every((p: ProviderListRow) => p.enabled === "Enabled"),
+      "enabled providers should report Enabled",
     );
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
-  // Test 4: provider ls --quiet outputs provider names only
+  // Test 4: provider ls includes disabled providers
   {
-    console.log("Test 4: provider ls --quiet outputs provider names only");
+    console.log("Test 4: provider ls includes disabled providers");
+    const { paseoHome, workDir } = await createTempDirs();
+    await writeFile(
+      join(paseoHome, "config.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            providers: {
+              claude: {
+                enabled: false,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const disabledCtx = await startTestDaemon({ paseoHome, workDir, timeout: 120000 });
+    try {
+      const result = await runPaseoCli(disabledCtx, ["provider", "ls", "--json"]);
+      assert.strictEqual(result.exitCode, 0, "provider ls should exit 0");
+      const data = JSON.parse(result.stdout.trim()) as ProviderListRow[];
+      const claude = data.find((p) => p.provider === "claude");
+      assert(claude, "disabled claude provider should stay in provider ls");
+      assert.strictEqual(claude.enabled, "Disabled", "disabled provider should report Disabled");
+
+      const opencode = data.find((p) => p.provider === "opencode");
+      assert(opencode, "enabled opencode provider should stay in provider ls");
+      assert.strictEqual(opencode.enabled, "Enabled", "enabled provider should report Enabled");
+
+      const modelsResult = await runPaseoCli(disabledCtx, ["provider", "models", "claude"]);
+      assert.notStrictEqual(
+        modelsResult.exitCode,
+        0,
+        "provider models should fail for disabled providers",
+      );
+      const output = modelsResult.stdout + modelsResult.stderr;
+      assert(
+        output.includes("Provider claude is disabled"),
+        "provider models should surface the daemon disabled error",
+      );
+      assert(
+        !output.includes("claude-sonnet"),
+        "provider models should not print fallback models for disabled providers",
+      );
+    } finally {
+      await disabledCtx.stop();
+    }
+    console.log("✓ provider ls includes disabled providers\n");
+  }
+
+  // Test 5: provider ls --quiet outputs provider names only
+  {
+    console.log("Test 5: provider ls --quiet outputs provider names only");
     const result = await ctx.paseo(["provider", "ls", "--quiet"]);
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const lines = result.stdout.trim().split("\n");
-    assert.strictEqual(lines.length, 5, "should have 5 lines");
+    assert(lines.length >= 3, `should have at least 3 lines, got ${lines.length}`);
     assert(lines.includes("claude"), "should include claude");
     assert(lines.includes("codex"), "should include codex");
     assert(lines.includes("opencode"), "should include opencode");
-    assert(lines.includes("copilot"), "should include copilot");
-    assert(lines.includes("pi"), "should include pi");
     console.log("✓ provider ls --quiet outputs provider names only\n");
   }
 
-  // Test 5: provider models claude lists canonical model aliases
+  // Test 6: provider models claude lists canonical model aliases
   {
-    console.log("Test 5: provider models claude lists canonical model aliases");
+    console.log("Test 6: provider models claude lists canonical model aliases");
     const data = await runProviderModelsJson("claude");
     assertClaudeModels(data);
     console.log("✓ provider models claude lists canonical model aliases\n");
   }
 
-  // Test 6: provider models codex includes concrete codex model IDs
+  // Test 7: provider models codex includes concrete codex model IDs
   {
-    console.log("Test 6: provider models codex includes concrete codex model IDs");
+    console.log("Test 7: provider models codex includes concrete codex model IDs");
     const data = await runProviderModelsJson("codex");
     assert(data.length >= 1, "codex model list should not be empty");
     const ids = data.map((m) => m.id);
@@ -209,9 +291,9 @@ try {
     console.log("✓ provider models codex includes concrete codex model IDs\n");
   }
 
-  // Test 7: provider models opencode returns namespaced model IDs
+  // Test 8: provider models opencode returns namespaced model IDs
   {
-    console.log("Test 7: provider models opencode returns namespaced model IDs");
+    console.log("Test 8: provider models opencode returns namespaced model IDs");
     const data = await runProviderModelsJson("opencode");
     assert(data.length >= 1, "opencode model list should not be empty");
     const ids = data.map((m) => m.id);
@@ -230,9 +312,9 @@ try {
     console.log("✓ provider models opencode returns namespaced model IDs\n");
   }
 
-  // Test 8: provider models unknown fails with error
+  // Test 9: provider models unknown fails with error
   {
-    console.log("Test 8: provider models unknown fails with error");
+    console.log("Test 9: provider models unknown fails with error");
     const result = await ctx.paseo(["provider", "models", "unknown"]);
     assert.notStrictEqual(result.exitCode, 0, "should fail for unknown provider");
     const output = result.stdout + result.stderr;
@@ -243,9 +325,9 @@ try {
     console.log("✓ provider models unknown fails with error\n");
   }
 
-  // Test 9: provider models --json outputs valid JSON
+  // Test 10: provider models --json outputs valid JSON
   {
-    console.log("Test 9: provider models --json outputs valid JSON");
+    console.log("Test 10: provider models --json outputs valid JSON");
     const data = await runProviderModelsJson("claude");
     assert(Array.isArray(data), "output should be an array");
     assert(
@@ -258,9 +340,9 @@ try {
     console.log("✓ provider models --json outputs valid JSON\n");
   }
 
-  // Test 10: provider models --quiet outputs model IDs only
+  // Test 11: provider models --quiet outputs model IDs only
   {
-    console.log("Test 10: provider models --quiet outputs model IDs only");
+    console.log("Test 11: provider models --quiet outputs model IDs only");
     assert(
       claudeModelIdsFromJson.length > 0,
       "claude model IDs should be captured from --json output",

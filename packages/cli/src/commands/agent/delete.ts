@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import type { DaemonClient } from "@getpaseo/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
 
@@ -38,7 +39,7 @@ export async function runDeleteCommand(
   options: AgentDeleteOptions,
   _command: Command,
 ): Promise<AgentDeleteResult> {
-  const host = getDaemonHost({ host: options.host as string | undefined });
+  const host = getDaemonHost({ host: options.host });
 
   if (!id && !options.all && !options.cwd) {
     const error: CommandError = {
@@ -49,9 +50,9 @@ export async function runDeleteCommand(
     throw error;
   }
 
-  let client;
+  let client: DaemonClient;
   try {
-    client = await connectToDaemon({ host: options.host as string | undefined });
+    client = await connectToDaemon({ host: options.host });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
@@ -87,16 +88,27 @@ export async function runDeleteCommand(
       agents = [fetchResult.agent];
     }
 
-    for (const agent of agents) {
-      try {
-        if (agent.status === "running") {
-          await client.cancelAgent(agent.id);
+    const deleteResults = await Promise.all(
+      agents.map(async (agent) => {
+        try {
+          if (agent.status === "running") {
+            await client.cancelAgent(agent.id);
+          }
+          await client.deleteAgent(agent.id);
+          return { ok: true as const, id: agent.id };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { ok: false as const, id: agent.id, message };
         }
-        await client.deleteAgent(agent.id);
-        deletedIds.push(agent.id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`Warning: Failed to delete agent ${agent.id.slice(0, 7)}: ${message}`);
+      }),
+    );
+    for (const result of deleteResults) {
+      if (result.ok) {
+        deletedIds.push(result.id);
+      } else {
+        console.error(
+          `Warning: Failed to delete agent ${result.id.slice(0, 7)}: ${result.message}`,
+        );
       }
     }
 

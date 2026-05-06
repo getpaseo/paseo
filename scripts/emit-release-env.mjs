@@ -38,8 +38,9 @@ const entries = [
   ["RELEASE_BASE_VERSION", info.baseVersion],
   ["RELEASE_PRERELEASE", info.prerelease ?? ""],
   ["IS_PRERELEASE", info.isPrerelease ? "true" : "false"],
-  ["IS_RELEASE_CANDIDATE", info.isReleaseCandidate ? "true" : "false"],
+  ["IS_BETA", info.isBeta ? "true" : "false"],
   ["RELEASE_TYPE", info.releaseType],
+  ["RELEASE_CHANNEL", info.releaseChannel],
   ["DESKTOP_VERSION", info.version],
   ["IS_SMOKE_TAG", info.isSmokeTag ? "true" : "false"],
 ];

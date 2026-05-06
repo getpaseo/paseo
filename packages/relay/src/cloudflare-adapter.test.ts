@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import relayWorker, { RelayDurableObject } from "./cloudflare-adapter.js";
 
+type DurableObjectStateArg = ConstructorParameters<typeof RelayDurableObject>[0];
+type RelayEnvArg = Parameters<typeof relayWorker.fetch>[1];
+
 type MockSocket = WebSocket & {
   send: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -68,17 +71,19 @@ async function withMockWebSocketPair(
   }
 }
 
+const swallow = () => undefined;
+
 describe("RelayDurableObject versioning", () => {
   it("accepts legacy v1 client sockets without connectionId", async () => {
     const { state } = createMockState();
     await withMockWebSocketPair(async () => {
-      const relay = new RelayDurableObject(state as any);
+      const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
       const req = new Request("https://relay.test/ws?role=client&serverId=srv_test&v=1", {
         headers: {
           Upgrade: "websocket",
         },
       });
-      await relay.fetch(req).catch(() => undefined);
+      await relay.fetch(req).catch(swallow);
       expect(state.acceptWebSocket).toHaveBeenCalled();
     });
   });
@@ -86,11 +91,11 @@ describe("RelayDurableObject versioning", () => {
   it("assigns a connectionId when v2 client connects without one", async () => {
     const { state } = createMockState();
     await withMockWebSocketPair(async ({ serverWs }) => {
-      const relay = new RelayDurableObject(state as any);
+      const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
       const req = new Request("https://relay.test/ws?role=client&serverId=srv_test&v=2", {
         headers: { Upgrade: "websocket" },
       });
-      await relay.fetch(req).catch(() => undefined);
+      await relay.fetch(req).catch(swallow);
       expect(state.acceptWebSocket).toHaveBeenCalled();
       const attachment = serverWs.deserializeAttachment();
       expect(attachment).toMatchObject({
@@ -117,8 +122,10 @@ describe("RelayDurableObject control nudge/reset behavior", () => {
     setTagSockets(`client:${clientId}`, []);
     setTagSockets(`server:${clientId}`, []);
 
-    const relay = new RelayDurableObject(state as any);
-    (relay as any).nudgeOrResetControlForConnection(clientId);
+    const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
+    (
+      relay as unknown as { nudgeOrResetControlForConnection(id: string): void }
+    ).nudgeOrResetControlForConnection(clientId);
 
     vi.advanceTimersByTime(15_000);
 
@@ -143,8 +150,10 @@ describe("RelayDurableObject control nudge/reset behavior", () => {
     setTagSockets(`client:${clientId}`, [client]);
     setTagSockets(`server:${clientId}`, []);
 
-    const relay = new RelayDurableObject(state as any);
-    (relay as any).nudgeOrResetControlForConnection(clientId);
+    const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
+    (
+      relay as unknown as { nudgeOrResetControlForConnection(id: string): void }
+    ).nudgeOrResetControlForConnection(clientId);
 
     vi.advanceTimersByTime(10_000);
     expect(control.send).toHaveBeenCalledTimes(1);
@@ -166,7 +175,7 @@ describe("RelayDurableObject control nudge/reset behavior", () => {
     setTagSockets("client", [existingClient]);
 
     await withMockWebSocketPair(async () => {
-      const relay = new RelayDurableObject(state as any);
+      const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
       const req = new Request(
         "https://relay.test/ws?role=client&serverId=srv_test&connectionId=clt_same_session&v=2",
         {
@@ -176,7 +185,7 @@ describe("RelayDurableObject control nudge/reset behavior", () => {
         },
       );
 
-      await relay.fetch(req).catch(() => undefined);
+      await relay.fetch(req).catch(swallow);
       expect(existingClient.close).not.toHaveBeenCalled();
     });
   });
@@ -206,7 +215,7 @@ describe("RelayDurableObject control nudge/reset behavior", () => {
     setTagSockets("client", [stillConnectedClient]);
     setTagSockets(`client:${clientId}`, [stillConnectedClient]);
 
-    const relay = new RelayDurableObject(state as any);
+    const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
     relay.webSocketClose(
       disconnectedClient as unknown as WebSocket,
       1001,
@@ -231,7 +240,7 @@ describe("relay worker endpoint routing", () => {
 
     const response = await relayWorker.fetch(
       new Request("https://relay.test/ws?serverId=srv_test&role=server"),
-      { RELAY: { idFromName, get } } as any,
+      { RELAY: { idFromName, get } } as unknown as RelayEnvArg,
     );
 
     expect(idFromName).toHaveBeenCalledWith("relay-v1:srv_test");
@@ -248,7 +257,7 @@ describe("relay worker endpoint routing", () => {
 
     const response = await relayWorker.fetch(
       new Request("https://relay.test/ws?serverId=srv_test&role=server&v=2"),
-      { RELAY: { idFromName, get } } as any,
+      { RELAY: { idFromName, get } } as unknown as RelayEnvArg,
     );
 
     expect(idFromName).toHaveBeenCalledWith("relay-v2:srv_test");
@@ -263,7 +272,7 @@ describe("relay worker endpoint routing", () => {
 
     const response = await relayWorker.fetch(
       new Request("https://relay.test/ws?serverId=srv_test&role=server&v=nope"),
-      { RELAY: { idFromName, get } } as any,
+      { RELAY: { idFromName, get } } as unknown as RelayEnvArg,
     );
 
     expect(response.status).toBe(400);

@@ -1,12 +1,13 @@
 import { describe, expect, test } from "vitest";
 
 import { applyAgentInputProcessingTransition } from "./send-while-running-stuck-test-utils.js";
+import type { AgentSnapshotPayload } from "../messages.js";
 
-function snapshot(status: "running" | "idle", updatedAtMs: number) {
+function snapshot(status: "running" | "idle", updatedAtMs: number): AgentSnapshotPayload {
   return {
     status,
     updatedAt: new Date(updatedAtMs).toISOString(),
-  } as any;
+  } as unknown as AgentSnapshotPayload;
 }
 
 describe("applyAgentInputProcessingTransition", () => {

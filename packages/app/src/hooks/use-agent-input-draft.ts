@@ -1,52 +1,92 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { AttachmentMetadata } from "@/attachments/types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UserComposerAttachment } from "@/attachments/types";
+import type { DraftAgentStatusBarProps } from "@/components/agent-status-bar";
+import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
+import {
+  useAgentFormState,
+  type CreateAgentInitialValues,
+  type UseAgentFormStateResult,
+} from "@/hooks/use-agent-form-state";
+import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
+import {
+  areAttachmentsEqual,
+  buildDraftComposerCommandConfig,
+  buildDraftStatusControls,
+  hasDraftContent,
+  resolveDraftKey,
+  resolveEffectiveComposerModelId,
+  resolveEffectiveComposerThinkingOptionId,
+  type DraftKeyInput,
+} from "@/hooks/use-agent-input-draft-core";
 import { useDraftStore } from "@/stores/draft-store";
 
-type ImageUpdater = AttachmentMetadata[] | ((prev: AttachmentMetadata[]) => AttachmentMetadata[]);
+type AttachmentUpdater =
+  | UserComposerAttachment[]
+  | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
+
+interface AgentInputDraftComposerOptions {
+  initialServerId: string | null;
+  initialValues?: CreateAgentInitialValues;
+  isVisible?: boolean;
+  onlineServerIds?: string[];
+  lockedWorkingDir?: string;
+}
+
+interface UseAgentInputDraftInput {
+  draftKey: DraftKeyInput;
+  initialCwd?: string;
+  composer?: AgentInputDraftComposerOptions;
+}
+
+type DraftComposerState = UseAgentFormStateResult & {
+  workingDir: string;
+  effectiveModelId: string;
+  effectiveThinkingOptionId: string;
+  featureValues: Record<string, unknown> | undefined;
+  statusControls: DraftAgentStatusBarProps;
+  commandDraftConfig: DraftCommandConfig | undefined;
+};
 
 interface AgentInputDraft {
   text: string;
   setText: (text: string) => void;
-  images: AttachmentMetadata[];
-  setImages: (updater: ImageUpdater) => void;
+  attachments: UserComposerAttachment[];
+  setAttachments: (updater: AttachmentUpdater) => void;
+  cwd: string;
+  setCwd: (cwd: string) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
+  composerState: DraftComposerState | null;
 }
 
-function hasDraftContent(input: { text: string; images: AttachmentMetadata[] }): boolean {
-  return input.text.trim().length > 0 || input.images.length > 0;
-}
-
-function areImagesEqual(input: {
-  left: AttachmentMetadata[];
-  right: AttachmentMetadata[];
-}): boolean {
-  if (input.left.length !== input.right.length) {
-    return false;
-  }
-
-  return input.left.every((image, index) => {
-    const other = input.right[index];
-    return (
-      image.id === other?.id &&
-      image.mimeType === other?.mimeType &&
-      image.storageType === other?.storageType &&
-      image.storageKey === other?.storageKey
-    );
+export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDraft {
+  const composerOptions = input.composer ?? null;
+  const formState = useAgentFormState({
+    initialServerId: composerOptions?.initialServerId ?? null,
+    initialValues: composerOptions?.initialValues,
+    isVisible: composerOptions?.isVisible ?? false,
+    isCreateFlow: true,
+    onlineServerIds: composerOptions?.onlineServerIds ?? [],
   });
-}
-
-export function useAgentInputDraft(draftKey: string): AgentInputDraft {
+  const draftKey = useMemo(
+    () =>
+      resolveDraftKey({
+        draftKey: input.draftKey,
+        selectedServerId: formState.selectedServerId,
+      }),
+    [formState.selectedServerId, input.draftKey],
+  );
   const [text, setText] = useState("");
-  const [images, setImagesState] = useState<AttachmentMetadata[]>([]);
+  const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
+  const [cwd, setCwd] = useState(input.initialCwd ?? "");
   const [isHydrated, setIsHydrated] = useState(false);
   const draftGenerationRef = useRef(0);
   const hydratedGenerationRef = useRef(0);
 
-  const setImages = useCallback((updater: ImageUpdater) => {
-    setImagesState((previousImages) => {
+  const setAttachments = useCallback((updater: AttachmentUpdater) => {
+    setAttachmentsState((previousAttachments) => {
       if (typeof updater === "function") {
-        return updater(previousImages);
+        return updater(previousAttachments);
       }
       return updater;
     });
@@ -62,7 +102,8 @@ export function useAgentInputDraft(draftKey: string): AgentInputDraft {
       hydratedGenerationRef.current = generation;
 
       setText("");
-      setImagesState([]);
+      setAttachmentsState([]);
+      setCwd("");
       setIsHydrated(true);
     },
     [draftKey],
@@ -75,13 +116,17 @@ export function useAgentInputDraft(draftKey: string): AgentInputDraft {
     hydratedGenerationRef.current = 0;
 
     setText("");
-    setImagesState([]);
+    setAttachmentsState([]);
+    setCwd(input.initialCwd ?? "");
     setIsHydrated(false);
 
     let cancelled = false;
 
     void (async () => {
-      const draft = await store.hydrateDraftInput(draftKey);
+      const draft = await store.hydrateDraftInput({
+        draftKey,
+        initialCwd: input.initialCwd,
+      });
       if (cancelled) {
         return;
       }
@@ -91,7 +136,8 @@ export function useAgentInputDraft(draftKey: string): AgentInputDraft {
 
       if (draft) {
         setText(draft.text);
-        setImagesState(draft.images);
+        setAttachmentsState(draft.attachments);
+        setCwd(draft.cwd);
       }
 
       hydratedGenerationRef.current = generation;
@@ -101,7 +147,7 @@ export function useAgentInputDraft(draftKey: string): AgentInputDraft {
     return () => {
       cancelled = true;
     };
-  }, [draftKey]);
+  }, [draftKey, input.initialCwd]);
 
   useEffect(() => {
     const currentGeneration = draftGenerationRef.current;
@@ -123,16 +169,18 @@ export function useAgentInputDraft(draftKey: string): AgentInputDraft {
 
     const existing = store.getDraftInput(draftKey);
     const isSameDraft =
-      existing?.text === text &&
-      areImagesEqual({
-        left: existing?.images ?? [],
-        right: images,
+      existing !== undefined &&
+      existing.text === text &&
+      existing.cwd === cwd &&
+      areAttachmentsEqual({
+        left: existing.attachments,
+        right: attachments,
       });
     if (isSameDraft) {
       return;
     }
 
-    if (!hasDraftContent({ text, images })) {
+    if (!hasDraftContent({ text, attachments, cwd })) {
       if (existing) {
         store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
       }
@@ -143,17 +191,128 @@ export function useAgentInputDraft(draftKey: string): AgentInputDraft {
       draftKey,
       draft: {
         text,
-        images,
+        attachments,
+        cwd,
       },
     });
-  }, [draftKey, images, text]);
+  }, [attachments, cwd, draftKey, text]);
+
+  const lockedWorkingDir = composerOptions?.lockedWorkingDir?.trim() ?? "";
+  useEffect(() => {
+    if (!composerOptions || !lockedWorkingDir) {
+      return;
+    }
+    if (formState.workingDir.trim() === lockedWorkingDir) {
+      return;
+    }
+    formState.setWorkingDir(lockedWorkingDir);
+  }, [composerOptions, formState, lockedWorkingDir]);
+
+  const effectiveModelId = useMemo(
+    () =>
+      resolveEffectiveComposerModelId({
+        selectedModel: formState.selectedModel,
+        availableModels: formState.availableModels,
+      }),
+    [formState.availableModels, formState.selectedModel],
+  );
+
+  const effectiveThinkingOptionId = useMemo(
+    () =>
+      resolveEffectiveComposerThinkingOptionId({
+        selectedThinkingOptionId: formState.selectedThinkingOptionId,
+        availableModels: formState.availableModels,
+        effectiveModelId,
+      }),
+    [effectiveModelId, formState.availableModels, formState.selectedThinkingOptionId],
+  );
+
+  const workingDir = lockedWorkingDir || formState.workingDir;
+  const {
+    features: draftFeatures,
+    featureValues: draftFeatureValues,
+    setFeatureValue: setDraftFeatureValue,
+  } = useDraftAgentFeatures({
+    serverId: formState.selectedServerId,
+    provider: formState.selectedProvider,
+    cwd: workingDir,
+    modeId: formState.selectedMode,
+    modelId: effectiveModelId,
+    thinkingOptionId: effectiveThinkingOptionId,
+  });
+
+  const commandDraftConfig = useMemo(
+    () =>
+      composerOptions
+        ? buildDraftComposerCommandConfig({
+            provider: formState.selectedProvider,
+            cwd: workingDir,
+            modeOptions: formState.modeOptions,
+            selectedMode: formState.selectedMode,
+            effectiveModelId,
+            effectiveThinkingOptionId,
+            featureValues: draftFeatureValues,
+          })
+        : undefined,
+    [
+      composerOptions,
+      effectiveModelId,
+      effectiveThinkingOptionId,
+      draftFeatureValues,
+      workingDir,
+      formState.modeOptions,
+      formState.selectedMode,
+      formState.selectedProvider,
+    ],
+  );
+
+  const composerState = useMemo<DraftComposerState | null>(() => {
+    if (!composerOptions) {
+      return null;
+    }
+
+    return {
+      ...formState,
+      workingDir,
+      effectiveModelId,
+      effectiveThinkingOptionId,
+      featureValues: draftFeatureValues,
+      statusControls: buildDraftStatusControls({
+        formState,
+        features: draftFeatures,
+        onSetFeature: setDraftFeatureValue,
+      }),
+      commandDraftConfig,
+    };
+  }, [
+    commandDraftConfig,
+    composerOptions,
+    effectiveModelId,
+    effectiveThinkingOptionId,
+    draftFeatures,
+    draftFeatureValues,
+    formState,
+    setDraftFeatureValue,
+    workingDir,
+  ]);
 
   return {
     text,
     setText,
-    images,
-    setImages,
+    attachments,
+    setAttachments,
+    cwd,
+    setCwd,
     clear,
     isHydrated,
+    composerState,
   };
 }
+
+export const __private__ = {
+  resolveDraftKey,
+  resolveEffectiveComposerModelId,
+  resolveEffectiveComposerThinkingOptionId,
+  buildDraftComposerCommandConfig,
+  buildDraftStatusControls,
+};

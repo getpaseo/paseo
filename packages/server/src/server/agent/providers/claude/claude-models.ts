@@ -1,21 +1,34 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
 
 const CLAUDE_THINKING_OPTIONS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
+  { id: "max", label: "Max" },
+] as const;
+
+const CLAUDE_OPUS_4_7_THINKING_OPTIONS = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra High" },
+  { id: "max", label: "Max" },
 ] as const;
 
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
-    id: "default",
-    label: "default",
-    description: "From ~/.claude/settings.json",
-    isDefault: true,
+    id: "claude-opus-4-7[1m]",
+    label: "Opus 4.7 1M",
+    description: "Opus 4.7 with 1M context window",
+    thinkingOptions: [...CLAUDE_OPUS_4_7_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
+    id: "claude-opus-4-7",
+    label: "Opus 4.7",
+    description: "Opus 4.7 · Latest release",
+    thinkingOptions: [...CLAUDE_OPUS_4_7_THINKING_OPTIONS],
   },
   {
     provider: "claude",
@@ -47,60 +60,8 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
   },
 ];
 
-interface ClaudeSettings {
-  model?: string;
-  [key: string]: unknown;
-}
-
-/**
- * Read custom model from ~/.claude/settings.json if configured.
- * Returns the custom model definition or null if not configured.
- */
-async function readCustomModelFromSettings(): Promise<AgentModelDefinition | null> {
-  try {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const settingsPath = path.join(configDir, "settings.json");
-
-    const settingsContent = await fs.promises.readFile(settingsPath, "utf8");
-    const settings: ClaudeSettings = JSON.parse(settingsContent);
-
-    const customModel = settings.model;
-    if (!customModel || typeof customModel !== "string") {
-      return null;
-    }
-
-    // Don't return custom model if it's already in the built-in list
-    const existingModelIds = new Set(CLAUDE_MODELS.map((m) => m.id));
-    if (existingModelIds.has(customModel)) {
-      return null;
-    }
-
-    return {
-      provider: "claude",
-      id: customModel,
-      label: customModel,
-      description: "Custom model from ~/.claude/settings.json",
-    };
-  } catch (error) {
-    // Silently ignore errors - settings.json may not exist or be invalid
-    return null;
-  }
-}
-
-/**
- * Get Claude models including custom models from ~/.claude/settings.json.
- * The custom model (if configured and not already in the built-in list) is prepended.
- */
-export async function getClaudeModels(): Promise<AgentModelDefinition[]> {
-  const customModel = await readCustomModelFromSettings();
-
-  const models = CLAUDE_MODELS.map((model) => ({ ...model }));
-
-  if (customModel) {
-    models.unshift(customModel);
-  }
-
-  return models;
+export function getClaudeModels(): AgentModelDefinition[] {
+  return CLAUDE_MODELS.map((model) => ({ ...model }));
 }
 
 /**
@@ -126,9 +87,9 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     return null;
   }
 
-  const family = runtimeMatch[1]!.toLowerCase();
-  const major = runtimeMatch[2]!;
-  const minor = runtimeMatch[3]!;
+  const family = runtimeMatch[1].toLowerCase();
+  const major = runtimeMatch[2];
+  const minor = runtimeMatch[3];
   const suffix = runtimeMatch[4] ?? "";
   return `claude-${family}-${major}-${minor}${suffix}`;
 }

@@ -3,6 +3,7 @@ import {
   clearAssistantImageMetadataCache,
   estimateAssistantMessageHeightFromCache,
   extractAssistantImageSources,
+  getAssistantImageLoadStateFromMetadata,
   getAssistantImageMetadata,
   setAssistantImageMetadata,
 } from "./assistant-image-metadata";
@@ -41,6 +42,23 @@ describe("assistant image metadata", () => {
     });
   });
 
+  it("maps missing metadata to the image loading state", () => {
+    expect(getAssistantImageLoadStateFromMetadata(null)).toEqual({ status: "loading" });
+  });
+
+  it("maps cached metadata to the image ready state", () => {
+    expect(
+      getAssistantImageLoadStateFromMetadata({
+        width: 900,
+        height: 1600,
+        aspectRatio: 9 / 16,
+      }),
+    ).toEqual({
+      status: "ready",
+      aspectRatio: 9 / 16,
+    });
+  });
+
   it("estimates assistant message height from cached image metadata", () => {
     setAssistantImageMetadata(
       {
@@ -54,5 +72,16 @@ describe("assistant image metadata", () => {
         "Here is the screenshot\n\n![Screenshot](https://example.com/landscape.png)",
       ),
     ).toBeGreaterThan(220);
+  });
+
+  it("estimates image-only data-image markdown without caching the full payload as text", () => {
+    const source = `data:image/png;base64,${"a".repeat(512)}`;
+    setAssistantImageMetadata({ source }, { width: 1200, height: 800 });
+
+    const imageOnlyHeight = estimateAssistantMessageHeightFromCache(`![Screenshot](${source})`);
+    const mixedHeight = estimateAssistantMessageHeightFromCache(`Text\n\n![Screenshot](${source})`);
+
+    expect(imageOnlyHeight).toBeGreaterThan(220);
+    expect(mixedHeight).toBeGreaterThan(imageOnlyHeight ?? 0);
   });
 });

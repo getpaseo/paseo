@@ -1,18 +1,20 @@
 import React, { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { FileReadResult } from "@server/client/daemon-client";
+import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
   Image as RNImage,
   ScrollView as RNScrollView,
   Text,
   View,
-  Platform,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
   highlightCode,
   darkHighlightColors,
@@ -21,6 +23,14 @@ import {
   type HighlightStyle,
 } from "@getpaseo/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { isWeb } from "@/constants/platform";
+import { createMarkdownStyles } from "@/styles/markdown-styles";
+import type { AttachmentMetadata } from "@/attachments/types";
+import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { persistAttachmentFromBytes } from "@/attachments/service";
+import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
+import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -36,6 +46,7 @@ interface FilePreviewBodyProps {
   showDesktopWebScrollbar: boolean;
   isMobile: boolean;
   filePath: string;
+  imagePreviewUri: string | null;
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -56,6 +67,38 @@ function formatFileSize({ size }: { size: number }): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+async function createFilePanePreview(file: FileReadResult | null): Promise<{
+  file: ExplorerFile | null;
+  imageAttachment: AttachmentMetadata | null;
+}> {
+  if (!file) {
+    return { file: null, imageAttachment: null };
+  }
+
+  const explorerFile = explorerFileFromReadResult(file);
+  if (file.kind !== "image") {
+    return { file: explorerFile, imageAttachment: null };
+  }
+
+  const imageAttachment = await persistAttachmentFromBytes({
+    id: createPreviewAttachmentId({
+      mimeType: file.mime,
+      path: file.path,
+      size: file.size,
+      modifiedAt: file.modifiedAt,
+      contentLength: file.bytes.byteLength,
+    }),
+    bytes: file.bytes,
+    mimeType: file.mime,
+    fileName: getFileNameFromPath(file.path),
+  });
+
+  return {
+    file: explorerFile,
+    imageAttachment,
+  };
+}
+
 const CodeLine = React.memo(function CodeLine({
   tokens,
   lineNumber,
@@ -63,24 +106,44 @@ const CodeLine = React.memo(function CodeLine({
   colorMap,
   baseColor,
 }: CodeLineProps) {
+  const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
+  const gutterTextStyle = useMemo(
+    () => [codeLineStyles.gutterText, { color: baseColor }],
+    [baseColor],
+  );
+  const keyedTokens = useMemo(
+    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
+    [tokens],
+  );
   return (
     <View style={codeLineStyles.line}>
-      <View style={[codeLineStyles.gutter, { width: gutterWidth }]}>
-        <Text style={[codeLineStyles.gutterText, { color: baseColor }]}>{String(lineNumber)}</Text>
+      <View style={gutterStyle}>
+        <Text numberOfLines={1} style={gutterTextStyle}>
+          {String(lineNumber)}
+        </Text>
       </View>
-      <Text style={codeLineStyles.lineText}>
-        {tokens.map((token, index) => (
-          <Text
-            key={index}
-            style={{ color: token.style ? (colorMap[token.style] ?? baseColor) : baseColor }}
-          >
-            {token.text}
-          </Text>
+      <Text selectable style={codeLineStyles.lineText}>
+        {keyedTokens.map(({ key, token }) => (
+          <CodeLineToken
+            key={key}
+            color={token.style ? (colorMap[token.style] ?? baseColor) : baseColor}
+            text={token.text}
+          />
         ))}
       </Text>
     </View>
   );
 });
+
+interface CodeLineTokenProps {
+  color: string;
+  text: string;
+}
+
+function CodeLineToken({ color, text }: CodeLineTokenProps) {
+  const style = useMemo(() => ({ color }), [color]);
+  return <Text style={style}>{text}</Text>;
+}
 
 const codeLineStyles = StyleSheet.create((theme) => ({
   line: {
@@ -112,29 +175,39 @@ function FilePreviewBody({
   showDesktopWebScrollbar,
   isMobile,
   filePath,
+  imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colorScheme === "dark";
   const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
   const baseColor = isDark ? "#c9d1d9" : "#24292f";
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
+  const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
+  const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
 
   const previewScrollRef = useRef<RNScrollView>(null);
+  const webScrollbarStyle = useWebScrollbarStyle();
   const scrollbar = useWebScrollViewScrollbar(previewScrollRef, {
     enabled: showDesktopWebScrollbar,
   });
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text") {
+    if (!preview || preview.kind !== "text" || isMarkdownFile) {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [preview?.kind, preview?.content, filePath]);
+  }, [isMarkdownFile, preview, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
-    return lineNumberGutterWidth(highlightedLines.length);
-  }, [highlightedLines]);
+    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.sm);
+  }, [highlightedLines, theme.fontSize.sm]);
+
+  const imageSource = useMemo(
+    () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
+    [imagePreviewUri],
+  );
 
   if (isLoading && !preview) {
     return (
@@ -154,14 +227,41 @@ function FilePreviewBody({
   }
 
   if (preview.kind === "text") {
+    if (isMarkdownFile) {
+      return (
+        <View style={styles.previewScrollContainer}>
+          <RNScrollView
+            ref={previewScrollRef}
+            style={styles.previewContent}
+            contentContainerStyle={styles.previewMarkdownScrollContent}
+            onLayout={scrollbar.onLayout}
+            onScroll={scrollbar.onScroll}
+            onContentSizeChange={scrollbar.onContentSizeChange}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          >
+            <Markdown style={markdownStyles} markdownit={markdownParser}>
+              {preview.content ?? ""}
+            </Markdown>
+          </RNScrollView>
+          {scrollbar.overlay}
+        </View>
+      );
+    }
+
     const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
+    const keyedLines = lines.map((tokens, index) => ({
+      key: `line-${index}`,
+      tokens,
+      lineNumber: index + 1,
+    }));
     const codeLines = (
       <View>
-        {lines.map((tokens, index) => (
+        {keyedLines.map(({ key, tokens, lineNumber }) => (
           <CodeLine
-            key={index}
+            key={key}
             tokens={tokens}
-            lineNumber={index + 1}
+            lineNumber={lineNumber}
             gutterWidth={gutterWidth}
             colorMap={colorMap}
             baseColor={baseColor}
@@ -188,6 +288,7 @@ function FilePreviewBody({
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
+              style={webScrollbarStyle}
               contentContainerStyle={styles.previewCodeScrollContent}
             >
               {codeLines}
@@ -199,7 +300,16 @@ function FilePreviewBody({
     );
   }
 
-  if (preview.kind === "image" && preview.content) {
+  if (preview.kind === "image") {
+    if (!imagePreviewUri) {
+      return (
+        <View style={styles.centerState}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.loadingText}>Loading file…</Text>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.previewScrollContainer}>
         <RNScrollView
@@ -213,9 +323,7 @@ function FilePreviewBody({
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           <RNImage
-            source={{
-              uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
-            }}
+            source={imageSource ?? undefined}
             style={styles.previewImage}
             resizeMode="contain"
           />
@@ -243,7 +351,7 @@ export function FilePane({
   filePath: string;
 }) {
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
@@ -256,15 +364,26 @@ export function FilePane({
       if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
         return { file: null as ExplorerFile | null, error: "Host is not connected" };
       }
-      const payload = await client.exploreFileSystem(
-        normalizedWorkspaceRoot,
-        normalizedFilePath,
-        "file",
-      );
-      return { file: payload.file ?? null, error: payload.error ?? null };
+      try {
+        const file = await client.readFile(normalizedWorkspaceRoot, normalizedFilePath);
+        const preview = await createFilePanePreview(file);
+        return {
+          file: preview.file,
+          imageAttachment: preview.imageAttachment,
+          error: null,
+        };
+      } catch (error) {
+        return {
+          file: null,
+          imageAttachment: null,
+          error: error instanceof Error ? error.message : "Failed to load file",
+        };
+      }
     },
     staleTime: 5_000,
+    refetchOnMount: true,
   });
+  const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);
 
   return (
     <View style={styles.container} testID="workspace-file-pane">
@@ -280,6 +399,7 @@ export function FilePane({
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         isMobile={isMobile}
         filePath={filePath}
+        imagePreviewUri={imagePreviewUri}
       />
     </View>
   );
@@ -326,6 +446,9 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   previewCodeScrollContent: {
+    padding: theme.spacing[4],
+  },
+  previewMarkdownScrollContent: {
     padding: theme.spacing[4],
   },
   previewImageScrollContent: {

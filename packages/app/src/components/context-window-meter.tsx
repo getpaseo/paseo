@@ -3,12 +3,12 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-type ContextWindowMeterProps = {
+interface ContextWindowMeterProps {
   maxTokens: number;
   usedTokens: number;
-};
+}
 
-const SVG_SIZE = 20;
+const SVG_SIZE = 16;
 const CENTER = SVG_SIZE / 2;
 const RADIUS = 7;
 const STROKE_WIDTH = 2.25;
@@ -138,7 +138,6 @@ const styles = StyleSheet.create((theme) => ({
   tooltipTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
   },
   tooltipText: {
     color: theme.colors.foreground,

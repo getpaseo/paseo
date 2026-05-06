@@ -8,13 +8,18 @@ import {
   updatePidLock,
 } from "../src/server/pid-lock.js";
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
+import { loadPersistedConfig } from "../src/server/persisted-config.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
-type DaemonRunnerConfig = {
+const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
+const DEFAULT_LOG_ROTATE_SIZE = "10m";
+const DEFAULT_LOG_ROTATE_MAX_FILES = 2;
+
+interface DaemonRunnerConfig {
   devMode: boolean;
   workerArgs: string[];
-};
+}
 
 function parseConfig(argv: string[]): DaemonRunnerConfig {
   let devMode = false;
@@ -33,10 +38,10 @@ function parseConfig(argv: string[]): DaemonRunnerConfig {
 
 function resolveWorkerEntry(): string {
   const candidates = [
-    fileURLToPath(new URL("../server/server/index.js", import.meta.url)),
-    fileURLToPath(new URL("../dist/server/server/index.js", import.meta.url)),
-    fileURLToPath(new URL("../src/server/index.ts", import.meta.url)),
-    fileURLToPath(new URL("../../src/server/index.ts", import.meta.url)),
+    fileURLToPath(new URL("../server/server/daemon-worker.js", import.meta.url)),
+    fileURLToPath(new URL("../dist/server/server/daemon-worker.js", import.meta.url)),
+    fileURLToPath(new URL("../src/server/daemon-worker.ts", import.meta.url)),
+    fileURLToPath(new URL("../../src/server/daemon-worker.ts", import.meta.url)),
   ];
 
   for (const candidate of candidates) {
@@ -49,7 +54,7 @@ function resolveWorkerEntry(): string {
 }
 
 function resolveDevWorkerEntry(): string {
-  const candidate = fileURLToPath(new URL("../src/server/index.ts", import.meta.url));
+  const candidate = fileURLToPath(new URL("../src/server/daemon-worker.ts", import.meta.url));
   if (!existsSync(candidate)) {
     throw new Error(`Dev worker entry not found: ${candidate}`);
   }
@@ -72,11 +77,33 @@ function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): str
   return existsSync(runnerPath) ? runnerPath : null;
 }
 
+function resolveSupervisorLogFile(
+  paseoHome: string,
+  persistedConfig: ReturnType<typeof loadPersistedConfig>,
+) {
+  const configuredFile = persistedConfig.log?.file;
+  const configuredPath = configuredFile?.path;
+  let logPath = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+  if (configuredPath) {
+    logPath = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(paseoHome, configuredPath);
+  }
+
+  return {
+    path: logPath,
+    rotate: {
+      maxSize: configuredFile?.rotate?.maxSize ?? DEFAULT_LOG_ROTATE_SIZE,
+      maxFiles: configuredFile?.rotate?.maxFiles ?? DEFAULT_LOG_ROTATE_MAX_FILES,
+    },
+  };
+}
+
 async function main(): Promise<void> {
   const config = parseConfig(process.argv.slice(2));
   const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
   const workerExecArgv = resolveWorkerExecArgv(workerEntry);
-  const workerEnv: NodeJS.ProcessEnv = { ...process.env, PASEO_SUPERVISED: "1" };
+  const workerEnv: NodeJS.ProcessEnv = { ...process.env };
   const packagedNodeEntrypointRunner =
     process.env.ELECTRON_RUN_AS_NODE === "1"
       ? resolvePackagedNodeEntrypointRunnerPath(fileURLToPath(import.meta.url))
@@ -85,6 +112,8 @@ async function main(): Promise<void> {
   applySherpaLoaderEnv(workerEnv);
 
   const paseoHome = resolvePaseoHome(workerEnv);
+  const persistedConfig = loadPersistedConfig(paseoHome);
+  const supervisorLogFile = resolveSupervisorLogFile(paseoHome, persistedConfig);
 
   try {
     await acquirePidLock(paseoHome, null, {
@@ -112,9 +141,7 @@ async function main(): Promise<void> {
 
   runSupervisor({
     name: "DaemonRunner",
-    startupMessage: config.devMode
-      ? "Starting daemon worker (dev mode, crash restarts enabled)"
-      : "Starting daemon worker (IPC restart enabled)",
+    startupMessage: "Starting daemon worker (IPC restart and crash restart enabled)",
     resolveWorkerEntry: () => workerEntry,
     workerArgs: config.workerArgs,
     workerEnv,
@@ -134,7 +161,8 @@ async function main(): Promise<void> {
           },
         })
       : undefined,
-    restartOnCrash: config.devMode,
+    restartOnCrash: true,
+    logFile: supervisorLogFile,
     onWorkerReady: async ({ listen }) => {
       await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
     },

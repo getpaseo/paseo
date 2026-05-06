@@ -26,7 +26,7 @@ describe("projectTimelineRows", () => {
       },
     ];
 
-    const projected = projectTimelineRows(rows, "codex", "projected");
+    const projected = projectTimelineRows({ rows, mode: "projected" });
 
     expect(projected).toHaveLength(2);
     expect(projected[0]?.item).toEqual({
@@ -37,6 +37,32 @@ describe("projectTimelineRows", () => {
     expect(projected[0]?.seqEnd).toBe(2);
     expect(projected[0]?.sourceSeqRanges).toEqual([{ startSeq: 1, endSeq: 2 }]);
     expect(projected[0]?.collapsed).toContain("assistant_merge");
+  });
+
+  test("merges adjacent reasoning chunks in projected mode", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "reasoning", text: "Step " },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: { type: "reasoning", text: "by step" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        item: { type: "assistant_message", text: "done" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0]?.item).toEqual({ type: "reasoning", text: "Step by step" });
+    expect(projected[0]?.collapsed).toContain("reasoning_merge");
   });
 
   test("collapses tool lifecycle by callId and reports exact source seq ranges", () => {
@@ -80,7 +106,7 @@ describe("projectTimelineRows", () => {
       },
     ];
 
-    const projected = projectTimelineRows(rows, "codex", "projected");
+    const projected = projectTimelineRows({ rows, mode: "projected" });
 
     expect(projected).toHaveLength(2);
     const tool = projected[0];
@@ -110,7 +136,7 @@ describe("projectTimelineRows", () => {
       },
     ];
 
-    const projected = projectTimelineRows(rows, "codex", "canonical");
+    const projected = projectTimelineRows({ rows, mode: "canonical" });
 
     expect(projected).toHaveLength(2);
     expect(projected[0]?.item).toEqual(rows[0]?.item);
@@ -152,7 +178,6 @@ describe("selectTimelineWindowByProjectedLimit", () => {
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
-      provider: "codex",
       direction: "tail",
       limit: 1,
     });
@@ -193,7 +218,6 @@ describe("selectTimelineWindowByProjectedLimit", () => {
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
-      provider: "claude",
       direction: "after",
       limit: 2,
     });
@@ -247,7 +271,6 @@ describe("selectTimelineWindowByProjectedLimit", () => {
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
-      provider: "codex",
       direction: "tail",
       limit: 2,
     });
@@ -306,7 +329,6 @@ describe("selectTimelineWindowByProjectedLimit", () => {
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
-      provider: "codex",
       direction: "after",
       limit: 1,
     });
@@ -347,7 +369,6 @@ describe("selectTimelineWindowByProjectedLimit", () => {
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
-      provider: "claude",
       direction: "before",
       limit: 1,
     });
@@ -405,7 +426,6 @@ describe("selectTimelineWindowByProjectedLimit", () => {
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
-      provider: "codex",
       direction: "tail",
       limit: 1,
       collapseToolLifecycle: false,

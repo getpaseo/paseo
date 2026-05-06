@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   dialog: {
     ask: (message: string, options?: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:dialog:ask", message, options),
+    askWithCheckbox: (message: string, options: Record<string, unknown>) =>
+      ipcRenderer.invoke("paseo:dialog:askWithCheckbox", message, options),
     open: (options?: Record<string, unknown>) => ipcRenderer.invoke("paseo:dialog:open", options),
   },
   notification: {
@@ -56,5 +58,13 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   menu: {
     showContextMenu: (input?: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:menu:showContextMenu", input),
+  },
+  browser: {
+    setWorkspaceActiveBrowser: (browserId: string | null) =>
+      ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", browserId),
+    openDevTools: (browserId: string) =>
+      ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
+    clearPartition: (browserId: string) =>
+      ipcRenderer.invoke("paseo:browser:clear-partition", browserId),
   },
 });

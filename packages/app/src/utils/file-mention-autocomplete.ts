@@ -24,7 +24,7 @@ export function findActiveFileMention(input: FindActiveFileMentionInput): FileMe
   for (
     let atIndex = beforeCursor.lastIndexOf("@");
     atIndex >= 0;
-    atIndex = beforeCursor.lastIndexOf("@", atIndex - 1)
+    atIndex = atIndex === 0 ? -1 : beforeCursor.lastIndexOf("@", atIndex - 1)
   ) {
     const query = beforeCursor.slice(atIndex + 1);
     if (INVALID_MENTION_QUERY_CHARS.test(query)) {

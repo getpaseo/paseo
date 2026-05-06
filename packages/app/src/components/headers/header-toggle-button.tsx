@@ -1,16 +1,10 @@
-import type { ReactElement, ReactNode } from "react";
-import {
-  Platform,
-  Text,
-  View,
-  type PressableProps,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { useMemo, type ReactElement, type ReactNode } from "react";
+import { Text, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { isWeb } from "@/constants/platform";
 
 interface HeaderToggleButtonState {
   hovered: boolean;
@@ -44,9 +38,11 @@ export function HeaderToggleButton({
       : undefined;
   const expandedState = (props.accessibilityState as { expanded?: boolean } | undefined)?.expanded;
   const ariaExpandedProps =
-    Platform.OS === "web" && typeof expandedState === "boolean"
-      ? ({ "aria-expanded": expandedState } as any)
+    isWeb && typeof expandedState === "boolean"
+      ? ({ "aria-expanded": expandedState } as Record<string, boolean>)
       : null;
+
+  const combinedStyle = useMemo(() => [headerIconSlotStyle.slot, style], [style]);
 
   return (
     <Tooltip delayDuration={tooltipDelayDuration} enabledOnDesktop enabledOnMobile={false}>
@@ -54,10 +50,8 @@ export function HeaderToggleButton({
         {...props}
         {...ariaExpandedProps}
         disabled={disabled}
-        onPress={(e) => {
-          onPress(e);
-        }}
-        style={[styles.button, style]}
+        onPress={onPress}
+        style={combinedStyle}
       >
         {typeof children === "function"
           ? (state: { pressed: boolean; hovered?: boolean }) =>
@@ -74,14 +68,17 @@ export function HeaderToggleButton({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  button: {
+export const headerIconSlotStyle = StyleSheet.create((theme) => ({
+  slot: {
     padding: {
       xs: theme.spacing[3],
       md: theme.spacing[2],
     },
     borderRadius: theme.borderRadius.lg,
   },
+}));
+
+const styles = StyleSheet.create((theme) => ({
   tooltipRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -91,8 +88,5 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
   },
-  shortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
-  },
+  shortcut: {},
 }));

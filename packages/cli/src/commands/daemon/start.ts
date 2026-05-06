@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import {
   startLocalDaemonForeground,
@@ -9,6 +9,10 @@ import { getErrorMessage } from "../../utils/errors.js";
 
 export type { DaemonStartOptions as StartOptions } from "./local-daemon.js";
 
+type RawStartCommandOptions = StartOptions & {
+  allowedHosts?: string;
+};
+
 export function startCommand(): Command {
   return new Command("start")
     .description("Start the local Paseo daemon")
@@ -17,14 +21,19 @@ export function startCommand(): Command {
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .option("--foreground", "Run in foreground (don't daemonize)")
     .option("--no-relay", "Disable relay connection")
+    .option("--relay-use-tls", "Use wss:// for the relay connection and pairing offers")
     .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
     .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
     .option(
-      "--allowed-hosts <hosts>",
-      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
+      "--hostnames <hosts>",
+      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
     )
-    .action(async (options: StartOptions) => {
-      await runStart(options);
+    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
+    .action(async (options: RawStartCommandOptions) => {
+      await runStart({
+        ...options,
+        hostnames: options.hostnames ?? options.allowedHosts,
+      });
     });
 }
 

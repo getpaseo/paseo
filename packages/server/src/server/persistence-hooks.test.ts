@@ -1,83 +1,10 @@
-import { describe, expect, test, vi } from "vitest";
-
-import type { ManagedAgent } from "./agent/agent-manager.js";
+import { describe, expect, test } from "vitest";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import {
-  attachAgentStoragePersistence,
   buildConfigOverrides,
   buildSessionConfig,
+  toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
-import type {
-  AgentPermissionRequest,
-  AgentSession,
-  AgentSessionConfig,
-} from "./agent/agent-sdk-types.js";
-
-const testLogger = {
-  child: () => testLogger,
-  error: vi.fn(),
-} as any;
-
-type ManagedAgentOverrides = Omit<
-  Partial<ManagedAgent>,
-  "config" | "pendingPermissions" | "session" | "activeForegroundTurnId"
-> & {
-  config?: Partial<AgentSessionConfig>;
-  pendingPermissions?: Map<string, AgentPermissionRequest>;
-  session?: AgentSession | null;
-  activeForegroundTurnId?: string | null;
-};
-
-function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent {
-  const now = overrides.updatedAt ?? new Date("2025-01-01T00:00:00.000Z");
-  const provider = overrides.provider ?? "claude";
-  const cwd = overrides.cwd ?? "/tmp/project";
-  const lifecycle = overrides.lifecycle ?? "idle";
-  const configOverrides = overrides.config ?? {};
-  const config: AgentSessionConfig = {
-    provider,
-    cwd,
-    modeId: configOverrides.modeId ?? "plan",
-    model: configOverrides.model ?? "claude-3.5-sonnet",
-    extra: configOverrides.extra ?? { claude: { tone: "focused" } },
-  };
-  const session = lifecycle === "closed" ? null : (overrides.session ?? ({} as AgentSession));
-  const activeForegroundTurnId =
-    overrides.activeForegroundTurnId ?? (lifecycle === "running" ? "test-turn-id" : null);
-
-  const agent: ManagedAgent = {
-    id: overrides.id ?? "agent-1",
-    provider,
-    cwd,
-    session,
-    capabilities: overrides.capabilities ?? {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    config,
-    lifecycle,
-    createdAt: overrides.createdAt ?? now,
-    updatedAt: overrides.updatedAt ?? now,
-    availableModes: overrides.availableModes ?? [],
-    currentModeId: overrides.currentModeId ?? config.modeId ?? null,
-    pendingPermissions: overrides.pendingPermissions ?? new Map<string, AgentPermissionRequest>(),
-    activeForegroundTurnId,
-    foregroundTurnWaiters: new Set(),
-    unsubscribeSession: null,
-    timeline: overrides.timeline ?? [],
-    persistence: overrides.persistence ?? null,
-    historyPrimed: overrides.historyPrimed ?? true,
-    lastUserMessageAt: overrides.lastUserMessageAt ?? now,
-    lastUsage: overrides.lastUsage,
-    lastError: overrides.lastError,
-  };
-
-  return agent;
-}
 
 function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord {
   const now = new Date().toISOString();
@@ -100,43 +27,6 @@ function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord
 }
 
 describe("persistence hooks", () => {
-  test("attachAgentStoragePersistence forwards agent snapshots", async () => {
-    const applySnapshot = vi.fn().mockResolvedValue(undefined);
-    let subscriber: (event: any) => void = () => {
-      throw new Error("Agent manager subscriber was not registered");
-    };
-    const agentManager = {
-      subscribe: vi.fn((callback: (event: any) => void) => {
-        subscriber = callback;
-        return () => {
-          subscriber = () => {
-            throw new Error("Agent manager subscriber was not registered");
-          };
-        };
-      }),
-    };
-    attachAgentStoragePersistence(
-      testLogger,
-      agentManager as any,
-      {
-        applySnapshot,
-        list: vi.fn(),
-      } as any,
-    );
-
-    expect(agentManager.subscribe).toHaveBeenCalledTimes(1);
-    const agent = createManagedAgent();
-    subscriber({ type: "agent_state", agent });
-    expect(applySnapshot).toHaveBeenCalledWith(agent);
-
-    subscriber({
-      type: "agent_stream",
-      agentId: agent.id,
-      event: { type: "timeline", item: { type: "assistant_message", text: "hi" } },
-    });
-    expect(applySnapshot).toHaveBeenCalledTimes(1);
-  });
-
   test("buildConfigOverrides carries systemPrompt and mcpServers", () => {
     const record = createRecord({
       title: "Voice agent (current)",
@@ -207,5 +97,43 @@ describe("persistence hooks", () => {
         },
       },
     });
+  });
+
+  test("buildSessionConfig accepts providers from the canonical manifest", () => {
+    const record = createRecord({
+      provider: "claude",
+      persistence: {
+        provider: "claude",
+        sessionId: "session-123",
+      },
+      config: {},
+    });
+
+    expect(buildSessionConfig(record)).toMatchObject({
+      provider: "claude",
+      cwd: "/tmp/project",
+    });
+  });
+
+  test("buildSessionConfig skips records whose provider is missing from the registry", () => {
+    const record = createRecord({
+      id: "agent-missing-provider",
+      provider: "zai",
+    });
+
+    expect(
+      buildSessionConfig(record, {
+        validProviders: ["claude", "codex"],
+      }),
+    ).toBeNull();
+  });
+
+  test("toAgentPersistenceHandle rejects handles for unavailable providers", () => {
+    const handle = toAgentPersistenceHandle(["claude", "codex"], {
+      provider: "gemini",
+      sessionId: "session-123",
+    });
+
+    expect(handle).toBeNull();
   });
 });

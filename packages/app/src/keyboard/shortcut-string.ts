@@ -31,6 +31,7 @@ KEY_MAP["Digit"] = { code: "Digit" };
 KEY_MAP["\\"] = { code: "Backslash" };
 KEY_MAP["["] = { code: "BracketLeft", key: "[" };
 KEY_MAP["]"] = { code: "BracketRight", key: "]" };
+KEY_MAP[","] = { code: "Comma", key: "," };
 KEY_MAP["."] = { code: "Period", key: "." };
 KEY_MAP["`"] = { code: "Backquote", key: "`" };
 KEY_MAP["/"] = { code: "Slash" };

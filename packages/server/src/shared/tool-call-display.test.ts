@@ -48,13 +48,6 @@ describe("shared tool-call display mapping", () => {
         subAgentType: "Explore",
         description: "Inspect repository structure",
         log: "[Read] README.md",
-        actions: [
-          {
-            index: 1,
-            toolName: "Read",
-            summary: "README.md",
-          },
-        ],
       },
     });
 
@@ -79,6 +72,7 @@ describe("shared tool-call display mapping", () => {
             index: 1,
             command: "npm install",
             cwd: "/tmp/repo/.paseo/worktrees/repo/branch",
+            log: "==> [1/1] Running: npm install\n",
             status: "running",
             exitCode: null,
           },

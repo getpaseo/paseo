@@ -31,6 +31,21 @@ export async function persistAttachmentFromDataUrl(input: {
   });
 }
 
+export async function persistAttachmentFromBytes(input: {
+  bytes: Uint8Array;
+  mimeType?: string;
+  fileName?: string | null;
+  id?: string;
+}): Promise<AttachmentMetadata> {
+  const store = await getAttachmentStore();
+  return await store.save({
+    id: input.id,
+    mimeType: input.mimeType,
+    fileName: input.fileName,
+    source: { kind: "bytes", bytes: input.bytes },
+  });
+}
+
 export async function persistAttachmentFromFileUri(input: {
   uri: string;
   mimeType?: string;

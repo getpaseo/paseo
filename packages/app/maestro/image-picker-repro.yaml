@@ -1,0 +1,50 @@
+appId: sh.paseo
+---
+- runFlow: flows/land-in-chat.yaml
+
+- tapOn:
+    id: "message-input-attach-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "message-input-attachment-menu"
+    timeout: 10000
+
+- tapOn:
+    id: "message-input-attachment-menu-item-image"
+
+- runFlow:
+    when:
+      visible: "Allow Full Access"
+    commands:
+      - tapOn: "Allow Full Access"
+
+- runFlow:
+    when:
+      visible: "Allow Access to All Photos"
+    commands:
+      - tapOn: "Allow Access to All Photos"
+
+- extendedWaitUntil:
+    visible: "Cancel"
+    timeout: 30000
+
+- tapOn: "Cancel"
+
+- extendedWaitUntil:
+    visible:
+      id: "message-input-root"
+    timeout: 10000
+
+# If the dropdown Modal left an invisible backdrop mounted behind the picker,
+# this tap is swallowed and the attachment menu never reopens.
+- tapOn:
+    id: "message-input-attach-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "message-input-attachment-menu"
+    timeout: 10000
+
+- tapOn:
+    id: "message-input-attachment-menu-backdrop"

@@ -18,18 +18,20 @@ This example showcases the basic functions of the expo-two-way-audio module:
 In the `examples/basic-usage` directory:
 
 1. Install dependencies:
-    ```sh
-    npm install
-    ```
+
+   ```sh
+   npm install
+   ```
 
 2. Run the app:
-    ```sh
-    # Run iOS
-    npm run ios
 
-    # Run Android
-    npm run android
-    ```
+   ```sh
+   # Run iOS
+   npm run ios
+
+   # Run Android
+   npm run android
+   ```
 
 ## Notes
 

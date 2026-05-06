@@ -50,10 +50,10 @@ const TEST_OUTPUT_CAPTURE_LIMIT = Number.parseInt(
   10,
 );
 
-type OutputCapture = {
+interface OutputCapture {
   value: string;
   truncated: boolean;
-};
+}
 
 function createOutputCapture(): OutputCapture {
   return { value: "", truncated: false };
@@ -126,24 +126,17 @@ async function terminateProcessTree(processRef: ChildProcess, timeoutMs: number)
   signalProcessTree(pid, "SIGTERM");
 
   await new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
+    const done = () => resolve();
+    const onExit = () => {
       clearTimeout(timeoutId);
-      resolve();
+      done();
     };
-
     const timeoutId = setTimeout(() => {
       signalProcessTree(pid, "SIGKILL");
-      finish();
+      processRef.removeListener("exit", onExit);
+      done();
     }, timeoutMs);
-
-    processRef.once("exit", () => {
-      finish();
-    });
+    processRef.once("exit", onExit);
   });
 }
 
@@ -174,33 +167,39 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
  * Wait for daemon to be ready by running `paseo agent ls`
  * This connects via WebSocket and ensures the daemon is responsive
  */
+async function probeDaemonReady(port: number): Promise<boolean> {
+  try {
+    const { exitCode } = await runPaseoCli(
+      {
+        port,
+        wsUrl: `ws://${TEST_DAEMON_HOST}:${port}`,
+        paseoHome: "",
+        workDir: "",
+        process: null,
+        isReady: false,
+        stop: async () => {},
+      },
+      ["agent", "ls"],
+    );
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForDaemonReady(port: number, timeout = 30000): Promise<void> {
-  const start = Date.now();
+  const deadline = Date.now() + timeout;
 
-  while (Date.now() - start < timeout) {
-    try {
-      const { exitCode } = await runPaseoCli(
-        {
-          port,
-          wsUrl: `ws://${TEST_DAEMON_HOST}:${port}`,
-          paseoHome: "",
-          workDir: "",
-          process: null,
-          isReady: false,
-          stop: async () => {},
-        },
-        ["agent", "ls"],
-      );
-
-      if (exitCode === 0) {
-        return; // Daemon is ready
-      }
-    } catch {
-      // Connection failed, keep trying
+  async function poll(): Promise<void> {
+    if (await probeDaemonReady(port)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Daemon failed to become ready on port ${port} within ${timeout}ms`);
     }
     await sleep(100);
+    return poll();
   }
-  throw new Error(`Daemon failed to become ready on port ${port} within ${timeout}ms`);
+
+  return poll();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -218,6 +217,7 @@ export async function startTestDaemon(options?: {
   paseoHome?: string;
   workDir?: string;
   timeout?: number;
+  env?: NodeJS.ProcessEnv;
 }): Promise<TestDaemonContext> {
   const port = options?.port ?? (await getAvailablePort());
   const { paseoHome, workDir } =
@@ -241,6 +241,7 @@ export async function startTestDaemon(options?: {
       PASEO_LISTEN: `${TEST_DAEMON_HOST}:${port}`,
       // Force no TTY to prevent QR code output
       CI: "true",
+      ...options?.env,
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
@@ -315,6 +316,7 @@ export async function startTestDaemon(options?: {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Failed to start test daemon: ${message}\nStdout: ${formatOutputCapture(stdout)}\nStderr: ${formatOutputCapture(stderr)}`,
+      { cause: err },
     );
   }
 
@@ -396,7 +398,10 @@ export async function runPaseoCli(
  *
  * This is the main entry point for E2E tests.
  */
-export async function createE2ETestContext(options?: { timeout?: number }): Promise<
+export async function createE2ETestContext(options?: {
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+}): Promise<
   TestDaemonContext & {
     /** Run a paseo CLI command against this daemon */
     paseo: (
@@ -409,7 +414,7 @@ export async function createE2ETestContext(options?: { timeout?: number }): Prom
     }>;
   }
 > {
-  const ctx = await startTestDaemon({ timeout: options?.timeout });
+  const ctx = await startTestDaemon({ timeout: options?.timeout, env: options?.env });
 
   const paseo = (
     args: string[],

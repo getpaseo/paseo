@@ -37,6 +37,9 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# vitest browser failure screenshots
+.vitest-screenshots/
+
 app-example
 
 # generated native folders

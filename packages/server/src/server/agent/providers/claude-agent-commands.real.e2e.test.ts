@@ -1,14 +1,25 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
-import type { AgentSlashCommand } from "../agent-sdk-types.js";
-import { isCommandAvailableSync } from "../../../utils/executable.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 
 // Real-Claude contract coverage: validates slash command shape from a live Claude CLI session.
 describe("claude agent commands contract (real)", () => {
+  let canRun = false;
+
+  beforeAll(async () => {
+    canRun = await isCommandAvailable("claude");
+  });
+
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test("lists slash commands with the expected contract", async () => {
-    expect(isCommandAvailableSync("claude")).toBe(true);
+    expect(await isCommandAvailable("claude")).toBe(true);
 
     const client = new ClaudeAgentClient({
       logger: pino({ level: "silent" }),
@@ -28,7 +39,7 @@ describe("claude agent commands contract (real)", () => {
       expect(commands.map((command) => command.name)).toContain("rewind");
 
       for (const command of commands) {
-        const typed = command as AgentSlashCommand;
+        const typed = command;
         expect(typeof typed.name).toBe("string");
         expect(typed.name.length).toBeGreaterThan(0);
         expect(typed.name.startsWith("/")).toBe(false);

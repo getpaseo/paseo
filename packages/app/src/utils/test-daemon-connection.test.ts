@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const daemonClientMock = vi.hoisted(() => {
-  const createdConfigs: Array<{ clientId?: string; url?: string }> = [];
+  const createdConfigs: Array<{ clientId?: string; url?: string; password?: string }> = [];
+  let nextConnectError: Error | null = null;
+  let nextLastError: string | null = null;
 
   class MockDaemonClient {
-    public lastError: string | null = null;
+    public lastError: string | null = nextLastError;
     private lastServerInfo = {
       status: "server_info" as const,
       serverId: "srv_probe_test",
@@ -12,7 +14,7 @@ const daemonClientMock = vi.hoisted(() => {
       version: "0.0.0",
     };
 
-    constructor(config: { clientId?: string; url?: string }) {
+    constructor(config: { clientId?: string; url?: string; password?: string }) {
       createdConfigs.push(config);
     }
 
@@ -25,6 +27,9 @@ const daemonClientMock = vi.hoisted(() => {
     }
 
     async connect(): Promise<void> {
+      if (nextConnectError) {
+        throw nextConnectError;
+      }
       return;
     }
 
@@ -44,6 +49,15 @@ const daemonClientMock = vi.hoisted(() => {
   return {
     MockDaemonClient,
     createdConfigs,
+    setNextConnectFailure: (error: Error, lastError: string | null) => {
+      nextConnectError = error;
+      nextLastError = lastError;
+    },
+    reset: () => {
+      createdConfigs.length = 0;
+      nextConnectError = null;
+      nextLastError = null;
+    },
   };
 });
 
@@ -59,10 +73,24 @@ vi.mock("./client-id", () => ({
   getOrCreateClientId: clientIdMock.getOrCreateClientId,
 }));
 
+vi.mock("@/desktop/daemon/desktop-daemon-transport", () => ({
+  createDesktopLocalDaemonTransportFactory: vi.fn(() => null),
+  buildLocalDaemonTransportUrl: vi.fn(
+    ({
+      transportType,
+      transportPath,
+    }: {
+      transportType: "socket" | "pipe";
+      transportPath: string;
+    }) => `paseo+local://${transportType}?path=${encodeURIComponent(transportPath)}`,
+  ),
+}));
+
 describe("test-daemon-connection connectToDaemon", () => {
   beforeEach(() => {
-    daemonClientMock.createdConfigs.length = 0;
+    daemonClientMock.reset();
     clientIdMock.getOrCreateClientId.mockClear();
+    vi.stubGlobal("__DEV__", false);
   });
 
   it("reuses the app clientId for direct connections", async () => {
@@ -101,5 +129,85 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(daemonClientMock.createdConfigs[0]?.url).toBe(
       "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock",
     );
+  });
+
+  it("passes direct TCP connection passwords into the client config", async () => {
+    const mod = await import("./test-daemon-connection");
+
+    const result = await mod.connectToDaemon({
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+      password: "shared-secret",
+    });
+    await result.client.close();
+
+    expect(daemonClientMock.createdConfigs[0]?.password).toBe("shared-secret");
+  });
+
+  it("uses relay TLS from the stored connection", async () => {
+    const mod = await import("./test-daemon-connection");
+
+    const tlsResult = await mod.connectToDaemon(
+      {
+        id: "relay:wss:[::1]:443",
+        type: "relay",
+        relayEndpoint: "[::1]:443",
+        useTls: true,
+        daemonPublicKeyB64: "pubkey",
+      },
+      { serverId: "srv_probe_test" },
+    );
+    await tlsResult.client.close();
+
+    const plainResult = await mod.connectToDaemon(
+      {
+        id: "relay:relay.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay.paseo.sh:443",
+        useTls: false,
+        daemonPublicKeyB64: "pubkey",
+      },
+      { serverId: "srv_probe_test" },
+    );
+    await plainResult.client.close();
+
+    expect(daemonClientMock.createdConfigs[0]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
+    expect(daemonClientMock.createdConfigs[1]?.url).toMatch(/^ws:\/\/relay\.paseo\.sh:443\/ws\?/);
+  });
+
+  it("surfaces auth rejection as an incorrect password", async () => {
+    const mod = await import("./test-daemon-connection");
+    daemonClientMock.setNextConnectFailure(
+      new Error("Transport closed (code 4001)"),
+      "Transport closed (code 4001)",
+    );
+
+    await expect(
+      mod.connectToDaemon({
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+        password: "wrong-secret",
+      }),
+    ).rejects.toMatchObject({
+      message: "Incorrect password",
+    });
+  });
+
+  it("keeps generic transport failures generic when a password was supplied", async () => {
+    const mod = await import("./test-daemon-connection");
+    daemonClientMock.setNextConnectFailure(new Error("Transport error"), "Transport error");
+
+    await expect(
+      mod.connectToDaemon({
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+        password: "shared-secret",
+      }),
+    ).rejects.toMatchObject({
+      message: "Transport error",
+    });
   });
 });

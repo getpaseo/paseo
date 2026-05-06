@@ -1,10 +1,25 @@
-import { useState, type ComponentType, type PropsWithChildren, type ReactElement } from "react";
-import { Pressable, Text, View } from "react-native";
-import type { PressableProps, StyleProp, TextStyle, ViewStyle } from "react-native";
+import {
+  default as React,
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentType,
+  type PropsWithChildren,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import type {
+  PressableProps,
+  PressableStateCallbackType,
+  StyleProp,
+  TextStyle,
+  ViewStyle,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
-type ButtonSize = "sm" | "md" | "lg";
+type ButtonSize = "xs" | "sm" | "md" | "lg";
 
 type LeftIcon =
   | ReactElement
@@ -12,7 +27,7 @@ type LeftIcon =
   | ((color: string) => ReactElement)
   | null;
 
-const ICON_SIZE: Record<ButtonSize, number> = { sm: 14, md: 16, lg: 20 };
+const ICON_SIZE: Record<ButtonSize, number> = { xs: 12, sm: 14, md: 16, lg: 20 };
 
 const styles = StyleSheet.create((theme) => ({
   base: {
@@ -27,6 +42,12 @@ const styles = StyleSheet.create((theme) => ({
   md: {
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
+  },
+  xs: {
+    minHeight: 28,
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
   },
   sm: {
     paddingVertical: theme.spacing[2],
@@ -69,6 +90,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
+  textXs: {
+    fontSize: theme.fontSize.xs,
+  },
   textDefault: {
     color: theme.colors.palette.white,
   },
@@ -88,9 +112,11 @@ export function Button({
   variant = "secondary",
   size = "md",
   leftIcon,
+  trailing,
   style,
   textStyle,
   disabled,
+  loading = false,
   accessibilityRole,
   ...props
 }: PropsWithChildren<
@@ -98,37 +124,93 @@ export function Button({
     variant?: ButtonVariant;
     size?: ButtonSize;
     leftIcon?: LeftIcon;
+    trailing?: ReactNode;
     style?: StyleProp<ViewStyle>;
     textStyle?: StyleProp<TextStyle>;
+    loading?: boolean;
   }
 >) {
   const [hovered, setHovered] = useState(false);
   const { theme } = useUnistyles();
+  const isDisabled = disabled || loading;
 
-  const variantStyle =
-    variant === "default"
-      ? styles.default
-      : variant === "secondary"
-        ? styles.secondary
-        : variant === "outline"
-          ? styles.outline
-          : variant === "ghost"
-            ? styles.ghost
-            : styles.destructive;
+  let variantStyle: ViewStyle;
+  if (variant === "default") {
+    variantStyle = styles.default;
+  } else if (variant === "secondary") {
+    variantStyle = styles.secondary;
+  } else if (variant === "outline") {
+    variantStyle = styles.outline;
+  } else if (variant === "ghost") {
+    variantStyle = styles.ghost;
+  } else {
+    variantStyle = styles.destructive;
+  }
 
-  const sizeStyle = size === "sm" ? styles.sm : size === "lg" ? styles.lg : styles.md;
+  let sizeStyle: ViewStyle;
+  if (size === "xs") {
+    sizeStyle = styles.xs;
+  } else if (size === "sm") {
+    sizeStyle = styles.sm;
+  } else if (size === "lg") {
+    sizeStyle = styles.lg;
+  } else {
+    sizeStyle = styles.md;
+  }
   const isGhostHovered = hovered && variant === "ghost";
 
-  const resolvedTextStyle = [
-    styles.text,
-    variant === "default" ? styles.textDefault : null,
-    variant === "destructive" ? styles.textDestructive : null,
-    variant === "ghost" ? styles.textGhost : null,
-    textStyle,
-    isGhostHovered ? styles.textGhostHovered : null,
-  ];
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+
+  const pressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType): StyleProp<ViewStyle> => [
+      styles.base,
+      sizeStyle,
+      variantStyle,
+      pressed ? styles.pressed : null,
+      isDisabled ? styles.disabled : null,
+      style,
+    ],
+    [sizeStyle, variantStyle, isDisabled, style],
+  );
+
+  const resolvedTextStyle = useMemo(
+    () => [
+      styles.text,
+      size === "xs" ? styles.textXs : null,
+      variant === "default" ? styles.textDefault : null,
+      variant === "destructive" ? styles.textDestructive : null,
+      variant === "ghost" ? styles.textGhost : null,
+      textStyle,
+      isGhostHovered ? styles.textGhostHovered : null,
+    ],
+    [size, variant, textStyle, isGhostHovered],
+  );
+
+  const accessibilityState = useMemo(
+    () => ({ disabled: isDisabled, busy: loading }),
+    [isDisabled, loading],
+  );
+
+  function resolveIconColor(): string {
+    if (variant === "default") {
+      return theme.colors.accentForeground;
+    }
+    if (variant === "ghost") {
+      return isGhostHovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+    }
+    return theme.colors.foreground;
+  }
 
   function renderIcon() {
+    if (loading) {
+      return (
+        <View>
+          <ActivityIndicator size="small" color={resolveIconColor()} />
+        </View>
+      );
+    }
+
     if (!leftIcon) return null;
 
     // Pre-rendered element — pass through
@@ -136,14 +218,7 @@ export function Button({
       return <View>{leftIcon}</View>;
     }
 
-    const color =
-      variant === "default"
-        ? theme.colors.accentForeground
-        : variant === "ghost"
-          ? isGhostHovered
-            ? theme.colors.foreground
-            : theme.colors.foregroundMuted
-          : theme.colors.foreground;
+    const color = resolveIconColor();
     const iconSize = ICON_SIZE[size];
 
     // Render function
@@ -168,20 +243,15 @@ export function Button({
     <Pressable
       {...props}
       accessibilityRole={accessibilityRole ?? "button"}
-      disabled={disabled}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={({ pressed }) => [
-        styles.base,
-        sizeStyle,
-        variantStyle,
-        pressed ? styles.pressed : null,
-        disabled ? styles.disabled : null,
-        style,
-      ]}
+      accessibilityState={accessibilityState}
+      disabled={isDisabled}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      style={pressableStyle}
     >
       {renderIcon()}
-      <Text style={resolvedTextStyle}>{children}</Text>
+      {children != null ? <Text style={resolvedTextStyle}>{children}</Text> : null}
+      {trailing}
     </Pressable>
   );
 }

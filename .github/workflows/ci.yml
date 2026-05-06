@@ -15,14 +15,30 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
 
       - name: Check formatting
-        run: npx biome format .
+        run: npx oxfmt --check .
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
 
   typecheck:
     runs-on: ubuntu-latest
@@ -31,8 +47,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -42,6 +58,9 @@ jobs:
 
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build server dependency
+        run: npm run build --workspace=@getpaseo/server
 
       - name: Typecheck all packages
         run: npm run typecheck
@@ -55,8 +74,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Fetch origin/main (worktree tests)
         run: git fetch --no-tags origin main:refs/remotes/origin/main
@@ -76,6 +95,78 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
+  server-tests-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Run Windows-critical server tests
+        working-directory: packages/server
+        run: >
+          npx vitest run
+          src/utils/executable.test.ts
+          src/utils/spawn.launch-regression.test.ts
+          src/utils/spawn.percent-escape.test.ts
+          src/utils/spawn.test.ts
+          src/utils/process-tree.test.ts
+          src/utils/run-git-command.test.ts
+          src/utils/checkout-git-rev-parse.test.ts
+          src/terminal/worker-terminal-manager.test.ts
+          src/server/agent/provider-registry.test.ts
+          src/server/agent/provider-launch-config.test.ts
+          src/server/agent/provider-snapshot-manager.test.ts
+          src/server/agent/providers/claude-agent.spawn.test.ts
+          src/server/agent/providers/provider-windows-launch.test.ts
+          src/server/agent/providers/provider-availability.test.ts
+          src/server/workspace-registry-model.test.ts
+          src/server/persisted-config.test.ts
+          src/server/bootstrap-provider-availability.test.ts
+
+  desktop-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build server dependency
+        run: npm run build --workspace=@getpaseo/server
+
+      - name: Run desktop tests
+        run: npm run test --workspace=@getpaseo/desktop
+
   app-tests:
     runs-on: ubuntu-latest
     steps:
@@ -83,11 +174,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
@@ -102,8 +196,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -145,8 +239,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -158,14 +252,19 @@ jobs:
         run: npm run test --workspace=@getpaseo/relay
 
   cli-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-latest
+    name: cli-tests (shard ${{ matrix.shard }}/3)
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -179,6 +278,8 @@ jobs:
       - name: Run CLI tests
         run: npm run test --workspace=@getpaseo/cli
         env:
-          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: '0'
-          PASEO_DICTATION_ENABLED: '0'
-          PASEO_VOICE_MODE_ENABLED: '0'
+          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
+          PASEO_DICTATION_ENABLED: "0"
+          PASEO_VOICE_MODE_ENABLED: "0"
+          PASEO_CLI_TEST_SHARD: ${{ matrix.shard }}
+          PASEO_CLI_TEST_SHARD_TOTAL: "3"

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import { useSessionStore } from "@/stores/session-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
-import { useHosts } from "@/runtime/host-runtime";
 import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
@@ -11,15 +11,17 @@ import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
-import { buildHostSettingsRoute, parseServerIdFromPathname } from "@/utils/host-routes";
+import { buildHostAgentDetailRoute, buildSettingsRoute } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
+import { useActiveServerId } from "@/hooks/use-active-server-id";
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
@@ -49,14 +51,14 @@ function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
   return right.lastActivityAt.getTime() - left.lastActivityAt.getTime();
 }
 
-type CommandCenterActionDefinition = {
+interface CommandCenterActionDefinition {
   id: string;
   title: string;
   icon?: "plus" | "settings";
   actionId?: string;
   keywords: string[];
   routeKind: "settings" | "none";
-};
+}
 
 const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   {
@@ -85,14 +87,14 @@ function matchesActionQuery(query: string, action: CommandCenterActionDefinition
   return action.keywords.some((keyword) => keyword.includes(normalized));
 }
 
-export type CommandCenterActionItem = {
+export interface CommandCenterActionItem {
   kind: "action";
   id: string;
   title: string;
   icon?: "plus" | "settings";
   route?: Href;
   shortcutKeys?: ShortcutKey[][];
-};
+}
 
 export type CommandCenterItem =
   | {
@@ -122,7 +124,7 @@ function resolveActionShortcutKeys(
 
 export function useCommandCenter() {
   const pathname = usePathname();
-  const daemons = useHosts();
+  const routeActiveServerId = useActiveServerId();
   const { overrides } = useKeyboardShortcutOverrides();
   const open = useKeyboardShortcutsStore((s) => s.commandCenterOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setCommandCenterOpen);
@@ -136,19 +138,7 @@ export function useCommandCenter() {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const activeServerId = useMemo(() => {
-    if (!open) {
-      return null;
-    }
-    const serverIdFromPath = parseServerIdFromPathname(pathname);
-    if (serverIdFromPath) {
-      const routeMatch = daemons.find((entry) => entry.serverId === serverIdFromPath);
-      if (routeMatch) {
-        return routeMatch.serverId;
-      }
-    }
-    return daemons[0]?.serverId ?? null;
-  }, [daemons, open, pathname]);
+  const activeServerId = open ? routeActiveServerId : null;
 
   const { agents } = useAllAgentsList({
     serverId: activeServerId,
@@ -164,9 +154,8 @@ export function useCommandCenter() {
   }, [agents, open, query]);
 
   const settingsRoute = useMemo<Href>(() => {
-    const serverIdFromPath = activeServerId;
-    return serverIdFromPath ? buildHostSettingsRoute(serverIdFromPath) : "/";
-  }, [activeServerId]);
+    return buildSettingsRoute();
+  }, []);
 
   const actionItems = useMemo(() => {
     if (!open) {
@@ -215,14 +204,22 @@ export function useCommandCenter() {
       // Don't restore focus back to the prior element after we navigate.
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
-      const route = prepareWorkspaceTab({
-        serverId: agent.serverId,
-        workspaceId: agent.cwd,
-        target: { kind: "agent", agentId: agent.id },
+      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+        workspaces: useSessionStore.getState().sessions[agent.serverId]?.workspaces?.values(),
+        workspaceDirectory: agent.cwd,
       });
-      router.navigate(route);
+      if (!workspaceId) {
+        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as Href);
+        return;
+      }
+      navigateToPreparedWorkspaceTab({
+        serverId: agent.serverId,
+        workspaceId,
+        target: { kind: "agent", agentId: agent.id },
+        currentPathname: pathname,
+      });
     },
-    [setOpen],
+    [pathname, setOpen],
   );
 
   const openProjectPicker = useOpenProjectPicker(activeServerId);
@@ -335,7 +332,7 @@ export function useCommandCenter() {
         if (currentItems.length === 0) return;
         event.preventDefault();
         const index = Math.max(0, Math.min(activeIndexRef.current, currentItems.length - 1));
-        handleSelectItemRef.current(currentItems[index]!);
+        handleSelectItemRef.current(currentItems[index]);
         return;
       }
 

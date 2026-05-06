@@ -1,9 +1,9 @@
 import * as Linking from "expo-linking";
-import { Platform } from "react-native";
 import { getDesktopHost } from "@/desktop/host";
+import { isWeb } from "@/constants/platform";
 
 export async function openExternalUrl(url: string): Promise<void> {
-  if (Platform.OS === "web") {
+  if (isWeb) {
     const opener = getDesktopHost()?.opener?.openUrl;
     if (typeof opener === "function") {
       await opener(url);

@@ -1,0 +1,36 @@
+# NOTE: Render through the workspace-create shell scripts before running when
+# using ${PASEO_MAESTRO_APP_ID}. Maestro does not substitute environment vars.
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Select a real provider/model on the New Workspace screen. Do not skip this
+# in redirect tests: without a selected model, Create only shows validation and
+# never exercises workspace creation.
+
+- tapOn:
+    id: "agent-preferences-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "agent-preferences-sheet"
+    timeout: 10000
+
+- tapOn:
+    id: "combined-model-selector"
+
+- extendedWaitUntil:
+    visible: "Select model"
+    timeout: 30000
+
+- tapOn: "Codex"
+
+- extendedWaitUntil:
+    visible: "GPT-5.4"
+    timeout: 30000
+
+- tapOn: "GPT-5.4"
+
+- tapOn: "Close"
+
+- extendedWaitUntil:
+    visible: "GPT-5.4"
+    timeout: 10000

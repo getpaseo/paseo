@@ -69,6 +69,7 @@ paseo
 This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
+
 - [Docs](https://paseo.sh/docs)
 - [Configuration reference](https://paseo.sh/docs/configuration)
 
@@ -90,9 +91,9 @@ paseo --host workstation.local:6767 run "run the full test suite"
 
 See the [full CLI reference](https://paseo.sh/docs/cli) for more.
 
-## Orchestration skills (Unstable)
+## Skills
 
-Experimental skills that teach agents how to use the Paseo CLI to orchestrate other agents. I am updating these very frequently as I learn new things, expect changes without notice, might be coupled to my own setup, use at your own risk.
+Skills teach your agent to use Paseo to orchestrate other agents.
 
 ```bash
 npx skills add getpaseo/paseo
@@ -100,22 +101,15 @@ npx skills add getpaseo/paseo
 
 Then use them in any agent conversation:
 
-```bash
-# Use handoff when you discuss something with an agent but want another one to implement.
-# I use this to plan with Claude and then handoff to Codex to implement.
-/paseo-handoff hand off the authentication fix to codex 5.4 in a worktree
-
-# Use loops when you have clear acceptance criteria (aka Ralph loops).
-/paseo-loop loop a codex agent to fix the backend tests, use sonnet to verify, max 10 iterations
-
-# Orchestrator teaches the agent how to create teams and manage them via a chat room.
-# Very opinionated and expects both Codex and Claude to work.
-/paseo-orchestrator spin up a team to implement the database refactor, use chat to coordinate. use claude to plan and codex to implement and review
-```
+- `/paseo-handoff` — hand off work between agents. I use this to plan with Claude and then handoff to Codex to implement.
+- `/paseo-loop` — loop an agent against clear acceptance criteria (aka Ralph loops), optionally with a verifier.
+- `/paseo-advisor` — spin up a single agent as an advisor for a second opinion, without delegating the work itself.
+- `/paseo-committee` — form a committee of two contrasting agents to step back, do root cause analysis, and produce a plan.
 
 ## Development
 
 Quick monorepo package map:
+
 - `packages/server`: Paseo daemon (agent process orchestration, WebSocket API, MCP server)
 - `packages/app`: Expo client (iOS, Android, web)
 - `packages/cli`: `paseo` CLI for daemon and agent workflows
@@ -141,6 +135,68 @@ npm run build:daemon
 # repo-wide checks
 npm run typecheck
 ```
+
+## Community
+
+- [paseo-relay](https://github.com/zenghongtu/paseo-relay) — self-hosted relay in Go
+
+### Self-hosted relay TLS
+
+Self-hosted relays use `ws://` unless TLS is opted in. For a relay behind nginx on 443, start the daemon with:
+
+```bash
+PASEO_RELAY_ENDPOINT=127.0.0.1:8080 \
+PASEO_RELAY_PUBLIC_ENDPOINT=relay.example.com:443 \
+PASEO_RELAY_USE_TLS=true \
+paseo daemon start
+```
+
+Equivalent config:
+
+```json
+{
+  "daemon": {
+    "relay": {
+      "enabled": true,
+      "endpoint": "127.0.0.1:8080",
+      "publicEndpoint": "relay.example.com:443",
+      "useTls": true
+    }
+  }
+}
+```
+
+Minimal nginx WebSocket proxy:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name relay.example.com;
+
+  ssl_certificate /etc/letsencrypt/live/relay.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/relay.example.com/privkey.pem;
+
+  location /ws {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+  }
+}
+```
+
+---
+
+<p align="center">
+  <a href="https://star-history.com/#getpaseo/paseo&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date">
+      <img src="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date" alt="Star history chart for getpaseo/paseo" width="600" style="max-width: 100%;">
+    </picture>
+  </a>
+</p>
 
 ## License
 

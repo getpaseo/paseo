@@ -85,13 +85,13 @@ interface RuntimeState {
 
 type AudioOutputPayload = Extract<SessionOutboundMessage, { type: "audio_output" }>["payload"];
 
-type StreamingPlaybackChunk = {
+interface StreamingPlaybackChunk {
   id: string;
   chunkIndex: number;
   source: { arrayBuffer(): Promise<ArrayBuffer>; size: number; type: string };
-};
+}
 
-type StreamingPlaybackGroup = {
+interface StreamingPlaybackGroup {
   groupId: string;
   isVoiceMode: boolean;
   shouldPlay: boolean;
@@ -100,7 +100,7 @@ type StreamingPlaybackGroup = {
   finalChunkIndex: number | null;
   started: boolean;
   ackedChunkIds: Set<string>;
-};
+}
 
 interface RuntimePlaybackState {
   groups: Map<string, StreamingPlaybackGroup>;
@@ -238,7 +238,6 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     if (snapshotsEqual(next, state.snapshot)) {
       return;
     }
-    const previous = state.snapshot;
     state.snapshot = next;
     emit();
   }
@@ -272,12 +271,10 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     bytes: Uint8Array,
     format: string,
   ): { arrayBuffer(): Promise<ArrayBuffer>; size: number; type: string } {
-    const mimeType =
-      format === "pcm"
-        ? "audio/pcm;rate=24000;bits=16"
-        : format === "mp3"
-          ? "audio/mpeg"
-          : `audio/${format}`;
+    let mimeType: string;
+    if (format === "pcm") mimeType = "audio/pcm;rate=24000;bits=16";
+    else if (format === "mp3") mimeType = "audio/mpeg";
+    else mimeType = `audio/${format}`;
 
     return {
       size: bytes.byteLength,
@@ -298,7 +295,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
 
   function activateNextPlaybackGroup(): void {
     while (playback.orderedGroupIds.length > 0) {
-      const groupId = playback.orderedGroupIds[0]!;
+      const groupId = playback.orderedGroupIds[0];
       if (playback.groups.has(groupId)) {
         playback.activeGroupId = groupId;
         return;
@@ -306,6 +303,23 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       playback.orderedGroupIds.shift();
     }
     playback.activeGroupId = null;
+  }
+
+  function retireFinishedGroup(
+    group: { groupId: string; started: boolean; isVoiceMode: boolean },
+    serverId: string,
+  ): void {
+    playback.groups.delete(group.groupId);
+    if (playback.orderedGroupIds[0] === group.groupId) {
+      playback.orderedGroupIds.shift();
+    } else {
+      playback.orderedGroupIds = playback.orderedGroupIds.filter(
+        (value) => value !== group.groupId,
+      );
+    }
+    if (group.started && group.isVoiceMode) {
+      api.onAssistantAudioFinished(serverId);
+    }
   }
 
   async function acknowledgeChunk(chunkId: string): Promise<void> {
@@ -337,22 +351,14 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
 
         const nextChunk = group.chunks.get(group.nextChunkToPlay);
         if (!nextChunk) {
-          if (group.finalChunkIndex !== null && group.nextChunkToPlay > group.finalChunkIndex) {
-            playback.groups.delete(group.groupId);
-            if (playback.orderedGroupIds[0] === group.groupId) {
-              playback.orderedGroupIds.shift();
-            } else {
-              playback.orderedGroupIds = playback.orderedGroupIds.filter(
-                (value) => value !== group.groupId,
-              );
-            }
-            if (group.started && group.isVoiceMode) {
-              api.onAssistantAudioFinished(serverId);
-            }
-            activateNextPlaybackGroup();
-            continue;
+          const groupIsFinished =
+            group.finalChunkIndex !== null && group.nextChunkToPlay > group.finalChunkIndex;
+          if (!groupIsFinished) {
+            return;
           }
-          return;
+          retireFinishedGroup(group, serverId);
+          activateNextPlaybackGroup();
+          continue;
         }
 
         group.chunks.delete(group.nextChunkToPlay);
@@ -436,6 +442,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       clearTimeout(cue.timeout);
       cue.timeout = null;
     }
+    cue.playing = false;
     if (hadActive) {
       deps.engine.stop();
       deps.engine.clearQueue();
@@ -865,6 +872,8 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }
 
       if (state.turnInProgress) {
+        patchSnapshot((prev) => ({ ...prev, phase: "waiting" }));
+        reconcileCue();
         return;
       }
 
@@ -897,9 +906,15 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       state.serverSpeechDetected = isSpeaking;
       state.serverSpeechStartedAt = isSpeaking ? (state.serverSpeechStartedAt ?? Date.now()) : null;
       if (isSpeaking) {
+        const shouldInterruptPlayback =
+          state.snapshot.phase === "playing" || playback.groups.size > 0;
+        const hadCue = cue.active || cue.timeout !== null || cue.playing;
         resetPlaybackState();
-        deps.engine.stop();
-        deps.engine.clearQueue();
+        stopCue();
+        if (shouldInterruptPlayback && !hadCue) {
+          deps.engine.stop();
+          deps.engine.clearQueue();
+        }
         getActiveSession()?.adapter.setAssistantAudioPlaying(false);
       }
       patchTelemetry((prev) => ({

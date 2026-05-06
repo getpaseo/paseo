@@ -83,6 +83,7 @@ export const baseColors = {
   // Amber scale
   amber: {
     500: "#f59e0b",
+    700: "#b45309",
   },
 
   // Yellow scale
@@ -116,6 +117,23 @@ const darkDiffColors = {
   diffDeletion: "#ef4444", // red-500
 };
 
+// Status colors — semantic signals for success/danger/warning/merged. Used by
+// check statuses, PR states, and review decisions. Kept a step darker than the
+// raw palette so they read as signals, not neon.
+const lightStatusColors = {
+  statusSuccess: "#15803d", // green-700
+  statusDanger: "#b91c1c", // red-700
+  statusWarning: "#d97706", // amber-600
+  statusMerged: "#7c3aed", // purple-600
+};
+
+const darkStatusColors = {
+  statusSuccess: "#16a34a", // green-600
+  statusDanger: "#dc2626", // red-600
+  statusWarning: "#f59e0b", // amber-500
+  statusMerged: "#9333ea", // purple-600
+};
+
 // Semantic color tokens - Layer-based system
 const lightSemanticColors = {
   // Surfaces (layers) - shifted one step lighter
@@ -146,7 +164,7 @@ const lightSemanticColors = {
   accentForeground: "#ffffff",
 
   // Semantic
-  destructive: "#dc2626",
+  destructive: "#b04138", // dark warm red on white — calm but unambiguously red
   destructiveForeground: "#ffffff",
   success: "#20744A",
   successForeground: "#ffffff",
@@ -166,6 +184,7 @@ const lightSemanticColors = {
   ring: "#18181b",
 
   ...lightDiffColors,
+  ...lightStatusColors,
 
   terminal: {
     background: "#ffffff",
@@ -214,6 +233,7 @@ interface DarkThemeConfig {
   borderAccent: string;
   accent: string;
   accentBright: string;
+  destructive: string;
 }
 
 const darkTerminalAnsi = {
@@ -257,7 +277,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accentBright: tint.accentBright,
     accentForeground: "#ffffff",
 
-    destructive: "#ef4444",
+    destructive: tint.destructive,
     destructiveForeground: "#ffffff",
     success: tint.accent,
     successForeground: "#ffffff",
@@ -277,6 +297,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     ring: "#d4d4d8",
 
     ...darkDiffColors,
+    ...darkStatusColors,
 
     terminal: {
       background: tint.surface0,
@@ -312,6 +333,7 @@ const paseoDarkColors = buildDarkSemanticColors({
   borderAccent: "#2F3534",
   accent: "#20744A",
   accentBright: "#7ccba0",
+  destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
 });
 
 // Zinc — neutral gray, no tint
@@ -330,6 +352,7 @@ const zincDarkColors = buildDarkSemanticColors({
   borderAccent: "#303036",
   accent: "#20744A",
   accentBright: "#7ccba0",
+  destructive: "#c44a4a", // neutral red, hue 0 — clearly red without screaming
 });
 
 // Midnight — subtle blue tint
@@ -348,6 +371,7 @@ const midnightDarkColors = buildDarkSemanticColors({
   borderAccent: "#2e3040",
   accent: "#3b6fcf",
   accentBright: "#7eaaeb",
+  destructive: "#c44a52", // red with a hint of cool lean against the blue tint
 });
 
 // Claude — warm neutral with subtle orange undertone
@@ -366,6 +390,7 @@ const claudeDarkColors = buildDarkSemanticColors({
   borderAccent: "#36332f",
   accent: "#d97757",
   accentBright: "#e89a7f",
+  destructive: "#cf513e", // warm orange-red, hue ~10 — sits with the Claude orange accent
 });
 
 // Ghostty — blue-tinted dark based on Ghostty default background
@@ -384,75 +409,86 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   borderAccent: "#3f4454",
   accent: "#89b4fa",
   accentBright: "#b4d0fc",
+  destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
 });
 
+export const SPACING = {
+  0: 0,
+  1: 4,
+  1.5: 6,
+  2: 8,
+  3: 12,
+  4: 16,
+  6: 24,
+  8: 32,
+  12: 48,
+  16: 64,
+  20: 80,
+  24: 96,
+  32: 128,
+} as const;
+
+export const FONT_SIZE = {
+  xs: 12,
+  sm: 14,
+  base: 16,
+  lg: 18,
+  xl: 20,
+  "2xl": 22,
+  "3xl": 26,
+  "4xl": 34,
+} as const;
+
+export const LINE_HEIGHT = {
+  diff: 22,
+} as const;
+
+export const ICON_SIZE = {
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 20,
+} as const;
+
+export const FONT_WEIGHT = {
+  normal: "normal" as const,
+  medium: "500" as const,
+  semibold: "600" as const,
+  bold: "bold" as const,
+} as const;
+
+export const BORDER_RADIUS = {
+  none: 0,
+  sm: 2,
+  base: 4,
+  md: 6,
+  lg: 8,
+  xl: 12,
+  "2xl": 16,
+  full: 9999,
+} as const;
+
+export const BORDER_WIDTH = {
+  0: 0,
+  1: 1,
+  2: 2,
+} as const;
+
+export const OPACITY = {
+  0: 0,
+  50: 0.5,
+  100: 1,
+} as const;
+
 const commonTheme = {
-  spacing: {
-    0: 0,
-    1: 4,
-    2: 8,
-    3: 12,
-    4: 16,
-    6: 24,
-    8: 32,
-    12: 48,
-    16: 64,
-    20: 80,
-    24: 96,
-    32: 128,
-  },
-
-  fontSize: {
-    xs: 12,
-    sm: 14,
-    base: 16,
-    lg: 18,
-    xl: 20,
-    "2xl": 22,
-    "3xl": 26,
-    "4xl": 34,
-  },
-
-  lineHeight: {
-    diff: 22,
-  },
-
-  iconSize: {
-    xs: 12,
-    sm: 14,
-    md: 16,
-    lg: 20,
-  },
-
-  fontWeight: {
-    normal: "normal" as const,
-    medium: "500" as const,
-    semibold: "600" as const,
-    bold: "bold" as const,
-  },
-
-  borderRadius: {
-    none: 0,
-    sm: 2,
-    base: 4,
-    md: 6,
-    lg: 8,
-    xl: 12,
-    "2xl": 16,
-    full: 9999,
-  },
-
-  borderWidth: {
-    0: 0,
-    1: 1,
-    2: 2,
-  },
-
-  opacity: {
-    0: 0,
-    50: 0.5,
-    100: 1,
-  },
+  spacing: SPACING,
+  fontSize: FONT_SIZE,
+  lineHeight: LINE_HEIGHT,
+  iconSize: ICON_SIZE,
+  fontWeight: FONT_WEIGHT,
+  borderRadius: BORDER_RADIUS,
+  borderWidth: BORDER_WIDTH,
+  opacity: OPACITY,
 } as const;
 
 const darkShadow = {

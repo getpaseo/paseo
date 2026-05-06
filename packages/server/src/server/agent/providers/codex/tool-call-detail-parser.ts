@@ -20,9 +20,9 @@ import {
   toolDetailBranchByNameWithCwd,
 } from "../tool-call-detail-primitives.js";
 
-export type CodexToolDetailContext = {
+export interface CodexToolDetailContext {
   cwd?: string | null;
-};
+}
 
 const CodexToolEnvelopeSchema = z
   .object({

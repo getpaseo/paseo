@@ -21,8 +21,22 @@ export interface DesktopDialogOpenOptions {
   }>;
 }
 
+export interface DesktopDialogAskWithCheckboxOptions extends DesktopDialogAskOptions {
+  checkboxLabel: string;
+  checkboxChecked?: boolean;
+}
+
+export interface DesktopDialogAskWithCheckboxResult {
+  confirmed: boolean;
+  dontAskAgain: boolean;
+}
+
 export interface DesktopDialogBridge {
   ask?: (message: string, options?: DesktopDialogAskOptions) => Promise<boolean>;
+  askWithCheckbox?: (
+    message: string,
+    options: DesktopDialogAskWithCheckboxOptions,
+  ) => Promise<DesktopDialogAskWithCheckboxResult>;
   open?: (options?: DesktopDialogOpenOptions) => Promise<string | string[] | null>;
 }
 
@@ -69,6 +83,17 @@ export interface DesktopEventsBridge {
   on?: (event: string, handler: (payload: unknown) => void) => Promise<() => void> | (() => void);
 }
 
+export interface DesktopBrowserShortcutEvent {
+  browserId?: string;
+  action: "focus-url";
+}
+
+export interface DesktopBrowserBridge {
+  setWorkspaceActiveBrowser?: (browserId: string | null) => Promise<void>;
+  openDevTools?: (browserId: string) => Promise<unknown>;
+  clearPartition?: (browserId: string) => Promise<void>;
+}
+
 export interface DesktopInvokeBridge {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
@@ -83,6 +108,7 @@ export interface DesktopHostBridge {
   notification?: DesktopNotificationBridge;
   opener?: DesktopOpenerBridge;
   menu?: DesktopMenuBridge;
+  browser?: DesktopBrowserBridge;
 }
 
 declare global {

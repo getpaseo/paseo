@@ -4,6 +4,7 @@ import os from "node:os";
 import { app } from "electron";
 import log from "electron-log/main";
 import { resolveCliInstallSourcePath } from "./cli-install-path.js";
+import { syncSkills } from "./skill-sync.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,11 +20,12 @@ interface InstallStatus {
 
 const SKILL_NAMES = [
   "paseo",
-  "paseo-loop",
-  "paseo-handoff",
-  "paseo-orchestrator",
-  "paseo-chat",
+  "paseo-advisor",
   "paseo-committee",
+  "paseo-epic",
+  "paseo-handoff",
+  "paseo-loop",
+  "paseo-orchestrate",
 ];
 
 // ---------------------------------------------------------------------------
@@ -238,67 +240,79 @@ export async function getCliInstallStatus(): Promise<InstallStatus> {
 // Skills Installation
 // ---------------------------------------------------------------------------
 
-async function copySkillFile(
-  sourceFile: string,
-  destDir: string,
-  skillName: string,
-): Promise<void> {
-  const destSkillDir = path.join(destDir, skillName);
-  await fs.mkdir(destSkillDir, { recursive: true });
-  await fs.copyFile(sourceFile, path.join(destSkillDir, "SKILL.md"));
-}
-
-async function symlinkSkillDir(
-  skillName: string,
-  targetDir: string,
-  linkParentDir: string,
-): Promise<void> {
-  await fs.mkdir(linkParentDir, { recursive: true });
-  const target = path.join(targetDir, skillName);
-  const linkPath = path.join(linkParentDir, skillName);
-
-  if (await pathOrSymlinkExists(linkPath)) {
-    await fs.rm(linkPath, { recursive: true, force: true });
-  }
-
-  if (process.platform === "win32") {
-    try {
-      await fs.symlink(target, linkPath, "junction");
-    } catch {
-      await copySkillFile(path.join(target, "SKILL.md"), linkParentDir, skillName);
-    }
-  } else {
-    await fs.symlink(target, linkPath);
-  }
+function getSkillSyncTargets(): {
+  sourceDir: string;
+  agentsDir: string;
+  claudeDir: string;
+  codexDir: string;
+} {
+  return {
+    sourceDir: getBundledSkillsDir(),
+    agentsDir: getAgentsSkillsDir(),
+    claudeDir: getClaudeSkillsDir(),
+    codexDir: getCodexSkillsDir(),
+  };
 }
 
 export async function installSkills(): Promise<InstallStatus> {
-  const sourceDir = getBundledSkillsDir();
-  const agentsDir = getAgentsSkillsDir();
-  const claudeDir = getClaudeSkillsDir();
-  const codexDir = getCodexSkillsDir();
+  const targets = getSkillSyncTargets();
+  log.info("[integrations] installSkills", targets);
 
-  log.info("[integrations] installSkills", { sourceDir, agentsDir, claudeDir, codexDir });
+  const result = await syncSkills({
+    ...targets,
+    skillNames: SKILL_NAMES,
+    onSkillError: (skillName, error) => {
+      log.warn("[integrations] skill install failed", { skillName, error });
+    },
+  });
 
-  for (const skillName of SKILL_NAMES) {
-    const sourceFile = path.join(sourceDir, skillName, "SKILL.md");
-    await copySkillFile(sourceFile, agentsDir, skillName);
-    await symlinkSkillDir(skillName, agentsDir, claudeDir);
-    await copySkillFile(sourceFile, codexDir, skillName);
+  log.info("[integrations] installSkills done", result);
+  return getSkillsInstallStatus();
+}
+
+export async function autoUpdateSkillsIfInstalled(): Promise<{
+  ran: boolean;
+  changedFiles: number;
+  processedSkills: number;
+}> {
+  const targets = getSkillSyncTargets();
+  const installedMarker = path.join(targets.agentsDir, "paseo", "SKILL.md");
+
+  try {
+    await fs.access(installedMarker);
+  } catch {
+    return { ran: false, changedFiles: 0, processedSkills: 0 };
   }
 
-  return getSkillsInstallStatus();
+  try {
+    const result = await syncSkills({
+      ...targets,
+      skillNames: SKILL_NAMES,
+      onSkillError: (skillName, error) => {
+        log.warn("[integrations] skill auto-update failed", { skillName, error });
+      },
+    });
+    if (result.changedFiles > 0) {
+      log.info("[integrations] auto-updated paseo skills", result);
+    } else {
+      log.info("[integrations] paseo skills already up to date", result);
+    }
+    return { ran: true, ...result };
+  } catch (error) {
+    log.warn("[integrations] auto-update skills aborted", { error });
+    return { ran: false, changedFiles: 0, processedSkills: 0 };
+  }
 }
 
 export async function getSkillsInstallStatus(): Promise<InstallStatus> {
   const claudeDir = getClaudeSkillsDir();
-  for (const skillName of SKILL_NAMES) {
-    const skillFile = path.join(claudeDir, skillName, "SKILL.md");
-    try {
-      await fs.access(skillFile);
-    } catch {
-      return { installed: false };
-    }
-  }
-  return { installed: true };
+  const accessResults = await Promise.all(
+    SKILL_NAMES.map((skillName) =>
+      fs
+        .access(path.join(claudeDir, skillName, "SKILL.md"))
+        .then(() => true)
+        .catch(() => false),
+    ),
+  );
+  return { installed: accessResults.every(Boolean) };
 }

@@ -1,13 +1,24 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
-import type { AgentSlashCommand } from "../agent-sdk-types.js";
-import { isCommandAvailableSync } from "../../../utils/executable.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
 describe("opencode agent commands contract (real)", () => {
+  let canRun = false;
+
+  beforeAll(async () => {
+    canRun = await isCommandAvailable("opencode");
+  });
+
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test("lists slash commands with the expected contract", async () => {
-    expect(isCommandAvailableSync("opencode")).toBe(true);
+    expect(await isCommandAvailable("opencode")).toBe(true);
 
     const client = new OpenCodeAgentClient(pino({ level: "silent" }));
     const session = await client.createSession({
@@ -24,7 +35,7 @@ describe("opencode agent commands contract (real)", () => {
       expect(commands.length).toBeGreaterThan(0);
 
       for (const command of commands) {
-        const typed = command as AgentSlashCommand;
+        const typed = command;
         expect(typeof typed.name).toBe("string");
         expect(typed.name.length).toBeGreaterThan(0);
         expect(typed.name.startsWith("/")).toBe(false);
@@ -37,7 +48,7 @@ describe("opencode agent commands contract (real)", () => {
   }, 60_000);
 
   test("executes a slash command without arguments", async () => {
-    expect(isCommandAvailableSync("opencode")).toBe(true);
+    expect(await isCommandAvailable("opencode")).toBe(true);
 
     const client = new OpenCodeAgentClient(pino({ level: "silent" }));
     const session = await client.createSession({
@@ -51,7 +62,7 @@ describe("opencode agent commands contract (real)", () => {
       expect(commands.length).toBeGreaterThan(0);
 
       // Pick the first available command and send it without arguments.
-      const command = commands[0]!;
+      const command = commands[0];
       const events: Array<{ type: string }> = [];
       session.subscribe((event) => events.push(event));
 

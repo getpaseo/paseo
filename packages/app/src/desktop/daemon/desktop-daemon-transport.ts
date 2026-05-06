@@ -13,7 +13,7 @@ function encodeBinaryToBase64(data: Uint8Array | ArrayBuffer): string {
   const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
   let binary = "";
   for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index]!);
+    binary += String.fromCharCode(bytes[index]);
   }
   return globalThis.btoa(binary);
 }
@@ -117,6 +117,7 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
           return;
         }
         unlisten = cleanup;
+        return;
       })
       .catch((error) => {
         emitError(error);
@@ -130,6 +131,7 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
         }
         sessionId = id;
         emitOpen();
+        return;
       })
       .catch((error) => {
         emitError(error);

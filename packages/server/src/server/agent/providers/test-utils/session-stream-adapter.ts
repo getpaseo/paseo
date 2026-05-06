@@ -46,12 +46,13 @@ export async function* streamSession(
     turnId = result.turnId;
 
     for (let idx = queue.length - 1; idx >= 0; idx -= 1) {
-      if (!matchesTurn(queue[idx]!)) {
+      if (!matchesTurn(queue[idx])) {
         queue.splice(idx, 1);
       }
     }
 
-    while (!closed) {
+    for (;;) {
+      if (closed) break;
       if (queue.length === 0) {
         await new Promise<void>((resolve) => {
           waiters.push(resolve);

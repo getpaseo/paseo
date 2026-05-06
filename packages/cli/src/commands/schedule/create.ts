@@ -15,23 +15,34 @@ export interface ScheduleCreateOptions extends ScheduleCommandOptions {
   cron?: string;
   name?: string;
   target?: string;
+  provider?: string;
+  mode?: string;
+  cwd?: string;
   maxRuns?: string;
   expiresIn?: string;
+  runNow?: boolean;
 }
 
 export async function runCreateCommand(
   prompt: string,
   options: ScheduleCreateOptions,
-  _command: Command,
+  command: Command,
 ): Promise<SingleResult<ScheduleRow>> {
+  const runNowSource = command.getOptionValueSource("runNow");
+  const runNow = runNowSource === "cli" ? Boolean(options.runNow) : undefined;
   const input = parseScheduleCreateInput({
     prompt,
     every: options.every,
     cron: options.cron,
     name: options.name,
     target: options.target,
+    provider: options.provider,
+    mode: options.mode,
+    cwd: options.cwd,
+    host: options.host,
     maxRuns: options.maxRuns,
     expiresIn: options.expiresIn,
+    runNow,
   });
   const { client } = await connectScheduleClient(options.host);
   try {

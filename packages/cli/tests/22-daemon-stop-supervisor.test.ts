@@ -39,9 +39,9 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-type PidLockState = {
+interface PidLockState {
   pid: number | null;
-};
+}
 
 async function readPidLockState(paseoHome: string): Promise<PidLockState> {
   const pidPath = join(paseoHome, "paseo.pid");
@@ -68,10 +68,10 @@ function readProcessCommand(pid: number): string | null {
   return command.length > 0 ? command : null;
 }
 
-type DaemonStatus = {
+interface DaemonStatus {
   localDaemon: string | null;
   pid: number | null;
-};
+}
 
 async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   const result =
@@ -100,14 +100,14 @@ async function waitFor(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  while (Date.now() < deadline) {
-    if (await check()) {
-      return;
-    }
+  async function poll(): Promise<void> {
+    if (await check()) return;
+    if (Date.now() >= deadline) throw new Error(message);
     await sleep(pollIntervalMs);
+    return poll();
   }
 
-  throw new Error(message);
+  return poll();
 }
 
 console.log("=== Daemon Stop (supervisor regression) ===\n");

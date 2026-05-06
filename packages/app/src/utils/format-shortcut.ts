@@ -1,10 +1,10 @@
-export type ShortcutKey = "mod" | "shift" | "alt" | "ctrl" | "meta" | string;
+export type ShortcutKey = string;
 
 export type ShortcutOs = "mac" | "non-mac";
 
 const KEY_DISPLAY: Record<string, string> = {
   Backspace: "⌫",
-  Enter: "↩",
+  Enter: "⏎",
   Esc: "Esc",
   Space: "␣",
   Left: "←",

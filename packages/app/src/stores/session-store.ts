@@ -1,32 +1,29 @@
+import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
-import type { AttachmentMetadata } from "@/attachments/types";
+import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type {
-  AgentPermissionResponse,
   AgentPermissionRequest,
-  AgentSessionConfig,
   AgentFeature,
   AgentProvider,
   AgentMode,
   AgentCapabilityFlags,
-  AgentModelDefinition,
   AgentUsage,
   AgentPersistenceHandle,
 } from "@server/server/agent/agent-sdk-types";
 import type {
-  FileDownloadTokenResponse,
-  GitSetupOptions,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
   WorkspaceDescriptorPayload,
 } from "@server/shared/messages";
-import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -67,9 +64,9 @@ export type MessageEntry =
       id: string;
       timestamp: number;
       toolName: string;
-      args: unknown | null;
-      result?: unknown | null;
-      error?: unknown | null;
+      args: unknown;
+      result?: unknown;
+      error?: unknown;
       status: "executing" | "completed" | "failed";
     };
 
@@ -116,42 +113,74 @@ export interface WorkspaceDescriptor {
   projectId: string;
   projectDisplayName: string;
   projectRootPath: string;
+  workspaceDirectory: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   status: WorkspaceDescriptorPayload["status"];
+  archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
+  scripts: WorkspaceDescriptorPayload["scripts"];
+  gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
+  githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
+  project?: ProjectPlacementPayload;
 }
 
 export function normalizeWorkspaceDescriptor(
   payload: WorkspaceDescriptorPayload,
 ): WorkspaceDescriptor {
   return {
-    id: normalizeWorkspaceIdentity(payload.id) ?? payload.id,
+    id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectRootPath: payload.projectRootPath,
+    workspaceDirectory: payload.workspaceDirectory,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     status: payload.status,
+    archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
+    scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
+    gitRuntime: payload.gitRuntime,
+    githubRuntime: payload.githubRuntime,
+    project: payload.project,
   };
 }
 
-export function mergeWorkspaceSnapshotWithExisting(input: {
-  incoming: WorkspaceDescriptor;
-  existing?: WorkspaceDescriptor | null;
-}): WorkspaceDescriptor {
-  const { incoming, existing } = input;
-  if (!existing || existing.id !== incoming.id) {
-    return incoming;
+function preserveWorkspaceDescriptorIdentity(
+  incoming: WorkspaceDescriptor,
+  existing?: WorkspaceDescriptor | null,
+): WorkspaceDescriptor {
+  if (existing && equal(existing, incoming)) {
+    return existing;
+  }
+  return incoming;
+}
+
+function preserveWorkspaceMapIdentity(
+  existing: Map<string, WorkspaceDescriptor>,
+  incoming: Map<string, WorkspaceDescriptor>,
+): Map<string, WorkspaceDescriptor> {
+  if (existing === incoming) {
+    return existing;
   }
 
-  return {
-    ...incoming,
-    diffStat: incoming.diffStat ?? existing.diffStat,
-  };
+  const next = new Map<string, WorkspaceDescriptor>();
+  let changed = existing.size !== incoming.size;
+  const existingEntries = existing.entries();
+
+  for (const [key, workspace] of incoming) {
+    const existingWorkspace = existing.get(key);
+    const nextWorkspace = preserveWorkspaceDescriptorIdentity(workspace, existingWorkspace);
+    next.set(key, nextWorkspace);
+    const existingEntry = existingEntries.next().value;
+    if (!existingEntry || existingEntry[0] !== key || existingEntry[1] !== nextWorkspace) {
+      changed = true;
+    }
+  }
+
+  return changed ? next : existing;
 }
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -198,13 +227,13 @@ export interface AgentFileExplorerState {
   selectedEntryPath: string | null;
 }
 
-export type DaemonServerInfo = {
+export interface DaemonServerInfo {
   serverId: string;
   hostname: string | null;
   version: string | null;
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
-};
+}
 
 export interface AgentTimelineCursorState {
   epoch: string;
@@ -240,6 +269,8 @@ export interface SessionState {
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
+  agentTimelineHasOlder: Map<string, boolean>;
+  agentTimelineOlderFetchInFlight: Map<string, boolean>;
   historySyncGeneration: number;
   agentHistorySyncGeneration: Map<string, number>;
   agentAuthoritativeHistoryApplied: Map<string, boolean>;
@@ -249,6 +280,7 @@ export interface SessionState {
 
   // Agents
   agents: Map<string, Agent>;
+  agentDetails: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
 
   // Permissions
@@ -258,7 +290,10 @@ export interface SessionState {
   fileExplorer: Map<string, AgentFileExplorerState>;
 
   // Queued messages
-  queuedMessages: Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>;
+  queuedMessages: Map<
+    string,
+    Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
+  >;
 }
 
 // Global store state
@@ -319,6 +354,14 @@ interface SessionStoreActions {
       | Map<string, AgentTimelineCursorState>
       | ((prev: Map<string, AgentTimelineCursorState>) => Map<string, AgentTimelineCursorState>),
   ) => void;
+  setAgentTimelineHasOlder: (
+    serverId: string,
+    state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
+  ) => void;
+  setAgentTimelineOlderFetchInFlight: (
+    serverId: string,
+    state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
+  ) => void;
   bumpHistorySyncGeneration: (serverId: string) => void;
   markAgentHistorySynchronized: (serverId: string, agentId: string) => void;
   setAgentAuthoritativeHistoryApplied: (
@@ -335,6 +378,10 @@ interface SessionStoreActions {
 
   // Agents
   setAgents: (
+    serverId: string,
+    agents: Map<string, Agent> | ((prev: Map<string, Agent>) => Map<string, Agent>),
+  ) => void;
+  setAgentDetails: (
     serverId: string,
     agents: Map<string, Agent> | ((prev: Map<string, Agent>) => Map<string, Agent>),
   ) => void;
@@ -374,10 +421,10 @@ interface SessionStoreActions {
   setQueuedMessages: (
     serverId: string,
     value:
-      | Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>
+      | Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>
       | ((
-          prev: Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>,
-        ) => Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>),
+          prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
+        ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
   ) => void;
 
   // Hydration
@@ -407,11 +454,14 @@ function createInitialSessionState(serverId: string, client: DaemonClient): Sess
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
     agentTimelineCursor: new Map(),
+    agentTimelineHasOlder: new Map(),
+    agentTimelineOlderFetchInFlight: new Map(),
     historySyncGeneration: 0,
     agentHistorySyncGeneration: new Map(),
     agentAuthoritativeHistoryApplied: new Map(),
     initializingAgents: new Map(),
     agents: new Map(),
+    agentDetails: new Map(),
     workspaces: new Map(),
     pendingPermissions: new Map(),
     fileExplorer: new Map(),
@@ -431,6 +481,26 @@ function areServerInfoFeaturesEqual(
   next: ServerInfoStatusPayload["features"] | undefined,
 ): boolean {
   return JSON.stringify(current ?? null) === JSON.stringify(next ?? null);
+}
+
+function isSessionServerInfoUnchanged(input: {
+  currentServerInfo: SessionState["serverInfo"] | undefined;
+  nextHostname: string | null;
+  nextVersion: string | null;
+  nextCapabilities: ServerCapabilities | undefined;
+  nextFeatures: ServerInfoStatusPayload["features"] | undefined;
+  nextServerId: string;
+}): boolean {
+  const { currentServerInfo, nextHostname, nextVersion, nextCapabilities, nextFeatures } = input;
+  const prevHostname = currentServerInfo?.hostname?.trim() || null;
+  const prevVersion = currentServerInfo?.version?.trim() || null;
+  return (
+    currentServerInfo?.serverId === input.nextServerId &&
+    prevHostname === nextHostname &&
+    prevVersion === nextVersion &&
+    areServerCapabilitiesEqual(currentServerInfo?.capabilities, nextCapabilities) &&
+    areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
+  );
 }
 
 export const useSessionStore = create<SessionStore>()(
@@ -489,10 +559,13 @@ export const useSessionStore = create<SessionStore>()(
           const nextSessions = { ...prev.sessions };
           delete nextSessions[serverId];
           let nextActivity = prev.agentLastActivity;
-          if (session.agents.size > 0) {
+          if (session.agents.size > 0 || session.agentDetails.size > 0) {
             const candidate = new Map(prev.agentLastActivity);
             let changed = false;
-            for (const agentId of session.agents.keys()) {
+            for (const agentId of new Set([
+              ...session.agents.keys(),
+              ...session.agentDetails.keys(),
+            ])) {
               if (candidate.delete(agentId)) {
                 changed = true;
               }
@@ -543,20 +616,19 @@ export const useSessionStore = create<SessionStore>()(
           }
 
           const nextHostname = info.hostname?.trim() || null;
-          const prevHostname = session.serverInfo?.hostname?.trim() || null;
           const nextVersion = info.version?.trim() || null;
-          const prevVersion = session.serverInfo?.version?.trim() || null;
           const nextCapabilities = info.capabilities;
-          const prevCapabilities = session.serverInfo?.capabilities;
           const nextFeatures = info.features;
-          const prevFeatures = session.serverInfo?.features;
 
           if (
-            session.serverInfo?.serverId === info.serverId &&
-            prevHostname === nextHostname &&
-            prevVersion === nextVersion &&
-            areServerCapabilitiesEqual(prevCapabilities, nextCapabilities) &&
-            areServerInfoFeaturesEqual(prevFeatures, nextFeatures)
+            isSessionServerInfoUnchanged({
+              currentServerInfo: session.serverInfo,
+              nextHostname,
+              nextVersion,
+              nextCapabilities,
+              nextFeatures,
+              nextServerId: info.serverId,
+            })
           ) {
             return prev;
           }
@@ -802,6 +874,48 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
+      setAgentTimelineHasOlder: (serverId, state) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const nextState =
+            typeof state === "function" ? state(session.agentTimelineHasOlder) : state;
+          if (session.agentTimelineHasOlder === nextState) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineHasOlder: nextState },
+            },
+          };
+        });
+      },
+
+      setAgentTimelineOlderFetchInFlight: (serverId, state) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const nextState =
+            typeof state === "function" ? state(session.agentTimelineOlderFetchInFlight) : state;
+          if (session.agentTimelineOlderFetchInFlight === nextState) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineOlderFetchInFlight: nextState },
+            },
+          };
+        });
+      },
+
       bumpHistorySyncGeneration: (serverId) => {
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -922,6 +1036,26 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
+      setAgentDetails: (serverId, agents) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const nextAgents = typeof agents === "function" ? agents(session.agentDetails) : agents;
+          if (session.agentDetails === nextAgents) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentDetails: nextAgents },
+            },
+          };
+        });
+      },
+
       setWorkspaces: (serverId, workspaces) => {
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -930,14 +1064,18 @@ export const useSessionStore = create<SessionStore>()(
           }
           const nextWorkspaces =
             typeof workspaces === "function" ? workspaces(session.workspaces) : workspaces;
-          if (session.workspaces === nextWorkspaces) {
+          const preservedWorkspaces = preserveWorkspaceMapIdentity(
+            session.workspaces,
+            nextWorkspaces,
+          );
+          if (session.workspaces === preservedWorkspaces) {
             return prev;
           }
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: nextWorkspaces },
+              [serverId]: { ...session, workspaces: preservedWorkspaces },
             },
           };
         });
@@ -954,10 +1092,11 @@ export const useSessionStore = create<SessionStore>()(
           let changed = false;
           for (const workspace of nextEntries) {
             const existing = next.get(workspace.id);
-            if (existing === workspace) {
+            const nextWorkspace = preserveWorkspaceDescriptorIdentity(workspace, existing);
+            if (existing === nextWorkspace) {
               continue;
             }
-            next.set(workspace.id, workspace);
+            next.set(workspace.id, nextWorkspace);
             changed = true;
           }
           if (!changed) {
@@ -976,11 +1115,15 @@ export const useSessionStore = create<SessionStore>()(
       removeWorkspace: (serverId, workspaceId) => {
         set((prev) => {
           const session = prev.sessions[serverId];
-          if (!session || !session.workspaces.has(workspaceId)) {
+          const workspaceKey = resolveWorkspaceMapKeyByIdentity({
+            workspaces: session?.workspaces,
+            workspaceId,
+          });
+          if (!session || !workspaceKey) {
             return prev;
           }
           const next = new Map(session.workspaces);
-          next.delete(workspaceId);
+          next.delete(workspaceKey);
           return {
             ...prev,
             sessions: {

@@ -54,11 +54,16 @@ function resolveShellEnv(): Record<string, string> | undefined {
     }
   }
 
+  const shellEnv = { ...process.env };
+  delete shellEnv.PASEO_NODE_ENV;
+  delete shellEnv.PASEO_DESKTOP_MANAGED;
+  delete shellEnv.PASEO_SUPERVISED;
+
   const result = spawnSync(shell, [...shellArgs, command], {
     encoding: "utf8",
     timeout: RESOLVE_TIMEOUT_MS,
     env: {
-      ...process.env,
+      ...shellEnv,
       ELECTRON_RUN_AS_NODE: "1",
       ELECTRON_NO_ATTACH_CONSOLE: "1",
     },

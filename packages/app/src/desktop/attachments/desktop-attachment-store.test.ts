@@ -4,6 +4,7 @@ import { createDesktopAttachmentStore } from "./desktop-attachment-store";
 const {
   copyDesktopAttachmentFileMock,
   writeDesktopAttachmentBase64Mock,
+  writeDesktopAttachmentBytesMock,
   deleteDesktopAttachmentFileMock,
   garbageCollectDesktopAttachmentFilesMock,
   readDesktopFileBase64Mock,
@@ -18,6 +19,10 @@ const {
     path: "/managed/att_2.png",
     byteSize: 4,
   })),
+  writeDesktopAttachmentBytesMock: vi.fn(async () => ({
+    path: "/managed/att_bytes.png",
+    byteSize: 4,
+  })),
   deleteDesktopAttachmentFileMock: vi.fn(async () => true),
   garbageCollectDesktopAttachmentFilesMock: vi.fn(async () => 0),
   readDesktopFileBase64Mock: vi.fn(async () => "AAECAw=="),
@@ -28,6 +33,7 @@ const {
 vi.mock("./desktop-file-commands", () => ({
   copyDesktopAttachmentFile: copyDesktopAttachmentFileMock,
   writeDesktopAttachmentBase64: writeDesktopAttachmentBase64Mock,
+  writeDesktopAttachmentBytes: writeDesktopAttachmentBytesMock,
   deleteDesktopAttachmentFile: deleteDesktopAttachmentFileMock,
   garbageCollectDesktopAttachmentFiles: garbageCollectDesktopAttachmentFilesMock,
 }));
@@ -42,6 +48,7 @@ describe("desktop attachment store", () => {
   beforeEach(() => {
     copyDesktopAttachmentFileMock.mockClear();
     writeDesktopAttachmentBase64Mock.mockClear();
+    writeDesktopAttachmentBytesMock.mockClear();
     deleteDesktopAttachmentFileMock.mockClear();
     garbageCollectDesktopAttachmentFilesMock.mockClear();
     readDesktopFileBase64Mock.mockClear();
@@ -86,6 +93,35 @@ describe("desktop attachment store", () => {
     });
   });
 
+  it("saves raw byte sources via desktop filesystem writes", async () => {
+    const store = createDesktopAttachmentStore();
+    const bytes = new Uint8Array([0, 1, 2, 3]);
+    const attachment = await store.save({
+      id: "att_bytes",
+      mimeType: "image/png",
+      fileName: "inline.png",
+      source: {
+        kind: "bytes",
+        bytes,
+      },
+    });
+
+    expect(writeDesktopAttachmentBytesMock).toHaveBeenCalledWith({
+      attachmentId: "att_bytes",
+      bytes,
+      extension: ".png",
+    });
+    expect(writeDesktopAttachmentBase64Mock).not.toHaveBeenCalled();
+    expect(attachment).toMatchObject({
+      id: "att_bytes",
+      mimeType: "image/png",
+      storageType: "desktop-file",
+      storageKey: "/managed/att_bytes.png",
+      fileName: "inline.png",
+      byteSize: 4,
+    });
+  });
+
   it("delegates encode/preview/delete/gc to desktop command path", async () => {
     const store = createDesktopAttachmentStore();
     const attachment = {
@@ -103,7 +139,7 @@ describe("desktop attachment store", () => {
     await store.garbageCollect({ referencedIds: new Set(["att_3"]) });
 
     expect(readDesktopFileBase64Mock).toHaveBeenCalledWith("/managed/att_3.jpg");
-    expect(resolveDesktopPreviewUrlMock).toHaveBeenCalled();
+    expect(resolveDesktopPreviewUrlMock).toHaveBeenCalledWith(attachment);
     expect(releaseDesktopPreviewUrlMock).toHaveBeenCalledWith({ url: "blob:test" });
     expect(deleteDesktopAttachmentFileMock).toHaveBeenCalledWith({
       path: "/managed/att_3.jpg",

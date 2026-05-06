@@ -23,7 +23,7 @@ describe("deriveWorkspaceTabModel", () => {
     ];
 
     const model = deriveWorkspaceTabModel({
-      tabs: [uiTabs[0]!, uiTabs[2]!, uiTabs[1]!],
+      tabs: [uiTabs[0], uiTabs[2], uiTabs[1]],
     });
 
     expect(model.tabs.map((tab) => tab.descriptor.tabId)).toEqual([

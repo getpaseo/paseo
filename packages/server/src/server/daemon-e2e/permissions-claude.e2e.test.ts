@@ -46,7 +46,7 @@ describe("daemon E2E - permission flow: Claude", () => {
       const permissionState = await ctx.client.waitForFinish(agent.id, 5_000);
       expect(permissionState.status).toBe("permission");
       expect(permissionState.final?.pendingPermissions?.length).toBeGreaterThan(0);
-      const permission = permissionState.final!.pendingPermissions[0]!;
+      const permission = permissionState.final!.pendingPermissions[0];
 
       await ctx.client.respondToPermission(agent.id, permission.id, { behavior: "allow" });
 
@@ -93,7 +93,7 @@ describe("daemon E2E - permission flow: Claude", () => {
       const permissionState = await ctx.client.waitForFinish(agent.id, 5_000);
       expect(permissionState.status).toBe("permission");
       expect(permissionState.final?.pendingPermissions?.length).toBeGreaterThan(0);
-      const permission = permissionState.final!.pendingPermissions[0]!;
+      const permission = permissionState.final!.pendingPermissions[0];
 
       await ctx.client.respondToPermission(agent.id, permission.id, {
         behavior: "deny",

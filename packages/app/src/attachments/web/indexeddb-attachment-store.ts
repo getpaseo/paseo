@@ -10,12 +10,12 @@ import {
   parseDataUrl,
 } from "@/attachments/utils";
 
-type StoredBlobRecord = {
+interface StoredBlobRecord {
   id: string;
   blob: Blob;
   createdAt: number;
   fileName: string | null;
-};
+}
 
 const DB_NAME = "paseo-attachment-bytes";
 const STORE_NAME = "attachments";
@@ -40,13 +40,13 @@ function openAttachmentDb(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => {
+    request.addEventListener("success", () => {
       resolve(request.result);
-    };
+    });
 
-    request.onerror = () => {
+    request.addEventListener("error", () => {
       reject(request.error ?? new Error("Failed to open attachment IndexedDB."));
-    };
+    });
   });
 }
 
@@ -60,22 +60,32 @@ function runTx<T>(
     const store = transaction.objectStore(STORE_NAME);
     const request = run(store);
 
-    request.onsuccess = () => {
-      resolve(request.result as T);
-    };
+    request.addEventListener("success", () => {
+      resolve(request.result);
+    });
 
-    request.onerror = () => {
+    request.addEventListener("error", () => {
       reject(request.error ?? new Error("IndexedDB transaction request failed."));
-    };
+    });
 
-    transaction.onerror = () => {
+    transaction.addEventListener("error", () => {
       reject(transaction.error ?? new Error("IndexedDB transaction failed."));
-    };
+    });
   });
 }
 
 async function sourceToBlob(input: SaveAttachmentInput): Promise<{ blob: Blob; mimeType: string }> {
   const source = input.source;
+  if (source.kind === "bytes") {
+    const mimeType = normalizeMimeType(input.mimeType);
+    const buffer = new ArrayBuffer(source.bytes.byteLength);
+    new Uint8Array(buffer).set(source.bytes);
+    return {
+      blob: new Blob([buffer], { type: mimeType }),
+      mimeType,
+    };
+  }
+
   if (source.kind === "blob") {
     const mimeType = normalizeMimeType(input.mimeType ?? source.blob.type);
     const blob =
@@ -186,13 +196,13 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
           const store = tx.objectStore(STORE_NAME);
           const cursorRequest = store.openCursor();
 
-          cursorRequest.onerror = () => {
+          cursorRequest.addEventListener("error", () => {
             reject(
               cursorRequest.error ?? new Error("Failed to iterate IndexedDB attachment store."),
             );
-          };
+          });
 
-          cursorRequest.onsuccess = () => {
+          cursorRequest.addEventListener("success", () => {
             const cursor = cursorRequest.result;
             if (!cursor) {
               resolve();
@@ -204,11 +214,11 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
               cursor.delete();
             }
             cursor.continue();
-          };
+          });
 
-          tx.onerror = () => {
+          tx.addEventListener("error", () => {
             reject(tx.error ?? new Error("Failed to garbage collect IndexedDB attachments."));
-          };
+          });
         });
       } finally {
         db.close();

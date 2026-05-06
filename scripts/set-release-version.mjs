@@ -11,7 +11,7 @@ const rootPackagePath = path.join(rootDir, "package.json");
 function usageAndExit(code = 1) {
   process.stderr.write(`Usage: node scripts/set-release-version.mjs --mode <mode> [--print]\n`);
   process.stderr.write(
-    "Modes: patch, minor, major, rc-patch, rc-minor, rc-major, rc-next, promote\n",
+    "Modes: patch, minor, major, beta-patch, beta-minor, beta-major, beta-next, promote\n",
   );
   process.exit(code);
 }

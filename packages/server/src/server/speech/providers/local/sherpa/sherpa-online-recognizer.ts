@@ -19,7 +19,7 @@ export type SherpaOnlineRecognizerModel =
       tokens: string;
     };
 
-export type SherpaOnlineRecognizerConfig = {
+export interface SherpaOnlineRecognizerConfig {
   model: SherpaOnlineRecognizerModel;
   numThreads?: number;
   provider?: "cpu";
@@ -32,7 +32,7 @@ export type SherpaOnlineRecognizerConfig = {
   rule1MinTrailingSilence?: number;
   rule2MinTrailingSilence?: number;
   rule3MinUtteranceLength?: number;
-};
+}
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {
@@ -40,8 +40,57 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
+function validateModelFiles(model: SherpaOnlineRecognizerModel): void {
+  if (model.kind === "transducer") {
+    assertFileExists(model.encoder, "transducer encoder");
+    assertFileExists(model.decoder, "transducer decoder");
+    assertFileExists(model.joiner, "transducer joiner");
+    assertFileExists(model.tokens, "tokens");
+  } else {
+    assertFileExists(model.encoder, "paraformer encoder");
+    assertFileExists(model.decoder, "paraformer decoder");
+    assertFileExists(model.tokens, "tokens");
+  }
+}
+
+function buildModelConfig(model: SherpaOnlineRecognizerModel): object {
+  if (model.kind === "transducer") {
+    return {
+      transducer: {
+        encoder: model.encoder,
+        decoder: model.decoder,
+        joiner: model.joiner,
+      },
+      tokens: model.tokens,
+      modelType: model.modelType ?? "zipformer",
+    };
+  }
+  return {
+    paraformer: {
+      encoder: model.encoder,
+      decoder: model.decoder,
+    },
+    tokens: model.tokens,
+  };
+}
+
+export interface SherpaOnlineStreamNative {
+  acceptWaveform: (sampleRate: number, samples: Float32Array) => void;
+  free?: () => void;
+}
+
+export interface SherpaOnlineRecognizerNative {
+  config?: { featConfig?: { sampleRate?: number } };
+  createStream: () => SherpaOnlineStreamNative;
+  isReady: (stream: SherpaOnlineStreamNative) => boolean;
+  decode: (stream: SherpaOnlineStreamNative) => void;
+  getResult: (stream: SherpaOnlineStreamNative) => { text?: string } | string | undefined;
+  reset?: (stream: SherpaOnlineStreamNative) => void;
+  free?: () => void;
+}
+
 export class SherpaOnlineRecognizerEngine {
-  public readonly recognizer: any;
+  public readonly recognizer: SherpaOnlineRecognizerNative;
   public readonly sampleRate: number;
   private readonly logger: pino.Logger;
 
@@ -53,36 +102,10 @@ export class SherpaOnlineRecognizerEngine {
     });
 
     const { model } = config;
-    if (model.kind === "transducer") {
-      assertFileExists(model.encoder, "transducer encoder");
-      assertFileExists(model.decoder, "transducer decoder");
-      assertFileExists(model.joiner, "transducer joiner");
-      assertFileExists(model.tokens, "tokens");
-    } else {
-      assertFileExists(model.encoder, "paraformer encoder");
-      assertFileExists(model.decoder, "paraformer decoder");
-      assertFileExists(model.tokens, "tokens");
-    }
+    validateModelFiles(model);
 
     const sherpa = loadSherpaOnnx();
-    const modelConfig =
-      model.kind === "transducer"
-        ? {
-            transducer: {
-              encoder: model.encoder,
-              decoder: model.decoder,
-              joiner: model.joiner,
-            },
-            tokens: model.tokens,
-            modelType: model.modelType ?? "zipformer",
-          }
-        : {
-            paraformer: {
-              encoder: model.encoder,
-              decoder: model.decoder,
-            },
-            tokens: model.tokens,
-          };
+    const modelConfig = buildModelConfig(model);
 
     const featConfig = {
       sampleRate: config.sampleRate ?? 16000,
@@ -107,7 +130,9 @@ export class SherpaOnlineRecognizerEngine {
       rule3MinUtteranceLength: config.rule3MinUtteranceLength ?? 20,
     };
 
-    this.recognizer = sherpa.createOnlineRecognizer(recognizerConfig);
+    this.recognizer = sherpa.createOnlineRecognizer(
+      recognizerConfig,
+    ) as SherpaOnlineRecognizerNative;
     const sr = this.recognizer?.config?.featConfig?.sampleRate;
     this.sampleRate =
       typeof sr === "number" && Number.isFinite(sr) && sr > 0 ? sr : featConfig.sampleRate;
@@ -118,7 +143,7 @@ export class SherpaOnlineRecognizerEngine {
     );
   }
 
-  createStream(): any {
+  createStream(): SherpaOnlineStreamNative {
     return this.recognizer.createStream();
   }
 

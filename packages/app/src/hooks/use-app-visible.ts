@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
+import { isWeb } from "@/constants/platform";
 
 let current = getIsAppActivelyVisible();
 const listeners = new Set<() => void>();
@@ -29,7 +30,7 @@ export function useAppVisible(): boolean {
   useEffect(() => {
     const appStateSubscription = AppState.addEventListener("change", notify);
 
-    if (Platform.OS === "web" && typeof document !== "undefined") {
+    if (isWeb && typeof document !== "undefined") {
       document.addEventListener("visibilitychange", notify);
       window.addEventListener("focus", notify);
       window.addEventListener("blur", notify);
@@ -37,7 +38,7 @@ export function useAppVisible(): boolean {
 
     return () => {
       appStateSubscription.remove();
-      if (Platform.OS === "web" && typeof document !== "undefined") {
+      if (isWeb && typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", notify);
         window.removeEventListener("focus", notify);
         window.removeEventListener("blur", notify);

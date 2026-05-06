@@ -83,18 +83,26 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
  * Wait for daemon to be ready by testing WebSocket connection
  * Uses `paseo agent ls` which connects via WebSocket
  */
+async function probeDaemon(port: number): Promise<boolean> {
+  try {
+    const result = await $`PASEO_HOST=localhost:${port} paseo agent ls`.nothrow();
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function waitForDaemon(port: number, timeout = 30000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    try {
-      const result = await $`PASEO_HOST=localhost:${port} paseo agent ls`.nothrow();
-      if (result.exitCode === 0) return;
-    } catch {
-      // Connection failed, keep trying
+  const deadline = Date.now() + timeout;
+  async function poll(): Promise<void> {
+    if (await probeDaemon(port)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Daemon failed to start on port ${port} within ${timeout}ms`);
     }
     await sleep(100);
+    return poll();
   }
-  throw new Error(`Daemon failed to start on port ${port} within ${timeout}ms`);
+  return poll();
 }
 
 /**

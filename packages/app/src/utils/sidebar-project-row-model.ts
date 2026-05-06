@@ -6,7 +6,6 @@ import type {
 export interface SidebarProjectWorkspaceLinkRowModel {
   kind: "workspace_link";
   workspace: SidebarWorkspaceEntry;
-  selected: boolean;
   chevron: null;
   trailingAction: "new_worktree" | "none";
 }
@@ -28,23 +27,15 @@ export function isSidebarProjectFlattened(project: SidebarProjectEntry): boolean
 export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
-  serverId?: string | null;
-  activeWorkspaceSelection?: { serverId: string; workspaceId: string } | null;
 }): SidebarProjectRowModel {
   const flattenedWorkspace = isSidebarProjectFlattened(input.project)
     ? (input.project.workspaces[0] ?? null)
     : null;
-  const selected =
-    flattenedWorkspace !== null &&
-    Boolean(input.serverId) &&
-    input.activeWorkspaceSelection?.serverId === input.serverId &&
-    input.activeWorkspaceSelection?.workspaceId === flattenedWorkspace.workspaceId;
 
   if (flattenedWorkspace) {
     return {
       kind: "workspace_link",
       workspace: flattenedWorkspace,
-      selected,
       chevron: null,
       trailingAction: input.project.projectKind === "git" ? "new_worktree" : "none",
     };
@@ -52,9 +43,14 @@ export function buildSidebarProjectRowModel(input: {
 
   const collapsible = input.project.projectKind === "git" || input.project.workspaces.length > 1;
 
+  let chevron: "expand" | "collapse" | null;
+  if (!collapsible) chevron = null;
+  else if (input.collapsed) chevron = "expand";
+  else chevron = "collapse";
+
   return {
     kind: "project_section",
-    chevron: collapsible ? (input.collapsed ? "expand" : "collapse") : null,
+    chevron,
     trailingAction: input.project.projectKind === "git" ? "new_worktree" : "none",
   };
 }

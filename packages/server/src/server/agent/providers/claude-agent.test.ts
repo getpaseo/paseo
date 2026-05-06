@@ -1,8 +1,18 @@
 import { describe, expect, test, vi } from "vitest";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
-import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import {
+  ClaudeAgentClient,
+  convertClaudeHistoryEntry,
+  normalizeClaudeAskUserQuestionUpdatedInput,
+} from "./claude-agent.js";
+import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../agent-sdk-types.js";
+
+interface TestClaudeSession {
+  translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+  convertUsage(message: SDKMessage): AgentUsage | undefined;
+}
 
 describe("convertClaudeHistoryEntry", () => {
   test("maps user tool results to timeline items", () => {
@@ -337,9 +347,11 @@ describe("ClaudeAgentClient.listModels", () => {
 
   test("returns hardcoded claude models", async () => {
     const client = new ClaudeAgentClient({ logger });
-    const models = await client.listModels();
+    const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-4-7[1m]",
+      "claude-opus-4-7",
       "claude-opus-4-6[1m]",
       "claude-opus-4-6",
       "claude-sonnet-4-6",
@@ -356,15 +368,148 @@ describe("ClaudeAgentClient.listModels", () => {
   });
 });
 
-describe("ClaudeAgentSession context window usage", () => {
-  const logger = createTestLogger();
+describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
+  test("maps frontend header-keyed answers to Claude question text keys", () => {
+    expect(
+      normalizeClaudeAskUserQuestionUpdatedInput(
+        {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+          answers: { Provider: "Claude" },
+        },
+        undefined,
+      ),
+    ).toEqual({
+      questions: [
+        {
+          question: "Which provider should I use?",
+          header: "Provider",
+          options: [],
+          multiSelect: false,
+        },
+      ],
+      answers: { "Which provider should I use?": "Claude" },
+    });
+  });
 
-  async function createSessionForTest(): Promise<any> {
-    const client = new ClaudeAgentClient({ logger });
-    return client.createSession({
+  test("uses fallback request questions when response only includes answers", () => {
+    expect(
+      normalizeClaudeAskUserQuestionUpdatedInput(
+        {
+          answers: { Provider: "Codex" },
+        },
+        {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+        },
+      ),
+    ).toEqual({
+      questions: [
+        {
+          question: "Which provider should I use?",
+          header: "Provider",
+          options: [],
+          multiSelect: false,
+        },
+      ],
+      answers: { "Which provider should I use?": "Codex" },
+    });
+  });
+
+  test("respondToPermission preserves full question input when UI returns answers-only payload", async () => {
+    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),
     });
+
+    const request = {
+      id: "permission-question-1",
+      provider: "claude",
+      name: "AskUserQuestion",
+      kind: "question",
+      input: {
+        questions: [
+          {
+            question: "Which provider should I use?",
+            header: "Provider",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      },
+    };
+
+    const resultPromise = new Promise<unknown>((resolve, reject) => {
+      (
+        session as unknown as {
+          pendingPermissions: Map<
+            string,
+            {
+              request: typeof request;
+              resolve: (value: unknown) => void;
+              reject: (error: Error) => void;
+            }
+          >;
+        }
+      ).pendingPermissions.set(request.id, {
+        request,
+        resolve,
+        reject,
+      });
+    });
+
+    try {
+      await session.respondToPermission(request.id, {
+        behavior: "allow",
+        updatedInput: {
+          answers: { Provider: "Claude" },
+        },
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+          answers: { "Which provider should I use?": "Claude" },
+        },
+        updatedPermissions: undefined,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+});
+
+describe("ClaudeAgentSession context window usage", () => {
+  const logger = createTestLogger();
+
+  async function createSessionForTest(): Promise<TestClaudeSession> {
+    const client = new ClaudeAgentClient({ logger });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+    return session as unknown as TestClaudeSession;
   }
 
   function createQueryFactoryForTurns(turns: Array<Array<Record<string, unknown>>>) {
@@ -372,7 +517,7 @@ describe("ClaudeAgentSession context window usage", () => {
       const queuedMessages: Array<Record<string, unknown>> = [];
       const waiters: Array<() => void> = [];
       let turnIndex = 0;
-      let closed = false;
+      const closedRef = { value: false };
 
       function wakeNextWaiter() {
         const waiter = waiters.shift();
@@ -392,13 +537,13 @@ describe("ClaudeAgentSession context window usage", () => {
             enqueue(message);
           }
         }
-        closed = true;
+        closedRef.value = true;
         wakeNextWaiter();
       })();
 
       return {
         next: vi.fn(async () => {
-          while (queuedMessages.length === 0 && !closed) {
+          while (queuedMessages.length === 0 && !closedRef.value) {
             await new Promise<void>((resolve) => {
               waiters.push(resolve);
             });
@@ -410,12 +555,12 @@ describe("ClaudeAgentSession context window usage", () => {
         }),
         interrupt: vi.fn(async () => undefined),
         return: vi.fn(async () => {
-          closed = true;
+          closedRef.value = true;
           wakeNextWaiter();
           return undefined;
         }),
         close: vi.fn(() => {
-          closed = true;
+          closedRef.value = true;
           wakeNextWaiter();
         }),
         setPermissionMode: vi.fn(async () => undefined),
@@ -429,6 +574,68 @@ describe("ClaudeAgentSession context window usage", () => {
       };
     });
   }
+
+  test("passes persistSession through to the Claude SDK query options", async () => {
+    const createResultTurn = (sessionId: string) => [
+      {
+        type: "system",
+        subtype: "init",
+        session_id: sessionId,
+        permissionMode: "default",
+      },
+      {
+        type: "result",
+        subtype: "success",
+        duration_ms: 10,
+        duration_api_ms: 8,
+        is_error: false,
+        num_turns: 1,
+        result: "done",
+        stop_reason: null,
+        total_cost_usd: 0,
+        usage: {},
+        permission_denials: [],
+        uuid: `${sessionId}-result`,
+        session_id: sessionId,
+      },
+    ];
+
+    const nonPersistedQueryFactory = createQueryFactoryForTurns([createResultTurn("session-1")]);
+    const nonPersistedClient = new ClaudeAgentClient({
+      logger,
+      queryFactory: nonPersistedQueryFactory,
+    });
+    const nonPersistedSession = await nonPersistedClient.createSession(
+      {
+        provider: "claude",
+        cwd: process.cwd(),
+      },
+      undefined,
+      { persistSession: false },
+    );
+    await nonPersistedSession.run("turn");
+    await nonPersistedSession.close();
+
+    expect(nonPersistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(false);
+
+    const persistedQueryFactory = createQueryFactoryForTurns([createResultTurn("session-2")]);
+    const persistedClient = new ClaudeAgentClient({
+      logger,
+      queryFactory: persistedQueryFactory,
+    });
+    const persistedSession = await persistedClient.createSession(
+      {
+        provider: "claude",
+        cwd: process.cwd(),
+      },
+      undefined,
+      { persistSession: true },
+    );
+    await persistedSession.run("turn");
+    await persistedSession.close();
+
+    expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
+  });
 
   test("convertUsage includes contextWindowMaxTokens and derives used tokens from result usage as initial fallback", async () => {
     const session = await createSessionForTest();
@@ -582,7 +789,7 @@ describe("ClaudeAgentSession context window usage", () => {
         duration_ms: 50,
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(events).toContainEqual({
       type: "usage_updated",
@@ -609,7 +816,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(events).toContainEqual({
       type: "usage_updated",
@@ -636,7 +843,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const events = session.translateMessageToEvents({
       type: "stream_event",
@@ -647,7 +854,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(events).toContainEqual({
       type: "usage_updated",
@@ -845,7 +1052,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
     session.translateMessageToEvents({
       type: "stream_event",
       event: {
@@ -855,7 +1062,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const usage = session.convertUsage({
       type: "result",
@@ -893,7 +1100,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
     session.translateMessageToEvents({
       type: "stream_event",
       event: {
@@ -903,7 +1110,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const secondStartEvents = session.translateMessageToEvents({
       type: "stream_event",
@@ -918,7 +1125,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(secondStartEvents).toContainEqual({
       type: "usage_updated",
@@ -937,7 +1144,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const usage = session.convertUsage({
       type: "result",

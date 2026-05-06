@@ -35,7 +35,7 @@ export interface EncryptedChannelEvents {
 
 type ChannelState = "connecting" | "handshaking" | "open" | "closed";
 
-type EncryptedChannelOptions = {
+interface EncryptedChannelOptions {
   /**
    * If set, the channel can validate repeated plaintext `{type:"e2ee_hello"}`
    * messages even after it is open.
@@ -45,7 +45,7 @@ type EncryptedChannelOptions = {
    * the daemon should re-send `{type:"e2ee_ready"}` without changing keys.
    */
   daemonKeyPair?: KeyPair;
-};
+}
 
 interface E2EEHelloMessage {
   type: "e2ee_hello";
@@ -56,12 +56,32 @@ interface E2EEReadyMessage {
   type: "e2ee_ready";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isE2EEHelloMessage(value: unknown): value is E2EEHelloMessage {
+  return (
+    isRecord(value) &&
+    value.type === "e2ee_hello" &&
+    typeof value.key === "string" &&
+    value.key.trim().length > 0
+  );
+}
+
+function isE2EEReadyMessage(value: unknown): value is E2EEReadyMessage {
+  return isRecord(value) && value.type === "e2ee_ready";
+}
+
 function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
-  const parsedRecord =
-    parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  const parsedRecord = isRecord(parsed) ? parsed : null;
   const rawType = parsedRecord?.type;
-  const receivedType =
-    typeof rawType === "string" ? rawType : rawType === undefined ? "undefined" : typeof rawType;
+  function describeType(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (value === undefined) return "undefined";
+    return typeof value;
+  }
+  const receivedType = describeType(rawType);
   const hasKey = typeof parsedRecord?.key === "string" && parsedRecord.key.trim().length > 0;
   const compact = rawText.replace(/\s+/g, " ").trim();
   const preview = compact.length > 160 ? `${compact.slice(0, 157)}...` : compact;
@@ -72,6 +92,19 @@ function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
 
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
+
+interface TimeoutWithUnref {
+  unref(): void;
+}
+
+function hasUnref(timeout: unknown): timeout is TimeoutWithUnref {
+  return (
+    typeof timeout === "object" &&
+    timeout !== null &&
+    "unref" in timeout &&
+    typeof (timeout as Record<string, unknown>).unref === "function"
+  );
+}
 
 /**
  * Creates an encrypted channel as the initiator (client).
@@ -133,7 +166,9 @@ export async function createClientChannel(
     sendHello();
   }, HANDSHAKE_RETRY_MS);
   // Avoid keeping Node processes alive (e.g. tests) if the handshake is stuck.
-  (retry as unknown as { unref?: () => void }).unref?.();
+  if (hasUnref(retry)) {
+    retry.unref();
+  }
 
   return channel;
 }
@@ -156,14 +191,14 @@ export async function createDaemonChannel(
     const shouldIgnorePostHelloPlaintext = (data: string | ArrayBuffer): boolean => {
       try {
         const text = typeof data === "string" ? data : new TextDecoder().decode(data);
-        const parsed = JSON.parse(text) as Partial<E2EEHelloMessage | E2EEReadyMessage>;
-        return parsed.type === "e2ee_hello" || parsed.type === "e2ee_ready";
+        const parsed: unknown = JSON.parse(text);
+        return isE2EEHelloMessage(parsed) || isE2EEReadyMessage(parsed);
       } catch {
         return false;
       }
     };
 
-    transport.onmessage = async (data) => {
+    const handleHello = async (data: string | ArrayBuffer): Promise<void> => {
       try {
         const helloText = typeof data === "string" ? data : new TextDecoder().decode(data);
 
@@ -174,18 +209,20 @@ export async function createDaemonChannel(
           throw buildInvalidHelloError(helloText);
         }
 
-        const msg = parsed as Partial<E2EEHelloMessage>;
-        if (msg.type !== "e2ee_hello" || typeof msg.key !== "string" || !msg.key.trim()) {
+        if (!isE2EEHelloMessage(parsed)) {
           throw buildInvalidHelloError(helloText, parsed);
         }
+
+        const msg = parsed;
 
         // Buffer any subsequent messages that arrive while we're doing async
         // WebCrypto work to derive the shared key. Without this, it's possible
         // for the next message (already encrypted) to be misinterpreted as a
         // second hello, causing the handshake to fail.
-        transport.onmessage = (next) => {
+        const bufferNext = (next: string | ArrayBuffer): void => {
           bufferedMessages.push(next);
         };
+        Object.assign(transport, { onmessage: bufferNext });
 
         const clientPublicKey = importPublicKey(msg.key);
         const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
@@ -207,13 +244,15 @@ export async function createDaemonChannel(
       }
     };
 
-    transport.onerror = (error) => {
-      reject(error);
-    };
-
-    transport.onclose = (code, reason) => {
-      reject(new Error(`Connection closed during handshake: ${code} ${reason}`));
-    };
+    Object.assign(transport, {
+      onmessage: handleHello,
+      onerror: (error: Error) => {
+        reject(error);
+      },
+      onclose: (code: number, reason: string) => {
+        reject(new Error(`Connection closed during handshake: ${code} ${reason}`));
+      },
+    });
   });
 }
 
@@ -241,15 +280,17 @@ export class EncryptedChannel {
     this.events = events;
     this.options = options;
 
-    transport.onmessage = (data) => this.handleMessage(data);
-    transport.onclose = (code, reason) => {
-      this.state = "closed";
-      this.events.onclose?.(code, reason);
-      for (const cb of this.onCloseCallbacks) cb();
-    };
-    transport.onerror = (error) => {
-      this.events.onerror?.(error);
-    };
+    Object.assign(transport, {
+      onmessage: (data: string | ArrayBuffer) => this.handleMessage(data),
+      onclose: (code: number, reason: string) => {
+        this.state = "closed";
+        this.events.onclose?.(code, reason);
+        for (const cb of this.onCloseCallbacks) cb();
+      },
+      onerror: (error: Error) => {
+        this.events.onerror?.(error);
+      },
+    });
   }
 
   setState(state: ChannelState): void {
@@ -260,8 +301,8 @@ export class EncryptedChannel {
     if (this.state === "handshaking") {
       try {
         const text = typeof data === "string" ? data : new TextDecoder().decode(data);
-        const msg = JSON.parse(text) as Partial<E2EEReadyMessage>;
-        if (msg.type === "e2ee_ready") {
+        const parsed: unknown = JSON.parse(text);
+        if (isE2EEReadyMessage(parsed)) {
           this.state = "open";
           this.events.onopen?.();
           for (const cb of this.onOpenCallbacks) cb();
@@ -281,48 +322,16 @@ export class EncryptedChannel {
         try {
           const text = typeof data === "string" ? data : new TextDecoder().decode(data);
           if (text.trim().startsWith("{")) {
-            const parsed = JSON.parse(text) as Partial<E2EEHelloMessage | E2EEReadyMessage>;
+            const parsed: unknown = JSON.parse(text);
 
-            if (parsed.type === "e2ee_hello" && typeof parsed.key === "string") {
+            if (isE2EEHelloMessage(parsed)) {
               if (this.options.daemonKeyPair) {
-                try {
-                  const clientPublicKey = importPublicKey(parsed.key);
-                  const nextSharedKey = deriveSharedKey(
-                    this.options.daemonKeyPair.secretKey,
-                    clientPublicKey,
-                  );
-
-                  // If it's the same client key (handshake retry), re-send
-                  // "ready" but do not re-key. Re-keying here would desync
-                  // the channel and cause decrypt failures.
-                  if (keysEqual(nextSharedKey, this.sharedKey)) {
-                    this.transport.send(
-                      JSON.stringify({ type: "e2ee_ready" } satisfies E2EEReadyMessage),
-                    );
-                    return null;
-                  }
-
-                  // Different key implies a new client connection (common with relays
-                  // where the daemon's socket stays open while the client reconnects).
-                  // Re-key and re-send "ready". Drop any queued sends to avoid leaking
-                  // messages between logical client sessions.
-                  this.state = "handshaking";
-                  this.sharedKey = nextSharedKey;
-                  this.pendingSends = [];
-                  this.transport.send(
-                    JSON.stringify({ type: "e2ee_ready" } satisfies E2EEReadyMessage),
-                  );
-                  this.state = "open";
-                  await this.flushPendingSends();
-                  return null;
-                } catch (error) {
-                  throw error;
-                }
+                await this.handleDaemonRehello(parsed.key);
               }
               return null;
             }
 
-            if (parsed.type === "e2ee_ready") {
+            if (isE2EEReadyMessage(parsed)) {
               return null;
             }
 
@@ -354,7 +363,7 @@ export class EncryptedChannel {
       })();
 
       if (ciphertext) {
-        const plaintext = await decrypt(this.sharedKey, ciphertext);
+        const plaintext = decrypt(this.sharedKey, ciphertext);
         this.events.onmessage?.(plaintext);
       }
     } catch (error) {
@@ -384,7 +393,7 @@ export class EncryptedChannel {
       throw new Error("Channel not open");
     }
 
-    const ciphertext = await encrypt(this.sharedKey, data);
+    const ciphertext = encrypt(this.sharedKey, data);
     // Send as base64 for WebSocket text compatibility
     this.transport.send(arrayBufferToBase64(ciphertext));
   }
@@ -396,6 +405,31 @@ export class EncryptedChannel {
     for (const item of pending) {
       await this.send(item);
     }
+  }
+
+  private async handleDaemonRehello(clientKeyB64: string): Promise<void> {
+    if (!this.options.daemonKeyPair) return;
+    const clientPublicKey = importPublicKey(clientKeyB64);
+    const nextSharedKey = deriveSharedKey(this.options.daemonKeyPair.secretKey, clientPublicKey);
+
+    // If it's the same client key (handshake retry), re-send
+    // "ready" but do not re-key. Re-keying here would desync
+    // the channel and cause decrypt failures.
+    if (keysEqual(nextSharedKey, this.sharedKey)) {
+      this.transport.send(JSON.stringify({ type: "e2ee_ready" } satisfies E2EEReadyMessage));
+      return;
+    }
+
+    // Different key implies a new client connection (common with relays
+    // where the daemon's socket stays open while the client reconnects).
+    // Re-key and re-send "ready". Drop any queued sends to avoid leaking
+    // messages between logical client sessions.
+    this.state = "handshaking";
+    this.sharedKey = nextSharedKey;
+    this.pendingSends = [];
+    this.transport.send(JSON.stringify({ type: "e2ee_ready" } satisfies E2EEReadyMessage));
+    this.state = "open";
+    await this.flushPendingSends();
   }
 
   close(code = 1000, reason = "Normal closure"): void {

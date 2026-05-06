@@ -9,8 +9,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { app, BrowserWindow, ipcMain, nativeImage, net, protocol } from "electron";
-import { registerDaemonManager } from "./daemon/daemon-manager.js";
+import { app, BrowserWindow, Menu, ipcMain, nativeImage, net, protocol, session } from "electron";
+import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon/daemon-manager.js";
 import {
   parseCliPassthroughArgsFromArgv,
   runCliPassthroughCommand,
@@ -21,6 +21,7 @@ import {
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
+  setupDarwinPaintRefresh,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
@@ -32,17 +33,163 @@ import {
 } from "./features/notifications.js";
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
+import {
+  getPaseoBrowserIdForWebContents,
+  getPaseoBrowserWebContents,
+  listRegisteredPaseoBrowserIds,
+  registerPaseoBrowserWebContents,
+  setWorkspaceActivePaseoBrowserId,
+} from "./features/browser-webviews.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
+import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
+import {
+  isDesktopManagedDaemonRunningSync,
+  stopDesktopDaemonViaCli,
+} from "./daemon/daemon-manager.js";
+import {
+  createBeforeQuitHandler,
+  stopDesktopManagedDaemonOnQuitIfNeeded,
+} from "./daemon/quit-lifecycle.js";
+import { autoUpdateSkillsIfInstalled } from "./integrations/integrations-manager.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
+
+function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
+  if (!value) {
+    return true;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function preventUnsafeBrowserWebviewNavigation(
+  event: Electron.Event,
+  url: string | undefined,
+): void {
+  if (!isAllowedBrowserWebviewUrl(url)) {
+    event.preventDefault();
+  }
+}
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
+const BROWSER_SHORTCUT_EVENT = "paseo:event:browser-shortcut";
+const BROWSER_FORWARDED_KEY_EVENT = "paseo:event:browser-forwarded-key";
+
+const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
+  "b",
+  "e",
+  "w",
+  "t",
+  "k",
+  "/",
+  "\\",
+  ",",
+  ".",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "enter",
+  "arrowleft",
+  "arrowright",
+  "arrowup",
+  "arrowdown",
+]);
+const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
+const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName("Paseo");
+
+function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
+  const prefix = "persist:paseo-browser-";
+  if (!partition?.startsWith(prefix)) {
+    return null;
+  }
+  const browserId = partition.slice(prefix.length).trim();
+  return browserId.length > 0 ? browserId : null;
+}
+
+const pendingBrowserWebviewIds: string[] = [];
+
+function isBrowserRefreshInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown" || input.alt || input.shift) {
+    return false;
+  }
+  return (input.meta || input.control) && input.key.toLowerCase() === "r";
+}
+
+function isBrowserLocationInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown" || input.alt || input.shift) {
+    return false;
+  }
+  return (input.meta || input.control) && input.key.toLowerCase() === "l";
+}
+
+function isForwardablePaseoShortcutInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown") {
+    return false;
+  }
+  if (!input.meta && !input.control) {
+    return false;
+  }
+  return FORWARDED_PASEO_SHORTCUT_KEYS.has(input.key.toLowerCase());
+}
+
+function showBrowserWebviewContextMenu(
+  win: BrowserWindow,
+  contents: Electron.WebContents,
+  params: Electron.ContextMenuParams,
+): void {
+  const menu = Menu.buildFromTemplate([
+    { role: "copy", enabled: params.selectionText.length > 0 },
+    { role: "paste" },
+    { type: "separator" },
+    { role: "selectAll" },
+    ...(app.isPackaged
+      ? []
+      : [
+          { type: "separator" as const },
+          {
+            label: "Inspect Element",
+            click: () => {
+              log.info("[browser-devtools] inspect-element.request", {
+                webContentsId: contents.id,
+                browserId: getPaseoBrowserIdForWebContents(contents),
+                x: params.x,
+                y: params.y,
+                isDevToolsOpened: contents.isDevToolsOpened(),
+              });
+              contents.openDevTools({ mode: "detach" });
+              contents.inspectElement(params.x, params.y);
+              log.info("[browser-devtools] inspect-element.done", {
+                webContentsId: contents.id,
+                isDevToolsOpened: contents.isDevToolsOpened(),
+              });
+            },
+          },
+        ]),
+  ]);
+  menu.popup({ window: win });
+}
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
-if (!app.isPackaged) {
+const forcedUserDataDir = process.env.PASEO_ELECTRON_USER_DATA_DIR?.trim();
+if (forcedUserDataDir) {
+  app.setPath("userData", forcedUserDataDir);
+  log.info("[dev-user-data] forced userData dir:", forcedUserDataDir);
+} else if (!app.isPackaged) {
   try {
     const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
@@ -68,6 +215,13 @@ if (!app.isPackaged) {
   } catch {
     devWorktreeName = null;
   }
+}
+
+// AppImage runtimes mount the app from /tmp under the user's UID, so the SUID
+// chrome-sandbox helper we ship in .deb/.rpm cannot work there. Disable the
+// sandbox only in that case; .deb/.rpm keep the sandbox on, matching VS Code.
+if (process.platform === "linux" && process.env.APPIMAGE) {
+  app.commandLine.appendSwitch("no-sandbox");
 }
 
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
@@ -100,6 +254,59 @@ ipcMain.handle("paseo:get-pending-open-project", () => {
   return result;
 });
 
+ipcMain.handle("paseo:browser:set-workspace-active-browser", (_event, browserId: unknown) => {
+  setWorkspaceActivePaseoBrowserId(typeof browserId === "string" ? browserId : null);
+});
+
+ipcMain.handle("paseo:browser:open-devtools", (_event, browserId: unknown) => {
+  if (typeof browserId !== "string" || browserId.trim().length === 0) {
+    const result = {
+      ok: false,
+      reason: "invalid-browser-id",
+      browserId,
+      registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+    };
+    log.warn("[browser-devtools] open-devtools.invalid", result);
+    return result;
+  }
+  const contents = getPaseoBrowserWebContents(browserId);
+  if (!contents) {
+    const result = {
+      ok: false,
+      reason: "browser-webcontents-not-found",
+      browserId,
+      registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+    };
+    log.warn("[browser-devtools] open-devtools.not-found", result);
+    return result;
+  }
+  log.info("[browser-devtools] open-devtools.request", {
+    browserId,
+    webContentsId: contents.id,
+    isDestroyed: contents.isDestroyed(),
+    isDevToolsOpened: contents.isDevToolsOpened(),
+    registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+  });
+  contents.openDevTools({ mode: "detach" });
+  const result = {
+    ok: true,
+    reason: "opened",
+    browserId,
+    webContentsId: contents.id,
+    isDevToolsOpened: contents.isDevToolsOpened(),
+  };
+  log.info("[browser-devtools] open-devtools.done", result);
+  return result;
+});
+
+ipcMain.handle("paseo:browser:clear-partition", async (_event, browserId: unknown) => {
+  if (typeof browserId !== "string" || browserId.trim().length === 0) {
+    return;
+  }
+  const partition = `persist:paseo-browser-${browserId}`;
+  await session.fromPartition(partition).clearStorageData();
+});
+
 protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
@@ -120,20 +327,27 @@ function getAppDistDir(): string {
   return path.resolve(__dirname, "../../app/dist");
 }
 
-function getWindowIconPath(): string | null {
-  const candidates = app.isPackaged
-    ? process.platform === "win32"
-      ? [path.join(process.resourcesPath, "icon.ico"), path.join(process.resourcesPath, "icon.png")]
-      : [path.join(process.resourcesPath, "icon.png")]
-    : process.platform === "darwin"
-      ? [path.resolve(__dirname, "../assets/icon.png")]
-      : process.platform === "win32"
-        ? [
-            path.resolve(__dirname, "../assets/icon.ico"),
-            path.resolve(__dirname, "../assets/icon.png"),
-          ]
-        : [path.resolve(__dirname, "../assets/icon.png")];
+function getWindowIconCandidates(): string[] {
+  if (app.isPackaged) {
+    if (process.platform === "win32") {
+      return [
+        path.join(process.resourcesPath, "icon.ico"),
+        path.join(process.resourcesPath, "icon.png"),
+      ];
+    }
+    return [path.join(process.resourcesPath, "icon.png")];
+  }
+  if (process.platform === "win32") {
+    return [
+      path.resolve(__dirname, "../assets/icon.ico"),
+      path.resolve(__dirname, "../assets/icon.png"),
+    ];
+  }
+  return [path.resolve(__dirname, "../assets/icon.png")];
+}
 
+function getWindowIconPath(): string | null {
+  const candidates = getWindowIconCandidates();
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
@@ -175,6 +389,7 @@ async function createMainWindow(): Promise<void> {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   });
 
@@ -182,9 +397,95 @@ async function createMainWindow(): Promise<void> {
     app.dock?.setBadge(devWorktreeName);
   }
 
+  setupDarwinPaintRefresh(mainWindow);
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+  mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (!isAllowedBrowserWebviewUrl(params.src)) {
+      event.preventDefault();
+      return;
+    }
+    const browserId = getBrowserIdFromWebviewPartition(params.partition);
+    if (!browserId) {
+      event.preventDefault();
+      return;
+    }
+    pendingBrowserWebviewIds.push(browserId);
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.webviewTag = false;
+    webPreferences.allowRunningInsecureContent = false;
+    delete webPreferences.preload;
+    delete params.preload;
+    delete (webPreferences as { preloadURL?: string }).preloadURL;
+    delete (params as { preloadURL?: string }).preloadURL;
+  });
+  mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
+    const browserId = pendingBrowserWebviewIds.shift() ?? null;
+    if (browserId) {
+      registerPaseoBrowserWebContents(contents, browserId);
+      log.info("[browser-webview] registered", {
+        browserId,
+        webContentsId: contents.id,
+        registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+      });
+    }
+    contents.on("before-input-event", (event, input) => {
+      if (isBrowserRefreshInput(input)) {
+        event.preventDefault();
+        if (contents.isLoadingMainFrame()) {
+          contents.stop();
+        } else {
+          contents.reload();
+        }
+        return;
+      }
+      if (isBrowserLocationInput(input)) {
+        event.preventDefault();
+        const focusedBrowserId = getPaseoBrowserIdForWebContents(contents);
+        mainWindow.webContents.send(BROWSER_SHORTCUT_EVENT, {
+          action: "focus-url",
+          ...(focusedBrowserId ? { browserId: focusedBrowserId } : {}),
+        });
+        return;
+      }
+      if (isForwardablePaseoShortcutInput(input)) {
+        event.preventDefault();
+        mainWindow.webContents.send(BROWSER_FORWARDED_KEY_EVENT, {
+          key: input.key,
+          code: input.code,
+          meta: input.meta,
+          control: input.control,
+          shift: input.shift,
+          alt: input.alt,
+        });
+      }
+    });
+    contents.setWindowOpenHandler(({ url }) => {
+      if (!isAllowedBrowserWebviewUrl(url)) {
+        return { action: "deny" };
+      }
+      contents.loadURL(url).catch(() => undefined);
+      return { action: "deny" };
+    });
+    contents.on("context-menu", (_contextMenuEvent, params) => {
+      showBrowserWebviewContextMenu(mainWindow, contents, params);
+    });
+    contents.on("will-navigate", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+    contents.on("will-frame-navigate", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+    contents.on("will-redirect", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+  });
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
@@ -194,7 +495,6 @@ async function createMainWindow(): Promise<void> {
     const { loadReactDevTools } = await import("./features/react-devtools.js");
     await loadReactDevTools();
     await mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 
@@ -266,6 +566,53 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
   return true;
 }
 
+async function runDesktopSmokeIfRequested(): Promise<boolean> {
+  if (process.env[DESKTOP_SMOKE_ENV] !== "1") {
+    return false;
+  }
+
+  const handlers = createDaemonCommandHandlers();
+  const startStatus = await handlers.start_desktop_daemon();
+  process.stdout.write(
+    `[paseo-smoke] ${JSON.stringify({
+      type: "desktop-daemon-smoke-started",
+      status: startStatus,
+    })}\n`,
+  );
+
+  await waitForDesktopSmokeStopRequest();
+
+  const stopStatus = await handlers.stop_desktop_daemon();
+  process.stdout.write(
+    `[paseo-smoke] ${JSON.stringify({
+      type: "desktop-daemon-smoke-stopped",
+      stopStatus,
+    })}\n`,
+  );
+
+  app.exit(0);
+  return true;
+}
+
+function waitForDesktopSmokeStopRequest(): Promise<void> {
+  return new Promise((resolve) => {
+    let buffer = "";
+    const stop = () => {
+      process.stdin.off("data", onData);
+      resolve();
+    };
+    const onData = (chunk: Buffer | string) => {
+      buffer += chunk.toString();
+      if (buffer.includes(DESKTOP_SMOKE_STOP_REQUEST)) {
+        stop();
+      }
+    };
+
+    process.stdin.on("data", onData);
+    process.stdin.resume();
+  });
+}
+
 async function bootstrap(): Promise<void> {
   if (!pendingOpenProjectPath && (await runCliPassthroughIfRequested())) {
     return;
@@ -307,11 +654,19 @@ async function bootstrap(): Promise<void> {
   applyAppIcon();
   setupApplicationMenu();
   ensureNotificationCenterRegistration();
+  if (await runDesktopSmokeIfRequested()) {
+    return;
+  }
   registerDaemonManager();
   registerWindowManager();
   registerDialogHandlers();
   registerNotificationHandlers();
   registerOpenerHandlers();
+
+  void autoUpdateSkillsIfInstalled().catch((error) => {
+    log.warn("[integrations] auto-update skills failed", error);
+  });
+
   await createMainWindow();
 
   app.on("activate", async () => {
@@ -327,9 +682,29 @@ void bootstrap().catch((error) => {
   process.exit(1);
 });
 
-app.on("before-quit", () => {
-  closeAllTransportSessions();
-});
+function showDaemonShutdownDialog(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("paseo:event:quitting", {});
+  }
+}
+
+app.on(
+  "before-quit",
+  createBeforeQuitHandler({
+    app,
+    closeTransportSessions: closeAllTransportSessions,
+    stopDesktopManagedDaemonIfNeeded: () =>
+      stopDesktopManagedDaemonOnQuitIfNeeded({
+        settingsStore: getDesktopSettingsStore(),
+        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+        stopDaemon: stopDesktopDaemonViaCli,
+        showShutdownFeedback: showDaemonShutdownDialog,
+      }),
+    onStopError: (error) => {
+      log.error("[desktop daemon] failed to stop managed daemon on quit", error);
+    },
+  }),
+);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

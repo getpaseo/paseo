@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type pino from "pino";
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -109,25 +109,25 @@ export class OpenAISTT implements SpeechToTextProvider {
       },
       appendPcm16(chunk: Buffer) {
         if (!connected) {
-          (emitter as any).emit("error", new Error("STT session not connected"));
+          emitter.emit("error", new Error("STT session not connected"));
           return;
         }
         pcm16 = pcm16.length === 0 ? chunk : Buffer.concat([pcm16, chunk]);
       },
       commit() {
         if (!connected) {
-          (emitter as any).emit("error", new Error("STT session not connected"));
+          emitter.emit("error", new Error("STT session not connected"));
           return;
         }
 
         const committedId = segmentId;
         const prev = previousSegmentId;
-        (emitter as any).emit("committed", { segmentId: committedId, previousSegmentId: prev });
+        emitter.emit("committed", { segmentId: committedId, previousSegmentId: prev });
 
         void (async () => {
           try {
             if (pcm16.length === 0) {
-              (emitter as any).emit("transcript", {
+              emitter.emit("transcript", {
                 segmentId: committedId,
                 transcript: "",
                 isFinal: true,
@@ -140,7 +140,7 @@ export class OpenAISTT implements SpeechToTextProvider {
             const wav = convertPCMToWavBuffer(pcm16);
             const result = await transcribeAudio(wav, "audio/wav", params.language ?? "en", logger);
 
-            (emitter as any).emit("transcript", {
+            emitter.emit("transcript", {
               segmentId: committedId,
               transcript: result.text,
               isFinal: true,
@@ -150,7 +150,7 @@ export class OpenAISTT implements SpeechToTextProvider {
               isLowConfidence: result.isLowConfidence,
             });
           } catch (err) {
-            (emitter as any).emit("error", err);
+            emitter.emit("error", err);
           } finally {
             previousSegmentId = committedId;
             segmentId = v4();
@@ -166,8 +166,8 @@ export class OpenAISTT implements SpeechToTextProvider {
         connected = false;
         pcm16 = Buffer.alloc(0);
       },
-      on(event: any, handler: any) {
-        emitter.on(event, handler);
+      on(event: string, handler: (...args: never[]) => void) {
+        emitter.on(event, handler as (...args: unknown[]) => void);
         return undefined;
       },
     };
@@ -243,14 +243,15 @@ export class OpenAISTT implements SpeechToTextProvider {
             ? response.language
             : undefined,
       };
-    } catch (error: any) {
+    } catch (error) {
       logger.error({ err: error }, "Transcription error");
-      throw new Error(`STT transcription failed: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`STT transcription failed: ${message}`, { cause: error });
     } finally {
       if (tempFilePath) {
         try {
           await unlink(tempFilePath);
-        } catch (cleanupError) {
+        } catch {
           logger.warn({ tempFilePath }, "Failed to clean up temp file");
         }
       }

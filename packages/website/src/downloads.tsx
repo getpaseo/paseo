@@ -4,7 +4,14 @@ export function releaseBase(version: string) {
   return `https://github.com/getpaseo/paseo/releases/download/v${version}`;
 }
 
-export function downloadUrls(version: string) {
+export interface ReleaseAssetInfo {
+  version: string;
+  windowsX64Asset: string | null;
+  windowsArm64Asset: string | null;
+}
+
+export function downloadUrls(release: ReleaseAssetInfo) {
+  const { version, windowsX64Asset, windowsArm64Asset } = release;
   const base = releaseBase(version);
   return {
     macAppleSilicon: `${base}/Paseo-${version}-arm64.dmg`,
@@ -12,7 +19,8 @@ export function downloadUrls(version: string) {
     linuxAppImage: `${base}/Paseo-${version}-x86_64.AppImage`,
     linuxDeb: `${base}/Paseo-${version}-amd64.deb`,
     linuxRpm: `${base}/Paseo-${version}-x86_64.rpm`,
-    windowsExe: `${base}/Paseo-Setup-${version}.exe`,
+    windowsExeX64: `${base}/${windowsX64Asset ?? `Paseo-Setup-${version}.exe`}`,
+    windowsExeArm64: windowsArm64Asset ? `${base}/${windowsArm64Asset}` : null,
     androidApk: `${base}/paseo-v${version}-android.apk`,
   };
 }
@@ -30,8 +38,8 @@ export interface DownloadOption {
   icon: (props: React.SVGProps<SVGSVGElement>) => React.ReactElement;
 }
 
-export function getDownloadOptions(version: string): DownloadOption[] {
-  const urls = downloadUrls(version);
+export function getDownloadOptions(release: ReleaseAssetInfo): DownloadOption[] {
+  const urls = downloadUrls(release);
   return [
     {
       platform: "mac-silicon",
@@ -48,7 +56,7 @@ export function getDownloadOptions(version: string): DownloadOption[] {
     {
       platform: "windows",
       label: "Windows",
-      href: urls.windowsExe,
+      href: urls.windowsExeX64,
       icon: WindowsIcon,
     },
     {

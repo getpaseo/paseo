@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { resolvePathFromBase } from "../path-utils.js";
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -34,6 +35,16 @@ export interface FileExplorerFile {
   encoding: ExplorerEncoding;
   content?: string;
   mimeType?: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface FileExplorerFileBytes {
+  path: string;
+  kind: ExplorerFileKind;
+  encoding: "utf-8" | "binary";
+  bytes: Uint8Array;
+  mimeType: string;
   size: number;
   modifiedAt: string;
 }
@@ -119,6 +130,46 @@ export async function readExplorerFile({
   root,
   relativePath,
 }: ReadFileParams): Promise<FileExplorerFile> {
+  const file = await readExplorerFileBytes({ root, relativePath });
+
+  if (file.kind === "image") {
+    return {
+      path: file.path,
+      kind: file.kind,
+      encoding: "base64",
+      content: Buffer.from(file.bytes).toString("base64"),
+      mimeType: file.mimeType,
+      size: file.size,
+      modifiedAt: file.modifiedAt,
+    };
+  }
+
+  if (file.kind === "binary") {
+    return {
+      path: file.path,
+      kind: file.kind,
+      encoding: "none",
+      mimeType: file.mimeType,
+      size: file.size,
+      modifiedAt: file.modifiedAt,
+    };
+  }
+
+  return {
+    path: file.path,
+    kind: file.kind,
+    encoding: "utf-8",
+    content: Buffer.from(file.bytes).toString("utf-8"),
+    mimeType: file.mimeType,
+    size: file.size,
+    modifiedAt: file.modifiedAt,
+  };
+}
+
+export async function readExplorerFileBytes({
+  root,
+  relativePath,
+}: ReadFileParams): Promise<FileExplorerFileBytes> {
   const filePath = await resolveScopedPath({ root, relativePath });
   const stats = await fs.stat(filePath);
 
@@ -138,8 +189,8 @@ export async function readExplorerFile({
     return {
       ...basePayload,
       kind: "image",
-      encoding: "base64",
-      content: buffer.toString("base64"),
+      encoding: "binary",
+      bytes: buffer,
       mimeType: IMAGE_MIME_TYPES[ext],
     };
   }
@@ -149,7 +200,8 @@ export async function readExplorerFile({
     return {
       ...basePayload,
       kind: "binary",
-      encoding: "none",
+      encoding: "binary",
+      bytes: buffer,
       mimeType: "application/octet-stream",
     };
   }
@@ -158,7 +210,7 @@ export async function readExplorerFile({
     ...basePayload,
     kind: "text",
     encoding: "utf-8",
-    content: buffer.toString("utf-8"),
+    bytes: buffer,
     mimeType: textMimeTypeForExtension(ext),
   };
 }
@@ -207,7 +259,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
 
 async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams): Promise<string> {
   const normalizedRoot = path.resolve(root);
-  const requestedPath = path.resolve(normalizedRoot, relativePath);
+  const requestedPath = resolvePathFromBase(normalizedRoot, relativePath);
   const relative = path.relative(normalizedRoot, requestedPath);
 
   if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {

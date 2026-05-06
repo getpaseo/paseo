@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { Platform } from "react-native";
 import type { ImageAttachment } from "@/components/message-input";
 import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
+import { isWeb } from "@/constants/platform";
 
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
@@ -14,7 +14,7 @@ interface UseFileDropZoneReturn {
   containerRef: React.RefObject<HTMLElement | null>;
 }
 
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -46,9 +46,9 @@ type DesktopDragDropPayload =
       type: "leave";
     };
 
-type DesktopDragDropEvent = {
+interface DesktopDragDropEvent {
   payload: DesktopDragDropPayload;
-};
+}
 
 function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
@@ -167,6 +167,7 @@ export function useFileDropZone({
                 return;
               }
               onFilesDroppedRef.current(attachments);
+              return;
             })
             .catch((error) => {
               console.error("[useFileDropZone] Failed to persist dropped files:", error);

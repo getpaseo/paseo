@@ -1,10 +1,11 @@
-import { View, Text, Platform } from "react-native";
+import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, { useAnimatedStyle, withTiming, useSharedValue } from "react-native-reanimated";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Upload } from "lucide-react-native";
 import { useFileDropZone } from "@/hooks/use-file-drop-zone";
 import type { ImageAttachment } from "./message-input";
+import { isWeb } from "@/constants/platform";
 
 interface FileDropZoneProps {
   children: React.ReactNode;
@@ -12,7 +13,7 @@ interface FileDropZoneProps {
   disabled?: boolean;
 }
 
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 
 export function FileDropZone({ children, onFilesDropped, disabled = false }: FileDropZoneProps) {
   const { theme } = useUnistyles();
@@ -32,9 +33,14 @@ export function FileDropZone({ children, onFilesDropped, disabled = false }: Fil
     pointerEvents: overlayOpacity.value > 0 ? "auto" : "none",
   }));
 
+  const overlayStyle = useMemo(
+    () => [styles.overlay, overlayAnimatedStyle],
+    [overlayAnimatedStyle],
+  );
+
   // On non-web platforms, just render children
   if (!IS_WEB) {
-    return <>{children}</>;
+    return children;
   }
 
   return (
@@ -46,7 +52,7 @@ export function FileDropZone({ children, onFilesDropped, disabled = false }: Fil
       {children}
 
       {/* Drop overlay */}
-      <Animated.View style={[styles.overlay, overlayAnimatedStyle]}>
+      <Animated.View style={overlayStyle}>
         {/* Backdrop */}
         <View style={styles.backdrop} />
         {/* Content */}

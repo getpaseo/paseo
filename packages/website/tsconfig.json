@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "baseUrl": ".",
+    "types": ["@cloudflare/workers-types"],
     "paths": {
       "~/*": ["./src/*"]
     }

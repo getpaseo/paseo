@@ -1,11 +1,18 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { startCommand } from "./start.js";
 import { runStatusCommand } from "./status.js";
 import { runStopCommand } from "./stop.js";
 import { runRestartCommand } from "./restart.js";
+import { runSetPasswordCommand } from "./set-password.js";
 import { pairCommand } from "./pair.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonOption } from "../../utils/command-options.js";
+
+function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
+  if (typeof hostnames === "string") return hostnames;
+  if (typeof allowedHosts === "string") return allowedHosts;
+  return undefined;
+}
 
 export function createDaemonCommand(): Command {
   const daemon = new Command("daemon").description("Manage the Paseo daemon");
@@ -21,6 +28,7 @@ export function createDaemonCommand(): Command {
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .option("--timeout <seconds>", "Wait timeout before failing (default: 15)")
     .option("--force", "Send SIGKILL if graceful stop times out")
+    .option("--kill-timeout <seconds>", "Wait after SIGKILL before failing (default: 3)")
     .action(withOutput(runStopCommand));
 
   addJsonOption(daemon.command("restart").description("Restart the local daemon"))
@@ -36,10 +44,30 @@ export function createDaemonCommand(): Command {
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
     .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
     .option(
-      "--allowed-hosts <hosts>",
-      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
+      "--hostnames <hosts>",
+      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
     )
-    .action(withOutput(runRestartCommand));
+    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
+    .action(
+      withOutput((...args) => {
+        const [options, command] = args.slice(-2) as [(typeof args)[number], Command];
+        return runRestartCommand(
+          {
+            ...options,
+            hostnames: resolveHostnamesOption(options.hostnames, options.allowedHosts),
+          },
+          command,
+        );
+      }),
+    );
+
+  addJsonOption(
+    daemon
+      .command("set-password")
+      .description("Prompt for and save a hashed daemon password to config.json"),
+  )
+    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .action(withOutput(runSetPasswordCommand));
 
   return daemon;
 }

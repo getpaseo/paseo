@@ -1,8 +1,8 @@
-export type PendingTerminalModifiers = {
+export interface PendingTerminalModifiers {
   ctrl: boolean;
   shift: boolean;
   alt: boolean;
-};
+}
 
 const MODIFIER_DOM_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "AltGraph", "OS"]);
 

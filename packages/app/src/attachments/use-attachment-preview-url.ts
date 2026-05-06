@@ -7,29 +7,37 @@ export function useAttachmentPreviewUrl(
 ): string | null {
   const [url, setUrl] = useState<string | null>(null);
   const activeAttachmentRef = useRef<AttachmentMetadata | null>(null);
+  const attachmentRef = useRef(attachment);
+  attachmentRef.current = attachment;
+
+  const id = attachment?.id;
+  const storageType = attachment?.storageType;
+  const storageKey = attachment?.storageKey;
+  const mimeType = attachment?.mimeType;
 
   useEffect(() => {
     let disposed = false;
     let currentUrl: string | null = null;
+    const current = attachmentRef.current;
 
-    activeAttachmentRef.current = attachment ?? null;
-    if (!attachment) {
+    activeAttachmentRef.current = current ?? null;
+    if (!current) {
       setUrl(null);
       return;
     }
 
     void (async () => {
       try {
-        const resolved = await resolveAttachmentPreviewUrl(attachment);
+        const resolved = await resolveAttachmentPreviewUrl(current);
         if (disposed) {
-          await releaseAttachmentPreviewUrl({ attachment, url: resolved });
+          await releaseAttachmentPreviewUrl({ attachment: current, url: resolved });
           return;
         }
         currentUrl = resolved;
         setUrl(resolved);
       } catch (error) {
         console.error("[attachments] Failed to resolve preview URL", {
-          attachmentId: attachment.id,
+          attachmentId: current.id,
           error,
         });
         if (!disposed) {
@@ -49,7 +57,7 @@ export function useAttachmentPreviewUrl(
         url: currentUrl,
       });
     };
-  }, [attachment?.id, attachment?.storageType, attachment?.storageKey, attachment?.mimeType]);
+  }, [id, storageType, storageKey, mimeType]);
 
   return url;
 }

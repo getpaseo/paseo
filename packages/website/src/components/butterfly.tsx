@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 // --- Vector math utilities ---
 
@@ -107,10 +107,21 @@ function ButterflyVisual({
   direction = "right",
   heading = 0,
 }: ButterflyVisualProps) {
-  const wingStyle = {
-    animationDelay: `${delay}s`,
-    animationDuration: `${duration}s`,
-  };
+  const wingStyle = useMemo(
+    () => ({
+      animationDelay: `${delay}s`,
+      animationDuration: `${duration}s`,
+    }),
+    [delay, duration],
+  );
+
+  const bodyStyle = useMemo(
+    () => ({
+      animationDelay: `${delay}s`,
+      animationDuration: `${duration}s`,
+    }),
+    [delay, duration],
+  );
 
   const scaleX = direction === "left" ? -1 : 1;
 
@@ -119,24 +130,28 @@ function ButterflyVisual({
   // -30° = horizontal, 0° = 30° down (base), +90° = 120° down (nearly straight down)
   const clampedHeading = Math.max(-30, Math.min(90, heading));
 
+  const svgStyle = useMemo(
+    () => ({
+      filter: "url(#painterly)",
+      transform: `scaleX(${scaleX}) rotateY(25deg) rotate(30deg) rotateZ(${clampedHeading}deg)`,
+      transition: "transform 0.3s ease-out",
+    }),
+    [scaleX, clampedHeading],
+  );
+
+  const farWingStyle = useMemo(
+    () => ({ ...wingStyle, animationDelay: `${delay + 0.08}s` }),
+    [wingStyle, delay],
+  );
+
+  const lowerWingStyle = useMemo(
+    () => ({ ...wingStyle, animationDelay: `${delay + 0.05}s` }),
+    [wingStyle, delay],
+  );
+
   return (
-    <div
-      className="animate-flutter-body"
-      style={{
-        animationDelay: `${delay}s`,
-        animationDuration: `${duration}s`,
-      }}
-    >
-      <svg
-        viewBox="0 0 50 40"
-        width={size}
-        height={size * 0.8}
-        style={{
-          filter: "url(#painterly)",
-          transform: `scaleX(${scaleX}) rotateY(25deg) rotate(30deg) rotateZ(${clampedHeading}deg)`,
-          transition: "transform 0.3s ease-out",
-        }}
-      >
+    <div className="animate-flutter-body" style={bodyStyle}>
+      <svg viewBox="0 0 50 40" width={size} height={size * 0.8} style={svgStyle}>
         <defs>
           <filter id="painterly" x="-20%" y="-20%" width="140%" height="140%">
             <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" result="noise" />
@@ -153,7 +168,7 @@ function ButterflyVisual({
         {/* Far side wings (darker, behind, slightly rotated) */}
         <g
           className="animate-flutter-left origin-[38px_20px]"
-          style={{ ...wingStyle, animationDelay: `${delay + 0.08}s` }}
+          style={farWingStyle}
           transform="translate(6, 0) rotate(8, 38, 20)"
         >
           <path d="M38 20 Q20 2 8 10 Q0 18 10 28 Q25 32 38 22" fill={darken(color, 50)} />
@@ -165,10 +180,7 @@ function ButterflyVisual({
           <path d="M38 20 Q20 2 8 10 Q0 18 10 28 Q25 32 38 22" fill={color} />
         </g>
 
-        <g
-          className="animate-flutter-left origin-[38px_20px]"
-          style={{ ...wingStyle, animationDelay: `${delay + 0.05}s` }}
-        >
+        <g className="animate-flutter-left origin-[38px_20px]" style={lowerWingStyle}>
           <path d="M38 22 Q25 30 18 38 Q28 42 36 34 Q40 28 38 24" fill={color} />
         </g>
       </svg>
@@ -358,17 +370,18 @@ export function FloatingButterfly({
     };
   }, [mounted]);
 
+  const containerStyle = useMemo(
+    () => ({
+      ...style,
+      transform: `translate(${renderState.x}px, ${renderState.y}px)`,
+    }),
+    [style, renderState.x, renderState.y],
+  );
+
   if (!mounted) return null;
 
   return (
-    <div
-      ref={elementRef}
-      className="absolute pointer-events-none"
-      style={{
-        ...style,
-        transform: `translate(${renderState.x}px, ${renderState.y}px)`,
-      }}
-    >
+    <div ref={elementRef} className="absolute pointer-events-none" style={containerStyle}>
       <ButterflyVisual
         size={size}
         color={color}

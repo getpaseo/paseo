@@ -15,7 +15,7 @@ interface GitHubRelease {
 const REQUIRED_ASSET_PATTERNS = [
   /Paseo-.*-arm64\.dmg$/, // Mac Apple Silicon
   /Paseo-.*-x86_64\.AppImage$/, // Linux AppImage
-  /Paseo-Setup-.*\.exe$/, // Windows
+  /Paseo-Setup-.*\.exe$/, // Windows (any arch)
 ];
 
 function hasRequiredAssets(release: GitHubRelease): boolean {
@@ -24,14 +24,40 @@ function hasRequiredAssets(release: GitHubRelease): boolean {
   );
 }
 
+function pickWindowsAssets(assets: GitHubAsset[]) {
+  const x64Suffixed = assets.find((a) => /Paseo-Setup-.*-x64\.exe$/.test(a.name));
+  const arm64 = assets.find((a) => /Paseo-Setup-.*-arm64\.exe$/.test(a.name));
+  const legacy = assets.find(
+    (a) =>
+      /Paseo-Setup-.*\.exe$/.test(a.name) &&
+      !a.name.endsWith("-x64.exe") &&
+      !a.name.endsWith("-arm64.exe"),
+  );
+  return {
+    x64: (x64Suffixed ?? legacy)?.name ?? null,
+    arm64: arm64?.name ?? null,
+  };
+}
+
 function versionFromTag(tag: string): string {
   return tag.replace(/^v/, "");
 }
 
+interface ReleaseInfo {
+  version: string;
+  windowsX64Asset: string | null;
+  windowsArm64Asset: string | null;
+}
+
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
 
-async function fetchLatestReadyRelease(): Promise<string> {
-  const fallback = websitePackage.version.replace(/-.*$/, "");
+async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
+  const fallbackVersion = websitePackage.version.replace(/-.*$/, "");
+  const fallback: ReleaseInfo = {
+    version: fallbackVersion,
+    windowsX64Asset: `Paseo-Setup-${fallbackVersion}.exe`,
+    windowsArm64Asset: null,
+  };
 
   try {
     const res = await fetch(GITHUB_RELEASES_URL, {
@@ -52,13 +78,18 @@ async function fetchLatestReadyRelease(): Promise<string> {
 
     const releases = (await res.json()) as GitHubRelease[];
     const ready = releases.find((r) => !r.prerelease && !r.draft && hasRequiredAssets(r));
-    return ready ? versionFromTag(ready.tag_name) : fallback;
+    if (!ready) return fallback;
+    const win = pickWindowsAssets(ready.assets);
+    return {
+      version: versionFromTag(ready.tag_name),
+      windowsX64Asset: win.x64,
+      windowsArm64Asset: win.arm64,
+    };
   } catch {
     return fallback;
   }
 }
 
 export const getLatestRelease = createServerFn({ method: "GET" }).handler(async () => {
-  const version = await fetchLatestReadyRelease();
-  return { version };
+  return fetchLatestReadyRelease();
 });

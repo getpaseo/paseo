@@ -6,7 +6,7 @@ main = "@tanstack/react-start/server-entry"
 
 routes = [
   { pattern = "paseo.sh", custom_domain = true },
-  { pattern = "www.paseo.sh", custom_domain = true }
+  { pattern = "www.paseo.sh", custom_domain = true },
 ]
 
 [observability]

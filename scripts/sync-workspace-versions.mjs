@@ -54,6 +54,11 @@ for (const workspacePath of workspacePaths) {
     }
   }
 
+  // Private workspaces (app, desktop) keep "*" for internal deps so npm always
+  // resolves the local sibling, never a registry artifact. Publishable workspaces
+  // get the root version so their published tarballs reference real npm versions.
+  const internalDepRange = pkg.private === true ? "*" : rootVersion;
+
   for (const section of dependencySections) {
     const deps = pkg[section];
     if (!deps || typeof deps !== "object") {
@@ -67,8 +72,8 @@ for (const workspacePath of workspacePaths) {
       if (name === pkg.name) {
         continue;
       }
-      if (deps[name] !== rootVersion) {
-        deps[name] = rootVersion;
+      if (deps[name] !== internalDepRange) {
+        deps[name] = internalDepRange;
         changed = true;
       }
     }

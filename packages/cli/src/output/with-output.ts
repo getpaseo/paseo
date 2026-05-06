@@ -10,6 +10,10 @@ import { render, renderError, toCommandError, defaultOutputOptions } from "./ren
 
 /** Options that include output settings from global options */
 export interface CommandOptions extends Partial<OutputOptions> {
+  /** Daemon host target from --host option */
+  host?: string;
+  /** JSON output flag from --json option */
+  json?: boolean;
   [key: string]: unknown;
 }
 

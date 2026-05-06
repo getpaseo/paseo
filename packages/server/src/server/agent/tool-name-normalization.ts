@@ -12,7 +12,7 @@ export function tokenizeToolName(name: string): string[] {
 
 export function getToolLeafName(name: string): string | null {
   const tokens = tokenizeToolName(name);
-  return tokens.length > 0 ? tokens[tokens.length - 1]! : null;
+  return tokens.length > 0 ? tokens[tokens.length - 1] : null;
 }
 
 export function isSpeakToolName(name: string): boolean {
@@ -33,7 +33,7 @@ export function isLikelyNamespacedToolName(name: string): boolean {
   if (segments.length >= 3) {
     return true;
   }
-  if (segments.length === 2 && segments[1]!.includes("_")) {
+  if (segments.length === 2 && segments[1].includes("_")) {
     return true;
   }
   return false;
@@ -49,11 +49,11 @@ export function isPaseoToolName(name: string): boolean {
     return (
       segments.length >= 3 &&
       segments[0] === "mcp" &&
-      (segments[1] === "paseo" || segments[1]!.startsWith("paseo_"))
+      (segments[1] === "paseo" || segments[1].startsWith("paseo_"))
     );
   }
   if (normalized.includes(".")) {
-    const firstSegment = normalized.split(".")[0]!;
+    const firstSegment = normalized.split(".")[0];
     return firstSegment === "paseo" || firstSegment.startsWith("paseo_");
   }
   return false;
@@ -66,14 +66,14 @@ export function getPaseoToolLeafName(name: string): string | null {
     if (
       segments.length >= 3 &&
       segments[0] === "mcp" &&
-      (segments[1] === "paseo" || segments[1]!.startsWith("paseo_"))
+      (segments[1] === "paseo" || segments[1].startsWith("paseo_"))
     ) {
       return segments.slice(2).join("__");
     }
     return null;
   }
   if (normalized.includes(".")) {
-    const firstSegment = normalized.split(".")[0]!;
+    const firstSegment = normalized.split(".")[0];
     if (firstSegment === "paseo" || firstSegment.startsWith("paseo_")) {
       return normalized.split(".").slice(1).join(".");
     }

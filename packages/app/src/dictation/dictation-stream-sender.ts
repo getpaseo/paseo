@@ -1,13 +1,16 @@
 import { generateMessageId } from "@/types/stream";
 import type { DaemonClient } from "@server/client/daemon-client";
 
-export type DictationStreamSenderParams = {
+export interface DictationStreamSenderParams {
   client: DaemonClient | null;
   format: string;
   createDictationId?: () => string;
-};
+}
 
-type DictationFinishResult = { dictationId: string; text: string };
+interface DictationFinishResult {
+  dictationId: string;
+  text: string;
+}
 
 /**
  * Small, non-React state machine for dictation streaming.
@@ -107,7 +110,7 @@ export class DictationStreamSender {
     let sent = 0;
     while (this.sendSeq < this.segments.length) {
       const seq = this.sendSeq;
-      const audio = this.segments[seq]!;
+      const audio = this.segments[seq];
       client.sendDictationStreamChunk(dictationId, seq, audio, this.format);
       this.sendSeq = seq + 1;
       sent += 1;

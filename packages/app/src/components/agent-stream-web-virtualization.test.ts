@@ -54,6 +54,16 @@ function toolCall(id: string, seed: number): StreamItem {
   };
 }
 
+function thought(id: string, seed: number): StreamItem {
+  return {
+    kind: "thought",
+    id,
+    text: id,
+    status: "ready",
+    timestamp: createTimestamp(seed),
+  };
+}
+
 function indexEntries(items: StreamItem[]): IndexedStreamItem[] {
   return items.map((item, index) => ({ item, index }));
 }
@@ -111,6 +121,11 @@ describe("splitWebVirtualizedHistory", () => {
 });
 
 describe("estimateStreamItemHeight", () => {
+  it("uses compact estimates for collapsed tool sequence rows", () => {
+    expect(estimateStreamItemHeight(toolCall("tool", 1))).toBe(40);
+    expect(estimateStreamItemHeight(thought("thought", 2))).toBe(40);
+  });
+
   it("uses a larger estimate for user messages with image attachments", () => {
     const item: StreamItem = {
       kind: "user_message",

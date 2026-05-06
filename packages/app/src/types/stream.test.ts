@@ -3,6 +3,7 @@ import { describe, it } from "vitest";
 
 import {
   hydrateStreamState,
+  mergeToolCallDetail,
   reduceStreamUpdate,
   type AgentToolCallItem,
   type StreamItem,
@@ -10,7 +11,7 @@ import {
 } from "./stream";
 import type { AgentProvider, ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import type { AgentStreamEventPayload } from "@server/shared/messages";
-import { buildToolCallDisplayModel } from "@/utils/tool-call-display";
+import { buildToolCallDisplayModel } from "../../../server/src/shared/tool-call-display";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
@@ -41,8 +42,8 @@ function canonicalToolTimeline(params: {
   callId: string;
   name: string;
   status: CanonicalToolStatus;
-  input?: unknown | null;
-  output?: unknown | null;
+  input?: unknown;
+  output?: unknown;
   error?: unknown;
   metadata?: Record<string, unknown>;
   detail?: ToolCallDetail;
@@ -98,6 +99,193 @@ function findToolByCallId(state: StreamItem[], callId: string): AgentToolCallIte
       isAgentToolCallItem(item) && item.payload.data.callId === callId,
   );
 }
+
+describe("stream reducer tool call idempotency", () => {
+  it("returns the same detail reference when tool call detail is identical", () => {
+    const existing: ToolCallDetail = {
+      type: "shell",
+      command: "npm test",
+      cwd: "/tmp/repo",
+    };
+    const incoming: ToolCallDetail = {
+      type: "shell",
+      command: "npm test",
+      cwd: "/tmp/repo",
+    };
+
+    const merged = mergeToolCallDetail(existing, incoming);
+
+    assert.strictEqual(merged, existing);
+  });
+
+  it("returns a new detail reference when tool call detail changes", () => {
+    const existing: ToolCallDetail = {
+      type: "shell",
+      command: "npm test",
+      cwd: "/tmp/repo",
+    };
+    const incoming: ToolCallDetail = {
+      type: "shell",
+      command: "npm run typecheck",
+      cwd: "/tmp/repo",
+    };
+
+    const merged = mergeToolCallDetail(existing, incoming);
+
+    assert.notStrictEqual(merged, existing);
+    assert.deepStrictEqual(merged, incoming);
+  });
+
+  it("returns the same state array when status, error, detail, and metadata are identical", () => {
+    const callId = "idempotent-tool-call";
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "running",
+        detail: {
+          type: "shell",
+          command: "npm test",
+          cwd: "/tmp/repo",
+        },
+        metadata: {
+          paneId: "%1",
+        },
+      }),
+      new Date("2025-01-01T12:00:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "running",
+        detail: {
+          type: "shell",
+          command: "npm test",
+          cwd: "/tmp/repo",
+        },
+        metadata: {
+          paneId: "%1",
+        },
+      }),
+      new Date("2025-01-01T12:00:01Z"),
+    );
+
+    assert.strictEqual(nextState, initialState);
+  });
+
+  it("returns a new state array when tool call status changes", () => {
+    const callId = "status-change-tool-call";
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "running",
+        detail: {
+          type: "shell",
+          command: "npm test",
+        },
+      }),
+      new Date("2025-01-01T12:10:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "completed",
+        detail: {
+          type: "shell",
+          command: "npm test",
+        },
+      }),
+      new Date("2025-01-01T12:10:01Z"),
+    );
+
+    assert.notStrictEqual(nextState, initialState);
+  });
+
+  it("returns a new state array when tool call detail changes", () => {
+    const callId = "detail-change-tool-call";
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "running",
+        detail: {
+          type: "shell",
+          command: "npm test",
+        },
+      }),
+      new Date("2025-01-01T12:20:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "running",
+        detail: {
+          type: "shell",
+          command: "npm run typecheck",
+        },
+      }),
+      new Date("2025-01-01T12:20:01Z"),
+    );
+
+    assert.notStrictEqual(nextState, initialState);
+  });
+
+  it("returns a new state array when tool call error changes", () => {
+    const callId = "error-change-tool-call";
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "failed",
+        error: { message: "first failure" },
+        detail: {
+          type: "shell",
+          command: "npm test",
+        },
+      }),
+      new Date("2025-01-01T12:30:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "failed",
+        error: { message: "second failure" },
+        detail: {
+          type: "shell",
+          command: "npm test",
+        },
+      }),
+      new Date("2025-01-01T12:30:01Z"),
+    );
+
+    assert.notStrictEqual(nextState, initialState);
+  });
+});
 
 describe("stream reducer canonical tool calls", () => {
   it("is deterministic for equivalent hydration sequences", () => {
@@ -179,18 +367,6 @@ describe("stream reducer canonical tool calls", () => {
             subAgentType: "Explore",
             description: "Inspect repository structure",
             log: "[Read] README.md\n[Bash] ls",
-            actions: [
-              {
-                index: 1,
-                toolName: "Read",
-                summary: "README.md",
-              },
-              {
-                index: 2,
-                toolName: "Bash",
-                summary: "ls",
-              },
-            ],
           },
         }),
         timestamp: new Date("2025-01-01T10:12:00Z"),
@@ -218,18 +394,6 @@ describe("stream reducer canonical tool calls", () => {
       subAgentType: "Explore",
       description: "Inspect repository structure",
       log: "[Read] README.md\n[Bash] ls",
-      actions: [
-        {
-          index: 1,
-          toolName: "Read",
-          summary: "README.md",
-        },
-        {
-          index: 2,
-          toolName: "Bash",
-          summary: "ls",
-        },
-      ],
     });
 
     const display = buildToolCallDisplayModel({

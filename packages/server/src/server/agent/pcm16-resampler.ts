@@ -51,8 +51,8 @@ export class Pcm16MonoResampler {
     while (this.pos < maxPos) {
       const i = Math.floor(this.pos);
       const frac = this.pos - i;
-      const s0 = src[i]!;
-      const s1 = src[i + 1]!;
+      const s0 = src[i];
+      const s1 = src[i + 1];
       const sample = s0 + (s1 - s0) * frac;
       const clamped = Math.max(-1, Math.min(1, sample));
       const int16 = Math.round(clamped * 32767);
@@ -61,7 +61,7 @@ export class Pcm16MonoResampler {
     }
 
     // Keep the last input sample as carry for the next chunk.
-    const lastInput = srcChunk[srcChunk.length - 1]!;
+    const lastInput = srcChunk[srcChunk.length - 1];
     this.carrySample = lastInput;
 
     // Shift position so next chunk (which will include carry sample) continues smoothly.

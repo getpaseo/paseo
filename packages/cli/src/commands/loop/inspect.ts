@@ -83,11 +83,11 @@ export async function runLoopInspectCommand(
   options: LoopInspectOptions,
   _command: Command,
 ): Promise<LoopInspectResult> {
-  const host = getDaemonHost({ host: options.host as string | undefined });
+  const host = getDaemonHost({ host: options.host });
   let client;
   try {
     client = (await connectToDaemon({
-      host: options.host as string | undefined,
+      host: options.host,
     })) as unknown as LoopDaemonClient;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -6,7 +6,11 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function normalizeWorkspaceIdentity(value: string | null | undefined): string | null {
+export function normalizeWorkspaceOpaqueId(value: string | null | undefined): string | null {
+  return trimNonEmpty(value);
+}
+
+export function normalizeWorkspacePath(value: string | null | undefined): string | null {
   const trimmed = trimNonEmpty(value);
   if (!trimmed) {
     return null;

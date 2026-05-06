@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { platform } from "node:os";
+import { execCommand } from "@getpaseo/server";
 
 export interface NodePathFromPidResult {
   nodePath: string | null;
@@ -13,63 +13,37 @@ function normalizeError(error: unknown): string {
   return String(error);
 }
 
-function resolveNodePathFromPidUnix(pid: number): NodePathFromPidResult {
-  const result = spawnSync("ps", ["-o", "comm=", "-p", String(pid)], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  if (result.error) {
-    return { nodePath: null, error: `ps failed: ${normalizeError(result.error)}` };
+async function resolveNodePathFromPidUnix(pid: number): Promise<NodePathFromPidResult> {
+  try {
+    const { stdout } = await execCommand("ps", ["-o", "comm=", "-p", String(pid)]);
+    const resolved = stdout.trim();
+    return resolved
+      ? { nodePath: resolved }
+      : { nodePath: null, error: "ps returned an empty command path" };
+  } catch (error) {
+    return { nodePath: null, error: `ps failed: ${normalizeError(error)}` };
   }
-
-  if ((result.status ?? 1) !== 0) {
-    const details = result.stderr?.trim();
-    return {
-      nodePath: null,
-      error: details ? `ps failed: ${details}` : `ps exited with code ${result.status ?? 1}`,
-    };
-  }
-
-  const resolved = result.stdout.trim();
-  return resolved
-    ? { nodePath: resolved }
-    : { nodePath: null, error: "ps returned an empty command path" };
 }
 
-function runProcessProbe(
+async function runProcessProbe(
   command: string,
   args: string[],
-): {
+): Promise<{
   resolved: string | null;
   error?: string;
-} {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  if (result.error) {
-    return { resolved: null, error: `${command} failed: ${normalizeError(result.error)}` };
+}> {
+  try {
+    const { stdout } = await execCommand(command, args);
+    const resolved = stdout.trim();
+    return resolved
+      ? { resolved }
+      : { resolved: null, error: `${command} returned no executable path` };
+  } catch (error) {
+    return { resolved: null, error: `${command} failed: ${normalizeError(error)}` };
   }
-
-  if ((result.status ?? 1) !== 0) {
-    const details = result.stderr?.trim();
-    return {
-      resolved: null,
-      error: details
-        ? `${command} failed: ${details}`
-        : `${command} exited with code ${result.status ?? 1}`,
-    };
-  }
-
-  const resolved = result.stdout.trim();
-  return resolved
-    ? { resolved }
-    : { resolved: null, error: `${command} returned no executable path` };
 }
 
-function resolveNodePathFromPidWindows(pid: number): NodePathFromPidResult {
+async function resolveNodePathFromPidWindows(pid: number): Promise<NodePathFromPidResult> {
   const probes: Array<{
     label: string;
     command: string;
@@ -102,29 +76,31 @@ function resolveNodePathFromPidWindows(pid: number): NodePathFromPidResult {
   ];
 
   const errors: string[] = [];
-  for (const probe of probes) {
-    const result = runProcessProbe(probe.command, probe.args);
+
+  async function tryProbe(index: number): Promise<NodePathFromPidResult> {
+    if (index >= probes.length) {
+      return {
+        nodePath: null,
+        error: errors.join("; ") || "could not resolve executable path from PID",
+      };
+    }
+    const probe = probes[index];
+    const result = await runProcessProbe(probe.command, probe.args);
     if (result.resolved) {
       const resolved = probe.parseValue ? probe.parseValue(result.resolved) : result.resolved;
-      if (resolved) {
-        return { nodePath: resolved };
-      }
+      if (resolved) return { nodePath: resolved };
       errors.push(`${probe.label} returned no executable path`);
-      continue;
-    }
-    if (result.error) {
+    } else if (result.error) {
       errors.push(`${probe.label}: ${result.error}`);
     }
+    return tryProbe(index + 1);
   }
 
-  return {
-    nodePath: null,
-    error: errors.join("; ") || "could not resolve executable path from PID",
-  };
+  return tryProbe(0);
 }
 
-export function resolveNodePathFromPid(pid: number): NodePathFromPidResult {
+export async function resolveNodePathFromPid(pid: number): Promise<NodePathFromPidResult> {
   return platform() === "win32"
-    ? resolveNodePathFromPidWindows(pid)
-    : resolveNodePathFromPidUnix(pid);
+    ? await resolveNodePathFromPidWindows(pid)
+    : await resolveNodePathFromPidUnix(pid);
 }

@@ -1,8 +1,8 @@
-type PartialParseResult<T> = {
+interface PartialParseResult<T> {
   value: T;
   nextIndex: number;
   complete: boolean;
-};
+}
 
 function skipWhitespace(input: string, index: number): number {
   let currentIndex = index;

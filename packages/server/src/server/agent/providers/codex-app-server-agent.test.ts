@@ -1,5 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
-import { existsSync, rmSync } from "node:fs";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
 
 import type {
   AgentLaunchContext,
@@ -12,6 +18,37 @@ import {
   codexAppServerTurnInputFromPrompt,
 } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
+
+interface CollaborationModeRecord {
+  name: string;
+  mode?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  developer_instructions?: string | null;
+}
+
+interface CodexSessionTestAccess {
+  handleToolApprovalRequest(params: unknown): Promise<unknown>;
+  handleNotification(method: string, params: unknown): void;
+  loadPersistedHistory(): Promise<void>;
+  refreshResolvedCollaborationMode(): void;
+  serviceTier: "fast" | null;
+  planModeEnabled: boolean;
+  collaborationModes: CollaborationModeRecord[];
+  config: AgentSessionConfig;
+}
+
+interface CodexClientLike {
+  request: (method: string, ...rest: unknown[]) => Promise<unknown>;
+}
+
+type CodexTestSession = AgentSession & {
+  connected: boolean;
+  currentThreadId: string | null;
+  activeForegroundTurnId: string | null;
+  client: CodexClientLike | null;
+};
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
@@ -27,7 +64,7 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
-function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
+function createSession(configOverrides: Partial<AgentSessionConfig> = {}): CodexTestSession {
   const session = new __codexAppServerInternals.CodexAppServerAgentSession(
     createConfig(configOverrides),
     null,
@@ -35,14 +72,131 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
     () => {
       throw new Error("Test session cannot spawn Codex app-server");
     },
-  ) as unknown as AgentSession & { [key: string]: unknown };
+  ) as CodexTestSession;
   session.connected = true;
   session.currentThreadId = "test-thread";
   session.activeForegroundTurnId = "test-turn";
   return session;
 }
 
+function asInternals(session: CodexTestSession): CodexSessionTestAccess {
+  return castInternals<CodexSessionTestAccess>(session);
+}
+
 describe("Codex app-server provider", () => {
+  test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const fakeClient: CodexClientLike = {
+      async request(method: string, params?: unknown) {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "ephemeral-thread" } };
+        }
+        return null;
+      },
+    };
+
+    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+      createConfig({ thinkingOptionId: "medium" }),
+      null,
+      createTestLogger(),
+      () => {
+        throw new Error("Test session cannot spawn Codex app-server");
+      },
+      {},
+      true,
+    );
+    castInternals<{ client: CodexClientLike }>(session).client = fakeClient;
+
+    await castInternals<{ ensureThread: () => Promise<void> }>(session).ensureThread();
+
+    const startCall = requests.find((req) => req.method === "thread/start");
+    expect(startCall).toBeDefined();
+    expect(startCall?.params).toMatchObject({ ephemeral: true });
+  });
+
+  test("omits ephemeral from thread/start by default", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const fakeClient: CodexClientLike = {
+      async request(method: string, params?: unknown) {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "persistent-thread" } };
+        }
+        return null;
+      },
+    };
+
+    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+      createConfig({ thinkingOptionId: "medium" }),
+      null,
+      createTestLogger(),
+      () => {
+        throw new Error("Test session cannot spawn Codex app-server");
+      },
+    );
+    castInternals<{ client: CodexClientLike }>(session).client = fakeClient;
+
+    await castInternals<{ ensureThread: () => Promise<void> }>(session).ensureThread();
+
+    const startCall = requests.find((req) => req.method === "thread/start");
+    expect(startCall).toBeDefined();
+    expect((startCall!.params as Record<string, unknown>).ephemeral).toBeUndefined();
+  });
+
+  test("disposes an unresponsive app-server child with SIGKILL", async () => {
+    vi.useFakeTimers();
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+    child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
+    child.stdout = new PassThrough() as ChildProcessWithoutNullStreams["stdout"];
+    child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
+    child.exitCode = null;
+    child.signalCode = null;
+    child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+    const client = new __codexAppServerInternals.CodexAppServerClient(child, createTestLogger());
+
+    try {
+      const disposePromise = client.dispose();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(disposePromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
+    const cwd = path.join(tempDir, "repo", "packages", "app");
+    const repoSkillDir = path.join(tempDir, "repo", ".codex", "skills", "shipper");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(repoSkillDir, { recursive: true });
+    writeFileSync(
+      path.join(repoSkillDir, "SKILL.md"),
+      "---\nname: shipper\ndescription: Ship changes carefully.\n---\n",
+    );
+    const workspaceGitService = {
+      resolveRepoRoot: vi.fn().mockResolvedValue(path.join(tempDir, "repo")),
+    };
+
+    try {
+      await expect(
+        __codexAppServerInternals.listCodexSkills(cwd, workspaceGitService),
+      ).resolves.toContainEqual({
+        name: "shipper",
+        description: "Ship changes carefully.",
+        argumentHint: "",
+      });
+      expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   const logger = createTestLogger();
 
   test("extracts context window usage from snake_case token payloads", () => {
@@ -196,7 +350,7 @@ describe("Codex app-server provider", () => {
     });
 
     session.activeForegroundTurnId = null;
-    session.client = { request } as any;
+    session.client = createStub<CodexClientLike>({ request });
 
     await session.startTurn("Return JSON", {
       outputSchema: {
@@ -222,6 +376,59 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("resolves Codex skill slash commands into app-server skill input", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "skills/list") {
+        return {
+          data: [
+            {
+              cwd: "/tmp/codex-question-test",
+              skills: [
+                {
+                  name: "paseo-implement",
+                  description: "Execute an existing Paseo plan.",
+                  path: "/tmp/skills/paseo-implement/SKILL.md",
+                },
+              ],
+              errors: [],
+            },
+          ],
+        };
+      }
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("/paseo-implement in a worktree, remember to use Claude for the UI");
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        input: [
+          {
+            type: "skill",
+            name: "paseo-implement",
+            path: "/tmp/skills/paseo-implement/SKILL.md",
+          },
+          {
+            type: "text",
+            text: "in a worktree, remember to use Claude for the UI",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+  });
+
   test("maps image prompt blocks to Codex localImage input", async () => {
     const input = await codexAppServerTurnInputFromPrompt(
       [
@@ -238,6 +445,95 @@ describe("Codex app-server provider", () => {
       expect(existsSync(localImage.path)).toBe(true);
       rmSync(localImage.path, { force: true });
     }
+  });
+
+  test("maps github_pr prompt attachments to Codex text input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          body: "Review body",
+          baseRefName: "main",
+          headRefName: "fix/worktree-race",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      {
+        type: "text",
+        text_elements: [],
+        text: expect.stringContaining("GitHub PR #123: Fix race in worktree setup"),
+      },
+    ]);
+  });
+
+  test("passes Codex skill prompt blocks through to Codex app-server input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        { type: "skill", name: "fix-build", path: "/tmp/skills/fix-build/SKILL.md" },
+        { type: "text", text: "keep this build moving" },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      { type: "skill", name: "fix-build", path: "/tmp/skills/fix-build/SKILL.md" },
+      { type: "text", text: "keep this build moving", text_elements: [] },
+    ]);
+  });
+
+  test("separates Codex text prompts from rendered attachment text", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        { type: "text", text: "Please review this" },
+        {
+          type: "github_issue",
+          mimeType: "application/github-issue",
+          number: 456,
+          title: "Attachment spacing",
+          url: "https://github.com/getpaseo/paseo/issues/456",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      { type: "text", text: "Please review this", text_elements: [] },
+      {
+        type: "text",
+        text: expect.stringMatching(/^\n\nGitHub Issue #456: Attachment spacing/),
+        text_elements: [],
+      },
+    ]);
+  });
+
+  test("does not prefix Codex attachment-only prompts with a blank line", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        {
+          type: "github_issue",
+          mimeType: "application/github-issue",
+          number: 456,
+          title: "Attachment spacing",
+          url: "https://github.com/getpaseo/paseo/issues/456",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      {
+        type: "text",
+        text: expect.stringMatching(/^GitHub Issue #456: Attachment spacing/),
+        text_elements: [],
+      },
+    ]);
   });
 
   test("maps patch notifications with array-style changes and alias diff keys", () => {
@@ -352,7 +648,7 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    void (session as any).handleToolApprovalRequest({
+    void asInternals(session).handleToolApprovalRequest({
       itemId: "call-question-1",
       threadId: "thread-1",
       turnId: "turn-1",
@@ -437,12 +733,158 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("converts Codex collab agent notifications through the normal timeline path", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-normal-path",
+        tool: "spawnAgent",
+        status: "inProgress",
+        prompt: "Inspect the stream path.",
+        receiverThreadIds: [],
+        agentsStates: {},
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "tool_call",
+          callId: "call-sub-agent-normal-path",
+          name: "Sub-agent",
+          status: "running",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Sub-agent",
+            description: "Inspect the stream path.",
+            log: "",
+            actions: [],
+          },
+        },
+      },
+    ]);
+  });
+
+  test("folds child-thread Codex activity into the parent sub-agent tool call", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-child-activity",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Report findings.",
+        receiverThreadIds: ["child-thread-1"],
+        agentsStates: {
+          "child-thread-1": { status: "pendingInit", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "child-thread-1",
+      itemId: "child-message-1",
+      delta: "Found the path.",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-1",
+      item: {
+        type: "agentMessage",
+        id: "child-message-1",
+        text: "Found the path.",
+      },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "child-thread-1",
+      turn: { status: "completed" },
+    });
+
+    const timelineEvents = events.filter((event) => event.type === "timeline");
+    expect(timelineEvents).toHaveLength(4);
+    expect(timelineEvents.every((event) => event.item.type === "tool_call")).toBe(true);
+    const finalItem = timelineEvents.at(-1)?.item;
+    expect(finalItem).toMatchObject({
+      type: "tool_call",
+      callId: "call-sub-agent-child-activity",
+      name: "Sub-agent",
+      status: "completed",
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Report findings.",
+        log: "[Assistant] Found the path.",
+        actions: [],
+      },
+    });
+  });
+
+  test("loads Codex persisted history from the app-server thread", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method !== "thread/read") {
+          return {};
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "agentMessage",
+                    id: "message-history",
+                    text: "History loaded.",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(requests.map((request) => [request.method, request.params])).toEqual([
+      ["thread/read", { threadId: "test-thread", includeTurns: true }],
+    ]);
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "History loaded.",
+        },
+      },
+    ]);
+  });
+
   test("maps question responses from headers back to question ids and completes the tool call", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    const pendingResponse = (session as any).handleToolApprovalRequest({
+    const pendingResponse = asInternals(session).handleToolApprovalRequest({
       itemId: "call-question-2",
       threadId: "thread-1",
       turnId: "turn-1",
@@ -523,19 +965,27 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    (session as any).handleNotification("turn/started", {
+    asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-1" },
     });
-    (session as any).handleNotification("turn/plan/updated", {
+    asInternals(session).handleNotification("turn/plan/updated", {
       plan: [
         { step: "Inspect the existing auth flow", status: "completed" },
         { step: "Implement the button behavior", status: "pending" },
       ],
     });
-    (session as any).handleNotification("turn/completed", {
+    asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
+    expect(
+      events.some(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.detail.type === "plan",
+      ),
+    ).toBe(false);
     expect(events.at(-2)).toEqual({
       type: "permission_requested",
       provider: "codex",
@@ -570,12 +1020,57 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("does not emit Codex plan thread items as timeline cards while plan approval is pending", () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-thread-item" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "plan-item-1",
+        type: "plan",
+        text: "- Inspect README\n- Add a short note",
+      },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          type: "tool_call",
+          detail: expect.objectContaining({ type: "plan" }),
+        }),
+      }),
+    );
+    expect(events.at(-2)).toEqual({
+      type: "permission_requested",
+      provider: "codex",
+      turnId: "test-turn",
+      request: expect.objectContaining({
+        provider: "codex",
+        name: "CodexPlanApproval",
+        kind: "plan",
+        input: {
+          plan: "- Inspect README\n- Add a short note",
+        },
+      }),
+    });
+  });
+
   test("emits usage_updated on token usage updates and keeps usage on turn completion", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    (session as any).handleNotification("thread/tokenUsage/updated", {
+    asInternals(session).handleNotification("thread/tokenUsage/updated", {
       tokenUsage: {
         model_context_window: 200000,
         last: {
@@ -586,7 +1081,7 @@ describe("Codex app-server provider", () => {
         },
       },
     });
-    (session as any).handleNotification("turn/completed", {
+    asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -616,20 +1111,225 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("approving a synthetic Codex plan permission disables plan and fast mode and returns follow-up prompt", async () => {
+  test("streams Codex assistant message deltas and does not replay completed text", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-1",
+      delta: "Hel",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-1",
+      delta: "lo",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "assistant-item-1",
+        type: "agentMessage",
+        text: "Hello",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "Hel" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "lo" },
+      },
+    ]);
+  });
+
+  test("emits only the missing assistant suffix when completed text extends streamed deltas", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-2",
+      delta: "Hel",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-2",
+      delta: "lo",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "assistant-item-2",
+        type: "agentMessage",
+        text: "Hello!",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "Hel" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "lo" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "!" },
+      },
+    ]);
+  });
+
+  test("emits a markdown divider when a new Codex assistant item starts after the previous one completed", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-3",
+      delta:
+        "I’m in the waiting phase now. The next read is intentionally delayed so we get meaningful CI state instead of churn.",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "assistant-item-3",
+        type: "agentMessage",
+        text: "I’m in the waiting phase now. The next read is intentionally delayed so we get meaningful CI state instead of churn.",
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-4",
+      delta:
+        "CI is still cooking. I’m staying on the current run rather than jumping around, because the first red job will tell us exactly whether anything else needs work.",
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          text: "I’m in the waiting phase now. The next read is intentionally delayed so we get meaningful CI state instead of churn.",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          text: "\n\n---\n\nCI is still cooking. I’m staying on the current run rather than jumping around, because the first red job will tell us exactly whether anything else needs work.",
+        },
+      },
+    ]);
+  });
+
+  test("streams Codex reasoning deltas and does not replay completed reasoning", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-1",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-1",
+      delta: "ing",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "reasoning-item-1",
+        type: "reasoning",
+        summary: ["Thinking"],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "ing" },
+      },
+    ]);
+  });
+
+  test("emits only the missing reasoning suffix when completed reasoning extends streamed deltas", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-2",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-2",
+      delta: "ing",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "reasoning-item-2",
+        type: "reasoning",
+        summary: ["Thinking!"],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "ing" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "!" },
+      },
+    ]);
+  });
+
+  test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    (session as any).handleNotification("turn/started", {
+    asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-2" },
     });
-    (session as any).handleNotification("turn/plan/updated", {
+    asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the new flow", status: "pending" }],
     });
-    (session as any).handleNotification("turn/completed", {
+    asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -647,11 +1347,11 @@ describe("Codex app-server provider", () => {
       selectedActionId: "implement",
     });
 
-    expect((session as any).serviceTier).toBeNull();
-    expect((session as any).planModeEnabled).toBe(false);
-    expect((session as any).config.featureValues).toEqual({
+    expect(asInternals(session).serviceTier).toBe("fast");
+    expect(asInternals(session).planModeEnabled).toBe(false);
+    expect(asInternals(session).config.featureValues).toEqual({
       plan_mode: false,
-      fast_mode: false,
+      fast_mode: true,
     });
     // The session returns the follow-up prompt instead of calling startTurn directly.
     // The caller (session/agent-manager) is responsible for sending it through streamAgent.
@@ -668,5 +1368,118 @@ describe("Codex app-server provider", () => {
         selectedActionId: "implement",
       },
     });
+  });
+
+  test("approving a synthetic Codex plan permission keeps fast mode disabled when it started disabled", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: false },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-3" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the safe flow", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const request = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(request).toBeDefined();
+    if (!request) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    const result = await session.respondToPermission(request.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+
+    expect(asInternals(session).serviceTier).toBeNull();
+    expect(asInternals(session).planModeEnabled).toBe(false);
+    expect(asInternals(session).config.featureValues).toEqual({
+      plan_mode: false,
+      fast_mode: false,
+    });
+    expect(result?.followUpPrompt).toEqual(
+      expect.stringContaining("The user approved the plan. Implement it now."),
+    );
+  });
+
+  test("follow-up implementation turn keeps fast service tier and switches back to code collaboration mode", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: true },
+    });
+    asInternals(session).collaborationModes = [
+      {
+        name: "Code",
+        mode: "code",
+        developer_instructions: "Built-in code mode",
+      },
+      {
+        name: "Plan",
+        mode: "plan",
+        developer_instructions: "Built-in plan mode",
+      },
+    ];
+    asInternals(session).refreshResolvedCollaborationMode();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-4" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the fast flow", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const permissionRequest = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(permissionRequest).toBeDefined();
+    if (!permissionRequest) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    const result = await session.respondToPermission(permissionRequest.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    expect(result?.followUpPrompt).toEqual(expect.any(String));
+
+    await session.startTurn(result!.followUpPrompt!);
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        serviceTier: "fast",
+        collaborationMode: expect.objectContaining({
+          mode: "code",
+        }),
+      }),
+    );
   });
 });

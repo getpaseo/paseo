@@ -1,0 +1,23 @@
+# NOTE: Render through the workspace-create shell scripts before running when
+# using ${PASEO_MAESTRO_APP_ID}. Maestro does not substitute environment vars.
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Start on the New Workspace screen after model selection. Taps Create and
+# proves the redirect completed into a workspace draft-agent tab.
+
+- tapOn: "Create"
+
+- extendedWaitUntil:
+    visible:
+      id: "workspace-header-title"
+    timeout: 60000
+
+- extendedWaitUntil:
+    visible:
+      id: "message-input-root"
+    timeout: 30000
+
+- assertNotVisible: "New workspace"
+- assertNotVisible: "Select a model"
+- assertNotVisible: "There was a problem loading the project."
+- assertNotVisible: "The specified child already has a parent"

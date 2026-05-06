@@ -1,0 +1,8 @@
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Focused repro window. Assumes `workspace-create-android-ready-sidebar.yaml`
+# already left the sidebar open with the prepared project visible.
+
+- runFlow: flows/new-workspace-open-from-sidebar.yaml
+- runFlow: flows/new-workspace-select-codex-gpt54.yaml
+- runFlow: flows/new-workspace-submit-and-assert-created.yaml

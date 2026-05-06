@@ -15,16 +15,25 @@
 import nacl from "tweetnacl";
 import { fromByteArray, toByteArray } from "base64-js";
 
-export type KeyPair = {
+export interface KeyPair {
   publicKey: Uint8Array; // 32 bytes
   secretKey: Uint8Array; // 32 bytes
-};
+}
 
 export type SharedKey = Uint8Array; // 32 bytes (box.before)
 
 const NONCE_LENGTH = nacl.box.nonceLength; // 24
 
 let prngReady = false;
+
+interface GlobalWithCrypto {
+  crypto?: Crypto;
+}
+
+function getGlobalCrypto(): Crypto | undefined {
+  const g = globalThis as GlobalWithCrypto;
+  return g.crypto;
+}
 
 function ensurePrng(): void {
   if (prngReady) return;
@@ -37,10 +46,12 @@ function ensurePrng(): void {
     // fallthrough
   }
 
-  const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto;
+  const cryptoObj = getGlobalCrypto();
   if (cryptoObj?.getRandomValues) {
     nacl.setPRNG((x, n) => {
-      cryptoObj.getRandomValues(x.subarray(0, n));
+      const buf = new Uint8Array(n);
+      cryptoObj.getRandomValues(buf);
+      x.set(buf, 0);
     });
     prngReady = true;
     return;

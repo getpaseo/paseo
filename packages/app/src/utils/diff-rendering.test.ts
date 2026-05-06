@@ -8,7 +8,11 @@ import {
 
 describe("diff-rendering", () => {
   it("keeps header gutters tall even when they do not show a line number", () => {
-    expect(formatDiffGutterText(null)).toBe(" ");
+    // Must be a non-collapsing whitespace: the gutter <Text> uses
+    // numberOfLines={1}, which on web wraps in display:-webkit-box;
+    // overflow:hidden. A plain ASCII space collapses to zero height
+    // there and shifts every line number up by one row.
+    expect(formatDiffGutterText(null)).toBe("\u00A0");
     expect(formatDiffGutterText(82)).toBe("82");
   });
 

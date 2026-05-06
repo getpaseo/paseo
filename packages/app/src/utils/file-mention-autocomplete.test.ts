@@ -36,6 +36,14 @@ describe("findActiveFileMention", () => {
     });
     expect(mention).toBeNull();
   });
+
+  it("returns null when @ at start is followed by a delimiter", () => {
+    const mention = findActiveFileMention({
+      text: "@ ",
+      cursorIndex: 2,
+    });
+    expect(mention).toBeNull();
+  });
 });
 
 describe("applyFileMentionReplacement", () => {

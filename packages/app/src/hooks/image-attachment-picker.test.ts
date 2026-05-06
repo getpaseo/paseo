@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const desktopHostState = vi.hoisted(() => ({
-  api: null as any,
+  api: null as unknown,
 }));
 
 vi.mock("@/desktop/host", () => ({

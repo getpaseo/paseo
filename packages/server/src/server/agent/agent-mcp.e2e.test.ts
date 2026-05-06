@@ -8,39 +8,22 @@ import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pino from "pino";
 
+import { withTimeout } from "../../utils/promise-timeout.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
-type StructuredContent = { [key: string]: unknown };
+interface StructuredContent {
+  [key: string]: unknown;
+}
 
-type McpToolResult = {
+interface McpToolResult {
   structuredContent?: StructuredContent;
   content?: Array<{ structuredContent?: StructuredContent } | StructuredContent>;
-};
+}
 
-type McpClient = {
-  callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
+interface McpClient {
+  callTool: (input: { name: string; args?: StructuredContent }) => Promise<McpToolResult>;
   close: () => Promise<void>;
-};
-
-async function withTimeout<T>(options: {
-  promise: Promise<T>;
-  timeoutMs: number;
-  label: string;
-}): Promise<T> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error(`Timed out after ${options.timeoutMs}ms (${options.label})`));
-    }, options.timeoutMs);
-  });
-  try {
-    return await Promise.race([options.promise, timeout]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
 }
 
 async function waitForPathExists(options: {
@@ -78,23 +61,29 @@ function getStructuredContent(result: McpToolResult): StructuredContent | null {
   }
   const content = result.content?.[0];
   if (content && typeof content === "object" && "structuredContent" in content) {
-    const structured = (content as { structuredContent?: StructuredContent }).structuredContent;
-    if (structured) return structured;
+    if (content.structuredContent) return content.structuredContent;
   }
   if (content && typeof content === "object") {
-    return content as StructuredContent;
+    return content;
   }
   return null;
+}
+
+async function createMcpClient(url: string): Promise<McpClient> {
+  const transport = new StreamableHTTPClientTransport(new URL(url));
+  const rawClient = await experimental_createMCPClient({ transport });
+  const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
+  return { callTool: boundCallTool, close: () => rawClient.close() };
 }
 
 async function waitForAgentCompletion(options: {
   client: McpClient;
   agentId: string;
 }): Promise<void> {
-  const waitResult = (await options.client.callTool({
+  const waitResult = await options.client.callTool({
     name: "wait_for_agent",
     args: { agentId: options.agentId },
-  })) as McpToolResult;
+  });
   const payload = getStructuredContent(waitResult);
   if (!payload) {
     throw new Error("wait_for_agent returned no structured payload");
@@ -104,7 +93,7 @@ async function waitForAgentCompletion(options: {
   }
   const status = payload.status;
   if (status === "running" || status === "initializing") {
-    throw new Error(`Agent still running after wait_for_agent (status=${String(status)})`);
+    throw new Error(`Agent still running after wait_for_agent (status=${status})`);
   }
 }
 
@@ -119,7 +108,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${port}`,
       paseoHome,
       corsAllowedOrigins: [],
-      allowedHosts: true,
+      hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -130,10 +119,7 @@ describe("agent MCP end-to-end (offline)", () => {
     const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp/agents`),
-    );
-    const client = (await experimental_createMCPClient({ transport })) as McpClient;
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
     let agentId: string | null = null;
     try {
@@ -146,20 +132,20 @@ describe("agent MCP end-to-end (offline)", () => {
         "Do not respond before the command finishes.",
       ].join("\n");
 
-      const result = (await client.callTool({
+      const result = await client.callTool({
         name: "create_agent",
         args: {
           cwd: agentCwd,
           title: "MCP e2e smoke",
-          provider: "claude",
+          provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt,
           background: false,
         },
-      })) as McpToolResult;
+      });
 
       const payload = getStructuredContent(result);
-      agentId = (payload?.agentId as string | undefined) ?? null;
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
       await waitForAgentCompletion({ client, agentId: agentId! });
@@ -192,7 +178,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${port}`,
       paseoHome,
       corsAllowedOrigins: [],
-      allowedHosts: true,
+      hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -203,10 +189,7 @@ describe("agent MCP end-to-end (offline)", () => {
     const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp/agents`),
-    );
-    const client = (await experimental_createMCPClient({ transport })) as McpClient;
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
     const disabledPaseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-disabled-"));
     const disabledStaticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-disabled-"));
@@ -216,7 +199,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${disabledPort}`,
       paseoHome: disabledPaseoHome,
       corsAllowedOrigins: [],
-      allowedHosts: true,
+      hostnames: true,
       mcpEnabled: true,
       mcpInjectIntoAgents: false,
       staticDir: disabledStaticDir,
@@ -227,29 +210,24 @@ describe("agent MCP end-to-end (offline)", () => {
     const disabledDaemon = await createPaseoDaemon(disabledDaemonConfig, pino({ level: "silent" }));
     await disabledDaemon.start();
 
-    const disabledTransport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${disabledPort}/mcp/agents`),
-    );
-    const disabledClient = (await experimental_createMCPClient({
-      transport: disabledTransport,
-    })) as McpClient;
+    const disabledClient = await createMcpClient(`http://127.0.0.1:${disabledPort}/mcp/agents`);
 
     let agentId: string | null = null;
     let disabledAgentId: string | null = null;
     try {
-      const result = (await client.callTool({
+      const result = await client.callTool({
         name: "create_agent",
         args: {
           cwd: agentCwd,
           title: "Injected MCP",
-          provider: "claude",
+          provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
           background: true,
         },
-      })) as McpToolResult;
+      });
       const payload = getStructuredContent(result);
-      agentId = (payload?.agentId as string | undefined) ?? null;
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
 
       const injectedAgent = daemon.agentManager.getAgent(agentId!);
@@ -260,19 +238,20 @@ describe("agent MCP end-to-end (offline)", () => {
         },
       });
 
-      const disabledResult = (await disabledClient.callTool({
+      const disabledResult = await disabledClient.callTool({
         name: "create_agent",
         args: {
           cwd: disabledAgentCwd,
           title: "No injected MCP",
-          provider: "claude",
+          provider: "claude/claude-test-model",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
           background: true,
         },
-      })) as McpToolResult;
+      });
       const disabledPayload = getStructuredContent(disabledResult);
-      disabledAgentId = (disabledPayload?.agentId as string | undefined) ?? null;
+      disabledAgentId =
+        typeof disabledPayload?.agentId === "string" ? disabledPayload.agentId : null;
       expect(disabledAgentId).toBeTruthy();
 
       const disabledAgent = disabledDaemon.agentManager.getAgent(disabledAgentId!);
@@ -307,7 +286,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${port}`,
       paseoHome,
       corsAllowedOrigins: [],
-      allowedHosts: true,
+      hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -318,10 +297,7 @@ describe("agent MCP end-to-end (offline)", () => {
     const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp/agents`),
-    );
-    const client = (await experimental_createMCPClient({ transport })) as McpClient;
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
 
     let agentId: string | null = null;
     try {
@@ -356,13 +332,13 @@ describe("agent MCP end-to-end (offline)", () => {
         stdio: "pipe",
       });
 
-      const result = (await withTimeout({
+      const result = await withTimeout({
         promise: client.callTool({
           name: "create_agent",
           args: {
             cwd: repoRoot,
             title: "MCP worktree setup terminals",
-            provider: "claude",
+            provider: "claude/claude-test-model",
             mode: "bypassPermissions",
             initialPrompt: "say done and stop",
             worktreeName: "mcp-worktree-setup-test",
@@ -372,12 +348,12 @@ describe("agent MCP end-to-end (offline)", () => {
         }),
         timeoutMs: 2500,
         label: "create_agent should not block on setup",
-      })) as McpToolResult;
+      });
 
       const payload = getStructuredContent(result);
-      agentId = (payload?.agentId as string | undefined) ?? null;
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
       expect(agentId).toBeTruthy();
-      const worktreePath = (payload?.cwd as string | undefined) ?? "";
+      const worktreePath = typeof payload?.cwd === "string" ? payload.cwd : "";
       expect(worktreePath).toContain(`${path.sep}worktrees${path.sep}`);
       expect(existsSync(path.join(worktreePath, "setup-done.txt"))).toBe(false);
       expect(existsSync(path.join(worktreePath, "dev-terminal.txt"))).toBe(false);

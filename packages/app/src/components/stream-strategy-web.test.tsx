@@ -1,0 +1,210 @@
+/**
+ * @vitest-environment jsdom
+ */
+import React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { StreamItem } from "@/types/stream";
+import type { StreamSegmentRenderers, StreamViewportHandle } from "./stream-strategy";
+import { createWebStreamStrategy } from "./stream-strategy-web";
+
+vi.hoisted(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: "",
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
+vi.mock("./use-web-scrollbar", () => ({ useWebElementScrollbar: () => null }));
+
+function userMessage(index: number): StreamItem {
+  return {
+    kind: "user_message",
+    id: `message-${index}`,
+    text: `Message ${index}`,
+    timestamp: new Date(`2026-04-20T00:00:${String(index % 60).padStart(2, "0")}.000Z`),
+  };
+}
+
+const VIRTUAL_ROW_STYLE = { height: 24 };
+
+function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
+  return {
+    renderHistoryVirtualizedRow: (item) => {
+      onRowRender();
+      return <div style={VIRTUAL_ROW_STYLE}>{item.id}</div>;
+    },
+    renderHistoryMountedRow: (item) => <div>{item.id}</div>,
+    renderLiveHeadRow: (item) => <div>{item.id}</div>,
+    renderLiveAuxiliary: () => null,
+  };
+}
+
+describe("createWebStreamStrategy", () => {
+  let root: Root | null = null;
+  let container: HTMLDivElement | null = null;
+  let originalScrollTo: HTMLElement["scrollTo"] | undefined;
+  let originalOffsetHeight: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
+      value: true,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      value: class ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+      configurable: true,
+    });
+    originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = vi.fn();
+    originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return 24;
+      },
+    });
+  });
+
+  afterEach(() => {
+    if (root) {
+      act(() => {
+        root?.unmount();
+      });
+    }
+    root = null;
+    container?.remove();
+    container = null;
+    if (originalScrollTo) {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
+    }
+    if (originalOffsetHeight) {
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "offsetHeight");
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("mounts virtualized history without recursive row measurement updates", () => {
+    const rowRenderCount = vi.fn();
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const historyVirtualized = Array.from({ length: 16 }, (_, index) => userMessage(index));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <>
+          {strategy.render({
+            agentId: "agent",
+            segments: {
+              historyVirtualized,
+              historyMounted: [],
+              liveHead: [],
+            },
+            boundary: {
+              hasVirtualizedHistory: true,
+              hasMountedHistory: false,
+              hasLiveHead: false,
+              historyToHeadGap: 0,
+            },
+            renderers: createRenderers(rowRenderCount),
+            listEmptyComponent: null,
+            viewportRef,
+            routeBottomAnchorRequest: null,
+            isAuthoritativeHistoryReady: true,
+            onNearBottomChange: vi.fn(),
+            onNearHistoryStart: vi.fn(),
+            isLoadingOlderHistory: false,
+            hasOlderHistory: false,
+            scrollEnabled: true,
+            listStyle: null,
+            baseListContentContainerStyle: null,
+            forwardListContentContainerStyle: null,
+          })}
+        </>,
+      );
+    });
+
+    expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
+    expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
+  });
+
+  it("fires near-history-start when the user scrolls near the top", async () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const onNearHistoryStart = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <>
+          {strategy.render({
+            agentId: "agent",
+            segments: {
+              historyVirtualized: [],
+              historyMounted: [userMessage(1), userMessage(2)],
+              liveHead: [],
+            },
+            boundary: {
+              hasVirtualizedHistory: false,
+              hasMountedHistory: true,
+              hasLiveHead: false,
+              historyToHeadGap: 0,
+            },
+            renderers: createRenderers(vi.fn()),
+            listEmptyComponent: null,
+            viewportRef,
+            routeBottomAnchorRequest: null,
+            isAuthoritativeHistoryReady: true,
+            onNearBottomChange: vi.fn(),
+            onNearHistoryStart,
+            isLoadingOlderHistory: false,
+            hasOlderHistory: true,
+            scrollEnabled: true,
+            listStyle: null,
+            baseListContentContainerStyle: null,
+            forwardListContentContainerStyle: null,
+          })}
+        </>,
+      );
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    expect(scrollContainer).toBeInstanceOf(HTMLElement);
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1200 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 64 });
+
+    act(() => {
+      scrollContainer?.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+});

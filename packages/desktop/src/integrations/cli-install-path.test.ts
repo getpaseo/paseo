@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveCliInstallSourcePath } from "./cli-install-path";
 
 describe("cli-install-path", () => {
-  it("uses the packaged executable on supported unix platforms", () => {
+  it("uses the bundled shim for packaged macOS installs", () => {
     expect(
       resolveCliInstallSourcePath({
         platform: "darwin",
@@ -10,7 +10,7 @@ describe("cli-install-path", () => {
         executablePath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
         shimPath: "/Applications/Paseo.app/Contents/Resources/bin/paseo",
       }),
-    ).toBe("/Applications/Paseo.app/Contents/MacOS/Paseo");
+    ).toBe("/Applications/Paseo.app/Contents/Resources/bin/paseo");
   });
 
   it("prefers the original AppImage path on linux", () => {

@@ -1,21 +1,22 @@
 const IGNORED_ARG_PREFIXES = ["-psn_", "--no-sandbox"];
 
 export const DESKTOP_CLI_ENV = "PASEO_DESKTOP_CLI";
+const PASEO_NODE_ENV = "PASEO_NODE_ENV";
 
-export type NodeEntrypointSpec = {
+export interface NodeEntrypointSpec {
   entryPath: string;
   execArgv: string[];
-};
+}
 
-export type NodeEntrypointInvocation = {
+export interface NodeEntrypointInvocation {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
-};
+}
 
 export type NodeEntrypointArgvMode = "bare" | "node-script";
 
-type CreateNodeEntrypointInvocationInput = {
+interface CreateNodeEntrypointInvocationInput {
   execPath: string;
   isPackaged: boolean;
   packagedRunnerPath: string | null;
@@ -23,18 +24,22 @@ type CreateNodeEntrypointInvocationInput = {
   argvMode: NodeEntrypointArgvMode;
   args: string[];
   baseEnv: NodeJS.ProcessEnv;
-};
+}
 
-type ParseCliPassthroughArgsFromArgvInput = {
+interface ParseCliPassthroughArgsFromArgvInput {
   argv: string[];
   isDefaultApp: boolean;
   forceCli: boolean;
-};
+}
 
-export function createElectronNodeEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function createElectronNodeEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options?: { isPackaged?: boolean },
+): NodeJS.ProcessEnv {
   return {
     ...baseEnv,
     ELECTRON_RUN_AS_NODE: "1",
+    ...(options?.isPackaged === true ? { [PASEO_NODE_ENV]: "production" } : {}),
   };
 }
 
@@ -61,7 +66,7 @@ export function parseCliPassthroughArgsFromArgv(
 export function createNodeEntrypointInvocation(
   input: CreateNodeEntrypointInvocationInput,
 ): NodeEntrypointInvocation {
-  const env = createElectronNodeEnv(input.baseEnv);
+  const env = createElectronNodeEnv(input.baseEnv, { isPackaged: input.isPackaged });
 
   if (input.isPackaged) {
     if (!input.packagedRunnerPath) {

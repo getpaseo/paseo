@@ -1,0 +1,22 @@
+# NOTE: Render through the workspace-create shell scripts before running when
+# using ${PASEO_MAESTRO_*}. Maestro does not substitute environment vars.
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Start from the connected home screen and leave the Android sidebar open with
+# the prepared project visible.
+
+- extendedWaitUntil:
+    visible: "What shall we build today?"
+    timeout: 60000
+
+- tapOn:
+    id: "menu-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "sidebar-project-list"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible: ${PASEO_MAESTRO_PROJECT_NAME}
+    timeout: 30000

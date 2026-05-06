@@ -1,9 +1,20 @@
 import { describe, expect, test, vi } from "vitest";
+import type pino from "pino";
+import type { StoredAgentRecord } from "../agent/agent-storage.js";
+import type { ManagedAgent } from "../agent/agent-manager.js";
 import {
   buildChatMentionNotification,
   notifyChatMentions,
   resolveChatMentionTargetAgentIds,
 } from "./chat-mentions.js";
+
+function storedAgent(overrides: Partial<StoredAgentRecord> & { id: string }): StoredAgentRecord {
+  return { internal: false, archivedAt: null, ...overrides } as StoredAgentRecord;
+}
+
+function liveAgent(overrides: Partial<ManagedAgent> & { id: string }): ManagedAgent {
+  return { internal: false, ...overrides } as ManagedAgent;
+}
 
 describe("chat mentions", () => {
   test("@everyone expands to active non-archived agents", () => {
@@ -11,14 +22,14 @@ describe("chat mentions", () => {
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone"],
       storedAgents: [
-        { id: "agent-a", internal: false, archivedAt: null } as any,
-        { id: "agent-b", internal: false, archivedAt: "2026-03-28T00:00:00.000Z" } as any,
-        { id: "author-agent", internal: false, archivedAt: null } as any,
-        { id: "internal-agent", internal: true, archivedAt: null } as any,
+        storedAgent({ id: "agent-a" }),
+        storedAgent({ id: "agent-b", archivedAt: "2026-03-28T00:00:00.000Z" }),
+        storedAgent({ id: "author-agent" }),
+        storedAgent({ id: "internal-agent", internal: true }),
       ],
       liveAgents: [
-        { id: "agent-c", internal: false } as any,
-        { id: "internal-live", internal: true } as any,
+        liveAgent({ id: "agent-c" }),
+        liveAgent({ id: "internal-live", internal: true }),
       ],
     });
 
@@ -29,8 +40,8 @@ describe("chat mentions", () => {
     const targets = resolveChatMentionTargetAgentIds({
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone", "agent-a", "custom-title"],
-      storedAgents: [{ id: "agent-a", internal: false, archivedAt: null } as any],
-      liveAgents: [{ id: "agent-b", internal: false } as any],
+      storedAgents: [storedAgent({ id: "agent-a" })],
+      liveAgents: [liveAgent({ id: "agent-b" })],
     });
 
     expect(targets.sort()).toEqual(["agent-a", "agent-b", "custom-title"]);
@@ -55,7 +66,7 @@ describe("chat mentions", () => {
     const sendAgentMessage = vi.fn(async () => {});
     const logger = {
       warn: vi.fn(),
-    } as any;
+    } as unknown as pino.Logger;
 
     await notifyChatMentions({
       room: "coord-room",
@@ -63,8 +74,8 @@ describe("chat mentions", () => {
       body: "@everyone Check status",
       mentionAgentIds: ["everyone"],
       logger,
-      listStoredAgents: async () => [{ id: "agent-a", internal: false, archivedAt: null } as any],
-      listLiveAgents: () => [{ id: "agent-b", internal: false } as any],
+      listStoredAgents: async () => [storedAgent({ id: "agent-a" })],
+      listLiveAgents: () => [liveAgent({ id: "agent-b" })],
       resolveAgentIdentifier,
       sendAgentMessage,
     });

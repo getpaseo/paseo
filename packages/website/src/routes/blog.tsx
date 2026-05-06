@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { SiteHeader } from "~/components/site-header";
+import { SiteShell } from "~/components/site-shell";
 
 export const Route = createFileRoute("/blog")({
   component: BlogLayout,
@@ -7,13 +7,8 @@ export const Route = createFileRoute("/blog")({
 
 function BlogLayout() {
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-prose mx-auto p-6 md:p-12">
-        <div className="mb-8">
-          <SiteHeader />
-        </div>
-        <Outlet />
-      </div>
-    </div>
+    <SiteShell>
+      <Outlet />
+    </SiteShell>
   );
 }

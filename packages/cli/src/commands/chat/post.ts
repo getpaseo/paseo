@@ -32,7 +32,7 @@ export async function runPostCommand(
     ]);
     return {
       type: "single",
-      data: message!,
+      data: message,
       schema: chatMessageSchema,
     };
   } catch (err) {

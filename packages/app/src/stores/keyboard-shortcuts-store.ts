@@ -13,8 +13,6 @@ interface KeyboardShortcutsState {
   showShortcutBadges: boolean;
   /** Sidebar-visible workspace targets (up to 9), in top-to-bottom visual order. */
   sidebarShortcutWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
-  /** All visible workspace targets in top-to-bottom visual order. */
-  visibleWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
 
   setCommandCenterOpen: (open: boolean) => void;
   setProjectPickerOpen: (open: boolean) => void;
@@ -23,7 +21,6 @@ interface KeyboardShortcutsState {
   setAltDown: (down: boolean) => void;
   setCmdOrCtrlDown: (down: boolean) => void;
   setSidebarShortcutWorkspaceTargets: (targets: SidebarShortcutWorkspaceTarget[]) => void;
-  setVisibleWorkspaceTargets: (targets: SidebarShortcutWorkspaceTarget[]) => void;
   resetModifiers: () => void;
 }
 
@@ -59,7 +56,6 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   cmdOrCtrlDown: false,
   showShortcutBadges: false,
   sidebarShortcutWorkspaceTargets: [],
-  visibleWorkspaceTargets: [],
 
   setCommandCenterOpen: (open) => set({ commandCenterOpen: open }),
   setProjectPickerOpen: (open) => set({ projectPickerOpen: open }),
@@ -75,7 +71,6 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   },
   setSidebarShortcutWorkspaceTargets: (targets) =>
     set({ sidebarShortcutWorkspaceTargets: targets }),
-  setVisibleWorkspaceTargets: (targets) => set({ visibleWorkspaceTargets: targets }),
   resetModifiers: () => {
     set({ altDown: false, cmdOrCtrlDown: false });
     updateBadgeTimer(set, get);

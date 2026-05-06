@@ -2,7 +2,7 @@ import "dotenv/config";
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 
 function requireEnv(name: string): string {
   const value = process.env[name];

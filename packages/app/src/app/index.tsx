@@ -1,56 +1,56 @@
-import { useEffect, useSyncExternalStore } from "react";
-import { usePathname, useRouter } from "expo-router";
+import React from "react";
+import { Redirect, usePathname } from "expo-router";
 import { StartupSplashScreen } from "@/screens/startup-splash-screen";
-import { useHostRuntimeBootstrapState, useStoreReady } from "@/app/_layout";
-import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
-import { buildHostRootRoute } from "@/utils/host-routes";
+import { useEarliestOnlineHostServerId, useHostRuntimeBootstrapState } from "@/app/_layout";
+import {
+  resolveStartupRedirectRoute,
+  resolveStartupWorkspaceSelection,
+} from "@/app/host-runtime-bootstrap";
+import {
+  navigateToWorkspace,
+  useActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
+import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 
-const WELCOME_ROUTE = "/welcome";
-
-function useAnyOnlineHostServerId(serverIds: string[]): string | null {
-  const runtime = getHostRuntimeStore();
-
-  return useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => {
-      let firstOnlineServerId: string | null = null;
-      let firstOnlineAt: string | null = null;
-      for (const serverId of serverIds) {
-        const snapshot = runtime.getSnapshot(serverId);
-        const lastOnlineAt = snapshot?.lastOnlineAt ?? null;
-        if (!isHostRuntimeConnected(snapshot) || !lastOnlineAt) {
-          continue;
-        }
-        if (!firstOnlineAt || lastOnlineAt < firstOnlineAt) {
-          firstOnlineAt = lastOnlineAt;
-          firstOnlineServerId = serverId;
-        }
-      }
-      return firstOnlineServerId;
-    },
-    () => null,
-  );
-}
+const isDesktop = shouldUseDesktopDaemon();
 
 export default function Index() {
-  const router = useRouter();
   const pathname = usePathname();
   const bootstrapState = useHostRuntimeBootstrapState();
-  const storeReady = useStoreReady();
-  const hosts = useHosts();
-  const anyOnlineServerId = useAnyOnlineHostServerId(hosts.map((host) => host.serverId));
+  const anyOnlineHostServerId = useEarliestOnlineHostServerId();
+  const workspaceSelection = useActiveWorkspaceSelection();
 
-  useEffect(() => {
-    if (!storeReady) {
+  const redirectRoute = resolveStartupRedirectRoute({
+    pathname,
+    anyOnlineHostServerId,
+    workspaceSelection,
+    isWorkspaceSelectionLoaded: true,
+    hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
+  });
+  const startupWorkspaceSelection = resolveStartupWorkspaceSelection({
+    pathname,
+    anyOnlineHostServerId,
+    workspaceSelection,
+    isWorkspaceSelectionLoaded: true,
+    hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
+  });
+
+  React.useEffect(() => {
+    if (!startupWorkspaceSelection) {
       return;
     }
-    if (pathname !== "/" && pathname !== "") {
-      return;
-    }
+    navigateToWorkspace(startupWorkspaceSelection.serverId, startupWorkspaceSelection.workspaceId, {
+      currentPathname: pathname,
+    });
+  }, [pathname, startupWorkspaceSelection]);
 
-    const targetRoute = anyOnlineServerId ? buildHostRootRoute(anyOnlineServerId) : WELCOME_ROUTE;
-    router.replace(targetRoute);
-  }, [anyOnlineServerId, pathname, router, storeReady]);
+  if (startupWorkspaceSelection) {
+    return <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
+  }
 
-  return <StartupSplashScreen bootstrapState={bootstrapState} />;
+  if (redirectRoute) {
+    return <Redirect href={redirectRoute} />;
+  }
+
+  return <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
 }

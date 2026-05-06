@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
-import { View, Text, Platform } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
@@ -20,6 +21,9 @@ import {
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
+
+const EMPTY_CAPTURED_COMBOS: string[] = [];
 
 function ShortcutSequence({
   chord,
@@ -28,16 +32,68 @@ function ShortcutSequence({
   chord: string[] | null;
   heldModifiers: string | null;
 }) {
+  const displayChord = useMemo(() => {
+    const combos = [...(chord ?? [])];
+    if (heldModifiers) {
+      combos.push(heldModifiers);
+    }
+    return combos.map(comboStringToShortcutKeys);
+  }, [chord, heldModifiers]);
+
   if ((!chord || chord.length === 0) && !heldModifiers) {
     return <Text style={styles.capturingText}>Press shortcut...</Text>;
   }
 
-  const displayCombos = [...(chord ?? [])];
-  if (heldModifiers) {
-    displayCombos.push(heldModifiers);
-  }
+  return <Shortcut chord={displayChord} />;
+}
 
-  return <Shortcut chord={displayCombos.map(comboStringToShortcutKeys)} />;
+interface ShortcutRowContainerProps {
+  row: KeyboardShortcutHelpRow;
+  bindingId: string | null;
+  overrideCombo: string | undefined;
+  isCapturing: boolean;
+  capturedCombos: string[];
+  heldModifiers: string | null;
+  onStartCapture: (bindingId: string) => void;
+  onSaveCapture: () => void;
+  onCancelCapture: () => void;
+  onRemoveOverride: (bindingId: string) => void;
+}
+
+function ShortcutRowContainer({
+  row,
+  bindingId,
+  overrideCombo,
+  isCapturing,
+  capturedCombos,
+  heldModifiers,
+  onStartCapture,
+  onSaveCapture,
+  onCancelCapture,
+  onRemoveOverride,
+}: ShortcutRowContainerProps) {
+  const handleRebind = useCallback(() => {
+    if (bindingId) onStartCapture(bindingId);
+  }, [bindingId, onStartCapture]);
+
+  const handleReset = useCallback(() => {
+    if (bindingId) onRemoveOverride(bindingId);
+  }, [bindingId, onRemoveOverride]);
+
+  return (
+    <ShortcutRow
+      row={row}
+      bindingId={bindingId}
+      overrideCombo={overrideCombo}
+      isCapturing={isCapturing}
+      capturedCombos={capturedCombos}
+      heldModifiers={heldModifiers}
+      onRebind={handleRebind}
+      onDone={onSaveCapture}
+      onCancel={onCancelCapture}
+      onReset={handleReset}
+    />
+  );
 }
 
 function ShortcutRow({
@@ -63,10 +119,14 @@ function ShortcutRow({
   onCancel: () => void;
   onReset: () => void;
 }) {
-  const displayChord = overrideCombo ? chordStringToShortcutKeys(overrideCombo) : [row.keys];
+  const displayChord = useMemo(
+    () => (overrideCombo ? chordStringToShortcutKeys(overrideCombo) : [row.keys]),
+    [overrideCombo, row.keys],
+  );
+  const rowStyle = useMemo(() => [styles.row, isCapturing && styles.rowCapturing], [isCapturing]);
 
   return (
-    <View style={[styles.row, isCapturing && styles.rowCapturing]}>
+    <View style={rowStyle}>
       <Text style={styles.rowLabel}>{row.label}</Text>
       <View style={styles.rowActions}>
         {isCapturing ? (
@@ -109,36 +169,39 @@ export function KeyboardShortcutsSection() {
   const isDesktopApp = getIsElectronRuntime();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
 
-  useEffect(() => {
-    if (!isFocused && capturingBindingId !== null) {
-      cancelCapture();
-    }
-  }, [isFocused]);
-
-  function cancelCapture() {
+  const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
     setHeldModifiers(null);
     setCapturingBindingId(null);
     setCapturingShortcut(false);
-  }
+  }, [setCapturingShortcut]);
 
-  function startCapture(bindingId: string) {
-    setCapturedCombos([]);
-    setHeldModifiers(null);
-    setCapturingBindingId(bindingId);
-    setCapturingShortcut(true);
-  }
+  const startCapture = useCallback(
+    (bindingId: string) => {
+      setCapturedCombos([]);
+      setHeldModifiers(null);
+      setCapturingBindingId(bindingId);
+      setCapturingShortcut(true);
+    },
+    [setCapturingShortcut],
+  );
 
-  function saveCapture() {
+  const saveCapture = useCallback(() => {
     if (capturingBindingId === null || capturedCombos.length === 0) {
       return;
     }
     void setOverride(capturingBindingId, capturedCombos.join(" "));
     cancelCapture();
-  }
+  }, [capturingBindingId, capturedCombos, setOverride, cancelCapture]);
 
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    if (!isFocused && capturingBindingId !== null) {
+      cancelCapture();
+    }
+  }, [isFocused, capturingBindingId, cancelCapture]);
+
+  useEffect(() => {
+    if (isNative) return;
     if (capturingBindingId === null) return;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -173,32 +236,37 @@ export function KeyboardShortcutsSection() {
     };
   }, [setCapturingShortcut]);
 
-  if (Platform.OS !== "web") {
+  const handleResetAll = useCallback(() => void resetAll(), [resetAll]);
+  const handleRemoveOverride = useCallback(
+    (bindingId: string) => void removeOverride(bindingId),
+    [removeOverride],
+  );
+
+  if (isNative) {
     return (
-      <View style={settingsStyles.section}>
-        <Text style={settingsStyles.sectionTitle}>Shortcuts</Text>
-        <View style={[settingsStyles.card, styles.mobileCard]}>
-          <Text style={styles.mobileText}>Keyboard shortcuts are only available on desktop.</Text>
+      <SettingsSection title="Shortcuts">
+        <View style={mobileCardStyle}>
+          <Text style={styles.mobileText}>Keyboard shortcuts are only available on desktop</Text>
         </View>
-      </View>
+      </SettingsSection>
     );
   }
 
-  return (
-    <View style={settingsStyles.section}>
-      <View style={settingsStyles.sectionHeader}>
-        <Text style={settingsStyles.sectionHeaderTitle}>Shortcuts</Text>
-        {hasOverrides && (
-          <Button variant="ghost" size="sm" onPress={() => void resetAll()}>
-            Reset all
-          </Button>
-        )}
-      </View>
+  const resetAllButton = hasOverrides ? (
+    <Button variant="ghost" size="sm" onPress={handleResetAll}>
+      Reset all
+    </Button>
+  ) : undefined;
 
-      {sections.map(function (section) {
+  return (
+    <>
+      {sections.map(function (section, sectionIndex) {
         return (
-          <View key={section.id}>
-            <Text style={styles.subsectionTitle}>{section.title}</Text>
+          <SettingsSection
+            key={section.id}
+            title={section.title}
+            trailing={sectionIndex === 0 ? resetAllButton : undefined}
+          >
             <View style={settingsStyles.card}>
               {section.rows.map(function (row, index) {
                 const bindingId = getBindingIdForAction(row.id, {
@@ -209,45 +277,33 @@ export function KeyboardShortcutsSection() {
 
                 return (
                   <View key={row.id}>
-                    <ShortcutRow
+                    <ShortcutRowContainer
                       row={row}
                       bindingId={bindingId}
                       overrideCombo={overrideCombo}
                       isCapturing={capturingBindingId === bindingId}
-                      capturedCombos={capturingBindingId === bindingId ? capturedCombos : []}
+                      capturedCombos={
+                        capturingBindingId === bindingId ? capturedCombos : EMPTY_CAPTURED_COMBOS
+                      }
                       heldModifiers={capturingBindingId === bindingId ? heldModifiers : null}
-                      onRebind={() => {
-                        if (bindingId) {
-                          startCapture(bindingId);
-                        }
-                      }}
-                      onDone={saveCapture}
-                      onCancel={cancelCapture}
-                      onReset={() => {
-                        if (bindingId) void removeOverride(bindingId);
-                      }}
+                      onStartCapture={startCapture}
+                      onSaveCapture={saveCapture}
+                      onCancelCapture={cancelCapture}
+                      onRemoveOverride={handleRemoveOverride}
                     />
                     {index < section.rows.length - 1 && <View style={styles.separator} />}
                   </View>
                 );
               })}
             </View>
-          </View>
+          </SettingsSection>
         );
       })}
-    </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  subsectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    marginBottom: theme.spacing[2],
-    marginTop: theme.spacing[4],
-    marginLeft: theme.spacing[1],
-  },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -287,3 +343,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
 }));
+
+const mobileCardStyle = [settingsStyles.card, styles.mobileCard];

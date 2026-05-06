@@ -9,8 +9,8 @@ import {
   useState,
   type PropsWithChildren,
   type ReactElement,
+  type ReactNode,
   type Ref,
-  type MutableRefObject,
 } from "react";
 import {
   ActivityIndicator,
@@ -22,7 +22,9 @@ import {
   StatusBar,
   Text,
   View,
+  type GestureResponderEvent,
   type PressableProps,
+  type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -30,8 +32,14 @@ import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CheckCircle } from "lucide-react-native";
-import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  IsolatedBottomSheetModal,
+  useIsolatedBottomSheetVisibility,
+} from "@/components/ui/isolated-bottom-sheet-modal";
+import { isWeb, isNative } from "@/constants/platform";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 // Keep parity with dropdown-menu action statuses.
 export type ActionStatus = "idle" | "pending" | "success";
@@ -47,13 +55,13 @@ interface Rect {
   height: number;
 }
 
-type ContextMenuContextValue = {
+interface ContextMenuContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
   anchorRect: Rect | null;
   setAnchorRect: (rect: Rect | null) => void;
-};
+}
 
 const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
 
@@ -80,7 +88,7 @@ function useControllableOpenState({
 }): [boolean, (next: boolean) => void] {
   const [internalOpen, setInternalOpen] = useState(Boolean(defaultOpen));
   const isControlled = typeof open === "boolean";
-  const value = isControlled ? Boolean(open) : internalOpen;
+  const value = isControlled ? open : internalOpen;
   const setValue = useCallback(
     (next: boolean) => {
       if (!isControlled) setInternalOpen(next);
@@ -166,15 +174,23 @@ function computePosition({
   return { x, y, actualPlacement };
 }
 
+function isCallable(fn: unknown): fn is (...args: unknown[]) => void {
+  return typeof fn === "function";
+}
+
 function coerceEventPoint(event: unknown): { pageX: number; pageY: number } | null {
-  const nativeEvent: any = (event as any)?.nativeEvent ?? event;
-  const pageX = nativeEvent?.pageX;
-  const pageY = nativeEvent?.pageY;
+  if (typeof event !== "object" || event === null) {
+    return null;
+  }
+  const nativeEvent = Reflect.get(event, "nativeEvent");
+  const native = typeof nativeEvent === "object" && nativeEvent !== null ? nativeEvent : event;
+  const pageX = Reflect.get(native, "pageX");
+  const pageY = Reflect.get(native, "pageY");
   if (typeof pageX === "number" && typeof pageY === "number") {
     return { pageX, pageY };
   }
-  const clientX = nativeEvent?.clientX;
-  const clientY = nativeEvent?.clientY;
+  const clientX = Reflect.get(native, "clientX");
+  const clientY = Reflect.get(native, "clientY");
   if (typeof clientX === "number" && typeof clientY === "number") {
     return { pageX: clientX, pageY: clientY };
   }
@@ -187,7 +203,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T): void {
     return;
   }
   if (ref && typeof ref === "object") {
-    (ref as MutableRefObject<T>).current = value;
+    Object.assign(ref, { current: value });
   }
 }
 
@@ -229,7 +245,11 @@ export function ContextMenu({
   return <ContextMenuContext.Provider value={value}>{children}</ContextMenuContext.Provider>;
 }
 
-type TriggerState = { pressed: boolean; hovered: boolean; open: boolean };
+interface TriggerState {
+  pressed: boolean;
+  hovered: boolean;
+  open: boolean;
+}
 type TriggerStyleProp = StyleProp<ViewStyle> | ((state: TriggerState) => StyleProp<ViewStyle>);
 
 export function ContextMenuTrigger({
@@ -254,8 +274,7 @@ export function ContextMenuTrigger({
 >): ReactElement {
   const ctx = useContextMenuContext("ContextMenuTrigger");
 
-  const shouldEnableOnThisPlatform =
-    enabled && (Platform.OS === "web" ? enabledOnWeb : enabledOnMobile);
+  const shouldEnableOnThisPlatform = enabled && (isWeb ? enabledOnWeb : enabledOnMobile);
 
   const openAtEvent = useCallback(
     (event: unknown) => {
@@ -286,6 +305,45 @@ export function ContextMenuTrigger({
     [ctx.triggerRef, triggerRef],
   );
 
+  const propsOnLongPress = props.onLongPress;
+  const handleLongPress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (isWeb) {
+        propsOnLongPress?.(event);
+        return;
+      }
+      openAtEvent(event);
+      propsOnLongPress?.(event);
+    },
+    [propsOnLongPress, openAtEvent],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: unknown) => {
+      if (isNative) {
+        return;
+      }
+      if (typeof event === "object" && event !== null) {
+        const preventDefault = Reflect.get(event, "preventDefault");
+        const stopPropagation = Reflect.get(event, "stopPropagation");
+        if (isCallable(preventDefault)) preventDefault.call(event);
+        if (isCallable(stopPropagation)) stopPropagation.call(event);
+      }
+      openAtEvent(event);
+    },
+    [openAtEvent],
+  );
+
+  const pressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      if (typeof style === "function") {
+        return style({ pressed, hovered, open: ctx.open });
+      }
+      return style;
+    },
+    [style, ctx.open],
+  );
+
   return (
     <Pressable
       {...props}
@@ -293,30 +351,10 @@ export function ContextMenuTrigger({
       collapsable={false}
       disabled={disabled}
       delayLongPress={longPressDelayMs}
-      onLongPress={(event) => {
-        if (Platform.OS === "web") {
-          props.onLongPress?.(event);
-          return;
-        }
-        openAtEvent(event);
-        props.onLongPress?.(event);
-      }}
+      onLongPress={handleLongPress}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
-      onContextMenu={(event: unknown) => {
-        if (Platform.OS !== "web") {
-          return;
-        }
-        const e: any = event;
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-        openAtEvent(event);
-      }}
-      style={({ pressed, hovered = false }) => {
-        if (typeof style === "function") {
-          return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
-        }
-        return style;
-      }}
+      onContextMenu={handleContextMenu}
+      style={pressableStyle}
     >
       {children}
     </Pressable>
@@ -348,10 +386,11 @@ export function ContextMenuContent({
   testID?: string;
 }>): ReactElement | null {
   const context = useContextMenuContext("ContextMenuContent");
+  const { theme } = useUnistyles();
+  const webScrollbarStyle = useWebScrollbarStyle();
   const isMobile = useIsCompactFormFactor();
   const useMobileSheet = isMobile && mobileMode === "sheet";
   const { open, setOpen, triggerRef, anchorRect } = context;
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
   const sheetSnapPoints = useMemo(() => ["30%", "55%"], []);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -361,23 +400,15 @@ export function ContextMenuContent({
     setOpen(false);
   }, [setOpen]);
 
-  useEffect(() => {
-    if (!useMobileSheet) return;
-    if (open) {
-      bottomSheetRef.current?.present();
-      return;
-    }
-    bottomSheetRef.current?.dismiss();
-  }, [open, useMobileSheet]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1) {
-        handleClose();
-      }
-    },
-    [handleClose],
-  );
+  const {
+    sheetRef: bottomSheetRef,
+    handleSheetChange,
+    handleSheetDismiss,
+  } = useIsolatedBottomSheetVisibility({
+    visible: open,
+    isEnabled: useMobileSheet,
+    onClose: handleClose,
+  });
 
   const renderSheetBackdrop = useCallback(
     (props: ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -386,41 +417,46 @@ export function ContextMenuContent({
     [],
   );
 
+  const sheetBackgroundStyle = useMemo(
+    () => [
+      styles.sheetBackground,
+      {
+        backgroundColor: theme.colors.surface0,
+        borderColor: theme.colors.border,
+      },
+    ],
+    [theme.colors.surface0, theme.colors.border],
+  );
+  const sheetHandleStyle = useMemo(
+    () => [styles.sheetHandle, { backgroundColor: theme.colors.surface2 }],
+    [theme.colors.surface2],
+  );
+
   // Measure trigger when opening (fallback) and capture point anchors.
   useEffect(() => {
-    if (useMobileSheet) {
+    if (useMobileSheet || !open) {
       setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
-      return;
-    }
-
-    if (!open) {
-      setTriggerRect(null);
-      setContentSize(null);
-      setPosition(null);
-      return;
+      return () => {};
     }
 
     if (anchorRect) {
       setTriggerRect(anchorRect);
-      return;
+      return () => {};
     }
 
     if (!triggerRef.current) {
       setTriggerRect(null);
-      return;
+      return () => {};
     }
 
     const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
-    measureElement(triggerRef.current).then((rect) => {
-      if (cancelled) return;
-      setTriggerRect({
-        ...rect,
-        y: rect.y + statusBarHeight,
-      });
+    void measureElement(triggerRef.current).then((rect) => {
+      if (!cancelled) setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      return undefined;
     });
 
     return () => {
@@ -462,19 +498,40 @@ export function ContextMenuContent({
     [],
   );
 
+  const animatedContentStyle = useMemo(() => {
+    const { width: screenWidth } = Dimensions.get("window");
+    const resolvedWidthStyle: ViewStyle = fullWidth
+      ? { width: screenWidth - horizontalPadding * 2 }
+      : {
+          ...(typeof width === "number" ? { width } : null),
+          ...(typeof minWidth === "number" ? { minWidth } : null),
+          ...(typeof maxWidth === "number" ? { maxWidth } : null),
+        };
+    return [
+      styles.content,
+      resolvedWidthStyle,
+      {
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ];
+  }, [fullWidth, horizontalPadding, width, minWidth, maxWidth, position?.y, position?.x]);
+
   if (useMobileSheet) {
     return (
       <ContextMenuContext.Provider value={context}>
-        <BottomSheetModal
+        <IsolatedBottomSheetModal
           ref={bottomSheetRef}
           index={0}
           snapPoints={sheetSnapPoints}
           enableDynamicSizing={false}
           onChange={handleSheetChange}
+          onDismiss={handleSheetDismiss}
           backdropComponent={renderSheetBackdrop}
           enablePanDownToClose
-          backgroundStyle={styles.sheetBackground}
-          handleIndicatorStyle={styles.sheetHandle}
+          backgroundStyle={sheetBackgroundStyle}
+          handleIndicatorStyle={sheetHandleStyle}
           keyboardBehavior="extend"
           keyboardBlurBehavior="restore"
         >
@@ -486,21 +543,12 @@ export function ContextMenuContent({
           >
             {children}
           </BottomSheetScrollView>
-        </BottomSheetModal>
+        </IsolatedBottomSheetModal>
       </ContextMenuContext.Provider>
     );
   }
 
   if (!open) return null;
-
-  const { width: screenWidth } = Dimensions.get("window");
-  const resolvedWidthStyle: ViewStyle = fullWidth
-    ? { width: screenWidth - horizontalPadding * 2 }
-    : {
-        ...(typeof width === "number" ? { width } : null),
-        ...(typeof minWidth === "number" ? { minWidth } : null),
-        ...(typeof maxWidth === "number" ? { maxWidth } : null),
-      };
 
   return (
     <Modal
@@ -524,20 +572,13 @@ export function ContextMenuContent({
           collapsable={false}
           testID={testID}
           onLayout={handleContentLayout}
-          style={[
-            styles.content,
-            resolvedWidthStyle,
-            {
-              position: "absolute",
-              top: position?.y ?? -9999,
-              left: position?.x ?? -9999,
-            },
-          ]}
+          style={animatedContentStyle}
         >
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator
-            contentContainerStyle={{ flexGrow: 1 }}
+            style={webScrollbarStyle}
+            contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
           >
             {children}
           </ScrollView>
@@ -552,8 +593,9 @@ export function ContextMenuLabel({
   style,
   testID,
 }: PropsWithChildren<{ style?: ViewStyle | ViewStyle[]; testID?: string }>): ReactElement {
+  const containerStyle = useMemo(() => [styles.labelContainer, style], [style]);
   return (
-    <View style={[styles.labelContainer, style]} testID={testID}>
+    <View style={containerStyle} testID={testID}>
       <Text style={styles.labelText}>{children}</Text>
     </View>
   );
@@ -566,7 +608,8 @@ export function ContextMenuSeparator({
   style?: ViewStyle;
   testID?: string;
 }): ReactElement {
-  return <View style={[styles.separator, style]} testID={testID} />;
+  const separatorStyle = useMemo(() => [styles.separator, style], [style]);
+  return <View style={separatorStyle} testID={testID} />;
 }
 
 export function ContextMenuHint({
@@ -578,6 +621,34 @@ export function ContextMenuHint({
       <Text style={styles.hintText}>{children}</Text>
     </View>
   );
+}
+
+function resolveLeadingContent(input: {
+  isPending: boolean;
+  isSuccess: boolean;
+  leading: ReactElement | null | undefined;
+  pendingColor: string;
+  successColor: string;
+}): ReactElement | null {
+  if (input.isPending) {
+    return <ActivityIndicator size={16} color={input.pendingColor} />;
+  }
+  if (input.isSuccess) {
+    return <CheckCircle size={16} color={input.successColor} />;
+  }
+  return input.leading ?? null;
+}
+
+function resolveItemLabel(input: {
+  children: ReactNode;
+  isPending: boolean;
+  isSuccess: boolean;
+  pendingLabel: string | undefined;
+  successLabel: string | undefined;
+}): ReactNode {
+  if (input.isPending && input.pendingLabel) return input.pendingLabel;
+  if (input.isSuccess && input.successLabel) return input.successLabel;
+  return input.children;
 }
 
 export function ContextMenuItem({
@@ -620,25 +691,19 @@ export function ContextMenuItem({
   const { theme } = useUnistyles();
   const { setOpen } = useContextMenuContext("ContextMenuItem");
 
-  const isPending = status === "pending" || loading;
+  const isPending = status === "pending" || Boolean(loading);
   const isSuccess = status === "success";
-  const isDisabled = disabled || isPending || isSuccess;
+  const isDisabled = Boolean(disabled) || isPending || isSuccess;
 
-  let leadingContent: ReactElement | null = null;
-  if (isPending) {
-    leadingContent = <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
-  } else if (isSuccess) {
-    leadingContent = <CheckCircle size={16} color={theme.colors.palette.green[500]} />;
-  } else if (leading) {
-    leadingContent = leading;
-  }
+  const leadingContent = resolveLeadingContent({
+    isPending,
+    isSuccess,
+    leading,
+    pendingColor: theme.colors.foregroundMuted,
+    successColor: theme.colors.palette.green[500],
+  });
 
-  let label = children;
-  if (isPending && pendingLabel) {
-    label = pendingLabel;
-  } else if (isSuccess && successLabel) {
-    label = successLabel;
-  }
+  const label = resolveItemLabel({ children, isPending, isSuccess, pendingLabel, successLabel });
 
   const trailingContent =
     trailing ??
@@ -646,32 +711,58 @@ export function ContextMenuItem({
       <Check size={16} color={theme.colors.foregroundMuted} />
     ) : null);
 
-  const content = (
-    <Pressable
-      testID={testID}
-      accessibilityRole="button"
-      disabled={isDisabled}
-      onPress={() => {
-        if (isDisabled) return;
-        if (closeOnSelect) {
-          setOpen(false);
-        }
-        onSelect?.();
-      }}
-      style={({ pressed, hovered }) => [
+  const handleItemPress = useCallback(() => {
+    if (isDisabled) return;
+    if (closeOnSelect) {
+      setOpen(false);
+    }
+    onSelect?.();
+  }, [isDisabled, closeOnSelect, setOpen, onSelect]);
+
+  const itemPressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      let selectedStyle: typeof styles.itemSelectedAccent | typeof styles.itemSelected | null;
+      if (!selected) selectedStyle = null;
+      else if (selectedVariant === "accent") selectedStyle = styles.itemSelectedAccent;
+      else selectedStyle = styles.itemSelected;
+      return [
         styles.item,
-        selected
-          ? selectedVariant === "accent"
-            ? styles.itemSelectedAccent
-            : styles.itemSelected
-          : null,
+        selectedStyle,
         selected && (hovered || pressed) && selectedVariant !== "accent"
           ? styles.itemSelectedInteractive
           : null,
         isDisabled ? styles.itemDisabled : null,
         hovered && !pressed && !isDisabled ? styles.itemHovered : null,
         pressed && !isDisabled ? styles.itemPressed : null,
-      ]}
+      ];
+    },
+    [selected, selectedVariant, isDisabled],
+  );
+
+  const itemTextStyle = useMemo(
+    () => [
+      styles.itemText,
+      destructive && !isSuccess ? styles.itemTextDestructive : null,
+      isSuccess ? styles.itemTextSuccess : null,
+      selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
+    ],
+    [destructive, isSuccess, selected, selectedVariant],
+  );
+  const itemDescriptionStyle = useMemo(
+    () => [
+      styles.itemDescription,
+      selected && selectedVariant === "accent" ? styles.itemDescriptionSelectedAccent : null,
+    ],
+    [selected, selectedVariant],
+  );
+
+  const content = (
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      disabled={isDisabled}
+      onPress={handleItemPress}
+      style={itemPressableStyle}
     >
       {showSelectedCheck ? (
         <View style={styles.checkSlot}>
@@ -680,27 +771,11 @@ export function ContextMenuItem({
       ) : null}
       {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}
       <View style={styles.itemContent}>
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.itemText,
-            destructive && !isSuccess ? styles.itemTextDestructive : null,
-            isSuccess ? styles.itemTextSuccess : null,
-            selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
-          ]}
-        >
+        <Text numberOfLines={1} style={itemTextStyle}>
           {label}
         </Text>
         {description && !isPending && !isSuccess ? (
-          <Text
-            numberOfLines={2}
-            style={[
-              styles.itemDescription,
-              selected && selectedVariant === "accent"
-                ? styles.itemDescriptionSelectedAccent
-                : null,
-            ]}
-          >
+          <Text numberOfLines={2} style={itemDescriptionStyle}>
             {description}
           </Text>
         ) : null}
@@ -853,3 +928,5 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.85,
   },
 }));
+
+const SCROLL_CONTENT_CONTAINER_STYLE = { flexGrow: 1 };

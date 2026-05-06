@@ -6,115 +6,40 @@ user-invocable: true
 
 # Paseo Loop Skill
 
-You are setting up a loop — an iterative worker/verifier cycle managed by the Paseo daemon.
+A loop is a worker/verifier cycle: launch a worker → check verification → repeat until done or limits hit. Use for "keep trying", "babysit", or "watch this until X."
 
 **User's arguments:** $ARGUMENTS
 
----
-
 ## Prerequisites
 
-Load the **Paseo skill** first. It contains the CLI reference for `paseo loop` and related commands.
+Read the **paseo** skill for orchestration preferences — worker and verifier providers come from preferences unless the user names them.
 
-## Core Model
+Loops are a CLI primitive: `paseo loop run`. Manage with `paseo loop ls`, `paseo loop inspect <id>`, `paseo loop logs <id>`, `paseo loop stop <id>`.
 
-A loop repeats: launch a worker → verify → repeat until done or limits hit.
+## Your job
 
-1. **Worker prompt**: what the worker does each iteration
-2. **Verification**: verifier prompt and/or shell checks that judge success
-3. **Sleep**: optional pause between iterations
-4. **Stop conditions**: max iterations and/or max total runtime
-5. **Model selection**: different providers/models for worker vs verifier
-6. **Archive**: optionally preserve agent history after each iteration
+1. Understand the user's intent from `$ARGUMENTS` and the conversation.
+2. **Worker prompt** — self-contained, concrete about what to do this iteration, explicit about what counts as progress.
+3. **Verification** — pick the right shape:
+   - Shell check (`--verify-check`) for objective criteria a command can answer (`gh pr checks --fail-fast`, `npm test`).
+   - Verifier prompt (`--verify`) for judgment ("Return done=true only if all tests pass and the changed files are coherent. Cite the command and the outcome.").
+   - Both, when shell rules out the obvious failures and the verifier judges the rest.
+4. **Providers** — `--provider` for the worker, `--verify-provider` for the verifier. From preferences unless the user named them. For implementation loops, pair worker and verifier on different providers — each catches the other's blind spots.
+5. **Sleep** — `--sleep` only when polling something external. Otherwise let it run as fast as the loop completes.
+6. **Stops** — set a sensible `--max-iterations` and/or `--max-time`. Open-ended loops are how runaways happen.
+7. **Archive** — `--archive` keeps agents after each iteration for inspection.
+8. Launch with `paseo loop run`.
 
-## Verification
+## Common shapes
 
-Every loop needs at least one form of verification:
+**Babysit a PR** — worker checks PR state and fixes issues; shell check is `gh pr checks <n> --fail-fast`; sleep 2m; max-time 1h.
 
-- `--verify "<prompt>"` — a verifier agent judges the worker's output
-- `--verify-check "<command>"` — a shell command that must exit 0 (repeatable)
-- Both can be combined: shell checks run first, then the verifier prompt
+**Drive tests to green** — worker investigates failures and fixes code; shell check is the test command; verifier confirms all tests pass; max-iterations 10.
 
-## Model Selection
+**Cross-provider implementation** — worker on `impl` provider, verifier on a different provider; verifier checks changed files, runs typecheck and tests; max-iterations and max-time both bounded; archive on so iterations can be inspected.
 
-Choose the right provider/model for worker and verifier independently:
+## Prompt rules
 
-- `--provider <provider/model>` — sets the worker (e.g. `codex/gpt-5.4`)
-- `--verify-provider <provider/model>` — sets the verifier (e.g. `claude/opus`)
+**Worker** — self-contained, concrete (commands, files, branches, tests, PRs, systems), explicit about what counts as progress this iteration.
 
-Default: both use Claude/sonnet. For implementation loops, use Codex for the worker and Claude for the verifier — each catches the other's blind spots.
-
-## Archive
-
-`--archive` preserves worker and verifier agents after each iteration instead of destroying them. Use this when you need to inspect conversation history for debugging.
-
-## Defaults by User Intent
-
-### Babysit / watch / check every X
-
-```bash
-paseo loop run "Check PR #42. Review CI, comments, and branch status. Fix issues as they arise." \
-  --verify-check "gh pr checks 42 --fail-fast" \
-  --sleep 2m \
-  --max-time 1h \
-  --name babysit-pr-42
-```
-
-### Keep trying until tests pass
-
-```bash
-paseo loop run "Run the test suite, investigate failures, and fix the code." \
-  --provider codex/gpt-5.4 \
-  --verify "Run the test suite. Return done=true only if all tests pass. Cite the exact command and outcome." \
-  --verify-check "npm test" \
-  --max-iterations 10 \
-  --name fix-tests
-```
-
-### Implementation loop with cross-provider review
-
-```bash
-paseo loop run "Implement issue #456. Make incremental progress each iteration." \
-  --provider codex/gpt-5.4 \
-  --verify "Verify issue #456 is complete. Check changed files, run typecheck and tests." \
-  --verify-provider claude/sonnet \
-  --max-iterations 8 \
-  --max-time 2h \
-  --archive \
-  --name issue-456
-```
-
-## Managing Loops
-
-```bash
-paseo loop ls                   # List all loops
-paseo loop inspect <id>         # Show details and iteration history
-paseo loop logs <id>            # Stream logs
-paseo loop stop <id>            # Stop a running loop
-```
-
-## Your Job
-
-1. Understand the user's intent from the conversation and `$ARGUMENTS`
-2. Decide the worker prompt — self-contained, concrete about what to do
-3. Decide verification — shell checks for objective criteria, verifier prompt for judgment
-4. Choose providers/models for worker and verifier
-5. Choose sleep only when the task is polling or waiting on an external system
-6. Add sensible stop conditions
-7. Run `paseo loop run` with the final arguments
-
-## Prompt Writing Rules
-
-### Worker prompt
-
-The worker prompt must be:
-- self-contained
-- concrete about commands, files, branches, tests, PRs, or systems to inspect
-- explicit about what counts as progress this iteration
-
-### Verifier prompt
-
-The verifier prompt should:
-- check facts, not offer fixes
-- cite commands, outputs, or file evidence
-- be specific about what "done" means
+**Verifier** — checks facts, doesn't suggest fixes, cites commands/outputs/file evidence, specific about what "done" means.

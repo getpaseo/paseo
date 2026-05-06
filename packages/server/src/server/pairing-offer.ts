@@ -5,17 +5,18 @@ import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { renderPairingQr } from "./pairing-qr.js";
 import { getOrCreateServerId } from "./server-id.js";
 
-export type LocalPairingOffer = {
+export interface LocalPairingOffer {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-};
+}
 
 export async function generateLocalPairingOffer(args: {
   paseoHome: string;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
+  relayUseTls?: boolean;
   appBaseUrl?: string;
   includeQr?: boolean;
   logger?: Logger;
@@ -31,13 +32,14 @@ export async function generateLocalPairingOffer(args: {
 
   const relayEndpoint = args.relayEndpoint ?? "relay.paseo.sh:443";
   const relayPublicEndpoint = args.relayPublicEndpoint ?? relayEndpoint;
+  const relayUseTls = args.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
   const appBaseUrl = args.appBaseUrl ?? "https://app.paseo.sh";
   const serverId = getOrCreateServerId(args.paseoHome, { logger: args.logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(args.paseoHome, args.logger);
   const offer = await createConnectionOfferV2({
     serverId,
     daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
-    relay: { endpoint: relayPublicEndpoint },
+    relay: { endpoint: relayPublicEndpoint, useTls: relayUseTls },
   });
   const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
 

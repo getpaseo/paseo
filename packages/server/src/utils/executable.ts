@@ -1,101 +1,112 @@
-import { execFile, execFileSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { platform } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
+import { extname } from "node:path";
+import { spawnProcess } from "./spawn.js";
+import { isWindowsCommandScript } from "./windows-command.js";
 
-const execFileAsync = promisify(execFile);
+export { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
 
-export interface FindExecutableDependencies {
-  execFileSync: typeof execFileSync;
-  existsSync: typeof existsSync;
-  platform: typeof platform;
+type Which = (command: string, options: { all: true }) => Promise<string[]>;
+
+const require = createRequire(import.meta.url);
+const which = require("which") as Which;
+const PROBE_TIMEOUT_MS = 2000;
+
+function hasPathSeparator(value: string): boolean {
+  return value.includes("/") || value.includes("\\");
 }
 
-function resolveExecutableFromWhichOutput(
-  name: string,
-  output: string,
-  source: "which",
-): string | null {
-  const lines = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const candidate = lines.at(-1);
-
-  if (!candidate) {
-    return null;
+async function enumerateCandidates(name: string): Promise<string[]> {
+  let candidates: string[];
+  try {
+    candidates = await which(name, { all: true });
+  } catch (error) {
+    // `which` throws ENOENT when the command is absent from PATH.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
   }
 
-  if (!path.isAbsolute(candidate)) {
-    console.warn(
-      `[findExecutable] Ignoring non-absolute ${source} output for '${name}': ${JSON.stringify(candidate)}`,
-    );
-    return null;
-  }
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate)) {
+      return false;
+    }
+    seen.add(candidate);
+    return true;
+  });
+}
 
-  return candidate;
+async function probeExecutable(executablePath: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    let pendingResolve: ((result: boolean) => void) | null = resolve;
+    let started = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const settle = (result: boolean) => {
+      if (!pendingResolve) {
+        return;
+      }
+      const fn = pendingResolve;
+      pendingResolve = null;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      fn(result);
+    };
+
+    let child: ChildProcess;
+    try {
+      child = spawnProcess(executablePath, ["--version"], {
+        stdio: "ignore",
+        // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.
+        shell: isWindowsCommandScript(executablePath),
+      });
+    } catch {
+      settle(false);
+      return;
+    }
+
+    timer = setTimeout(() => {
+      if (started) {
+        child.kill();
+        settle(true);
+        return;
+      }
+      settle(false);
+    }, PROBE_TIMEOUT_MS) as unknown as NodeJS.Timeout;
+    timer.unref();
+
+    child.once("spawn", () => {
+      started = true;
+    });
+    child.once("error", () => {
+      // ENOENT/EACCES/EPERM/UNKNOWN here means the OS could not start the candidate.
+      settle(started);
+    });
+    child.once("exit", () => {
+      settle(started);
+    });
+  });
 }
 
 /**
- * On Unix we use `which`. On Windows we use `where.exe`.
- *
- * Both rely on the inherited process.env.PATH — on macOS/Linux, Electron
- * enriches it at startup via inheritLoginShellEnv(); on Windows, Electron
- * inherits the full user environment from Explorer.
+ * Check a literal executable path. PATH search is handled by findExecutable().
  */
-export function findExecutableSync(
-  name: string,
-  dependencies?: FindExecutableDependencies,
+export function executableExists(
+  executablePath: string,
+  exists: typeof existsSync = existsSync,
 ): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const deps: FindExecutableDependencies = {
-    execFileSync,
-    existsSync,
-    platform,
-    ...dependencies,
-  };
-
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
-    return deps.existsSync(trimmed) ? trimmed : null;
-  }
-
-  if (deps.platform() === "win32") {
-    try {
-      const out = deps
-        .execFileSync("where.exe", [trimmed], {
-          encoding: "utf8",
-          windowsHide: true,
-        })
-        .trim();
-      return (
-        out
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find((line) => line.length > 0) ?? null
-      );
-    } catch {
-      return null;
+  if (exists(executablePath)) return executablePath;
+  if (process.platform === "win32" && !extname(executablePath)) {
+    for (const ext of [".exe", ".cmd"]) {
+      const candidate = executablePath + ext;
+      if (exists(candidate)) return candidate;
     }
   }
-
-  try {
-    return resolveExecutableFromWhichOutput(
-      trimmed,
-      deps.execFileSync("which", [trimmed], { encoding: "utf8" }).trim(),
-      "which",
-    );
-  } catch {
-    return null;
-  }
-}
-
-export function isCommandAvailableSync(command: string): boolean {
-  return findExecutableSync(command) !== null;
+  return null;
 }
 
 export async function findExecutable(name: string): Promise<string | null> {
@@ -104,61 +115,16 @@ export async function findExecutable(name: string): Promise<string | null> {
     return null;
   }
 
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
-    return existsSync(trimmed) ? trimmed : null;
+  if (hasPathSeparator(trimmed)) {
+    return (await probeExecutable(trimmed)) ? trimmed : null;
   }
 
-  if (platform() === "win32") {
-    try {
-      const { stdout } = await execFileAsync("where.exe", [trimmed], {
-        encoding: "utf8",
-        windowsHide: true,
-      });
-      return (
-        stdout
-          .trim()
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find((line) => line.length > 0) ?? null
-      );
-    } catch {
-      return null;
-    }
-  }
-
-  try {
-    const { stdout } = await execFileAsync("which", [trimmed], { encoding: "utf8" });
-    return resolveExecutableFromWhichOutput(trimmed, stdout.trim(), "which");
-  } catch {
-    return null;
-  }
+  const candidates = await enumerateCandidates(trimmed);
+  const probeResults = await Promise.all(candidates.map((candidate) => probeExecutable(candidate)));
+  const firstMatch = probeResults.findIndex((result) => result);
+  return firstMatch === -1 ? null : candidates[firstMatch];
 }
 
 export async function isCommandAvailable(command: string): Promise<boolean> {
   return (await findExecutable(command)) !== null;
-}
-
-/**
- * When spawning with `shell: true` on Windows, the command is passed to
- * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
- * command path with spaces (e.g. `C:\Program Files\...`) is split at the
- * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
- */
-export function quoteWindowsCommand(command: string): string {
-  if (process.platform !== "win32") return command;
-  if (!command.includes(" ")) return command;
-  if (command.startsWith('"') && command.endsWith('"')) return command;
-  return `"${command}"`;
-}
-
-/**
- * `spawn(..., { shell: true })` on Windows also passes argv through `cmd.exe`.
- * Any argument containing spaces must be quoted or it will be split before the
- * child process sees it.
- */
-export function quoteWindowsArgument(argument: string): string {
-  if (process.platform !== "win32") return argument;
-  if (!argument.includes(" ")) return argument;
-  if (argument.startsWith('"') && argument.endsWith('"')) return argument;
-  return `"${argument}"`;
 }

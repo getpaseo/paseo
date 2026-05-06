@@ -1,4 +1,3 @@
-import { basename } from "path";
 import { z } from "zod";
 import type { Logger } from "pino";
 
@@ -9,21 +8,13 @@ import {
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
-import { validateBranchSlug } from "../../utils/worktree.js";
-import {
-  getCheckoutStatus,
-  renameCurrentBranch,
-  type CheckoutStatusResult,
-} from "../../utils/checkout-git.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 
-export type AgentMetadataGeneratorDeps = {
+export interface AgentMetadataGeneratorDeps {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
-  getCheckoutStatus?: typeof getCheckoutStatus;
-  renameCurrentBranch?: typeof renameCurrentBranch;
-};
+}
 
-export type AgentMetadataGenerationOptions = {
+export interface AgentMetadataGenerationOptions {
   agentManager: AgentManager;
   agentId: string;
   cwd: string;
@@ -32,13 +23,12 @@ export type AgentMetadataGenerationOptions = {
   paseoHome?: string;
   logger: Logger;
   deps?: AgentMetadataGeneratorDeps;
-};
+}
 
-type AgentMetadataNeeds = {
+interface AgentMetadataNeeds {
   prompt: string | null;
   needsTitle: boolean;
-  needsBranch: boolean;
-};
+}
 
 function hasExplicitTitle(title?: string | null): boolean {
   return Boolean(title && title.trim().length > 0);
@@ -52,30 +42,6 @@ function normalizeAutoTitle(title: string): string | null {
   return normalized.slice(0, MAX_AUTO_AGENT_TITLE_CHARS).trim() || null;
 }
 
-async function canRenameBranch(
-  cwd: string,
-  paseoHome: string | undefined,
-  getCheckoutStatusImpl: typeof getCheckoutStatus,
-): Promise<boolean> {
-  let status: CheckoutStatusResult;
-  try {
-    status = await getCheckoutStatusImpl(cwd, { paseoHome });
-  } catch {
-    return false;
-  }
-
-  if (!status.isGit || !status.isPaseoOwnedWorktree) {
-    return false;
-  }
-
-  if (!status.currentBranch) {
-    return false;
-  }
-
-  const worktreeDirName = basename(status.repoRoot);
-  return status.currentBranch === worktreeDirName;
-}
-
 export async function determineAgentMetadataNeeds(
   options: Pick<
     AgentMetadataGenerationOptions,
@@ -84,22 +50,21 @@ export async function determineAgentMetadataNeeds(
 ): Promise<AgentMetadataNeeds> {
   const prompt = options.initialPrompt?.trim();
   if (!prompt) {
-    return { prompt: null, needsTitle: false, needsBranch: false };
+    return { prompt: null, needsTitle: false };
   }
 
   const needsTitle = !hasExplicitTitle(options.explicitTitle);
-  const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
-  const needsBranch = await canRenameBranch(options.cwd, options.paseoHome, getCheckoutStatusImpl);
 
   return {
     prompt,
     needsTitle,
-    needsBranch,
   };
 }
 
-function buildMetadataSchema(needs: AgentMetadataNeeds): z.ZodObject<any> | null {
-  if (!needs.needsTitle && !needs.needsBranch) {
+function buildMetadataSchema(
+  needs: AgentMetadataNeeds,
+): z.ZodObject<Record<string, z.ZodTypeAny>> | null {
+  if (!needs.needsTitle) {
     return null;
   }
 
@@ -107,33 +72,16 @@ function buildMetadataSchema(needs: AgentMetadataNeeds): z.ZodObject<any> | null
   if (needs.needsTitle) {
     shape.title = z.string().min(1).max(MAX_AUTO_AGENT_TITLE_CHARS);
   }
-  if (needs.needsBranch) {
-    shape.branch = z.string().min(1).max(100);
-  }
   return z.object(shape);
 }
 
 function buildPrompt(needs: AgentMetadataNeeds): string {
-  const fields = [needs.needsTitle ? "title" : null, needs.needsBranch ? "branch" : null].filter(
-    Boolean,
-  ) as string[];
-
   const instructions: string[] = ["Generate metadata for a coding agent based on the user prompt."];
 
   if (needs.needsTitle) {
     instructions.push(`Title: short descriptive label (<= ${MAX_AUTO_AGENT_TITLE_CHARS} chars).`);
   }
-  if (needs.needsBranch) {
-    instructions.push(
-      "Branch: lowercase slug using letters, numbers, hyphens, and slashes only; no spaces, no uppercase, no leading/trailing hyphen, no consecutive hyphens.",
-    );
-  }
-
-  if (fields.length === 1) {
-    instructions.push(`Return JSON only with a single field '${fields[0]}'.`);
-  } else {
-    instructions.push(`Return JSON only with fields '${fields.join("' and '")}'.`);
-  }
+  instructions.push("Return JSON only with a single field 'title'.");
 
   instructions.push("", "User prompt:", needs.prompt ?? "");
   return instructions.join("\n");
@@ -155,10 +103,8 @@ export async function generateAndApplyAgentMetadata(
   const generator =
     options.deps?.generateStructuredAgentResponseWithFallback ??
     generateStructuredAgentResponseWithFallback;
-  const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
-  const renameCurrentBranchImpl = options.deps?.renameCurrentBranch ?? renameCurrentBranch;
 
-  let result: { title?: string; branch?: string };
+  let result: { title?: string };
 
   try {
     result = await generator({
@@ -169,6 +115,7 @@ export async function generateAndApplyAgentMetadata(
       schemaName: "AgentMetadata",
       maxRetries: 2,
       providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+      persistSession: false,
       agentConfigOverrides: {
         title: "Agent metadata generator",
         internal: true,
@@ -196,48 +143,6 @@ export async function generateAndApplyAgentMetadata(
     const normalizedTitle = normalizeAutoTitle(result.title);
     if (normalizedTitle) {
       await options.agentManager.setTitle(options.agentId, normalizedTitle);
-    }
-  }
-
-  if (needs.needsBranch && typeof result.branch === "string") {
-    const normalizedBranch = result.branch.trim();
-    const validation = validateBranchSlug(normalizedBranch);
-    if (!validation.valid) {
-      options.logger.warn(
-        { agentId: options.agentId, branch: normalizedBranch, error: validation.error },
-        "Generated branch name is invalid",
-      );
-      return;
-    }
-
-    let status: CheckoutStatusResult;
-    try {
-      status = await getCheckoutStatusImpl(options.cwd, { paseoHome: options.paseoHome });
-    } catch (error) {
-      options.logger.warn(
-        { err: error, agentId: options.agentId },
-        "Failed to re-check branch eligibility",
-      );
-      return;
-    }
-
-    if (!status.isGit || !status.isPaseoOwnedWorktree || !status.currentBranch) {
-      return;
-    }
-
-    const worktreeDirName = basename(status.repoRoot);
-    if (status.currentBranch !== worktreeDirName) {
-      return;
-    }
-
-    try {
-      await renameCurrentBranchImpl(options.cwd, normalizedBranch);
-      options.agentManager.notifyAgentState(options.agentId);
-    } catch (error) {
-      options.logger.warn(
-        { err: error, agentId: options.agentId, branch: normalizedBranch },
-        "Failed to rename branch",
-      );
     }
   }
 }

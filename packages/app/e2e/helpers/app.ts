@@ -1,215 +1,44 @@
 import { expect, type Page } from "@playwright/test";
-import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function getE2EDaemonPort(): string {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) {
-    throw new Error("E2E_DAEMON_PORT is not set (expected from Playwright globalSetup).");
-  }
-  if (port === "6767") {
-    throw new Error(
-      "E2E_DAEMON_PORT is 6767. Refusing to run e2e against the default local daemon.",
-    );
-  }
-  return port;
-}
-
-async function ensureE2EStorageSeeded(page: Page): Promise<void> {
-  const port = getE2EDaemonPort();
-  const expectedEndpoint = `127.0.0.1:${port}`;
-  const expectedServerId = process.env.E2E_SERVER_ID;
-  if (!expectedServerId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-
-  const needsReset = await page.evaluate(
-    ({ expectedEndpoint, expectedServerId }) => {
-      const raw = localStorage.getItem("@paseo:daemon-registry");
-      if (!raw) return true;
-      try {
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed) || parsed.length !== 1) return true;
-        const entry = parsed[0] as any;
-        if (entry?.serverId !== expectedServerId) return true;
-        const connections = entry?.connections;
-        if (!Array.isArray(connections)) return true;
-        if (
-          connections.some(
-            (c: any) =>
-              c?.type === "directTcp" &&
-              typeof c?.endpoint === "string" &&
-              /:6767\b/.test(c.endpoint),
-          )
-        )
-          return true;
-        return !connections.some(
-          (c: any) => c?.type === "directTcp" && c?.endpoint === expectedEndpoint,
-        );
-      } catch {
-        return true;
-      }
-    },
-    { expectedEndpoint, expectedServerId },
-  );
-
-  if (!needsReset) {
-    return;
-  }
-
-  const nowIso = new Date().toISOString();
-  const daemon = buildSeededHost({
-    serverId: expectedServerId,
-    endpoint: expectedEndpoint,
-    nowIso,
-  });
-  const preferences = buildCreateAgentPreferences(expectedServerId);
-  await page.evaluate(
-    ({ daemon, preferences }) => {
-      localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
-      localStorage.removeItem("@paseo:settings");
-    },
-    { daemon, preferences },
-  );
-
-  await page.reload();
-}
-
-async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
-  const port = getE2EDaemonPort();
-  const expectedEndpoint = `127.0.0.1:${port}`;
-  const expectedServerId = process.env.E2E_SERVER_ID;
-  if (!expectedServerId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-
-  const snapshot = await page.evaluate(() => {
-    const registryRaw = localStorage.getItem("@paseo:daemon-registry");
-    const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
-    return { registryRaw, prefsRaw };
-  });
-
-  if (!snapshot.registryRaw) {
-    throw new Error("E2E expected @paseo:daemon-registry to be set before app load.");
-  }
-
-  let registry: any;
-  try {
-    registry = JSON.parse(snapshot.registryRaw);
-  } catch {
-    throw new Error("E2E expected @paseo:daemon-registry to be valid JSON.");
-  }
-
-  if (!Array.isArray(registry) || registry.length !== 1) {
-    throw new Error(
-      `E2E expected @paseo:daemon-registry to contain exactly 1 daemon (got ${Array.isArray(registry) ? registry.length : "non-array"}).`,
-    );
-  }
-
-  const daemon = registry[0];
-  if (typeof daemon?.serverId !== "string" || daemon.serverId.length === 0) {
-    throw new Error(
-      `E2E expected seeded daemon to have a string serverId (got ${String(daemon?.serverId)}).`,
-    );
-  }
-  if (daemon.serverId !== expectedServerId) {
-    throw new Error(
-      `E2E expected seeded daemon serverId to be ${expectedServerId} (got ${daemon.serverId}).`,
-    );
-  }
-
-  const connections: unknown = daemon?.connections;
-  if (
-    !Array.isArray(connections) ||
-    !connections.some((c: any) => c?.type === "directTcp" && c?.endpoint === expectedEndpoint)
-  ) {
-    throw new Error(
-      `E2E expected seeded daemon connections to include directTcp ${expectedEndpoint} (got ${JSON.stringify(connections)}).`,
-    );
-  }
-  if (
-    Array.isArray(connections) &&
-    connections.some(
-      (c: any) =>
-        c?.type === "directTcp" && typeof c?.endpoint === "string" && /:6767\b/.test(c.endpoint),
-    )
-  ) {
-    throw new Error(
-      `E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(connections)}).`,
-    );
-  }
-
-  if (!snapshot.prefsRaw) {
-    throw new Error("E2E expected @paseo:create-agent-preferences to be set before app load.");
-  }
-  try {
-    const prefs = JSON.parse(snapshot.prefsRaw) as any;
-    if (prefs?.serverId !== daemon.serverId) {
-      throw new Error(
-        `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${daemon.serverId}) (got ${String(prefs?.serverId)}).`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof Error) throw error;
-    throw new Error("E2E expected @paseo:create-agent-preferences to be valid JSON.");
-  }
-}
-
 export const gotoAppShell = async (page: Page) => {
   await page.goto("/");
-  await ensureE2EStorageSeeded(page);
 };
 
 export const gotoHome = async (page: Page) => {
   await gotoAppShell(page);
-  const composer = page.getByRole("textbox", { name: "Message agent..." });
-  if (
-    !(await composer
-      .first()
-      .isVisible()
-      .catch(() => false))
-  ) {
-    const addProjectCta = page.getByText("Add a project", { exact: true }).first();
-    const addProjectSidebar = page.getByText("Add project", { exact: true }).first();
-    const newAgentButton = page.getByText("New agent", { exact: true }).first();
+  const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
+  const entryButton = page
+    .getByText("Add a project", { exact: true })
+    .or(page.getByText("Add project", { exact: true }))
+    .or(page.getByText("New agent", { exact: true }))
+    .first();
 
-    await expect
-      .poll(
-        async () =>
-          (await addProjectCta.isVisible().catch(() => false)) ||
-          (await addProjectSidebar.isVisible().catch(() => false)) ||
-          (await newAgentButton.isVisible().catch(() => false)),
-        { timeout: 10000 },
-      )
-      .toBe(true);
+  await expect
+    .poll(
+      async () =>
+        (await composer.isVisible().catch(() => false)) ||
+        (await entryButton.isVisible().catch(() => false)),
+      { timeout: 10_000 },
+    )
+    .toBe(true);
 
-    if (await addProjectCta.isVisible().catch(() => false)) {
-      await addProjectCta.click();
-    } else if (await addProjectSidebar.isVisible().catch(() => false)) {
-      await addProjectSidebar.click();
-    } else {
-      await newAgentButton.click();
-    }
+  if (!(await composer.isVisible().catch(() => false))) {
+    await entryButton.click();
   }
-  await expect(composer.first()).toBeVisible({ timeout: 30000 });
+
+  await expect(composer).toBeVisible({ timeout: 30_000 });
 };
 
 export const openSettings = async (page: Page) => {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-
   // Navigate through the real app control so route changes stay aligned with UI behavior.
   const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
   await expect(settingsButton).toBeVisible();
   await settingsButton.click();
-  await expect(page).toHaveURL(new RegExp(`/h/${escapeRegex(serverId)}/settings$`));
+  await expect(page).toHaveURL(/\/settings\/general$/);
 };
 
 export const setWorkingDirectory = async (page: Page, directory: string) => {
@@ -313,7 +142,7 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
   if (trimmedDirectory.startsWith("/private/var/")) {
     directoryCandidates.add(trimmedDirectory.replace(/^\/private/, ""));
   }
-  const basename = trimmedDirectory.split("/").filter(Boolean).pop() ?? trimmedDirectory;
+  const basename = trimmedDirectory.split("/").findLast(Boolean) ?? trimmedDirectory;
 
   await expect
     .poll(
@@ -331,46 +160,6 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
 };
 
 export const ensureHostSelected = async (page: Page) => {
-  await ensureE2EStorageSeeded(page);
-
-  // Absolute verification that we're using the per-run e2e daemon (never :6767).
-  // Also self-heal a rare case where app code rewrites daemon IDs after boot, by
-  // realigning create-agent-preferences.serverId to the sole seeded daemon.
-  try {
-    await assertE2EUsesSeededTestDaemon(page);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/create-agent-preferences\.serverId/i.test(message)) {
-      throw error;
-    }
-
-    const fix = await page.evaluate(() => {
-      const registryRaw = localStorage.getItem("@paseo:daemon-registry");
-      const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
-      if (!registryRaw || !prefsRaw) return { ok: false, reason: "missing storage" } as const;
-      const registry = JSON.parse(registryRaw) as any[];
-      const prefs = JSON.parse(prefsRaw) as any;
-      if (!Array.isArray(registry) || registry.length !== 1)
-        return { ok: false, reason: "registry shape" } as const;
-      const serverId = registry[0]?.serverId;
-      if (typeof serverId !== "string" || serverId.length === 0)
-        return { ok: false, reason: "missing serverId" } as const;
-      prefs.serverId = serverId;
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(prefs));
-      // Prevent the fixture's init-script from overwriting the corrected prefs on reload.
-      const nonce = localStorage.getItem("@paseo:e2e-seed-nonce") ?? "1";
-      localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
-      return { ok: true } as const;
-    });
-
-    if (!fix.ok) {
-      throw error;
-    }
-
-    await page.reload();
-    await assertE2EUsesSeededTestDaemon(page);
-  }
-
   const input = page.getByRole("textbox", { name: "Message agent..." });
   await expect(input).toBeVisible();
 
@@ -382,7 +171,7 @@ export const ensureHostSelected = async (page: Page) => {
   if (await selectHostLabel.isVisible()) {
     await selectHostLabel.click();
 
-    // E2E safety: we enforce a single seeded daemon, so the option should be unambiguous.
+    // We enforce a single seeded daemon, so the option should be unambiguous.
     const localhostOption = page.getByText("localhost", { exact: true }).first();
     const daemonIdOption = page
       .getByText(process.env.E2E_SERVER_ID ?? "srv_e2e_test_daemon", { exact: true })
@@ -647,57 +436,3 @@ export const createAgentInRepo = async (
   await setWorkingDirectory(page, config.directory);
   await createAgent(page, config.prompt);
 };
-
-export const waitForPermissionPrompt = async (page: Page, timeout = 30000) => {
-  const promptText = page.getByTestId("permission-request-question").first();
-  await expect(promptText).toBeVisible({ timeout });
-};
-
-export const allowPermission = async (page: Page) => {
-  const acceptButton = page.getByTestId("permission-request-accept").first();
-  await expect(acceptButton).toBeVisible({ timeout: 5000 });
-  await acceptButton.click();
-};
-
-export const denyPermission = async (page: Page) => {
-  const denyButton = page.getByTestId("permission-request-deny").first();
-  await expect(denyButton).toBeVisible({ timeout: 5000 });
-  await denyButton.click();
-};
-
-export async function waitForAgentFinishUI(page: Page, timeout = 30000) {
-  // Wait for the stop button to disappear
-  const stopButton = page.getByRole("button", { name: /stop|cancel/i });
-
-  // First, let's debug what's happening - wait a bit to see the state
-  await page.waitForTimeout(2000);
-
-  // Check if stop button is visible
-  const isVisible = await stopButton.isVisible().catch(() => false);
-
-  if (isVisible) {
-    // If stop button is still visible after permission denial,
-    // it might be that the agent is waiting for something.
-    // Let's check if there's a tool call result or other UI indication
-
-    // Look for any indication that the agent has processed the permission denial
-    const toolCallResult = page.getByText(/permission.*denied|denied|blocked/i);
-
-    // Wait for the tool call result to appear
-    await expect(toolCallResult)
-      .toBeVisible({ timeout: 10000 })
-      .catch(() => {
-        // If no specific message, just wait for the button to disappear
-      });
-
-    // Now wait for the stop button to disappear
-    await expect(stopButton).not.toBeVisible({ timeout });
-  }
-}
-
-export async function getToolCallCount(page: Page): Promise<number> {
-  // Tool calls are rendered as ExpandableBadge components with tool names like Bash, Write, Read, etc.
-  // They appear as pressable badges in the agent stream
-  const toolCallBadges = page.locator('[data-testid="tool-call-badge"]');
-  return toolCallBadges.count();
-}

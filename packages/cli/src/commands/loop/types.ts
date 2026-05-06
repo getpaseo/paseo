@@ -47,10 +47,12 @@ export interface LoopRecord {
   cwd: string;
   provider: string;
   model: string | null;
+  modeId: string | null;
   workerProvider: string | null;
   workerModel: string | null;
   verifierProvider: string | null;
   verifierModel: string | null;
+  verifierModeId: string | null;
   verifyPrompt: string | null;
   verifyChecks: string[];
   archive: boolean;
@@ -124,10 +126,12 @@ export interface LoopRunInput {
   cwd: string;
   provider?: string;
   model?: string;
+  modeId?: string;
   workerProvider?: string;
   workerModel?: string;
   verifierProvider?: string;
   verifierModel?: string;
+  verifierModeId?: string;
   verifyPrompt?: string;
   verifyChecks?: string[];
   archive?: boolean;

@@ -1,12 +1,17 @@
 import type { AgentManager } from "./agent/agent-manager.js";
-import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
+import type {
+  AgentPersistenceHandle,
+  AgentProvider,
+  AgentSessionConfig,
+} from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import { isValidAgentProvider } from "./agent/provider-manifest.js";
+import { buildProviderRegistry } from "./agent/provider-registry.js";
 
-type LoggerLike = {
+interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
-  error(...args: any[]): void;
-};
+  error(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+}
 
 function getLogger(logger: LoggerLike): LoggerLike {
   return logger.child({ module: "persistence" });
@@ -14,6 +19,22 @@ function getLogger(logger: LoggerLike): LoggerLike {
 
 type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
+
+interface BuildSessionConfigOptions {
+  validProviders?: Iterable<AgentProvider>;
+}
+
+type RegisteredProviders = ReturnType<typeof buildProviderRegistry> | Iterable<AgentProvider>;
+
+function isProviderRegistry(
+  registeredProviders: RegisteredProviders,
+): registeredProviders is ReturnType<typeof buildProviderRegistry> {
+  return (
+    typeof registeredProviders === "object" &&
+    registeredProviders !== null &&
+    !(Symbol.iterator in registeredProviders)
+  );
+}
 
 /**
  * Attach AgentStorage persistence to an AgentManager instance so every
@@ -27,6 +48,9 @@ export function attachAgentStoragePersistence(
   const log = getLogger(logger);
   const unsubscribe = agentManager.subscribe((event) => {
     if (event.type !== "agent_state") {
+      return;
+    }
+    if (event.agent.lifecycle === "closed") {
       return;
     }
     void storage.applySnapshot(event.agent).catch((error) => {
@@ -51,9 +75,14 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
   };
 }
 
-export function buildSessionConfig(record: StoredAgentRecord): AgentSessionConfig {
-  if (!isValidAgentProvider(record.provider)) {
-    throw new Error(`Unknown provider '${record.provider}'`);
+export function buildSessionConfig(
+  record: StoredAgentRecord,
+  options?: BuildSessionConfigOptions,
+): AgentSessionConfig | null {
+  const validProviders = options?.validProviders;
+  const isValidProvider = validProviders ? new Set(validProviders).has(record.provider) : true;
+  if (!isValidProvider) {
+    return null;
   }
   const overrides = buildConfigOverrides(record);
   return {
@@ -70,6 +99,13 @@ export function buildSessionConfig(record: StoredAgentRecord): AgentSessionConfi
   };
 }
 
+export function isStoredAgentProviderAvailable(
+  record: StoredAgentRecord,
+  validProviders?: Iterable<AgentProvider>,
+): boolean {
+  return buildSessionConfig(record, { validProviders }) !== null;
+}
+
 export function extractTimestamps(record: StoredAgentRecord): {
   createdAt: Date;
   updatedAt: Date;
@@ -82,4 +118,40 @@ export function extractTimestamps(record: StoredAgentRecord): {
     lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
     labels: record.labels,
   };
+}
+
+function hasRegisteredProvider(registeredProviders: RegisteredProviders, value: string): boolean {
+  if (isProviderRegistry(registeredProviders)) {
+    return Object.prototype.hasOwnProperty.call(registeredProviders, value);
+  }
+  return new Set(registeredProviders).has(value);
+}
+
+export function isRegisteredProvider(
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
+  value: string,
+): boolean {
+  return hasRegisteredProvider(providerRegistry, value);
+}
+
+export function toAgentPersistenceHandle(
+  registeredProviders: RegisteredProviders,
+  handle: StoredAgentRecord["persistence"],
+): AgentPersistenceHandle | null {
+  if (!handle) {
+    return null;
+  }
+  const provider = handle.provider;
+  if (!hasRegisteredProvider(registeredProviders, provider)) {
+    return null;
+  }
+  if (!handle.sessionId) {
+    return null;
+  }
+  return {
+    provider,
+    sessionId: handle.sessionId,
+    ...(handle.nativeHandle !== undefined ? { nativeHandle: handle.nativeHandle } : {}),
+    ...(handle.metadata !== undefined ? { metadata: handle.metadata } : {}),
+  } satisfies AgentPersistenceHandle;
 }

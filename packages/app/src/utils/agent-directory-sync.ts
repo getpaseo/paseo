@@ -1,17 +1,19 @@
 import type { FetchAgentsEntry } from "@server/client/daemon-client";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 
-type PendingPermissionEntry = {
+type AgentDirectoryFetchEntry = FetchAgentsEntry;
+
+interface PendingPermissionEntry {
   key: string;
   agentId: string;
   request: Agent["pendingPermissions"][number];
-};
+}
 
 export function buildAgentDirectoryState(input: {
   serverId: string;
-  entries: FetchAgentsEntry[];
+  entries: AgentDirectoryFetchEntry[];
 }): {
   agents: Map<string, Agent>;
   pendingPermissions: Map<string, PendingPermissionEntry>;
@@ -40,20 +42,24 @@ export function buildAgentDirectoryState(input: {
   return { agents, pendingPermissions };
 }
 
-export function applyFetchedAgentDirectory(input: {
+export function replaceFetchedAgentDirectory(input: {
   serverId: string;
   entries: FetchAgentsEntry[];
 }): { agents: Map<string, Agent> } {
   const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
-
   const store = useSessionStore.getState();
 
-  store.setAgents(input.serverId, (prev) => {
-    const merged = new Map(prev);
-    for (const [id, agent] of fetchedAgents) {
-      merged.set(id, agent);
+  store.setAgents(input.serverId, fetchedAgents);
+  store.setAgentDetails(input.serverId, (prev) => {
+    let next: Map<string, Agent> | null = null;
+    for (const agentId of fetchedAgents.keys()) {
+      if (!prev.has(agentId)) {
+        continue;
+      }
+      next ??= new Map(prev);
+      next.delete(agentId);
     }
-    return merged;
+    return next ?? prev;
   });
 
   const lastActivityByAgentId = new Map<string, Date>();
@@ -62,13 +68,7 @@ export function applyFetchedAgentDirectory(input: {
   }
   store.setAgentLastActivityBatch(lastActivityByAgentId);
 
-  store.setPendingPermissions(input.serverId, (prev) => {
-    const merged = new Map(prev);
-    for (const [key, entry] of pendingPermissions) {
-      merged.set(key, entry);
-    }
-    return merged;
-  });
+  store.setPendingPermissions(input.serverId, new Map(pendingPermissions));
   store.setInitializingAgents(input.serverId, new Map());
   store.setHasHydratedAgents(input.serverId, true);
   return { agents: fetchedAgents };

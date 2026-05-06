@@ -55,7 +55,7 @@ export async function runModeCommand(
   _command: Command,
 ): Promise<AgentModeResult> {
   const normalizedMode = mode?.trim();
-  const host = getDaemonHost({ host: options.host as string | undefined });
+  const host = getDaemonHost({ host: options.host });
 
   // Validate arguments
   if (!options.list && !normalizedMode) {
@@ -64,7 +64,7 @@ export async function runModeCommand(
 
   let client: Awaited<ReturnType<typeof connectToDaemon>> | undefined;
   try {
-    client = await connectToDaemon({ host: options.host as string | undefined });
+    client = await connectToDaemon({ host: options.host });
     const fetchResult = await client.fetchAgent(id);
     if (!fetchResult) {
       const error: CommandError = {

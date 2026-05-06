@@ -6,10 +6,10 @@ const ATTACHMENTS_DIRNAME = "desktop-attachments";
 const ATTACHMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const EXTENSION_PATTERN = /^\.[A-Za-z0-9]{1,16}$/;
 
-type AttachmentFileResult = {
+interface AttachmentFileResult {
   path: string;
   byteSize: number;
-};
+}
 
 function attachmentsDirPath(): string {
   return path.join(resolvePaseoHome(process.env), ATTACHMENTS_DIRNAME);
@@ -90,6 +90,37 @@ export async function writeAttachmentBase64(input: {
   };
 }
 
+function normalizeBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value);
+  }
+  throw new Error("Attachment byte payload is required.");
+}
+
+export async function writeAttachmentBytes(input: {
+  attachmentId?: unknown;
+  bytes?: unknown;
+  extension?: unknown;
+}): Promise<AttachmentFileResult> {
+  const bytes = normalizeBytes(input.bytes);
+  const targetPath = await buildManagedAttachmentPath({
+    attachmentId: input.attachmentId,
+    extension: input.extension,
+  });
+  await writeFile(targetPath, bytes);
+  const fileInfo = await stat(targetPath);
+  return {
+    path: targetPath,
+    byteSize: fileInfo.size,
+  };
+}
+
 export async function copyAttachmentFileToManagedStorage(input: {
   attachmentId?: unknown;
   sourcePath?: unknown;
@@ -142,19 +173,11 @@ export async function garbageCollectManagedAttachmentFiles(input: {
     : new Set<string>();
 
   const entries = await readdir(dirPath, { withFileTypes: true });
-  let deletedCount = 0;
+  const toDelete = entries.filter(
+    (entry) => entry.isFile() && !referencedIds.has(path.parse(entry.name).name),
+  );
 
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
-    const attachmentId = path.parse(entry.name).name;
-    if (referencedIds.has(attachmentId)) {
-      continue;
-    }
-    await rm(path.join(dirPath, entry.name), { force: true });
-    deletedCount += 1;
-  }
+  await Promise.all(toDelete.map((entry) => rm(path.join(dirPath, entry.name), { force: true })));
 
-  return deletedCount;
+  return toDelete.length;
 }

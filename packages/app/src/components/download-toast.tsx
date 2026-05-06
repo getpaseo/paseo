@@ -1,11 +1,22 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, X, XCircle } from "lucide-react-native";
-import { useDownloadStore, formatSpeed, formatEta } from "@/stores/download-store";
+import { useDownloadStore, formatSpeed, formatEta, type Download } from "@/stores/download-store";
 
 const AUTO_DISMISS_DELAY = 3000;
+
+function getDownloadStatusText(download: Download): string {
+  if (download.status === "downloading") {
+    if (download.progress) {
+      return `${Math.round(download.progress.percent * 100)}% · ${formatSpeed(download.progress.speed)} · ${formatEta(download.progress.eta)}`;
+    }
+    return "Starting...";
+  }
+  if (download.status === "complete") return "Download complete";
+  return download.message ?? "Download failed";
+}
 
 export function DownloadToast() {
   const { theme } = useUnistyles();
@@ -36,59 +47,58 @@ export function DownloadToast() {
     };
   }, [activeDownload, dismissDownload]);
 
+  const containerStyle = useMemo(
+    () => [styles.container, { bottom: theme.spacing[4] + insets.bottom }],
+    [theme.spacing, insets.bottom],
+  );
+
+  const handleDismiss = useCallback(() => {
+    if (activeDownload) {
+      dismissDownload(activeDownload.id);
+    }
+  }, [activeDownload, dismissDownload]);
+
   if (!activeDownload) {
     return null;
   }
 
   return (
-    <View
-      style={[styles.container, { bottom: theme.spacing[4] + insets.bottom }]}
-      pointerEvents="box-none"
-    >
+    <View style={containerStyle} pointerEvents="box-none">
       <View style={styles.toast}>
         {activeDownload.status === "downloading" ? (
           <ActivityIndicator size="small" color={theme.colors.foreground} />
-        ) : activeDownload.status === "complete" ? (
+        ) : null}
+        {activeDownload.status === "complete" ? (
           <Check size={18} color={theme.colors.primary} />
-        ) : (
+        ) : null}
+        {activeDownload.status !== "downloading" && activeDownload.status !== "complete" ? (
           <XCircle size={18} color={theme.colors.destructive} />
-        )}
+        ) : null}
         <View style={styles.textContainer}>
           <Text style={styles.fileName} numberOfLines={1}>
             {activeDownload.fileName}
           </Text>
-          <Text style={styles.status}>
-            {activeDownload.status === "downloading"
-              ? activeDownload.progress
-                ? `${Math.round(activeDownload.progress.percent * 100)}% · ${formatSpeed(activeDownload.progress.speed)} · ${formatEta(activeDownload.progress.eta)}`
-                : "Starting..."
-              : activeDownload.status === "complete"
-                ? "Download complete"
-                : (activeDownload.message ?? "Download failed")}
-          </Text>
+          <Text style={styles.status}>{getDownloadStatusText(activeDownload)}</Text>
           {activeDownload.status === "downloading" && activeDownload.progress && (
             <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${Math.round(activeDownload.progress.percent * 100)}%` },
-                ]}
-              />
+              <ProgressFill percent={activeDownload.progress.percent} />
             </View>
           )}
         </View>
         {activeDownload.status !== "downloading" && (
-          <Pressable
-            onPress={() => dismissDownload(activeDownload.id)}
-            hitSlop={8}
-            style={styles.dismiss}
-          >
+          <Pressable onPress={handleDismiss} hitSlop={8} style={styles.dismiss}>
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
         )}
       </View>
     </View>
   );
+}
+
+function ProgressFill({ percent }: { percent: number }) {
+  const width: `${number}%` = `${Math.round(percent * 100)}%`;
+  const fillStyle = useMemo(() => [styles.progressFill, { width }], [width]);
+  return <View style={fillStyle} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

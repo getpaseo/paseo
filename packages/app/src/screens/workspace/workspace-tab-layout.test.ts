@@ -68,7 +68,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
     expect(result.items.map((item) => item.width)).toEqual([60, 60, 60, 60]);
-    expect(result.items.every((item) => item.showLabel === false)).toBe(true);
+    expect(result.items.every((item) => !item.showLabel)).toBe(true);
   });
 
   it("allows horizontal scroll only when icon-only tabs still cannot fit", () => {
@@ -81,7 +81,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(true);
     expect(result.items.map((item) => item.width)).toEqual([60, 60, 60, 60]);
-    expect(result.items.every((item) => item.showLabel === false)).toBe(true);
+    expect(result.items.every((item) => !item.showLabel)).toBe(true);
   });
 
   it("returns empty layout details when there are no tabs", () => {

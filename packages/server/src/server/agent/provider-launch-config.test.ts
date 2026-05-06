@@ -1,8 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
+  createProviderEnv,
+  migrateProviderSettings,
+  ProviderOverrideSchema,
   resolveProviderCommandPrefix,
-  applyProviderEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 
@@ -53,7 +55,7 @@ describe("resolveProviderCommandPrefix", () => {
   });
 });
 
-describe("applyProviderEnv", () => {
+describe("createProviderEnv", () => {
   test("merges provider env overrides", () => {
     const base = {
       PATH: "/usr/bin",
@@ -66,7 +68,7 @@ describe("applyProviderEnv", () => {
       },
     };
 
-    const env = applyProviderEnv(base, runtime);
+    const env = createProviderEnv({ baseEnv: base, runtimeSettings: runtime });
 
     expect(env.PATH).toBe("/usr/bin");
     expect(env.HOME).toBe("/custom/home");
@@ -78,7 +80,7 @@ describe("applyProviderEnv", () => {
     const base = { PATH: "/usr/bin" };
     const runtime: ProviderRuntimeSettings = { env: { PATH: "/custom/path" } };
 
-    const env = applyProviderEnv(base, runtime);
+    const env = createProviderEnv({ baseEnv: base, runtimeSettings: runtime });
 
     expect(env.PATH).toBe("/custom/path");
   });
@@ -93,7 +95,7 @@ describe("applyProviderEnv", () => {
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "true",
     };
 
-    const env = applyProviderEnv(base);
+    const env = createProviderEnv({ baseEnv: base });
 
     expect(env.PATH).toBe("/usr/bin");
     expect(env.CLAUDECODE).toBeUndefined();
@@ -101,5 +103,177 @@ describe("applyProviderEnv", () => {
     expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBeUndefined();
+  });
+});
+
+describe("ProviderOverrideSchema", () => {
+  test("accepts built-in override fields", () => {
+    const parsed = ProviderOverrideSchema.parse({
+      command: ["custom-claude", "--json"],
+      env: {
+        FOO: "bar",
+      },
+      enabled: false,
+      order: 2,
+    });
+
+    expect(parsed.command).toEqual(["custom-claude", "--json"]);
+    expect(parsed.env?.FOO).toBe("bar");
+    expect(parsed.enabled).toBe(false);
+    expect(parsed.order).toBe(2);
+  });
+
+  test("accepts models with thinking options", () => {
+    const parsed = ProviderOverrideSchema.parse({
+      models: [
+        {
+          id: "zai-fast",
+          label: "ZAI Fast",
+          isDefault: true,
+          thinkingOptions: [
+            {
+              id: "deep",
+              label: "Deep",
+              description: "Higher effort",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed.models).toEqual([
+      {
+        id: "zai-fast",
+        label: "ZAI Fast",
+        isDefault: true,
+        thinkingOptions: [
+          {
+            id: "deep",
+            label: "Deep",
+            description: "Higher effort",
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("migrateProviderSettings", () => {
+  const builtinProviderIds = ["claude", "codex", "copilot", "opencode", "pi"];
+
+  test("passes through entries already in the new format", () => {
+    const migrated = migrateProviderSettings(
+      {
+        zai: {
+          extends: "claude",
+          label: "ZAI",
+          command: ["zai"],
+          env: {
+            ZAI_KEY: "secret",
+          },
+        },
+      },
+      builtinProviderIds,
+    );
+
+    expect(migrated).toEqual({
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+        command: ["zai"],
+        env: {
+          ZAI_KEY: "secret",
+        },
+      },
+    });
+  });
+
+  test("migrates mode replace to command argv", () => {
+    const migrated = migrateProviderSettings(
+      {
+        claude: {
+          command: {
+            mode: "replace",
+            argv: ["docker", "run", "--rm", "claude"],
+          },
+        },
+      },
+      builtinProviderIds,
+    );
+
+    expect(migrated).toEqual({
+      claude: {
+        command: ["docker", "run", "--rm", "claude"],
+      },
+    });
+  });
+
+  test("migrates mode default by dropping command", () => {
+    const migrated = migrateProviderSettings(
+      {
+        codex: {
+          command: {
+            mode: "default",
+          },
+          env: {
+            FOO: "bar",
+          },
+        },
+      },
+      builtinProviderIds,
+    );
+
+    expect(migrated).toEqual({
+      codex: {
+        env: {
+          FOO: "bar",
+        },
+      },
+    });
+  });
+
+  test("drops append mode entries because they cannot be auto-migrated", () => {
+    const migrated = migrateProviderSettings(
+      {
+        claude: {
+          command: {
+            mode: "append",
+            args: ["--debug"],
+          },
+          env: {
+            FOO: "bar",
+          },
+        },
+      },
+      builtinProviderIds,
+    );
+
+    expect(migrated).toEqual({});
+  });
+
+  test("preserves legacy env while migrating old entries", () => {
+    const migrated = migrateProviderSettings(
+      {
+        opencode: {
+          command: {
+            mode: "replace",
+            argv: ["opencode"],
+          },
+          env: {
+            PATH: "/custom/bin",
+          },
+        },
+      },
+      builtinProviderIds,
+    );
+
+    expect(migrated).toEqual({
+      opencode: {
+        command: ["opencode"],
+        env: {
+          PATH: "/custom/bin",
+        },
+      },
+    });
   });
 });

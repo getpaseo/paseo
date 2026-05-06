@@ -1,9 +1,10 @@
 import { create } from "zustand";
 import type { UserMessageImageAttachment } from "@/types/stream";
+import type { AgentAttachment } from "@server/shared/messages";
 
 export type CreateFlowLifecycleState = "active" | "abandoned" | "sent";
 
-type PendingCreateAttempt = {
+interface PendingCreateAttempt {
   draftId: string;
   serverId: string;
   agentId: string | null;
@@ -12,9 +13,10 @@ type PendingCreateAttempt = {
   timestamp: number;
   lifecycle: CreateFlowLifecycleState;
   images?: UserMessageImageAttachment[];
-};
+  attachments?: AgentAttachment[];
+}
 
-type CreateFlowState = {
+interface CreateFlowState {
   pendingByDraftId: Record<string, PendingCreateAttempt>;
   setPending: (pending: Omit<PendingCreateAttempt, "lifecycle">) => void;
   updateAgentId: (input: { draftId: string; agentId: string }) => void;
@@ -22,7 +24,7 @@ type CreateFlowState = {
   rekeyDraft: (input: { fromDraftId: string; toDraftId: string }) => void;
   clear: (input: { draftId: string }) => void;
   clearAll: () => void;
-};
+}
 
 export const useCreateFlowStore = create<CreateFlowState>((set) => ({
   pendingByDraftId: {},

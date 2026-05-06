@@ -1,9 +1,9 @@
 import type { AgentTimelineItem, DaemonClient } from "@getpaseo/server";
 
-type FetchProjectedTimelineItemsInput = {
+interface FetchProjectedTimelineItemsInput {
   client: DaemonClient;
   agentId: string;
-};
+}
 
 export async function fetchProjectedTimelineItems(
   input: FetchProjectedTimelineItemsInput,

@@ -14,20 +14,14 @@ import { Route as OpencodeRouteImport } from "./routes/opencode";
 import { Route as DownloadRouteImport } from "./routes/download";
 import { Route as DocsRouteImport } from "./routes/docs";
 import { Route as CodexRouteImport } from "./routes/codex";
+import { Route as CloudRouteImport } from "./routes/cloud";
 import { Route as ClaudeCodeRouteImport } from "./routes/claude-code";
 import { Route as ChangelogRouteImport } from "./routes/changelog";
 import { Route as BlogRouteImport } from "./routes/blog";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DocsIndexRouteImport } from "./routes/docs/index";
 import { Route as BlogIndexRouteImport } from "./routes/blog/index";
-import { Route as DocsWorktreesRouteImport } from "./routes/docs/worktrees";
-import { Route as DocsVoiceRouteImport } from "./routes/docs/voice";
-import { Route as DocsUpdatesRouteImport } from "./routes/docs/updates";
-import { Route as DocsSkillsRouteImport } from "./routes/docs/skills";
-import { Route as DocsSecurityRouteImport } from "./routes/docs/security";
-import { Route as DocsConfigurationRouteImport } from "./routes/docs/configuration";
-import { Route as DocsCliRouteImport } from "./routes/docs/cli";
-import { Route as DocsBestPracticesRouteImport } from "./routes/docs/best-practices";
+import { Route as DocsSplatRouteImport } from "./routes/docs/$";
 import { Route as BlogSplatRouteImport } from "./routes/blog/$";
 
 const PrivacyRoute = PrivacyRouteImport.update({
@@ -53,6 +47,11 @@ const DocsRoute = DocsRouteImport.update({
 const CodexRoute = CodexRouteImport.update({
   id: "/codex",
   path: "/codex",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const CloudRoute = CloudRouteImport.update({
+  id: "/cloud",
+  path: "/cloud",
   getParentRoute: () => rootRouteImport,
 } as any);
 const ClaudeCodeRoute = ClaudeCodeRouteImport.update({
@@ -85,44 +84,9 @@ const BlogIndexRoute = BlogIndexRouteImport.update({
   path: "/",
   getParentRoute: () => BlogRoute,
 } as any);
-const DocsWorktreesRoute = DocsWorktreesRouteImport.update({
-  id: "/worktrees",
-  path: "/worktrees",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsVoiceRoute = DocsVoiceRouteImport.update({
-  id: "/voice",
-  path: "/voice",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsUpdatesRoute = DocsUpdatesRouteImport.update({
-  id: "/updates",
-  path: "/updates",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsSkillsRoute = DocsSkillsRouteImport.update({
-  id: "/skills",
-  path: "/skills",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsSecurityRoute = DocsSecurityRouteImport.update({
-  id: "/security",
-  path: "/security",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsConfigurationRoute = DocsConfigurationRouteImport.update({
-  id: "/configuration",
-  path: "/configuration",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsCliRoute = DocsCliRouteImport.update({
-  id: "/cli",
-  path: "/cli",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsBestPracticesRoute = DocsBestPracticesRouteImport.update({
-  id: "/best-practices",
-  path: "/best-practices",
+const DocsSplatRoute = DocsSplatRouteImport.update({
+  id: "/$",
+  path: "/$",
   getParentRoute: () => DocsRoute,
 } as any);
 const BlogSplatRoute = BlogSplatRouteImport.update({
@@ -136,20 +100,14 @@ export interface FileRoutesByFullPath {
   "/blog": typeof BlogRouteWithChildren;
   "/changelog": typeof ChangelogRoute;
   "/claude-code": typeof ClaudeCodeRoute;
+  "/cloud": typeof CloudRoute;
   "/codex": typeof CodexRoute;
   "/docs": typeof DocsRouteWithChildren;
   "/download": typeof DownloadRoute;
   "/opencode": typeof OpencodeRoute;
   "/privacy": typeof PrivacyRoute;
   "/blog/$": typeof BlogSplatRoute;
-  "/docs/best-practices": typeof DocsBestPracticesRoute;
-  "/docs/cli": typeof DocsCliRoute;
-  "/docs/configuration": typeof DocsConfigurationRoute;
-  "/docs/security": typeof DocsSecurityRoute;
-  "/docs/skills": typeof DocsSkillsRoute;
-  "/docs/updates": typeof DocsUpdatesRoute;
-  "/docs/voice": typeof DocsVoiceRoute;
-  "/docs/worktrees": typeof DocsWorktreesRoute;
+  "/docs/$": typeof DocsSplatRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
 }
@@ -157,19 +115,13 @@ export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/changelog": typeof ChangelogRoute;
   "/claude-code": typeof ClaudeCodeRoute;
+  "/cloud": typeof CloudRoute;
   "/codex": typeof CodexRoute;
   "/download": typeof DownloadRoute;
   "/opencode": typeof OpencodeRoute;
   "/privacy": typeof PrivacyRoute;
   "/blog/$": typeof BlogSplatRoute;
-  "/docs/best-practices": typeof DocsBestPracticesRoute;
-  "/docs/cli": typeof DocsCliRoute;
-  "/docs/configuration": typeof DocsConfigurationRoute;
-  "/docs/security": typeof DocsSecurityRoute;
-  "/docs/skills": typeof DocsSkillsRoute;
-  "/docs/updates": typeof DocsUpdatesRoute;
-  "/docs/voice": typeof DocsVoiceRoute;
-  "/docs/worktrees": typeof DocsWorktreesRoute;
+  "/docs/$": typeof DocsSplatRoute;
   "/blog": typeof BlogIndexRoute;
   "/docs": typeof DocsIndexRoute;
 }
@@ -179,20 +131,14 @@ export interface FileRoutesById {
   "/blog": typeof BlogRouteWithChildren;
   "/changelog": typeof ChangelogRoute;
   "/claude-code": typeof ClaudeCodeRoute;
+  "/cloud": typeof CloudRoute;
   "/codex": typeof CodexRoute;
   "/docs": typeof DocsRouteWithChildren;
   "/download": typeof DownloadRoute;
   "/opencode": typeof OpencodeRoute;
   "/privacy": typeof PrivacyRoute;
   "/blog/$": typeof BlogSplatRoute;
-  "/docs/best-practices": typeof DocsBestPracticesRoute;
-  "/docs/cli": typeof DocsCliRoute;
-  "/docs/configuration": typeof DocsConfigurationRoute;
-  "/docs/security": typeof DocsSecurityRoute;
-  "/docs/skills": typeof DocsSkillsRoute;
-  "/docs/updates": typeof DocsUpdatesRoute;
-  "/docs/voice": typeof DocsVoiceRoute;
-  "/docs/worktrees": typeof DocsWorktreesRoute;
+  "/docs/$": typeof DocsSplatRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
 }
@@ -203,20 +149,14 @@ export interface FileRouteTypes {
     | "/blog"
     | "/changelog"
     | "/claude-code"
+    | "/cloud"
     | "/codex"
     | "/docs"
     | "/download"
     | "/opencode"
     | "/privacy"
     | "/blog/$"
-    | "/docs/best-practices"
-    | "/docs/cli"
-    | "/docs/configuration"
-    | "/docs/security"
-    | "/docs/skills"
-    | "/docs/updates"
-    | "/docs/voice"
-    | "/docs/worktrees"
+    | "/docs/$"
     | "/blog/"
     | "/docs/";
   fileRoutesByTo: FileRoutesByTo;
@@ -224,19 +164,13 @@ export interface FileRouteTypes {
     | "/"
     | "/changelog"
     | "/claude-code"
+    | "/cloud"
     | "/codex"
     | "/download"
     | "/opencode"
     | "/privacy"
     | "/blog/$"
-    | "/docs/best-practices"
-    | "/docs/cli"
-    | "/docs/configuration"
-    | "/docs/security"
-    | "/docs/skills"
-    | "/docs/updates"
-    | "/docs/voice"
-    | "/docs/worktrees"
+    | "/docs/$"
     | "/blog"
     | "/docs";
   id:
@@ -245,20 +179,14 @@ export interface FileRouteTypes {
     | "/blog"
     | "/changelog"
     | "/claude-code"
+    | "/cloud"
     | "/codex"
     | "/docs"
     | "/download"
     | "/opencode"
     | "/privacy"
     | "/blog/$"
-    | "/docs/best-practices"
-    | "/docs/cli"
-    | "/docs/configuration"
-    | "/docs/security"
-    | "/docs/skills"
-    | "/docs/updates"
-    | "/docs/voice"
-    | "/docs/worktrees"
+    | "/docs/$"
     | "/blog/"
     | "/docs/";
   fileRoutesById: FileRoutesById;
@@ -268,6 +196,7 @@ export interface RootRouteChildren {
   BlogRoute: typeof BlogRouteWithChildren;
   ChangelogRoute: typeof ChangelogRoute;
   ClaudeCodeRoute: typeof ClaudeCodeRoute;
+  CloudRoute: typeof CloudRoute;
   CodexRoute: typeof CodexRoute;
   DocsRoute: typeof DocsRouteWithChildren;
   DownloadRoute: typeof DownloadRoute;
@@ -312,6 +241,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CodexRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/cloud": {
+      id: "/cloud";
+      path: "/cloud";
+      fullPath: "/cloud";
+      preLoaderRoute: typeof CloudRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/claude-code": {
       id: "/claude-code";
       path: "/claude-code";
@@ -354,60 +290,11 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof BlogIndexRouteImport;
       parentRoute: typeof BlogRoute;
     };
-    "/docs/worktrees": {
-      id: "/docs/worktrees";
-      path: "/worktrees";
-      fullPath: "/docs/worktrees";
-      preLoaderRoute: typeof DocsWorktreesRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/voice": {
-      id: "/docs/voice";
-      path: "/voice";
-      fullPath: "/docs/voice";
-      preLoaderRoute: typeof DocsVoiceRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/updates": {
-      id: "/docs/updates";
-      path: "/updates";
-      fullPath: "/docs/updates";
-      preLoaderRoute: typeof DocsUpdatesRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/skills": {
-      id: "/docs/skills";
-      path: "/skills";
-      fullPath: "/docs/skills";
-      preLoaderRoute: typeof DocsSkillsRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/security": {
-      id: "/docs/security";
-      path: "/security";
-      fullPath: "/docs/security";
-      preLoaderRoute: typeof DocsSecurityRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/configuration": {
-      id: "/docs/configuration";
-      path: "/configuration";
-      fullPath: "/docs/configuration";
-      preLoaderRoute: typeof DocsConfigurationRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/cli": {
-      id: "/docs/cli";
-      path: "/cli";
-      fullPath: "/docs/cli";
-      preLoaderRoute: typeof DocsCliRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/best-practices": {
-      id: "/docs/best-practices";
-      path: "/best-practices";
-      fullPath: "/docs/best-practices";
-      preLoaderRoute: typeof DocsBestPracticesRouteImport;
+    "/docs/$": {
+      id: "/docs/$";
+      path: "/$";
+      fullPath: "/docs/$";
+      preLoaderRoute: typeof DocsSplatRouteImport;
       parentRoute: typeof DocsRoute;
     };
     "/blog/$": {
@@ -433,26 +320,12 @@ const BlogRouteChildren: BlogRouteChildren = {
 const BlogRouteWithChildren = BlogRoute._addFileChildren(BlogRouteChildren);
 
 interface DocsRouteChildren {
-  DocsBestPracticesRoute: typeof DocsBestPracticesRoute;
-  DocsCliRoute: typeof DocsCliRoute;
-  DocsConfigurationRoute: typeof DocsConfigurationRoute;
-  DocsSecurityRoute: typeof DocsSecurityRoute;
-  DocsSkillsRoute: typeof DocsSkillsRoute;
-  DocsUpdatesRoute: typeof DocsUpdatesRoute;
-  DocsVoiceRoute: typeof DocsVoiceRoute;
-  DocsWorktreesRoute: typeof DocsWorktreesRoute;
+  DocsSplatRoute: typeof DocsSplatRoute;
   DocsIndexRoute: typeof DocsIndexRoute;
 }
 
 const DocsRouteChildren: DocsRouteChildren = {
-  DocsBestPracticesRoute: DocsBestPracticesRoute,
-  DocsCliRoute: DocsCliRoute,
-  DocsConfigurationRoute: DocsConfigurationRoute,
-  DocsSecurityRoute: DocsSecurityRoute,
-  DocsSkillsRoute: DocsSkillsRoute,
-  DocsUpdatesRoute: DocsUpdatesRoute,
-  DocsVoiceRoute: DocsVoiceRoute,
-  DocsWorktreesRoute: DocsWorktreesRoute,
+  DocsSplatRoute: DocsSplatRoute,
   DocsIndexRoute: DocsIndexRoute,
 };
 
@@ -463,6 +336,7 @@ const rootRouteChildren: RootRouteChildren = {
   BlogRoute: BlogRouteWithChildren,
   ChangelogRoute: ChangelogRoute,
   ClaudeCodeRoute: ClaudeCodeRoute,
+  CloudRoute: CloudRoute,
   CodexRoute: CodexRoute,
   DocsRoute: DocsRouteWithChildren,
   DownloadRoute: DownloadRoute,

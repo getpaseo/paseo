@@ -12,10 +12,10 @@ interface PendingPlayback {
   streamEnded: boolean;
 }
 
-type TtsSegment = {
+interface TtsSegment {
   index: number;
   text: string;
-};
+}
 
 type PreparedTtsSegment = TtsSegment & {
   format: string;
@@ -181,7 +181,7 @@ export class TTSManager {
 
     const scheduleNextSegments = () => {
       while (nextSegmentToSchedule < segments.length && inflight.size < TTS_PREFETCH_SEGMENTS) {
-        const segment = segments[nextSegmentToSchedule]!;
+        const segment = segments[nextSegmentToSchedule];
         inflight.set(segment.index, this.scheduleSegmentSynthesis(segment, abortSignal));
         nextSegmentToSchedule += 1;
       }
@@ -317,6 +317,7 @@ export class TTSManager {
         if (result.kind === "prepared") {
           this.destroySpeechStream(result.prepared.stream);
         }
+        return;
       });
     }
   }

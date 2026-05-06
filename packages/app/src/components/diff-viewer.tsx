@@ -1,18 +1,81 @@
 import React from "react";
-import { View, Text, Platform, ScrollView as RNScrollView } from "react-native";
+import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
-import type { DiffLine, DiffSegment } from "@/utils/tool-call-parsers";
+import type { DiffLine } from "@/utils/tool-call-parsers";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { getCodeInsets } from "./code-insets";
+import { isWeb } from "@/constants/platform";
 
-const ScrollView = Platform.OS === "web" ? RNScrollView : GHScrollView;
+const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 interface DiffViewerProps {
   diffLines: DiffLine[];
   maxHeight?: number;
   emptyLabel?: string;
   fillAvailableHeight?: boolean;
+}
+
+function DiffLineRow({ line }: { line: DiffLine }) {
+  const lineContainerStyle = React.useMemo(
+    () => [
+      styles.line,
+      line.type === "header" && styles.headerLine,
+      line.type === "add" && styles.addLine,
+      line.type === "remove" && styles.removeLine,
+      line.type === "context" && styles.contextLine,
+    ],
+    [line.type],
+  );
+  const plainLineTextStyle = React.useMemo(
+    () => [
+      styles.lineText,
+      line.type === "header" && styles.headerText,
+      line.type === "add" && styles.addText,
+      line.type === "remove" && styles.removeText,
+      line.type === "context" && styles.contextText,
+    ],
+    [line.type],
+  );
+
+  return (
+    <View style={lineContainerStyle}>
+      {line.segments ? (
+        <Text style={styles.lineText}>
+          <Text style={line.type === "add" ? styles.addText : styles.removeText}>
+            {line.content[0]}
+          </Text>
+          {line.segments.map((segment) => (
+            <DiffSegment
+              key={`${segment.changed ? "c" : "u"}:${segment.text}`}
+              segment={segment}
+              lineType={line.type}
+            />
+          ))}
+        </Text>
+      ) : (
+        <Text style={plainLineTextStyle}>{line.content}</Text>
+      )}
+    </View>
+  );
+}
+
+function DiffSegment({
+  segment,
+  lineType,
+}: {
+  segment: NonNullable<DiffLine["segments"]>[number];
+  lineType: DiffLine["type"];
+}) {
+  const segmentStyle = React.useMemo(
+    () => [
+      lineType === "add" ? styles.addText : styles.removeText,
+      segment.changed && (lineType === "add" ? styles.addHighlight : styles.removeHighlight),
+    ],
+    [lineType, segment.changed],
+  );
+  return <Text style={segmentStyle}>{segment.text}</Text>;
 }
 
 export function DiffViewer({
@@ -22,6 +85,30 @@ export function DiffViewer({
   fillAvailableHeight = false,
 }: DiffViewerProps) {
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
+  const webScrollbarStyle = useWebScrollbarStyle();
+  const handleInnerLayout = React.useCallback(
+    (e: { nativeEvent: { layout: { width: number } } }) =>
+      setScrollViewWidth(e.nativeEvent.layout.width),
+    [],
+  );
+
+  const outerScrollStyle = React.useMemo(
+    () => [
+      styles.verticalScroll,
+      maxHeight !== undefined && { maxHeight },
+      fillAvailableHeight && styles.fillHeight,
+      webScrollbarStyle,
+    ],
+    [maxHeight, fillAvailableHeight, webScrollbarStyle],
+  );
+  const linesContainerStyle = React.useMemo(
+    () => [styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }],
+    [scrollViewWidth],
+  );
+  const keyedDiffLines = React.useMemo(
+    () => diffLines.map((line, index) => ({ key: `${index}-${line.type}-${line.content}`, line })),
+    [diffLines],
+  );
 
   if (!diffLines.length) {
     return (
@@ -33,11 +120,7 @@ export function DiffViewer({
 
   return (
     <ScrollView
-      style={[
-        styles.verticalScroll,
-        maxHeight !== undefined && { maxHeight },
-        fillAvailableHeight && styles.fillHeight,
-      ]}
+      style={outerScrollStyle}
       contentContainerStyle={styles.verticalContent}
       nestedScrollEnabled
       showsVerticalScrollIndicator
@@ -46,53 +129,13 @@ export function DiffViewer({
         horizontal
         nestedScrollEnabled
         showsHorizontalScrollIndicator
+        style={webScrollbarStyle}
         contentContainerStyle={styles.horizontalContent}
-        onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+        onLayout={handleInnerLayout}
       >
-        <View style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}>
-          {diffLines.map((line, index) => (
-            <View
-              key={`${line.type}-${index}`}
-              style={[
-                styles.line,
-                line.type === "header" && styles.headerLine,
-                line.type === "add" && styles.addLine,
-                line.type === "remove" && styles.removeLine,
-                line.type === "context" && styles.contextLine,
-              ]}
-            >
-              {line.segments ? (
-                <Text style={styles.lineText}>
-                  <Text style={line.type === "add" ? styles.addText : styles.removeText}>
-                    {line.content[0]}
-                  </Text>
-                  {line.segments.map((segment, segIdx) => (
-                    <Text
-                      key={segIdx}
-                      style={[
-                        line.type === "add" ? styles.addText : styles.removeText,
-                        segment.changed &&
-                          (line.type === "add" ? styles.addHighlight : styles.removeHighlight),
-                      ]}
-                    >
-                      {segment.text}
-                    </Text>
-                  ))}
-                </Text>
-              ) : (
-                <Text
-                  style={[
-                    styles.lineText,
-                    line.type === "header" && styles.headerText,
-                    line.type === "add" && styles.addText,
-                    line.type === "remove" && styles.removeText,
-                    line.type === "context" && styles.contextText,
-                  ]}
-                >
-                  {line.content}
-                </Text>
-              )}
-            </View>
+        <View style={linesContainerStyle}>
+          {keyedDiffLines.map(({ key, line }) => (
+            <DiffLineRow key={key} line={line} />
           ))}
         </View>
       </ScrollView>
@@ -130,7 +173,7 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: Fonts.mono,
       fontSize: theme.fontSize.xs,
       color: theme.colors.foreground,
-      ...(Platform.OS === "web"
+      ...(isWeb
         ? {
             whiteSpace: "pre",
             overflowWrap: "normal",

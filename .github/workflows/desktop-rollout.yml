@@ -1,0 +1,152 @@
+name: Desktop Rollout
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to re-stamp (e.g. v0.1.42)."
+        required: true
+        type: string
+      rollout_hours:
+        description: "Total rollout duration since the original release date, in hours. Use 0 to admit everyone immediately."
+        required: true
+        type: string
+
+concurrency:
+  group: desktop-rollout-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_TAG: ${{ inputs.tag }}
+
+jobs:
+  stamp:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            package.json
+            package-lock.json
+            scripts
+
+      - name: Resolve release metadata
+        shell: bash
+        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
+
+      - name: Install JS dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download release manifests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-manifests
+          cd release-manifests
+          gh release download "$RELEASE_TAG" --repo "${{ github.repository }}" --pattern "${RELEASE_CHANNEL}*.yml"
+          shopt -s nullglob
+          files=( ./*.yml )
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::No manifests matched ${RELEASE_CHANNEL}*.yml on $RELEASE_TAG"
+            exit 1
+          fi
+          echo "Downloaded ${#files[@]} manifest(s):"
+          printf '  %s\n' "${files[@]}"
+
+      - name: Capture before state
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-manifests
+          summary=$(node -e '
+            const yaml = require("js-yaml");
+            const fs = require("fs");
+            for (const f of process.argv.slice(1)) {
+              const m = yaml.load(fs.readFileSync(f, "utf8")) ?? {};
+              console.log(`  ${f}: rolloutHours=${m.rolloutHours ?? "<unset>"} releaseDate=${m.releaseDate ?? "<unset>"}`);
+            }
+          ' ./*.yml)
+          echo "$summary"
+          {
+            echo "summary<<EOF"
+            echo "$summary"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Re-stamp rolloutHours
+        env:
+          NEW_HOURS: ${{ inputs.rollout_hours }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-manifests
+          node ../scripts/stamp-rollout.mjs --rollout-hours "$NEW_HOURS" ./*.yml
+
+      - name: Validate rewritten manifests
+        env:
+          EXPECTED: ${{ inputs.rollout_hours }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-manifests
+          node -e '
+            const yaml = require("js-yaml");
+            const fs = require("fs");
+            const expected = Number(process.env.EXPECTED);
+            if (!Number.isFinite(expected) || expected < 0) {
+              throw new Error(`EXPECTED must be a non-negative number, got ${process.env.EXPECTED}`);
+            }
+            for (const f of process.argv.slice(1)) {
+              const m = yaml.load(fs.readFileSync(f, "utf8")) ?? {};
+              if (m.rolloutHours !== expected) {
+                throw new Error(`${f}: rolloutHours=${m.rolloutHours}, expected ${expected}`);
+              }
+              if (typeof m.version !== "string" || m.version.length === 0) {
+                throw new Error(`${f}: missing or invalid version`);
+              }
+            }
+          ' ./*.yml
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-manifests
+          gh release upload "$RELEASE_TAG" ./*.yml --clobber --repo "${{ github.repository }}"
+
+      - name: Write summary
+        env:
+          BEFORE: ${{ steps.before.outputs.summary }}
+        shell: bash
+        run: |
+          {
+            echo "## Rollout updated"
+            echo ""
+            echo "**Tag:** \`$RELEASE_TAG\`"
+            echo "**Channel:** \`$RELEASE_CHANNEL\`"
+            echo "**New rolloutHours:** \`${{ inputs.rollout_hours }}\`"
+            echo ""
+            echo "### Before"
+            echo '```'
+            echo "$BEFORE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
