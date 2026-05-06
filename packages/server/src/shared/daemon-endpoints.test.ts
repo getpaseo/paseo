@@ -9,6 +9,7 @@ import {
   parseConnectionUri,
   serializeConnectionUri,
   serializeConnectionUriForStorage,
+  shouldUseTlsForDefaultHostedRelay,
 } from "./daemon-endpoints.js";
 
 describe("connection URI parsing", () => {
@@ -186,5 +187,27 @@ describe("relay websocket URLs", () => {
 
     expect(url.protocol).toBe("wss:");
     expect(extractHostPortFromWebSocketUrl(wsUrl)).toBe("[::1]:443");
+  });
+});
+
+describe("shouldUseTlsForDefaultHostedRelay", () => {
+  test("returns true for the hosted Paseo relay on port 443", () => {
+    expect(shouldUseTlsForDefaultHostedRelay("relay.paseo.sh:443")).toBe(true);
+  });
+
+  test("returns true for any self-hosted relay on port 443", () => {
+    expect(shouldUseTlsForDefaultHostedRelay("relay.example.com:443")).toBe(true);
+  });
+
+  test("returns true for an IPv6 relay on port 443", () => {
+    expect(shouldUseTlsForDefaultHostedRelay("[::1]:443")).toBe(true);
+  });
+
+  test("returns false for a relay on a non-443 port", () => {
+    expect(shouldUseTlsForDefaultHostedRelay("relay.example.com:8080")).toBe(false);
+  });
+
+  test("returns false for malformed endpoints", () => {
+    expect(shouldUseTlsForDefaultHostedRelay("not-an-endpoint")).toBe(false);
   });
 });
