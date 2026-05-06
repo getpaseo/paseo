@@ -18,7 +18,11 @@ describe("applyMutableProviderConfigToOverrides", () => {
           },
         },
         {
-          gemini: { enabled: false },
+          gemini: {
+            enabled: false,
+            description: "Gemini ACP",
+            env: { GEMINI_AUTO_UPDATE: "0" },
+          },
           claude: {
             additionalModels: [
               {
@@ -33,7 +37,9 @@ describe("applyMutableProviderConfigToOverrides", () => {
       gemini: {
         extends: "acp",
         label: "Gemini",
+        description: "Gemini ACP",
         command: ["gemini", "--acp"],
+        env: { GEMINI_AUTO_UPDATE: "0" },
         enabled: false,
       },
       claude: {
@@ -135,6 +141,41 @@ describe("DaemonConfigStore", () => {
           label: "claude-custom",
         },
       ],
+    });
+  });
+
+  test("patch persists custom ACP provider overrides into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+      },
+      undefined,
+    );
+
+    store.patch({
+      providers: {
+        "paseo-e2e-acp": {
+          extends: "acp",
+          label: "Paseo E2E ACP",
+          description: "E2E ACP provider fixture",
+          command: ["npx", "-y", "--version"],
+          env: {},
+        },
+      },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.providers?.["paseo-e2e-acp"]).toEqual({
+      extends: "acp",
+      label: "Paseo E2E ACP",
+      description: "E2E ACP provider fixture",
+      command: ["npx", "-y", "--version"],
+      env: {},
     });
   });
 });

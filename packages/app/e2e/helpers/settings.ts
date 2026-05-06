@@ -204,6 +204,41 @@ export async function expectHostActionCards(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-remove-host-button")).toBeVisible();
 }
 
+export async function serveJson(page: Page, url: string, body: unknown): Promise<void> {
+  await page.route(url, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+  });
+}
+
+export async function openAddProviderModal(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Add provider", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
+}
+
+export async function findAcpRegistryProvider(page: Page, providerName: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Search providers" }).fill(providerName);
+  await expect(page.getByText(providerName, { exact: true })).toBeVisible();
+}
+
+export async function installAcpRegistryProvider(page: Page, providerName: string): Promise<void> {
+  await findAcpRegistryProvider(page, providerName);
+  await page.getByRole("button", { name: "Install", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0);
+}
+
+export async function expectProviderInstalledInSettings(
+  page: Page,
+  providerName: string,
+): Promise<void> {
+  await expect(
+    page.getByRole("button", { name: `${providerName} provider details`, exact: true }),
+  ).toBeVisible();
+}
+
 export async function expectHostNoLocalOnlyRows(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-pair-device-row")).toHaveCount(0);
   await expect(page.getByTestId("host-page-daemon-lifecycle-card")).toHaveCount(0);

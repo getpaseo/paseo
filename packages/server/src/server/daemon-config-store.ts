@@ -3,6 +3,7 @@ import {
   savePersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
+import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { MutableDaemonConfigSchema, MutableDaemonConfigPatchSchema } from "../shared/messages.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
@@ -70,13 +71,8 @@ export function applyMutableProviderConfigToOverrides(
   for (const [providerId, providerConfig] of Object.entries(mutableProviders ?? {})) {
     nextOverrides[providerId] = {
       ...nextOverrides[providerId],
+      ...ProviderOverrideSchema.strip().parse(providerConfig),
     };
-    if (providerConfig.enabled !== undefined) {
-      nextOverrides[providerId].enabled = providerConfig.enabled;
-    }
-    if (providerConfig.additionalModels !== undefined) {
-      nextOverrides[providerId].additionalModels = providerConfig.additionalModels;
-    }
   }
 
   return nextOverrides;

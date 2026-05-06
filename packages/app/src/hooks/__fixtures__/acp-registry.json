@@ -1,0 +1,60 @@
+{
+  "version": "1.0.0",
+  "agents": [
+    {
+      "id": "agoragentic-acp",
+      "name": "Agoragentic",
+      "version": "1.3.0",
+      "description": "Agent marketplace with 174+ AI capabilities. Browse, invoke, and pay for agent services settled in USDC on Base L2.",
+      "repository": "https://github.com/rhein1/agoragentic-integrations",
+      "website": "https://agoragentic.com",
+      "authors": ["ACRE / Agoragentic"],
+      "license": "MIT",
+      "distribution": {
+        "npx": {
+          "package": "agoragentic-mcp@1.3.0",
+          "args": ["--acp"]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/agoragentic-acp.svg"
+    },
+    {
+      "id": "amp-acp",
+      "name": "Amp",
+      "version": "0.7.0",
+      "description": "ACP wrapper for Amp - the frontier coding agent",
+      "repository": "https://github.com/tao12345666333/amp-acp",
+      "authors": ["tao12345666333"],
+      "license": "Apache-2.0",
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/amp-acp.svg",
+      "distribution": {
+        "binary": {
+          "darwin-aarch64": {
+            "archive": "https://github.com/tao12345666333/amp-acp/releases/download/v0.7.0/amp-acp-darwin-aarch64.tar.gz",
+            "cmd": "./amp-acp"
+          }
+        }
+      }
+    },
+    {
+      "id": "auggie",
+      "name": "Auggie CLI",
+      "version": "0.25.2",
+      "description": "Augment Code's powerful software agent, backed by industry-leading context engine",
+      "repository": "https://github.com/augmentcode/auggie",
+      "website": "https://www.augmentcode.com/",
+      "authors": ["Augment Code <support@augmentcode.com>"],
+      "license": "proprietary",
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/auggie.svg",
+      "distribution": {
+        "npx": {
+          "package": "@augmentcode/auggie@0.25.2",
+          "args": ["--acp"],
+          "env": {
+            "AUGMENT_DISABLE_AUTO_UPDATE": "1"
+          }
+        }
+      }
+    }
+  ]
+}
