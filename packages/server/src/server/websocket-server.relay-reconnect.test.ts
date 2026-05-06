@@ -198,6 +198,7 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     createStub<AgentManager>({
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
+      listAgents: vi.fn(() => []),
       getMetricsSnapshot: vi.fn(() => ({
         totalAgents: 0,
         idleAgents: 0,

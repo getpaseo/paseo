@@ -862,6 +862,12 @@ export class Session {
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
+  // --- Reconnection / offline tracking ---
+  /** Tracks which agents need to be woken up when the app reconnects. */
+  private reconnectingAgents: Set<string> = new Set();
+  /** Events accumulated while app was offline; flushed on reconnect. */
+  private pendingEvents: SessionOutboundMessage[] = [];
+
   constructor(options: SessionOptions) {
     const {
       clientId,
@@ -1282,8 +1288,13 @@ export class Session {
     }
 
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
-      (event) => {
+      async (event) => {
         if (event.type === "agent_state") {
+          // Forward agent_state events during reconnection (they're important for UI).
+          if (this.reconnectingAgents.size > 0) {
+            await this.forwardAgentUpdate(event.agent);
+            return;
+          }
           void this.forwardAgentUpdate(event.agent);
           return;
         }
@@ -1342,6 +1353,33 @@ export class Session {
           ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
           ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
         } as const;
+
+        if (this.reconnectingAgents.size > 0) {
+          // Buffer all events (including permissions) during reconnection.
+          this.pendingEvents.push({
+            type: "agent_stream",
+            payload,
+          });
+          if (event.event.type === "permission_requested") {
+            this.pendingEvents.push({
+              type: "agent_permission_request",
+              payload: {
+                agentId: event.agentId,
+                request: event.event.request,
+              },
+            });
+          } else if (event.event.type === "permission_resolved") {
+            this.pendingEvents.push({
+              type: "agent_permission_resolved",
+              payload: {
+                agentId: event.agentId,
+                requestId: event.event.requestId,
+                resolution: event.event.resolution,
+              },
+            });
+          }
+          return;
+        }
 
         this.emit({
           type: "agent_stream",
@@ -4307,6 +4345,126 @@ export class Session {
       appVisible: msg.appVisible,
       appVisibilityChangedAt,
     };
+
+    // Flush pending events and reconnect state on first heartbeat.
+    this.flushReconnectEvents();
+  }
+
+  /**
+   * Called by the WebSocket server when a reconnect is detected.
+   * Queues state updates and flushes immediately with agent wakeup.
+   * @param agentIds - IDs of agents that need attention updates
+   */
+  public onReconnect(agentIds: string[]): void {
+    if (agentIds.length === 0) {
+      return;
+    }
+    this.reconnectingAgents = new Set(agentIds);
+    this.pendingEvents = [];
+    this.sessionLogger.info({ agentIds }, "App reconnecting, flushing events and waking up agents");
+    // Immediately flush (no need to wait for heartbeat).
+    this.flushReconnectEvents();
+    this.handleReconnectWakeUp();
+  }
+
+  /**
+   * Wake up agents that were running while the app was disconnected.
+   * Sends a lightweight status event to each agent, ensuring they respond
+   * with their current state when the app reconnects.
+   */
+  private handleReconnectWakeUp(): void {
+    const agents = this.agentManager.listAgents();
+    for (const agent of agents) {
+      // Wake up all active agents, but skip closed (no session).
+      if (agent.lifecycle !== "closed") {
+        // Send a lightweight status event as a "wake" signal.
+        this.onMessage({
+          type: "agent_stream",
+          payload: {
+            agentId: agent.id,
+            event: {
+              type: "timeline",
+              item: {
+                type: "user_message",
+                text: "[Reconnect wakeup]",
+              },
+              provider: agent.provider,
+            },
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Flush pending events and send reconnection snapshot to the client.
+   * Called when the app sends its first heartbeat after reconnecting.
+   */
+  private flushReconnectEvents(): void {
+    const hasPending = this.pendingEvents.length > 0;
+    if (!hasPending && this.reconnectingAgents.size === 0) {
+      return;
+    }
+
+    this.sessionLogger.info(
+      {
+        pendingEvents: this.pendingEvents.length,
+        reconnectingAgents: this.reconnectingAgents.size,
+      },
+      "Flushing reconnect events",
+    );
+
+    // Flush buffered events first
+    for (const msg of this.pendingEvents) {
+      this.onMessage(msg);
+    }
+    this.pendingEvents = [];
+
+    // Send attention_required for each agent that needs attention on reconnect.
+    // Also serve as a "wakeup" signal to ensure agents respond with current status.
+    for (const agentId of this.reconnectingAgents) {
+      const agent = this.agentManager.getAgent(agentId);
+      if (!agent) {
+        continue;
+      }
+
+      // Send agent_state event for the agent on reconnect (using agent_stream for simplicity).
+      this.onMessage({
+        type: "agent_stream",
+        payload: {
+          agentId,
+          event: {
+            type: "timeline",
+            item: {
+              type: "user_message",
+              text: `[Agent state: ${agent.lifecycle}]`,
+            },
+            provider: agent.provider,
+          },
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Send attention_required for agents that need user attention.
+      if (agent.attention.requiresAttention) {
+        this.onMessage({
+          type: "agent_stream",
+          payload: {
+            agentId,
+            event: {
+              type: "attention_required",
+              provider: agent.provider,
+              reason: agent.attention.attentionReason,
+              timestamp: new Date().toISOString(),
+              shouldNotify: true,
+            },
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }
+    this.reconnectingAgents.clear();
   }
 
   /**

@@ -868,7 +868,7 @@ export async function createAgentManagementMcpServer(
         throw new Error(`Provider ${provider} is not configured`);
       }
 
-      const models = await definition.fetchModels();
+      const models = await definition.fetchModels({ cwd: process.cwd(), force: false });
       return {
         content: [],
         structuredContent: ensureValidJson({

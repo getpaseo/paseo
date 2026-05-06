@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude-models.js";
 
 describe("getClaudeModels", () => {
-  it("returns all claude models", () => {
-    const models = getClaudeModels();
+  it("returns all claude models", async () => {
+    const models = await getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
       "claude-opus-4-7[1m]",
       "claude-opus-4-7",
@@ -15,16 +15,16 @@ describe("getClaudeModels", () => {
     ]);
   });
 
-  it("marks exactly one model as default", () => {
-    const models = getClaudeModels();
+  it("marks exactly one model as default", async () => {
+    const models = await getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
     expect(defaults[0].id).toBe("claude-opus-4-6");
   });
 
-  it("returns fresh copies each call", () => {
-    const a = getClaudeModels();
-    const b = getClaudeModels();
+  it("returns fresh copies each call", async () => {
+    const a = await getClaudeModels();
+    const b = await getClaudeModels();
     expect(a).not.toBe(b);
     expect(a[0]).not.toBe(b[0]);
   });

@@ -4,6 +4,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
 import { buildScriptHostname } from "../utils/script-hostname.js";
 import {
+  createWorktree,
   getScriptConfigs,
   getWorktreeTerminalSpecs,
   isServiceScript,
@@ -30,6 +31,14 @@ import {
   requirePlannedWorkspaceServicePort,
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
+
+export interface CreateAgentWorktreeOptions {
+  cwd: string;
+  branchName: string;
+  baseBranch: string;
+  worktreeSlug: string;
+  paseoHome?: string;
+}
 
 export interface WorktreeBootstrapTerminalResult {
   name: string | null;
@@ -1006,4 +1015,29 @@ export function teardownWorktreeScripts(options: {
     routeStore.removeRoute(hostname);
     logger.info({ hostname }, "Removed script proxy route");
   }
+}
+
+/**
+ * Create an agent worktree (legacy API wrapper for compatibility).
+ * Creates a git worktree and returns the config.
+ */
+export async function createAgentWorktree(options: CreateAgentWorktreeOptions): Promise<{
+  worktreePath: string;
+  branchName: string;
+}> {
+  const { cwd, branchName, baseBranch, worktreeSlug, paseoHome } = options;
+
+  // Create the worktree using the new API
+  const worktree = await createWorktree({
+    cwd,
+    worktreeSlug,
+    source: { kind: "branch-off", baseBranch, branchName },
+    runSetup: false,
+    paseoHome,
+  });
+
+  return {
+    worktreePath: worktree.worktreePath,
+    branchName: worktree.branchName ?? branchName,
+  };
 }

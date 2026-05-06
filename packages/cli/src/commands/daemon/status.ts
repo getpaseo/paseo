@@ -213,12 +213,22 @@ interface DaemonProbeResult {
   note?: string;
 }
 
+const DAEMON_STARTUP_DELAY_MS = 5000;
+
 async function probeDaemonOverWebsocket(args: {
   host: string;
   state: ReturnType<typeof resolveLocalDaemonState>;
 }): Promise<DaemonProbeResult> {
   const { host, state } = args;
-  const client = await tryConnectToDaemon({ host, timeout: 1500 });
+
+  if (state.running) {
+    // The daemon's HTTP API responds quickly but WebSocket needs more time to initialize.
+    // Add a startup delay so `paseo status` right after `paseo daemon start` doesn't
+    // falsely report "unresponsive".
+    await new Promise<void>((resolve) => setTimeout(resolve, DAEMON_STARTUP_DELAY_MS));
+  }
+
+  const client = await tryConnectToDaemon({ host, timeout: 5000 });
   if (!client) {
     if (state.running) {
       return {
