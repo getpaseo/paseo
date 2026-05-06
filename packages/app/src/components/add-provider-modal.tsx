@@ -1,17 +1,19 @@
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Image, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { PackagePlus, Search } from "lucide-react-native";
+import { Alert, Pressable, Text, View } from "react-native";
+import { SvgXml } from "react-native-svg";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ExternalLink, PackagePlus, Search } from "lucide-react-native";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   buildAcpProviderConfigPatch,
-  useAcpRegistry,
-  type AcpRegistryEntry,
-} from "@/hooks/use-acp-registry";
+  useAcpProviderCatalog,
+  type AcpProviderCatalogItem,
+} from "@/hooks/use-acp-provider-catalog";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import type { Theme } from "@/styles/theme";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 interface AddProviderModalProps {
   serverId: string;
@@ -19,65 +21,83 @@ interface AddProviderModalProps {
   onClose: () => void;
 }
 
-type InstallState = "installed" | "installable" | "binary";
+type InstallState = "installed" | "available";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
+const ACTION_BUTTON_STYLE = { width: 92 } as const;
 const MODAL_SNAP_POINTS = ["78%", "92%"];
+const SEARCH_ICON_SIZE = 16;
+const PROVIDER_FALLBACK_ICON_SIZE = 20;
+const PROVIDER_REMOTE_ICON_SIZE = 24;
 
-function getInstallState(entry: AcpRegistryEntry, installedProviderIds: Set<string>): InstallState {
+const ThemedPackagePlus = withUnistyles(PackagePlus);
+const ThemedSvgXml = withUnistyles(SvgXml);
+const ThemedSearch = withUnistyles(Search);
+const ThemedExternalLink = withUnistyles(ExternalLink);
+
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+function getInstallState(
+  entry: AcpProviderCatalogItem,
+  installedProviderIds: Set<string>,
+): InstallState {
   if (installedProviderIds.has(entry.id)) return "installed";
-  if (entry.npx) return "installable";
-  return "binary";
+  return "available";
 }
 
-function matchesSearch(entry: AcpRegistryEntry, query: string): boolean {
+function matchesSearch(entry: AcpProviderCatalogItem, query: string): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
-  return [entry.name, entry.id, entry.description].some((value) =>
+  return [entry.title, entry.id, entry.description].some((value) =>
     value.toLowerCase().includes(normalized),
   );
 }
 
-interface ProviderRegistryRowProps {
-  entry: AcpRegistryEntry;
+interface ProviderCatalogRowProps {
+  entry: AcpProviderCatalogItem;
   state: InstallState;
   installing: boolean;
-  onInstall: (entry: AcpRegistryEntry) => void;
+  onInstall: (entry: AcpProviderCatalogItem) => void;
 }
 
-function ProviderRegistryRow({ entry, state, installing, onInstall }: ProviderRegistryRowProps) {
-  const { theme } = useUnistyles();
-  const [iconFailed, setIconFailed] = useState(false);
-  const isInstallable = state === "installable";
+function ProviderCatalogRow({ entry, state, installing, onInstall }: ProviderCatalogRowProps) {
+  const isAvailable = state === "available";
+  let actionLabel = "Add";
+  if (installing) {
+    actionLabel = "Adding";
+  } else if (state === "installed") {
+    actionLabel = "Installed";
+  }
 
   const handleInstall = useCallback(() => {
     onInstall(entry);
   }, [entry, onInstall]);
-  const handleIconError = useCallback(() => setIconFailed(true), []);
 
-  const iconSource = useMemo(
-    () => (entry.iconUri && !iconFailed ? { uri: entry.iconUri } : null),
-    [entry.iconUri, iconFailed],
-  );
+  const handleOpenInstallLink = useCallback(() => {
+    void openExternalUrl(entry.installLink);
+  }, [entry.installLink]);
 
   return (
     <View style={styles.row}>
       <View style={styles.iconFrame}>
-        {iconSource ? (
-          <Image
-            source={iconSource}
-            style={styles.iconImage}
-            resizeMode="contain"
-            onError={handleIconError}
+        {entry.iconSvg ? (
+          <ThemedSvgXml
+            xml={entry.iconSvg}
+            width={PROVIDER_REMOTE_ICON_SIZE}
+            height={PROVIDER_REMOTE_ICON_SIZE}
+            uniProps={foregroundColorMapping}
           />
         ) : (
-          <PackagePlus size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          <ThemedPackagePlus size={PROVIDER_FALLBACK_ICON_SIZE} uniProps={foregroundColorMapping} />
         )}
       </View>
       <View style={styles.textColumn}>
         <View style={styles.titleRow}>
           <Text style={styles.name} numberOfLines={1}>
-            {entry.name}
+            {entry.title}
           </Text>
           <Text style={styles.version} numberOfLines={1}>
             {entry.version}
@@ -86,29 +106,35 @@ function ProviderRegistryRow({ entry, state, installing, onInstall }: ProviderRe
         <Text style={styles.description} numberOfLines={1}>
           {entry.description || entry.id}
         </Text>
-        {state === "binary" ? (
-          <Text style={styles.helper} numberOfLines={2}>
-            Install the binary on your PATH, then add manually.
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel={`${entry.title} install instructions`}
+          onPress={handleOpenInstallLink}
+          style={styles.installLink}
+        >
+          <Text style={styles.installLinkText} numberOfLines={1}>
+            Install instructions
           </Text>
-        ) : null}
+          <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
+        </Pressable>
       </View>
       <Button
         size="sm"
-        variant={isInstallable ? "default" : "secondary"}
-        disabled={!isInstallable || installing}
+        variant={isAvailable ? "default" : "secondary"}
+        disabled={!isAvailable || installing}
         loading={installing}
         onPress={handleInstall}
+        style={ACTION_BUTTON_STYLE}
         testID={`install-provider-${entry.id}`}
       >
-        {state === "installed" ? "Installed" : "Install"}
+        {actionLabel}
       </Button>
     </View>
   );
 }
 
 export function AddProviderModal({ serverId, visible, onClose }: AddProviderModalProps) {
-  const { theme } = useUnistyles();
-  const { entries, loading, error, refetch } = useAcpRegistry();
+  const { entries } = useAcpProviderCatalog();
   const { entries: providerEntries, refresh } = useProvidersSnapshot(serverId);
   const { patchConfig } = useDaemonConfig(serverId);
   const [search, setSearch] = useState("");
@@ -122,14 +148,10 @@ export function AddProviderModal({ serverId, visible, onClose }: AddProviderModa
     () => entries.filter((entry) => matchesSearch(entry, search)),
     [entries, search],
   );
-  const searchIcon = useMemo(
-    () => <Search size={16} color={theme.colors.foregroundMuted} />,
-    [theme.colors.foregroundMuted],
-  );
 
   const handleInstall = useCallback(
-    async (entry: AcpRegistryEntry) => {
-      if (!entry.npx || installingProviderId) return;
+    async (entry: AcpProviderCatalogItem) => {
+      if (installingProviderId) return;
 
       setInstallingProviderId(entry.id);
       try {
@@ -148,10 +170,6 @@ export function AddProviderModal({ serverId, visible, onClose }: AddProviderModa
     [installingProviderId, onClose, patchConfig, refresh],
   );
 
-  const handleRefetch = useCallback(() => {
-    void refetch();
-  }, [refetch]);
-
   return (
     <AdaptiveModalSheet
       title="Add provider"
@@ -162,46 +180,31 @@ export function AddProviderModal({ serverId, visible, onClose }: AddProviderModa
       testID="add-provider-modal"
     >
       <View style={styles.searchField}>
-        <View style={styles.searchIcon}>{searchIcon}</View>
+        <View style={styles.searchIcon}>
+          <ThemedSearch size={SEARCH_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
+        </View>
         <AdaptiveTextInput
-          testID="provider-registry-search"
+          testID="provider-catalog-search"
           accessibilityLabel="Search providers"
           value={search}
           onChangeText={setSearch}
           placeholder="Search providers"
-          placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.searchInput}
           autoCapitalize="none"
           autoCorrect={false}
         />
       </View>
 
-      {loading ? (
-        <View style={styles.stateBox}>
-          <LoadingSpinner size={16} color={theme.colors.foregroundMuted} />
-          <Text style={styles.stateText}>Loading providers...</Text>
-        </View>
-      ) : null}
-
-      {!loading && error ? (
-        <View style={styles.stateBox}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button size="sm" variant="secondary" onPress={handleRefetch}>
-            Retry
-          </Button>
-        </View>
-      ) : null}
-
-      {!loading && !error && filteredEntries.length === 0 ? (
+      {filteredEntries.length === 0 ? (
         <View style={styles.stateBox}>
           <Text style={styles.stateText}>No providers found</Text>
         </View>
       ) : null}
 
-      {!loading && !error && filteredEntries.length > 0 ? (
+      {filteredEntries.length > 0 ? (
         <View style={styles.list}>
           {filteredEntries.map((entry) => (
-            <ProviderRegistryRow
+            <ProviderCatalogRow
               key={entry.id}
               entry={entry}
               state={getInstallState(entry, installedProviderIds)}
@@ -266,10 +269,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     flexShrink: 0,
   },
-  iconImage: {
-    width: 24,
-    height: 24,
-  },
   textColumn: {
     flex: 1,
     minWidth: 0,
@@ -296,7 +295,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
-  helper: {
+  installLink: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    maxWidth: "100%",
+  },
+  installLinkText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
@@ -314,11 +320,6 @@ const styles = StyleSheet.create((theme) => ({
   stateText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  errorText: {
-    color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
   },
   actions: {
     flexDirection: "row",

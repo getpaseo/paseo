@@ -219,14 +219,14 @@ export async function openAddProviderModal(page: Page): Promise<void> {
   await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
 }
 
-export async function findAcpRegistryProvider(page: Page, providerName: string): Promise<void> {
+export async function findAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await page.getByRole("textbox", { name: "Search providers" }).fill(providerName);
   await expect(page.getByText(providerName, { exact: true })).toBeVisible();
 }
 
-export async function installAcpRegistryProvider(page: Page, providerName: string): Promise<void> {
-  await findAcpRegistryProvider(page, providerName);
-  await page.getByRole("button", { name: "Install", exact: true }).click();
+export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
+  await findAcpCatalogProvider(page, providerName);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0);
 }
 
