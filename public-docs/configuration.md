@@ -123,18 +123,29 @@ After setting a password, restart the daemon for the change to take effect.
 
 ### Connecting with a password
 
-The CLI reads the password from the TCP URI automatically:
+The CLI picks up a password from, in order:
 
-```bash
-paseo --host "tcp://192.168.1.10:6767?password=my-secret" ls
-```
+1. The `password` query parameter on a `tcp://` host URI:
+
+   ```bash
+   paseo --host "tcp://192.168.1.10:6767?password=my-secret" ls
+   ```
+
+2. The `PASEO_PASSWORD` environment variable, used as a fallback when the host carries no embedded password (works for `localhost:6767`, bare `host:port`, or `tcp://` hosts without a `password=` query):
+
+   ```bash
+   PASEO_PASSWORD=my-secret paseo ls
+   PASEO_PASSWORD=my-secret paseo --host 192.168.1.10:6767 ls
+   ```
+
+A `password=` in the URI always wins over the env var, so you can keep `PASEO_PASSWORD` set globally and still target a different daemon by spelling its password into the URI.
 
 In the mobile app, enter the password in the direct connection setup screen.
 
 ## Common env vars
 
 - `PASEO_HOME` — set Paseo home directory
-- `PASEO_PASSWORD` — require a password to connect (plaintext, hashed at startup)
+- `PASEO_PASSWORD` — on the daemon, the password to require (plaintext, hashed at startup); on the CLI, the password used to connect when the host URI doesn't include one
 - `PASEO_LISTEN` — override `daemon.listen`
 - `PASEO_HOSTNAMES` — override/extend `daemon.hostnames`
 - `PASEO_ALLOWED_HOSTS` — deprecated alias for `PASEO_HOSTNAMES`

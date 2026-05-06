@@ -218,7 +218,12 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
 
 export function resolveDaemonPassword(host: string): string | undefined {
   const trimmed = host.trim();
-  return trimmed.startsWith("tcp://") ? parseConnectionUri(trimmed).password : undefined;
+  if (trimmed.startsWith("tcp://")) {
+    const fromUri = parseConnectionUri(trimmed).password;
+    if (fromUri) return fromUri;
+  }
+  const fromEnv = process.env.PASEO_PASSWORD;
+  return fromEnv && fromEnv.length > 0 ? fromEnv : undefined;
 }
 
 /**
