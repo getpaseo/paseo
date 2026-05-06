@@ -204,7 +204,8 @@ export function buildRelayWebSocketUrl(params: {
  */
 export function shouldUseTlsForDefaultHostedRelay(endpoint: string): boolean {
   try {
-    return normalizeHostPort(endpoint) === DEFAULT_RELAY_ENDPOINT;
+    const { port } = parseHostPort(endpoint);
+    return port === 443;
   } catch {
     return false;
   }
