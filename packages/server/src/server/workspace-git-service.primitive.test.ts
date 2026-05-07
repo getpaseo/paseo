@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -11,11 +12,13 @@ import {
 import {
   getCheckoutDiff as getCheckoutDiffUncached,
   getCheckoutStatus as getCheckoutStatusUncached,
+  resolveAbsoluteGitDir as resolveAbsoluteGitDirReal,
   type CheckoutDiffCompare,
   type CheckoutDiffResult,
   type CheckoutStatusGit,
   type PullRequestStatusResult,
 } from "../utils/checkout-git.js";
+import { runGitCommand as runGitCommandReal } from "../utils/run-git-command.js";
 import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
@@ -207,6 +210,7 @@ interface CreateServiceOptions {
   runGitFetch?: ReturnType<typeof vi.fn>;
   runGitCommand?: ReturnType<typeof vi.fn>;
   watch?: ReturnType<typeof vi.fn>;
+  readdir?: ReturnType<typeof vi.fn>;
   now?: () => Date;
 }
 
@@ -1453,5 +1457,49 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     expect(getCheckoutDiff).toHaveBeenCalledTimes(3);
 
     service.dispose();
+  });
+
+  test("Linux working tree walker excludes gitignored directories", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-ignored-")));
+    const repoDir = join(tempDir, "repo");
+    mkdirSync(join(repoDir, "ignored", "deep"), { recursive: true });
+    mkdirSync(join(repoDir, "kept"), { recursive: true });
+    execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
+    writeFileSync(join(repoDir, ".gitignore"), "ignored/\n");
+    writeFileSync(join(repoDir, "ignored", "log.txt"), "noise\n");
+    writeFileSync(join(repoDir, "ignored", "deep", "log.txt"), "noise\n");
+    writeFileSync(join(repoDir, "kept", "file.txt"), "keep\n");
+
+    const watchedPaths: string[] = [];
+    const watchSpy = (watchPath: string) => {
+      watchedPaths.push(watchPath);
+      return { close: vi.fn(), on: vi.fn().mockReturnThis() };
+    };
+
+    const service = createService({
+      watch: watchSpy as never,
+      readdir: readdir as never,
+      runGitCommand: runGitCommandReal as never,
+      getCheckoutStatus: getCheckoutStatusUncached as never,
+      resolveAbsoluteGitDir: resolveAbsoluteGitDirReal as never,
+    });
+
+    try {
+      const subscription = await service.requestWorkingTreeWatch(repoDir, vi.fn());
+
+      const ignoredRoot = join(repoDir, "ignored");
+      expect(watchedPaths.filter((path) => path.startsWith(ignoredRoot))).toEqual([]);
+      expect(watchedPaths).toContain(repoDir);
+      expect(watchedPaths).toContain(join(repoDir, "kept"));
+
+      subscription.unsubscribe();
+    } finally {
+      service.dispose();
+      rmSync(tempDir, { recursive: true, force: true });
+      Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+    }
   });
 });
