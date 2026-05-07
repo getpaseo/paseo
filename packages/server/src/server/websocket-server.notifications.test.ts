@@ -86,6 +86,15 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     setAgentAttentionCallback: vi.fn(),
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),
+    getMetricsSnapshot: vi.fn(() => ({
+      total: 0,
+      byLifecycle: {},
+      withActiveForegroundTurn: 0,
+      timelineStats: {
+        totalItems: 0,
+        maxItemsPerAgent: 0,
+      },
+    })),
     ...agentManagerOverrides,
   };
   const daemonConfigStore = {
