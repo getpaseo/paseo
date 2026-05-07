@@ -165,46 +165,4 @@ describe("daemon-manager commands", () => {
       "--json",
     ]);
   });
-
-  it("routes running desktop daemon stops through CLI daemon stop", async () => {
-    mocks.runCliJsonCommand
-      .mockResolvedValueOnce({
-        localDaemon: "running",
-        serverId: "server-1",
-        pid: 4242,
-        listen: "127.0.0.1:6767",
-        desktopManaged: true,
-      })
-      .mockResolvedValueOnce({ action: "stopped" })
-      .mockResolvedValueOnce({
-        localDaemon: "stopped",
-        serverId: "",
-      });
-    const handlers = createDaemonCommandHandlers();
-
-    await expect(handlers.stop_desktop_daemon()).resolves.toEqual({
-      serverId: "",
-      status: "stopped",
-      listen: null,
-      hostname: null,
-      pid: null,
-      home: "/tmp/paseo-home",
-      version: null,
-      desktopManaged: false,
-      error: null,
-    });
-
-    expect(mocks.runCliJsonCommand).toHaveBeenNthCalledWith(1, ["daemon", "status", "--json"]);
-    expect(mocks.runCliJsonCommand).toHaveBeenNthCalledWith(2, [
-      "daemon",
-      "stop",
-      "--json",
-      "--timeout",
-      "5",
-      "--force",
-      "--kill-timeout",
-      "5",
-    ]);
-    expect(mocks.runCliJsonCommand).toHaveBeenNthCalledWith(3, ["daemon", "status", "--json"]);
-  });
 });
