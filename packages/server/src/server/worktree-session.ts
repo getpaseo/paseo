@@ -18,7 +18,6 @@ import {
   buildWorktreeSetupDetail,
   createWorktreeSetupProgressAccumulator,
   getWorktreeSetupProgressResults,
-  spawnWorktreeScripts,
 } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ScriptRouteStore } from "./script-proxy.js";
@@ -99,7 +98,6 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
   emit: EmitSessionMessage;
   sessionLogger: Logger;
-  workspaceGitService: WorkspaceGitService;
   terminalManager: TerminalManager | null;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   scriptRouteStore: ScriptRouteStore | null;
@@ -725,32 +723,6 @@ export async function runWorktreeSetupInBackground(
           });
           emitSetupProgress("completed", null);
         }
-      }
-
-      if (
-        options.shouldBootstrap &&
-        dependencies.terminalManager &&
-        dependencies.scriptRouteStore &&
-        dependencies.scriptRuntimeStore
-      ) {
-        const gitMetadata = await dependencies.workspaceGitService.getWorkspaceGitMetadata(
-          worktree.worktreePath,
-        );
-        await spawnWorktreeScripts({
-          repoRoot: worktree.worktreePath,
-          workspaceId: options.workspaceId,
-          projectSlug: gitMetadata.projectSlug,
-          branchName: worktree.branchName,
-          daemonPort: dependencies.getDaemonTcpPort?.() ?? null,
-          daemonListenHost: dependencies.getDaemonTcpHost?.() ?? null,
-          routeStore: dependencies.scriptRouteStore,
-          runtimeStore: dependencies.scriptRuntimeStore,
-          terminalManager: dependencies.terminalManager,
-          logger: dependencies.sessionLogger,
-          onLifecycleChanged: () => {
-            dependencies.onScriptsChanged?.(options.workspaceId, worktree.worktreePath);
-          },
-        });
       }
     } catch (error) {
       if (error instanceof WorktreeSetupError) {

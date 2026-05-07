@@ -699,7 +699,6 @@ export async function createPaseoDaemon(
               cacheWorkspaceSetupSnapshot: () => {},
               emit: emitExternalSessionMessage,
               sessionLogger: logger,
-              workspaceGitService,
               terminalManager,
               archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
               scriptRouteStore,
