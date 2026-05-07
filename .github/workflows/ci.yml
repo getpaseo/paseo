@@ -66,7 +66,12 @@ jobs:
         run: npm run typecheck
 
   server-tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: server-tests (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,50 +99,6 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-  server-tests-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Run Windows-critical server tests
-        working-directory: packages/server
-        run: >
-          npx vitest run
-          src/utils/executable.probe.test.ts
-          src/utils/executable.test.ts
-          src/utils/spawn.launch-regression.test.ts
-          src/utils/spawn.percent-escape.test.ts
-          src/utils/spawn.test.ts
-          src/utils/tree-kill.test.ts
-          src/utils/run-git-command.test.ts
-          src/utils/checkout-git-rev-parse.test.ts
-          src/terminal/worker-terminal-manager.test.ts
-          src/server/agent/provider-registry.test.ts
-          src/server/agent/provider-launch-config.test.ts
-          src/server/agent/provider-snapshot-manager.test.ts
-          src/server/agent/providers/claude-agent.spawn.test.ts
-          src/server/agent/providers/provider-windows-launch.test.ts
-          src/server/agent/providers/provider-availability.test.ts
-          src/server/workspace-registry-model.test.ts
-          src/server/persisted-config.test.ts
-          src/server/bootstrap-provider-availability.test.ts
 
   desktop-tests:
     strategy:
