@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
@@ -10,6 +10,18 @@ import type {
   EditorTargetDescriptorPayload,
   SessionOutboundMessage,
 } from "../shared/messages.js";
+import { AgentManager } from "./agent/agent-manager.js";
+import { AgentStorage } from "./agent/agent-storage.js";
+import type {
+  AgentClient,
+  AgentCreateSessionOptions,
+  AgentLaunchContext,
+  AgentPersistenceHandle,
+  AgentRunResult,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "./agent/agent-sdk-types.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import {
@@ -30,6 +42,8 @@ import {
   findByType,
 } from "./test-utils/session-stubs.js";
 import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
@@ -274,6 +288,101 @@ function createWorkspaceRuntimeSnapshot(
   };
 }
 
+const CREATE_AGENT_TEST_CAPABILITIES = {
+  supportsStreaming: false,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: false,
+} as const;
+
+class CreateAgentTestSession implements AgentSession {
+  readonly provider = "codex";
+  readonly id = "create-agent-test-session";
+  readonly capabilities = CREATE_AGENT_TEST_CAPABILITIES;
+
+  constructor(private readonly config: AgentSessionConfig) {}
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(): Promise<{ turnId: string }> {
+    return { turnId: "turn-1" };
+  }
+
+  subscribe(): () => void {
+    return () => {};
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+  async getRuntimeInfo() {
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      model: this.config.model ?? null,
+      modeId: this.config.modeId ?? null,
+    };
+  }
+
+  async getAvailableModes() {
+    return [];
+  }
+
+  async getCurrentMode() {
+    return null;
+  }
+
+  async setMode(): Promise<void> {}
+
+  getPendingPermissions() {
+    return [];
+  }
+
+  async respondToPermission(): Promise<void> {}
+
+  describePersistence(): AgentPersistenceHandle {
+    return { provider: this.provider, sessionId: this.id };
+  }
+
+  async interrupt(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
+
+class CreateAgentTestClient implements AgentClient {
+  readonly provider = "codex";
+  readonly capabilities = CREATE_AGENT_TEST_CAPABILITIES;
+
+  async createSession(
+    config: AgentSessionConfig,
+    _launchContext?: AgentLaunchContext,
+    _options?: AgentCreateSessionOptions,
+  ): Promise<AgentSession> {
+    return new CreateAgentTestSession(config);
+  }
+
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    return new CreateAgentTestSession({
+      provider: this.provider,
+      cwd: overrides?.cwd ?? process.cwd(),
+    });
+  }
+
+  async listModels() {
+    return [{ provider: this.provider, id: "gpt-test", label: "GPT Test", isDefault: true }];
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
 function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
@@ -360,6 +469,135 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test("create_agent_request keeps requested child cwd when grouped under an existing parent workspace", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-cwd-"));
+  try {
+    const parent = path.join(workdir, "parent");
+    const child = path.join(parent, "child");
+    mkdirSync(child, { recursive: true });
+
+    const logger = {
+      child: () => logger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    const agentManager = new AgentManager({
+      clients: { codex: new CreateAgentTestClient() },
+      registry: agentStorage,
+      logger: asSessionLogger(logger),
+      idFactory: () => "00000000-0000-4000-8000-000000000551",
+    });
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceGitService = createNoopWorkspaceGitService({
+      getCheckout: async (cwd: string) => ({
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: parent,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    });
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "proj-parent",
+        rootPath: parent,
+        kind: "git",
+        displayName: "parent",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-parent",
+        projectId: "proj-parent",
+        cwd: parent,
+        kind: "local_checkout",
+        displayName: "parent",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+
+    const emitted: SessionOutboundMessage[] = [];
+    const session = asTestSession(
+      new Session({
+        clientId: "test-client",
+        appVersion: null,
+        onMessage: (message) => emitted.push(message),
+        logger: asSessionLogger(logger),
+        downloadTokenStore: asDownloadTokenStore(),
+        pushTokenStore: asPushTokenStore(),
+        paseoHome: path.join(workdir, "paseo-home"),
+        agentManager,
+        agentStorage,
+        projectRegistry,
+        workspaceRegistry,
+        chatService: asChatService(),
+        scheduleService: asScheduleService(),
+        loopService: asLoopService(),
+        checkoutDiffManager: asCheckoutDiffManager({
+          subscribe: async () => ({
+            initial: { cwd: child, files: [], error: null },
+            unsubscribe: () => {},
+          }),
+          scheduleRefreshForCwd: () => {},
+          getMetrics: () => ({
+            checkoutDiffTargetCount: 0,
+            checkoutDiffSubscriptionCount: 0,
+            checkoutDiffWatcherCount: 0,
+            checkoutDiffFallbackRefreshTargetCount: 0,
+          }),
+          dispose: () => {},
+        }),
+        workspaceGitService,
+        daemonConfigStore: asDaemonConfigStore({
+          get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+          onChange: () => () => {},
+        }),
+        mcpBaseUrl: null,
+        stt: null,
+        tts: null,
+        terminalManager: null,
+      }),
+    );
+
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-child",
+      config: { provider: "codex", cwd: child },
+      attachments: [],
+    });
+
+    const [createdAgent] = agentManager.listAgents();
+    expect(createdAgent?.cwd).toBe(child);
+    await expect(session.buildProjectPlacementForCwd(createdAgent.cwd)).resolves.toMatchObject({
+      projectKey: "proj-parent",
+      checkout: { cwd: parent },
+    });
+    expect(findByType(emitted, "status")?.payload).toMatchObject({
+      status: "agent_created",
+      agent: { cwd: child },
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("unsupported persisted agents are excluded from active lists but preserved in history payloads", async () => {
   const session = createSessionForWorkspaceTests({ appVersion: "0.1.45" });

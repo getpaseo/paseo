@@ -3007,18 +3007,11 @@ export class Session {
       if (!resolvedWorkspace) {
         throw new Error(`Workspace not found: ${msg.workspaceId}`);
       }
-      const snapshot = await this.agentManager.createAgent(
-        {
-          ...sessionConfig,
-          cwd: resolvedWorkspace.cwd,
-        },
-        undefined,
-        {
-          labels,
-          workspaceId: resolvedWorkspace.workspaceId,
-          initialPrompt: trimmedPrompt,
-        },
-      );
+      const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, {
+        labels,
+        workspaceId: resolvedWorkspace.workspaceId,
+        initialPrompt: trimmedPrompt,
+      });
       await this.forwardAgentUpdate(snapshot);
 
       await this.sendInitialCreateAgentPrompt({
