@@ -10,7 +10,8 @@
 
 import { spawn } from "child_process";
 import { $ } from "zx";
-import { readdir, writeFile } from "fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
 import { join, dirname, delimiter } from "path";
 import { fileURLToPath } from "url";
 
@@ -192,55 +193,61 @@ async function runSingleTest(testFile: string): Promise<TestOutcome> {
   const testPath = join(__dirname, testFile);
   const testName = testFile.replace(/\.test\.ts$/, "");
   const startedAt = Date.now();
+  const npmCache = await mkdtemp(join(tmpdir(), "paseo-cli-test-npm-cache-"));
 
-  return new Promise<TestOutcome>((resolve) => {
-    const proc = spawn("npx", ["tsx", testPath], {
-      env: {
-        ...process.env,
-        PATH: [rootNodeModulesBin, process.env.PATH].filter(Boolean).join(delimiter),
-        PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD,
-        PASEO_DICTATION_ENABLED: testEnvDefaults.PASEO_DICTATION_ENABLED,
-        PASEO_VOICE_MODE_ENABLED: testEnvDefaults.PASEO_VOICE_MODE_ENABLED,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+  try {
+    return await new Promise<TestOutcome>((resolve) => {
+      const proc = spawn("npx", ["tsx", testPath], {
+        env: {
+          ...process.env,
+          PATH: [rootNodeModulesBin, process.env.PATH].filter(Boolean).join(delimiter),
+          npm_config_cache: npmCache,
+          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD,
+          PASEO_DICTATION_ENABLED: testEnvDefaults.PASEO_DICTATION_ENABLED,
+          PASEO_VOICE_MODE_ENABLED: testEnvDefaults.PASEO_VOICE_MODE_ENABLED,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      proc.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
 
-    proc.on("error", (err) => {
-      const durationMs = Date.now() - startedAt;
-      const message = err instanceof Error ? err.message : String(err);
-      flushTestBlock(testName, durationMs, false, stdout, stderr || message);
-      resolve({
-        status: "failed",
-        durationMs,
-        failure: { test: testName, error: message },
+      proc.on("error", (err) => {
+        const durationMs = Date.now() - startedAt;
+        const message = err instanceof Error ? err.message : String(err);
+        flushTestBlock(testName, durationMs, false, stdout, stderr || message);
+        resolve({
+          status: "failed",
+          durationMs,
+          failure: { test: testName, error: message },
+        });
+      });
+
+      proc.on("exit", (code) => {
+        const durationMs = Date.now() - startedAt;
+        const exitCode = code ?? 1;
+        if (exitCode === 0) {
+          flushTestBlock(testName, durationMs, true, stdout, stderr);
+          resolve({ status: "passed", durationMs });
+          return;
+        }
+        flushTestBlock(testName, durationMs, false, stdout, stderr);
+        resolve({
+          status: "failed",
+          durationMs,
+          failure: { test: testName, error: stderr || `Exit code: ${exitCode}` },
+        });
       });
     });
-
-    proc.on("exit", (code) => {
-      const durationMs = Date.now() - startedAt;
-      const exitCode = code ?? 1;
-      if (exitCode === 0) {
-        flushTestBlock(testName, durationMs, true, stdout, stderr);
-        resolve({ status: "passed", durationMs });
-        return;
-      }
-      flushTestBlock(testName, durationMs, false, stdout, stderr);
-      resolve({
-        status: "failed",
-        durationMs,
-        failure: { test: testName, error: stderr || `Exit code: ${exitCode}` },
-      });
-    });
-  });
+  } finally {
+    await rm(npmCache, { recursive: true, force: true });
+  }
 }
 
 function flushTestBlock(
