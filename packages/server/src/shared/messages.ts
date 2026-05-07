@@ -632,6 +632,11 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
+  /**
+   * Monotonically increasing version counter for sync tracking.
+   * Incremented on every state change so clients can detect missing updates.
+   */
+  version: z.number().optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -2242,12 +2247,24 @@ export const AgentStatusMessageSchema = z.object({
   }),
 });
 
+export const SyncStateMessageSchema = z.object({
+  type: z.literal("sync_state"),
+  payload: z.object({
+    /** Global version at the time of sync. Clients use this to detect missing updates. */
+    version: z.number(),
+    /** Full agent snapshot list. Empty array means no agents. */
+    agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
 export const AgentListMessageSchema = z.object({
   type: z.literal("agent_list"),
   payload: z.object({
     agents: z.array(AgentSnapshotPayloadSchema),
   }),
 });
+
+export type SyncStateMessage = z.infer<typeof SyncStateMessageSchema>;
 
 const AgentDirectoryResponseEntrySchema = z.object({
   agent: AgentSnapshotPayloadSchema,
@@ -3299,6 +3316,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceSetupStatusResponseMessageSchema,
   AgentStreamMessageSchema,
   AgentStatusMessageSchema,
+  SyncStateMessageSchema,
   FetchAgentsResponseMessageSchema,
   FetchAgentHistoryResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,

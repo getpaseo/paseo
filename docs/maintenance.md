@@ -7,6 +7,7 @@
 Paseo daemon 运行在 **npm 安装的包** (`~/.npm-packages/lib/node_modules/@getpaseo/server/`) 中，而不是直接从源码运行。新代码变更必须先构建并将编译产物复制到 npm 包位置才能生效。
 
 **症状：**
+
 - iOS/CLI 连接后 session 刷不出（心跳未正确触发 reconnect flush）
 - 模型列表不显示自定义配置（需重新安装）
 - 新功能/修复在 `npm run dev` 后不生效
@@ -67,6 +68,10 @@ ls ~/.npm-packages/lib/node_modules/@getpaseo/server/dist/server/server/ | head 
 # 确认重连优化代码已生效
 grep -c "reconnectingAgents" ~/.npm-packages/lib/node_modules/@getpaseo/server/dist/server/server/session.js
 # 应返回 10（heartbeat 修复 + 各引用点）
+
+# 确认 sync_state 已生效
+grep -c "sync_state" ~/.npm-packages/lib/node_modules/@getpaseo/server/dist/server/server/session.js
+# 应 >= 3
 ```
 
 ### 5. 重启 Daemon
@@ -106,12 +111,14 @@ git pull --rebase origin main && npm run build:daemon && cp -r packages/server/d
 **症状：** 其他设备能连上，iOS 始终超时（10s 无响应）
 
 **根因：** Cloudflare 回源策略配置为"剥离 TLS"（即 origin → Cloudflare 使用 `ws://`），导致：
+
 - 旧 daemon 使用 `wss://`（端口 443 自动省略）— 正常工作
 - 新 daemon 使用 `ws://`（端口 443 强制保留）— URL 格式不匹配，relay 返回 400
 
 **修复：**
 
 1. 在 `config.json` 中显式设置 `useTls: true`：
+
    ```json
    {
      "daemon": {
@@ -142,6 +149,7 @@ git pull --rebase origin main && npm run build:daemon && cp -r packages/server/d
 **原因：** `useTls` 未显式设置时，自定义 endpoint（非 `relay.paseo.sh`）的 `useTls` 默认为 `false`
 
 **排查：**
+
 ```bash
 grep "relay_control" ~/.paseo/daemon.log | tail -5
 # 对比 URL 是否为 wss://
@@ -150,6 +158,7 @@ grep "relay_control" ~/.paseo/daemon.log | tail -5
 ## 重连优化（v0.1.70+）
 
 iOS 客户端断线重连后，daemon 需要：
+
 1. 缓冲断线期间的 agent 事件（`pendingEvents`）
 2. 重连时批量刷新事件（`flushReconnectEvents`）
 3. 唤醒所有运行中的 agent（`handleReconnectWakeUp`）
@@ -162,6 +171,7 @@ iOS 客户端断线重连后，daemon 需要：
   - **修复：** 移除 closed 过滤，closed agent 也可被消息激活
 
 **测试：**
+
 ```bash
 npx vitest run packages/server/src/server/session.reconnect.test.ts
 ```
@@ -174,7 +184,53 @@ npx vitest run packages/server/src/server/session.reconnect.test.ts
   - **修复：** 移除 closed 过滤，closed agent 也可被消息激活
 
 **测试：**
+
 ```bash
+npx vitest run packages/server/src/server/session.reconnect.test.ts
+```
+
+## 同步策略（v0.1.71+）
+
+连接建立时 daemon 主动推送 `sync_state` 消息，包含所有 agent 列表及版本号。
+客户端通过 `version` 字段检测丢失更新。
+
+**sync_state 消息结构：**
+
+```json
+{
+  "type": "sync_state",
+  "payload": {
+    "version": 42,
+    "agents": [
+      {
+        "id": "uuid",
+        "status": "running",
+        "version": 1
+      }
+    ]
+  }
+}
+```
+
+**服务端版本追踪：**
+
+- `AgentManager.bumpVersion()` — 单调递增计数器
+- `AgentManager.getGlobalVersion()` — 返回当前全局版本
+- `emitState()` 每次调用自动 bump 版本号
+- 所有 `agent_state` 事件携带 `version` 字段
+- `AgentSnapshotPayloadSchema` 新增 `version` 字段
+
+**实施阶段：**
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| Phase 1 | 版本追踪 + 增量推送 | ✅ 已完成 |
+| Phase 2 | 连接建立全量推送（sync_state） | ✅ 已完成 |
+
+**测试：**
+
+```bash
+# 连接后应立即收到 sync_state
 npx vitest run packages/server/src/server/session.reconnect.test.ts
 ```
 

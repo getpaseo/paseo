@@ -32,6 +32,29 @@ function createSession(
         lifecycle: agentStatuses.get(id) ?? "idle",
         attention: { requiresAttention: false },
         provider: "claude",
+        config: {
+          provider: "claude" as const,
+          cwd: "/tmp/test",
+          model: null,
+          modeId: null,
+          thinkingOptionId: null,
+        },
+        title: null,
+        version: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastUserMessageAt: null,
+        availableModes: [],
+        capabilities: {},
+        cwd: "/tmp/test",
+        currentModeId: null,
+        features: [],
+        pendingPermissions: new Map(),
+        persistence: null,
+        labels: {},
+        runtimeInfo: undefined,
+        lastUsage: undefined,
+        lastError: undefined,
       })),
     getAgent: (id: string) => {
       const status = agentStatuses.get(id);
@@ -242,5 +265,43 @@ describe("session reconnect flow", () => {
     const callArgs = onMessage.mock.calls.map((c) => c[0] as any);
     // Should have called onMessage for the agent state update
     expect(onMessage).toHaveBeenCalled();
+  });
+
+  test("sendInitialState pushes sync_state with all agents and version", async () => {
+    const { session, onMessage } = createSession({
+      agentIds: ["agent-1"],
+      agentStatuses: new Map([["agent-1", "running"]]),
+    });
+
+    // Stub getGlobalVersion since the mock doesn't have it
+    (session as any).agentManager.getGlobalVersion = () => 1;
+
+    await session.sendInitialState();
+
+    // Should have sent a sync_state message
+    const callArgs = onMessage.mock.calls.map((c) => c[0] as any);
+    const syncState = callArgs.find((m: any) => m.type === "sync_state");
+    expect(syncState).toBeDefined();
+    // Global version is bumped by emitState calls during agent creation
+    expect(syncState.payload.version).toBeGreaterThan(0);
+    expect(syncState.payload.agents.length).toBe(1);
+    // Agent version from payload includes the version field
+    expect(syncState.payload.agents[0].version).toBe(0);
+  });
+
+  test("sendInitialState is idempotent with no agents", async () => {
+    const { session, onMessage } = createSession({
+      agentIds: [],
+    });
+
+    (session as any).agentManager.getGlobalVersion = () => 0;
+
+    onMessage.mockClear();
+    await session.sendInitialState();
+
+    const callArgs = onMessage.mock.calls.map((c) => c[0] as any);
+    const syncState = callArgs.find((m: any) => m.type === "sync_state");
+    expect(syncState.payload.agents).toEqual([]);
+    expect(syncState.payload.version).toBe(0);
   });
 });

@@ -1060,7 +1060,18 @@ export class Session {
    * Send initial state to client after connection
    */
   public async sendInitialState(): Promise<void> {
-    // No unsolicited agent list hydration. Callers must use fetch_agents_request.
+    const agents = this.agentManager.listAgents();
+    const payloads = (
+      await Promise.all(agents.map((agent) => this.buildAgentPayload(agent)))
+    ).filter((p): p is Awaited<ReturnType<typeof this.buildAgentPayload>> => p !== null);
+    const version = this.agentManager.getGlobalVersion();
+    this.emit({
+      type: "sync_state",
+      payload: {
+        version,
+        agents: payloads,
+      },
+    });
   }
 
   /**

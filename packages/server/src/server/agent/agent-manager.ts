@@ -215,6 +215,8 @@ interface ManagedAgentBase {
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
   labels: Record<string, string>;
+  /** Monotonically increasing version for sync tracking */
+  version: number;
 }
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -397,6 +399,7 @@ export class AgentManager {
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private agentVersions = new Map<string, number>();
 
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
@@ -2179,6 +2182,7 @@ export class AgentManager {
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
+      version: 0,
     } as ActiveManagedAgent;
   }
 
@@ -2850,6 +2854,24 @@ export class AgentManager {
     return row;
   }
 
+  private bumpVersion(agentId: string): number {
+    const next = (this.agentVersions.get(agentId) ?? 0) + 1;
+    this.agentVersions.set(agentId, next);
+    return next;
+  }
+
+  /**
+   * Returns the current global version. Called during sync_state to report the total version
+   * so clients can track and detect missing updates.
+   */
+  getGlobalVersion(): number {
+    let max = 0;
+    for (const v of this.agentVersions.values()) {
+      if (v > max) max = v;
+    }
+    return max;
+  }
+
   private emitState(agent: ManagedAgent, options?: { persist?: boolean }): void {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
@@ -2859,9 +2881,10 @@ export class AgentManager {
 
     this.syncFeaturesFromSession(agent);
 
+    const version = this.bumpVersion(agent.id);
     this.dispatch({
       type: "agent_state",
-      agent: { ...agent },
+      agent: { ...agent, version },
     });
   }
 

@@ -117,6 +117,7 @@ export function toAgentPayload(
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
+    version: agent.version,
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
