@@ -3000,10 +3000,18 @@ export class Session {
         worktreeName,
         firstAgentContext,
       );
-      let resolvedWorkspace = msg.workspaceId
-        ? await this.workspaceRegistry.get(msg.workspaceId)
-        : ((await this.findWorkspaceByDirectory(sessionConfig.cwd)) ??
-          (await this.findOrCreateWorkspaceForDirectory(sessionConfig.cwd)));
+      const requestedWorkspaceCwd = normalizePersistedWorkspaceId(sessionConfig.cwd);
+      const matchedWorkspace = msg.workspaceId
+        ? null
+        : await this.findWorkspaceByDirectory(sessionConfig.cwd);
+      let resolvedWorkspace;
+      if (msg.workspaceId) {
+        resolvedWorkspace = await this.workspaceRegistry.get(msg.workspaceId);
+      } else if (matchedWorkspace && matchedWorkspace.cwd === requestedWorkspaceCwd) {
+        resolvedWorkspace = await this.ensureWorkspaceRecordUnarchived(matchedWorkspace);
+      } else {
+        resolvedWorkspace = await this.findOrCreateWorkspaceForDirectory(sessionConfig.cwd);
+      }
       if (!resolvedWorkspace) {
         throw new Error(`Workspace not found: ${msg.workspaceId}`);
       }

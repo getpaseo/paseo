@@ -2434,6 +2434,172 @@ test("open_project_request does not unarchive an archived parent workspace for a
   expect(projects.get(home)?.archivedAt).toBe(archivedAt);
 });
 
+test("create_agent_request creates a child workspace instead of reusing an active parent directory workspace", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const parentCwd = "/Users/moboudra/agent-workspace";
+  const childCwd = "/Users/moboudra/agent-workspace/projects/wiki-project";
+  const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const createdAt = "2026-05-07T10:37:04.193Z";
+  let createdAgentCwd: string | null = null;
+
+  projects.set(
+    parentCwd,
+    createPersistedProjectRecord({
+      projectId: parentCwd,
+      rootPath: parentCwd,
+      kind: "non_git",
+      displayName: "agent-workspace",
+      createdAt,
+      updatedAt: createdAt,
+    }),
+  );
+  workspaces.set(
+    parentCwd,
+    createPersistedWorkspaceRecord({
+      workspaceId: parentCwd,
+      projectId: parentCwd,
+      cwd: parentCwd,
+      kind: "directory",
+      displayName: "agent-workspace",
+      createdAt,
+      updatedAt: createdAt,
+    }),
+  );
+
+  const workspaceGitService = createNoopWorkspaceGitService({
+    getCheckout: async (cwd: string) => {
+      if (cwd === childCwd) {
+        return {
+          cwd,
+          isGit: true,
+          currentBranch: "master",
+          remoteUrl: "git@github.com:example/wiki-project.git",
+          worktreeRoot: childCwd,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        };
+      }
+
+      return {
+        cwd,
+        isGit: false,
+        currentBranch: null,
+        remoteUrl: null,
+        worktreeRoot: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      };
+    },
+    peekSnapshot: () => null,
+  });
+
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+
+  const session = asTestSession(
+    new Session({
+      clientId: "test-client",
+      onMessage: (message) => emitted.push(message),
+      logger: asSessionLogger(logger),
+      downloadTokenStore: asDownloadTokenStore(),
+      pushTokenStore: asPushTokenStore(),
+      paseoHome: "/tmp/paseo-test",
+      agentManager: asAgentManager({
+        subscribe: () => () => {},
+        listAgents: () => [],
+        getAgent: () => null,
+        createAgent: async (config: { provider: string; cwd: string }) => {
+          createdAgentCwd = config.cwd;
+          return makeAgent({
+            id: "agent-child-workspace",
+            cwd: config.cwd,
+            status: "idle",
+            updatedAt: createdAt,
+          });
+        },
+        archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
+        archiveSnapshot: async () => ({}),
+        clearAgentAttention: async () => {},
+        notifyAgentState: () => {},
+      }),
+      agentStorage: asAgentStorage({
+        list: async () => [],
+        get: async () => null,
+      }),
+      projectRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => Array.from(projects.values()),
+        get: async (projectId: string) => projects.get(projectId) ?? null,
+        upsert: async (record: ReturnType<typeof createPersistedProjectRecord>) => {
+          projects.set(record.projectId, record);
+        },
+        archive: async () => {},
+        remove: async () => {},
+      },
+      workspaceRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => Array.from(workspaces.values()),
+        get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
+        upsert: async (record: ReturnType<typeof createPersistedWorkspaceRecord>) => {
+          workspaces.set(record.workspaceId, record);
+        },
+        archive: async () => {},
+        remove: async () => {},
+      },
+      chatService: asChatService(),
+      scheduleService: asScheduleService(),
+      loopService: asLoopService(),
+      checkoutDiffManager: asCheckoutDiffManager({
+        subscribe: async () => ({
+          initial: { cwd: childCwd, files: [], error: null },
+          unsubscribe: () => {},
+        }),
+        scheduleRefreshForCwd: () => {},
+        getMetrics: () => ({
+          checkoutDiffTargetCount: 0,
+          checkoutDiffSubscriptionCount: 0,
+          checkoutDiffWatcherCount: 0,
+          checkoutDiffFallbackRefreshTargetCount: 0,
+        }),
+        dispose: () => {},
+      }),
+      workspaceGitService,
+      daemonConfigStore: asDaemonConfigStore({
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      }),
+      mcpBaseUrl: null,
+      stt: null,
+      tts: null,
+      terminalManager: null,
+    }),
+  );
+
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-create-child-workspace-agent",
+    config: {
+      provider: "codex",
+      cwd: childCwd,
+    },
+  });
+
+  expect(createdAgentCwd).toBe(childCwd);
+  expect(workspaces.get(childCwd)).toBeTruthy();
+  expect(workspaces.get(childCwd)?.cwd).toBe(childCwd);
+  expect(workspaces.get(childCwd)?.projectId).not.toBe(parentCwd);
+  expect(workspaces.get(parentCwd)?.cwd).toBe(parentCwd);
+});
+
 test("open_project_request reclassifies an archived directory workspace when git metadata becomes available", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
