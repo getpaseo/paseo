@@ -25,7 +25,7 @@ async function writeFileIfChanged(srcPath: string, dstPath: string): Promise<boo
   return true;
 }
 
-async function listFilesRecursive(rootDir: string): Promise<string[]> {
+export async function listFilesRecursive(rootDir: string): Promise<string[]> {
   const out: string[] = [];
   async function walk(dir: string): Promise<void> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -81,6 +81,23 @@ async function ensureClaudeSkillLink(
 
   await fs.symlink(target, linkPath);
   return 0;
+}
+
+export interface RemoveSkillTargets {
+  agentsDir: string;
+  claudeDir: string;
+  codexDir: string;
+}
+
+export async function removeSkill(skillName: string, targets: RemoveSkillTargets): Promise<void> {
+  const paths = [
+    path.join(targets.agentsDir, skillName),
+    path.join(targets.claudeDir, skillName),
+    path.join(targets.codexDir, skillName),
+  ];
+  for (const p of paths) {
+    await fs.rm(p, { recursive: true, force: true });
+  }
 }
 
 export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncResult> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveCliInstallSourcePath } from "./cli-install-path";
+import { resolveCliInstallSourcePath } from "./path";
 
 describe("cli-install-path", () => {
   it("uses the bundled shim for packaged macOS installs", () => {

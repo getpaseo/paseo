@@ -5,7 +5,7 @@ import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useCliInstall, useSkillsInstall } from "./use-install-status";
+import { useCliInstall, useSkillsStatus } from "./use-install-status";
 
 const toast = vi.hoisted(() => ({
   error: vi.fn(),
@@ -15,9 +15,11 @@ const toast = vi.hoisted(() => ({
 
 const desktopDaemon = vi.hoisted(() => ({
   getCliInstallStatus: vi.fn(),
-  getSkillsInstallStatus: vi.fn(),
   installCli: vi.fn(),
+  getSkillsStatus: vi.fn(),
   installSkills: vi.fn(),
+  updateSkills: vi.fn(),
+  uninstallSkills: vi.fn(),
   shouldUseDesktopDaemon: vi.fn(() => true),
 }));
 
@@ -89,11 +91,9 @@ describe("useCliInstall", () => {
   });
 });
 
-describe("useSkillsInstall", () => {
+describe("useSkillsStatus", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    desktopDaemon.getSkillsInstallStatus.mockResolvedValue({ installed: true });
-    desktopDaemon.installSkills.mockResolvedValue({ installed: true });
   });
 
   afterEach(() => {
@@ -101,34 +101,155 @@ describe("useSkillsInstall", () => {
     vi.clearAllMocks();
   });
 
-  it("loads skills install status", async () => {
-    const { result } = renderDesktopHook(() => useSkillsInstall());
-
-    await waitFor(() => {
-      expect(result.current.status).toEqual({ installed: true });
+  it("loads the current skills status", async () => {
+    desktopDaemon.getSkillsStatus.mockResolvedValue({
+      state: "up-to-date",
+      ops: [],
     });
 
+    const { result } = renderDesktopHook(() => useSkillsStatus());
+
+    await waitFor(() => {
+      expect(result.current.status).toEqual({ state: "up-to-date", ops: [] });
+    });
+    expect(result.current.isWorking).toBe(false);
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("toasts and exposes skills install errors", async () => {
-    const error = new Error("Missing IPC handler");
-    desktopDaemon.getSkillsInstallStatus.mockResolvedValue({ installed: false });
-    desktopDaemon.installSkills.mockRejectedValue(error);
-    const { result } = renderDesktopHook(() => useSkillsInstall());
+  it("install transitions a fresh status to up-to-date and reflects the response directly", async () => {
+    desktopDaemon.getSkillsStatus.mockResolvedValue({
+      state: "fresh",
+      ops: [{ kind: "add", name: "paseo" }],
+    });
+    desktopDaemon.installSkills.mockResolvedValue({ state: "up-to-date", ops: [] });
+
+    const { result } = renderDesktopHook(() => useSkillsStatus());
 
     await waitFor(() => {
-      expect(result.current.status).toEqual({ installed: false });
+      expect(result.current.status?.state).toBe("fresh");
     });
 
+    await act(async () => {
+      await result.current.install();
+    });
+
+    expect(desktopDaemon.installSkills).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(result.current.status).toEqual({ state: "up-to-date", ops: [] });
+    });
+  });
+
+  it("update transitions drift to up-to-date", async () => {
+    desktopDaemon.getSkillsStatus.mockResolvedValue({
+      state: "drift",
+      ops: [{ kind: "update", name: "paseo" }],
+    });
+    desktopDaemon.updateSkills.mockResolvedValue({ state: "up-to-date", ops: [] });
+
+    const { result } = renderDesktopHook(() => useSkillsStatus());
+
+    await waitFor(() => {
+      expect(result.current.status?.state).toBe("drift");
+    });
+
+    await act(async () => {
+      await result.current.update();
+    });
+
+    expect(desktopDaemon.updateSkills).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(result.current.status).toEqual({ state: "up-to-date", ops: [] });
+    });
+  });
+
+  it("uninstall transitions up-to-date back to fresh", async () => {
+    desktopDaemon.getSkillsStatus.mockResolvedValue({ state: "up-to-date", ops: [] });
+    desktopDaemon.uninstallSkills.mockResolvedValue({
+      state: "fresh",
+      ops: [{ kind: "add", name: "paseo" }],
+    });
+
+    const { result } = renderDesktopHook(() => useSkillsStatus());
+
+    await waitFor(() => {
+      expect(result.current.status?.state).toBe("up-to-date");
+    });
+
+    await act(async () => {
+      await result.current.uninstall();
+    });
+
+    expect(desktopDaemon.uninstallSkills).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(result.current.status).toEqual({
+        state: "fresh",
+        ops: [{ kind: "add", name: "paseo" }],
+      });
+    });
+  });
+
+  it("isWorking flips while a mutation is in flight", async () => {
+    desktopDaemon.getSkillsStatus.mockResolvedValue({
+      state: "fresh",
+      ops: [{ kind: "add", name: "paseo" }],
+    });
+
+    let resolveInstall: ((value: unknown) => void) | null = null;
+    desktopDaemon.installSkills.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
+
+    const { result } = renderDesktopHook(() => useSkillsStatus());
+
+    await waitFor(() => {
+      expect(result.current.status?.state).toBe("fresh");
+    });
+    expect(result.current.isWorking).toBe(false);
+
+    let installPromise: Promise<void> = Promise.resolve();
     act(() => {
-      result.current.install();
+      installPromise = result.current.install();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isWorking).toBe(true);
+    });
+
+    await act(async () => {
+      resolveInstall?.({ state: "up-to-date", ops: [] });
+      await installPromise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.isWorking).toBe(false);
+    });
+    expect(result.current.status).toEqual({ state: "up-to-date", ops: [] });
+  });
+
+  it("toasts and exposes errors when install fails", async () => {
+    const error = new Error("Missing IPC handler");
+    desktopDaemon.getSkillsStatus.mockResolvedValue({
+      state: "fresh",
+      ops: [{ kind: "add", name: "paseo" }],
+    });
+    desktopDaemon.installSkills.mockRejectedValue(error);
+
+    const { result } = renderDesktopHook(() => useSkillsStatus());
+
+    await waitFor(() => {
+      expect(result.current.status?.state).toBe("fresh");
+    });
+
+    await act(async () => {
+      await result.current.install();
     });
 
     await waitFor(() => {
       expect(result.current.error).toBe(error);
     });
-
     expect(toast.error).toHaveBeenCalledWith("Unable to install orchestration skills.");
     expect(console.error).toHaveBeenCalledWith("[Integrations] Failed to install skills", error);
   });

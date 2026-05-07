@@ -7,12 +7,34 @@ import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
-import { useCliInstall, useSkillsInstall } from "@/desktop/hooks/use-install-status";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import {
+  shouldUseDesktopDaemon,
+  type SkillOp,
+  type SkillsStatus,
+} from "@/desktop/daemon/desktop-daemon";
+import { useCliInstall, useSkillsStatus } from "@/desktop/hooks/use-install-status";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+const UNINSTALL_MESSAGE =
+  "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex.";
+
+const OP_KIND_ORDER: Record<SkillOp["kind"], number> = { add: 0, update: 1, delete: 2 };
+const OP_KIND_LABEL: Record<SkillOp["kind"], string> = {
+  add: "Add skill",
+  update: "Update skill",
+  delete: "Delete skill",
+};
+
+function formatUpdateMessage(ops: readonly SkillOp[]): string {
+  const sorted = [...ops].sort((a, b) => {
+    const kindOrder = OP_KIND_ORDER[a.kind] - OP_KIND_ORDER[b.kind];
+    return kindOrder !== 0 ? kindOrder : a.name.localeCompare(b.name);
+  });
+  return sorted.map((op) => `${OP_KIND_LABEL[op.kind]} ${op.name}`).join("\n");
+}
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();
@@ -25,16 +47,18 @@ export function IntegrationsSection() {
   } = useCliInstall();
   const {
     status: skillsStatus,
-    isInstalling: isInstallingSkills,
+    isWorking: isSkillsWorking,
     install: installSkills,
+    update: updateSkills,
+    uninstall: uninstallSkills,
     refresh: refreshSkillsStatus,
-  } = useSkillsInstall();
+  } = useSkillsStatus();
 
   useFocusEffect(
     useCallback(() => {
       if (!showSection) return undefined;
       refreshCliStatus();
-      refreshSkillsStatus();
+      void refreshSkillsStatus();
       return undefined;
     }, [refreshCliStatus, refreshSkillsStatus, showSection]),
   );
@@ -45,9 +69,33 @@ export function IntegrationsSection() {
   }, [installCli, isInstallingCli]);
 
   const handleInstallSkills = useCallback(() => {
-    if (isInstallingSkills) return;
-    installSkills();
-  }, [installSkills, isInstallingSkills]);
+    if (isSkillsWorking) return;
+    void installSkills();
+  }, [installSkills, isSkillsWorking]);
+
+  const handleUpdateSkills = useCallback(async () => {
+    if (isSkillsWorking) return;
+    const ops = skillsStatus?.ops ?? [];
+    const confirmed = await confirmDialog({
+      title: "Update Paseo skills?",
+      message: ops.length > 0 ? formatUpdateMessage(ops) : "Sync bundled skills to your machine.",
+      confirmLabel: "Update",
+    });
+    if (!confirmed) return;
+    await updateSkills();
+  }, [isSkillsWorking, skillsStatus, updateSkills]);
+
+  const handleUninstallSkills = useCallback(async () => {
+    if (isSkillsWorking) return;
+    const confirmed = await confirmDialog({
+      title: "Uninstall Paseo skills?",
+      message: UNINSTALL_MESSAGE,
+      confirmLabel: "Uninstall",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await uninstallSkills();
+  }, [isSkillsWorking, uninstallSkills]);
 
   const handleOpenCliDocs = useCallback(() => {
     void openExternalUrl(CLI_DOCS_URL);
@@ -96,6 +144,8 @@ export function IntegrationsSection() {
     return null;
   }
 
+  const skillsState = skillsStatus?.state ?? null;
+
   return (
     <SettingsSection title="Integrations" trailing={trailing}>
       <View style={settingsStyles.card}>
@@ -130,27 +180,66 @@ export function IntegrationsSection() {
               <Text style={settingsStyles.rowTitle}>Orchestration skills</Text>
             </View>
             <Text style={settingsStyles.rowHint}>
-              Teach your agents to orchestrate through the CLI
+              {skillsState === "drift"
+                ? "Update available"
+                : "Teach your agents to orchestrate through the CLI"}
             </Text>
           </View>
-          {skillsStatus?.installed ? (
-            <View style={styles.installedLabel}>
-              <Check size={14} color={theme.colors.foregroundMuted} />
-              <Text style={styles.mutedText}>Installed</Text>
-            </View>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onPress={handleInstallSkills}
-              disabled={isInstallingSkills}
-            >
-              {isInstallingSkills ? "Installing..." : "Install"}
-            </Button>
-          )}
+          <SkillsActions
+            state={skillsState}
+            isWorking={isSkillsWorking}
+            onInstall={handleInstallSkills}
+            onUpdate={handleUpdateSkills}
+            onUninstall={handleUninstallSkills}
+          />
         </View>
       </View>
     </SettingsSection>
+  );
+}
+
+interface SkillsActionsProps {
+  state: SkillsStatus["state"] | null;
+  isWorking: boolean;
+  onInstall: () => void;
+  onUpdate: () => void;
+  onUninstall: () => void;
+}
+
+function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: SkillsActionsProps) {
+  const { theme } = useUnistyles();
+
+  if (state === "up-to-date") {
+    return (
+      <View style={styles.actionsRow}>
+        <View style={styles.installedLabel}>
+          <Check size={14} color={theme.colors.foregroundMuted} />
+          <Text style={styles.mutedText}>Installed</Text>
+        </View>
+        <Button variant="ghost" size="sm" onPress={onUninstall} disabled={isWorking}>
+          Uninstall
+        </Button>
+      </View>
+    );
+  }
+
+  if (state === "drift") {
+    return (
+      <View style={styles.actionsRow}>
+        <Button variant="outline" size="sm" onPress={onUpdate} disabled={isWorking}>
+          {isWorking ? "Working..." : "Update"}
+        </Button>
+        <Button variant="ghost" size="sm" onPress={onUninstall} disabled={isWorking}>
+          Uninstall
+        </Button>
+      </View>
+    );
+  }
+
+  return (
+    <Button variant="outline" size="sm" onPress={onInstall} disabled={isWorking}>
+      {isWorking ? "Installing..." : "Install"}
+    </Button>
   );
 }
 
@@ -173,5 +262,10 @@ const styles = StyleSheet.create((theme) => ({
   mutedText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
 }));

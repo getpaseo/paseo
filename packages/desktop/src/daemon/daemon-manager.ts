@@ -17,12 +17,13 @@ import {
   downloadAndInstallUpdate,
   type AppReleaseChannel,
 } from "../features/auto-updater.js";
+import { getCliInstallStatus, installCli } from "../integrations/cli-install/index.js";
 import {
-  installCli,
-  getCliInstallStatus,
+  getSkillsStatus,
   installSkills,
-  getSkillsInstallStatus,
-} from "../integrations/integrations-manager.js";
+  uninstallSkills,
+  updateSkills,
+} from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
   sendLocalTransportMessage,
@@ -531,8 +532,10 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
+    get_skills_status: () => getSkillsStatus(),
     install_skills: () => installSkills(),
-    get_skills_install_status: () => getSkillsInstallStatus(),
+    update_skills: () => updateSkills(),
+    uninstall_skills: () => uninstallSkills(),
   };
 }
 

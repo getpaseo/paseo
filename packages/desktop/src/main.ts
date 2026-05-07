@@ -48,7 +48,6 @@ import {
   createBeforeQuitHandler,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
-import { autoUpdateSkillsIfInstalled } from "./integrations/integrations-manager.js";
 import { runDesktopStartup } from "./desktop-startup.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
@@ -660,10 +659,6 @@ async function bootstrap(): Promise<void> {
   registerDialogHandlers();
   registerNotificationHandlers();
   registerOpenerHandlers();
-
-  void autoUpdateSkillsIfInstalled().catch((error) => {
-    log.warn("[integrations] auto-update skills failed", error);
-  });
 
   await createMainWindow();
 
