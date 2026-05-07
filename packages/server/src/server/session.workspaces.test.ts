@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -2160,13 +2160,19 @@ test("create paseo worktree request returns a registered workspace descriptor", 
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "session-worktree-test-")));
   const repoDir = path.join(tempDir, "repo");
   const paseoHome = path.join(tempDir, "paseo-home");
-  execSync(`mkdir -p ${repoDir}`);
-  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "file.txt"), "hello\n");
-  execSync("git add .", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
   const workspaceGitService = createNoopWorkspaceGitService();
   workspaceGitService.getSnapshot = vi.fn(async (cwd: string) => {
     if (cwd === repoDir) {
@@ -3271,7 +3277,7 @@ test.skip("opening a new worktree reconciles older local workspaces into the rem
   const localProjectId = mainWorkspaceId;
   const remoteProjectId = "remote:github.com/zimakki/inkwell";
 
-  execSync(`mkdir -p ${JSON.stringify(worktreeWorkspaceId)}`);
+  mkdirSync(worktreeWorkspaceId, { recursive: true });
 
   projects.set(
     localProjectId,
@@ -3381,7 +3387,7 @@ test.skip("fetch_workspaces_request reconciles remote URL changes for existing w
   const oldProjectId = "remote:github.com/old-owner/inkwell";
   const newProjectId = "remote:github.com/new-owner/inkwell";
 
-  execSync(`mkdir -p ${JSON.stringify(worktreeWorkspaceId)}`);
+  mkdirSync(worktreeWorkspaceId, { recursive: true });
 
   projects.set(
     oldProjectId,
@@ -3476,7 +3482,7 @@ test.skip("reconcile archives stale subdirectory workspace records when collapsi
   const subdirWorkspaceId = path.join(repoRoot, "packages", "app");
   const projectId = "remote:github.com/acme/repo";
 
-  execSync(`mkdir -p ${JSON.stringify(subdirWorkspaceId)}`);
+  mkdirSync(subdirWorkspaceId, { recursive: true });
 
   projects.set(
     projectId,

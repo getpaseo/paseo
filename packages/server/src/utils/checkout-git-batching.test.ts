@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
@@ -38,16 +38,18 @@ function initRepoWithTrackedChanges(fileCount: number): { tempDir: string; repoD
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-git-batch-test-")));
   const repoDir = join(tempDir, "repo");
 
-  execSync(`mkdir -p ${repoDir}`);
-  execSync("git init -b main", { cwd: repoDir });
-  execSync("git config user.email 'test@test.com'", { cwd: repoDir });
-  execSync("git config user.name 'Test'", { cwd: repoDir });
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
 
   for (let i = 0; i < fileCount; i += 1) {
     writeFileSync(join(repoDir, `file-${i}.txt`), `before-${i}\n`);
   }
-  execSync("git add .", { cwd: repoDir });
-  execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir });
+  execFileSync("git", ["add", "."], { cwd: repoDir });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+  });
 
   for (let i = 0; i < fileCount; i += 1) {
     writeFileSync(join(repoDir, `file-${i}.txt`), `after-${i}\n`);

@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -131,7 +131,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
     generateBranchNameFromContext: async ({ firstAgentContext }) =>
       firstAgentContext.prompt ? "renamed-from-agent-context" : null,
   });
-  const branchAfterFirst = execSync("git branch --show-current", {
+  const branchAfterFirst = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -157,7 +157,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
     firstAgentContext: { prompt: "Try another name" },
     generateBranchNameFromContext: async () => "second-agent-name",
   });
-  const branchAfterSecond = execSync("git branch --show-current", {
+  const branchAfterSecond = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -196,7 +196,7 @@ test("renames the branch even when the app supplies a random placeholder slug", 
         : null,
   });
 
-  const branchAfter = execSync("git branch --show-current", {
+  const branchAfter = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -253,7 +253,7 @@ test("renames the branch from a github_pr attachment when no prompt is supplied"
         : null,
   });
 
-  const branchAfter = execSync("git branch --show-current", {
+  const branchAfter = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -286,7 +286,7 @@ test("leaves the branch alone when generated branch text is invalid", async () =
   ).resolves.toEqual({ attempted: true, renamed: false, branchName: null });
 
   expect(
-    execSync("git branch --show-current", {
+    execFileSync("git", ["branch", "--show-current"], {
       cwd: created.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -305,11 +305,11 @@ test("leaves the branch alone when generated branch text is invalid", async () =
 test("does not mark checkout branch worktrees as eligible for first-agent rename", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
-  execSync("git checkout -b dev", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", "dev"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "dev branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git commit -m dev", { cwd: repoDir, stdio: "pipe" });
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "dev"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
 
   const created = await createPaseoWorktree(
     {
@@ -334,7 +334,7 @@ test("does not mark checkout branch worktrees as eligible for first-agent rename
     }),
   ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
   expect(
-    execSync("git branch --show-current", {
+    execFileSync("git", ["branch", "--show-current"], {
       cwd: created.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -370,7 +370,7 @@ test("does not mark GitHub PR checkout worktrees as eligible for first-agent ren
     }),
   ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
   expect(
-    execSync("git branch --show-current", {
+    execFileSync("git", ["branch", "--show-current"], {
       cwd: created.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -524,17 +524,24 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
 }
 
 function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
-  const repoRoot = execSync("git rev-parse --show-toplevel", { cwd, stdio: "pipe" })
+  const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, stdio: "pipe" })
     .toString()
     .trim();
-  const mainRepoRoot = execSync("git rev-parse --path-format=absolute --git-common-dir", {
-    cwd,
-    stdio: "pipe",
-  })
+  const mainRepoRoot = execFileSync(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    {
+      cwd,
+      stdio: "pipe",
+    },
+  )
     .toString()
     .trim()
     .replace(/\/\.git$/, "");
-  const currentBranch = execSync("git branch --show-current", { cwd, stdio: "pipe" })
+  const currentBranch = execFileSync("git", ["branch", "--show-current"], {
+    cwd,
+    stdio: "pipe",
+  })
     .toString()
     .trim();
 
@@ -566,34 +573,39 @@ function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
 function createGitRepo(): { tempDir: string; repoDir: string } {
   const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-worktree-service-"));
   const repoDir = path.join(tempDir, "repo");
-  execSync(`git init ${JSON.stringify(repoDir)}`, { stdio: "pipe" });
-  execSync("git config user.email test@example.com", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.name Test", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git commit -m init", { cwd: repoDir, stdio: "pipe" });
-  execSync("git branch -M main", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
 }
 
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string } {
   const { tempDir, repoDir } = createGitRepo();
-  execSync("git checkout -b pr-123", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", "pr-123"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "pr branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git commit -m pr-branch", { cwd: repoDir, stdio: "pipe" });
-  const prHead = execSync("git rev-parse HEAD", { cwd: repoDir, stdio: "pipe" }).toString().trim();
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git branch -D pr-123", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "pr-branch"], { cwd: repoDir, stdio: "pipe" });
+  const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
+    .toString()
+    .trim();
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-D", "pr-123"], { cwd: repoDir, stdio: "pipe" });
 
   const remoteDir = path.join(tempDir, "remote.git");
-  execSync(`git clone --bare ${JSON.stringify(repoDir)} ${JSON.stringify(remoteDir)}`, {
+  execFileSync("git", ["clone", "--bare", repoDir, remoteDir], {
     stdio: "pipe",
   });
-  execSync(`git --git-dir=${JSON.stringify(remoteDir)} update-ref refs/pull/123/head ${prHead}`, {
+  execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/123/head", prHead], {
     stdio: "pipe",
   });
-  execSync(`git remote add origin ${JSON.stringify(remoteDir)}`, { cwd: repoDir, stdio: "pipe" });
-  execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
 }

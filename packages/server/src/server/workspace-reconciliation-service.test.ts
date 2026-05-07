@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -117,13 +117,13 @@ function createWorkspaceGitServiceStub(
 function createTempGitRepo(prefix: string): string {
   const raw = mkdtempSync(path.join(tmpdir(), prefix));
   const dir = realpathSync(raw);
-  execSync("git init -b main", { cwd: dir, stdio: "ignore" });
-  execSync('git config user.email "test@test.com"', { cwd: dir, stdio: "ignore" });
-  execSync('git config user.name "Test"', { cwd: dir, stdio: "ignore" });
-  execSync("git config commit.gpgsign false", { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: dir, stdio: "ignore" });
   writeFileSync(path.join(dir, "README.md"), "# Test\n");
-  execSync("git add .", { cwd: dir, stdio: "ignore" });
-  execSync('git commit -m "init"', { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
   return dir;
 }
 
@@ -253,12 +253,18 @@ describe("WorkspaceReconciliationService", () => {
     );
 
     // Initialize as git repo
-    execSync("git init -b main", { cwd: resolved, stdio: "ignore" });
-    execSync('git config user.email "test@test.com"', { cwd: resolved, stdio: "ignore" });
-    execSync('git config user.name "Test"', { cwd: resolved, stdio: "ignore" });
-    execSync("git config commit.gpgsign false", { cwd: resolved, stdio: "ignore" });
-    execSync("git add .", { cwd: resolved, stdio: "ignore" });
-    execSync('git commit -m "init"', { cwd: resolved, stdio: "ignore" });
+    execFileSync("git", ["init", "-b", "main"], { cwd: resolved, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@test.com"], {
+      cwd: resolved,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: resolved, stdio: "ignore" });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], {
+      cwd: resolved,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["add", "."], { cwd: resolved, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: resolved, stdio: "ignore" });
 
     const service = new WorkspaceReconciliationService({
       projectRegistry,
@@ -311,7 +317,7 @@ describe("WorkspaceReconciliationService", () => {
     );
 
     // Change the remote
-    execSync("git remote add origin git@github.com:new-owner/new-repo.git", {
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:new-owner/new-repo.git"], {
       cwd: dir,
       stdio: "ignore",
     });
@@ -341,7 +347,7 @@ describe("WorkspaceReconciliationService", () => {
     const dir = createTempGitRepo("reconcile-branch-");
     tempDirs.push(dir);
 
-    execSync("git checkout -b feature-branch", { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["checkout", "-b", "feature-branch"], { cwd: dir, stdio: "ignore" });
 
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
 

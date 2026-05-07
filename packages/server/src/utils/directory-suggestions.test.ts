@@ -2,9 +2,10 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "./directory-suggestions.js";
 
-const isWindows = process.platform === "win32";
+const isWindows = isPlatform("win32");
 
 describe("searchHomeDirectories", () => {
   let tempRoot: string;
@@ -26,7 +27,9 @@ describe("searchHomeDirectories", () => {
     writeFileSync(path.join(homeDir, "projects", "README.md"), "not a directory\n");
 
     mkdirSync(path.join(outsideDir, "outside-match"), { recursive: true });
-    symlinkSync(path.join(outsideDir, "outside-match"), path.join(homeDir, "outside-link"));
+    if (!isWindows) {
+      symlinkSync(path.join(outsideDir, "outside-match"), path.join(homeDir, "outside-link"));
+    }
   });
 
   afterEach(() => {
@@ -125,7 +128,8 @@ describe("searchHomeDirectories", () => {
     expect(results).not.toContain(path.join(homeDir, ".hidden", "cache"));
   });
 
-  it("does not return paths that escape home through symlinks", async () => {
+  // POSIX-only: creates and follows a symlink escape fixture.
+  it.skipIf(isWindows)("does not return paths that escape home through symlinks", async () => {
     const results = await searchHomeDirectories({
       homeDir,
       query: "outside",
@@ -170,7 +174,9 @@ describe("searchWorkspaceEntries", () => {
     );
     writeFileSync(path.join(workspaceDir, "docs", "notes.md"), "notes\n");
 
-    symlinkSync(path.join(outsideDir, "escaped"), path.join(workspaceDir, "escaped-link"));
+    if (!isWindows) {
+      symlinkSync(path.join(outsideDir, "escaped"), path.join(workspaceDir, "escaped-link"));
+    }
   });
 
   afterEach(() => {
@@ -214,28 +220,32 @@ describe("searchWorkspaceEntries", () => {
     expect(filesOnly).toEqual([{ path: "README.md", kind: "file" }]);
   });
 
-  it("supports path-style queries and does not escape cwd through symlinks", async () => {
-    const pathResults = await searchWorkspaceEntries({
-      cwd: workspaceDir,
-      query: "src/co",
-      limit: 20,
-      includeFiles: true,
-      includeDirectories: true,
-    });
-    expect(pathResults).toContainEqual({
-      path: "src/components",
-      kind: "directory",
-    });
+  // POSIX-only: creates and follows a symlink escape fixture.
+  it.skipIf(isWindows)(
+    "supports path-style queries and does not escape cwd through symlinks",
+    async () => {
+      const pathResults = await searchWorkspaceEntries({
+        cwd: workspaceDir,
+        query: "src/co",
+        limit: 20,
+        includeFiles: true,
+        includeDirectories: true,
+      });
+      expect(pathResults).toContainEqual({
+        path: "src/components",
+        kind: "directory",
+      });
 
-    const escapedResults = await searchWorkspaceEntries({
-      cwd: workspaceDir,
-      query: "escaped",
-      limit: 20,
-      includeFiles: true,
-      includeDirectories: true,
-    });
-    expect(escapedResults.some((entry) => entry.path.includes("escaped-link"))).toBe(false);
-  });
+      const escapedResults = await searchWorkspaceEntries({
+        cwd: workspaceDir,
+        query: "escaped",
+        limit: 20,
+        includeFiles: true,
+        includeDirectories: true,
+      });
+      expect(escapedResults.some((entry) => entry.path.includes("escaped-link"))).toBe(false);
+    },
+  );
 
   it("ignores node_modules entries so deep workspace files still resolve under scan limits", async () => {
     mkdirSync(path.join(workspaceDir, "packages", "app", "src", "app"), { recursive: true });

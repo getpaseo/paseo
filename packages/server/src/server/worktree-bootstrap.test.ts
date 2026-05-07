@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+} from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -86,13 +94,16 @@ describe("runAsyncWorktreeBootstrap", () => {
     repoDir = join(tempDir, "repo");
     paseoHome = join(tempDir, "paseo-home");
 
-    execSync(`mkdir -p ${repoDir}`);
-    execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-    execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
-    execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
-    execSync("echo 'hello' > file.txt", { cwd: repoDir, stdio: "pipe" });
-    execSync("git add .", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
+    mkdirSync(repoDir, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+    writeFileSync(join(repoDir, "file.txt"), "hello\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
   });
 
   afterEach(async () => {
@@ -109,8 +120,8 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add setup'", {
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add setup"], {
       cwd: repoDir,
       stdio: "pipe",
     });
@@ -217,8 +228,8 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add setup'", {
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add setup"], {
       cwd: repoDir,
       stdio: "pipe",
     });
@@ -268,8 +279,8 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add large output setup'", {
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add large output setup"], {
       cwd: repoDir,
       stdio: "pipe",
     });
@@ -327,11 +338,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add carriage return setup'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add carriage return setup"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const worktreeBootstrap = await createBootstrapWorktreeForTest({
       cwd: repoDir,
@@ -383,11 +398,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add terminal bootstrap config'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add terminal bootstrap config"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const worktreeBootstrap = await createBootstrapWorktreeForTest({
       cwd: repoDir,
@@ -482,11 +501,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add port setup and terminals'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add port setup and terminals"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const worktreeBootstrap = await createBootstrapWorktreeForTest({
       cwd: repoDir,
@@ -759,8 +782,8 @@ describe("runAsyncWorktreeBootstrap", () => {
     message = "add script config",
   ): void {
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts }));
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync(`git -c commit.gpgsign=false commit -m ${JSON.stringify(message)}`, {
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", message], {
       cwd: repoDir,
       stdio: "pipe",
     });
@@ -1117,11 +1140,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add respawn service script config'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add respawn service script config"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
@@ -1216,11 +1243,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add renamed service script config'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add renamed service script config"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
@@ -1278,11 +1309,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add colliding service config'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add colliding service config"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
@@ -1368,11 +1403,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add real peer env services'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add real peer env services"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
@@ -1453,11 +1492,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       }),
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add remote service script config'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "-m", "add remote service script config"],
+      {
+        cwd: repoDir,
+        stdio: "pipe",
+      },
+    );
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();

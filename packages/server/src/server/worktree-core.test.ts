@@ -1,5 +1,6 @@
-import { execSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
+  mkdirSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -59,55 +60,57 @@ function createGitRepo(): { tempDir: string; repoDir: string; paseoHome: string 
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "worktree-core-test-")));
   const repoDir = path.join(tempDir, "repo");
   const paseoHome = path.join(tempDir, ".paseo");
-  execSync(`mkdir -p ${JSON.stringify(repoDir)}`);
-  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
   return { tempDir, repoDir, paseoHome };
 }
 
 function createGitRepoWithDevBranch(): { tempDir: string; repoDir: string; paseoHome: string } {
   const { tempDir, repoDir, paseoHome } = createGitRepo();
-  execSync("git checkout -b dev", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", "dev"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "dev branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'dev branch'", {
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "dev branch"], {
     cwd: repoDir,
     stdio: "pipe",
   });
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir, paseoHome };
 }
 
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string; paseoHome: string } {
   const { tempDir, repoDir, paseoHome } = createGitRepo();
   const featureBranch = "feature/review-pr";
-  execSync(`git checkout -b ${JSON.stringify(featureBranch)}`, { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", featureBranch], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "review branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'review branch'", {
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "review branch"], {
     cwd: repoDir,
     stdio: "pipe",
   });
-  const featureSha = execSync("git rev-parse HEAD", { cwd: repoDir, stdio: "pipe" })
+  const featureSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
     .toString()
     .trim();
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
-  execSync(`git branch -D ${JSON.stringify(featureBranch)}`, { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-D", featureBranch], { cwd: repoDir, stdio: "pipe" });
 
   const remoteDir = path.join(tempDir, "remote.git");
-  execSync(`git clone --bare ${JSON.stringify(repoDir)} ${JSON.stringify(remoteDir)}`, {
+  execFileSync("git", ["clone", "--bare", repoDir, remoteDir], {
     stdio: "pipe",
   });
-  execSync(
-    `git --git-dir=${JSON.stringify(remoteDir)} update-ref refs/pull/123/head ${featureSha}`,
-    { stdio: "pipe" },
-  );
-  execSync(`git remote add origin ${JSON.stringify(remoteDir)}`, { cwd: repoDir, stdio: "pipe" });
-  execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/123/head", featureSha], {
+    stdio: "pipe",
+  });
+  execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
 
   return { tempDir, repoDir, paseoHome };
 }
@@ -123,41 +126,42 @@ function createForkGitHubPrRemoteRepo(): {
   const headRemoteDir = path.join(tempDir, "therainisme.git");
   const headCloneDir = path.join(tempDir, "therainisme-clone");
 
-  execSync(`git clone --bare ${JSON.stringify(repoDir)} ${JSON.stringify(baseRemoteDir)}`, {
+  execFileSync("git", ["clone", "--bare", repoDir, baseRemoteDir], {
     stdio: "pipe",
   });
-  execSync(`git clone --bare ${JSON.stringify(repoDir)} ${JSON.stringify(headRemoteDir)}`, {
+  execFileSync("git", ["clone", "--bare", repoDir, headRemoteDir], {
     stdio: "pipe",
   });
-  execSync(`git remote add origin ${JSON.stringify(baseRemoteDir)}`, {
+  execFileSync("git", ["remote", "add", "origin", baseRemoteDir], {
     cwd: repoDir,
     stdio: "pipe",
   });
 
-  execSync(`git clone ${JSON.stringify(headRemoteDir)} ${JSON.stringify(headCloneDir)}`, {
+  execFileSync("git", ["clone", headRemoteDir, headCloneDir], {
     stdio: "pipe",
   });
-  execSync("git config user.email 'test@test.com'", { cwd: headCloneDir, stdio: "pipe" });
-  execSync("git config user.name 'Test'", { cwd: headCloneDir, stdio: "pipe" });
-  writeFileSync(path.join(headCloneDir, "README.md"), "fork pr main branch\n");
-  execSync("git add README.md", { cwd: headCloneDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'fork pr main branch'", {
+  execFileSync("git", ["config", "user.email", "test@test.com"], {
     cwd: headCloneDir,
     stdio: "pipe",
   });
-  const prHead = execSync("git rev-parse HEAD", { cwd: headCloneDir, stdio: "pipe" })
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: headCloneDir, stdio: "pipe" });
+  writeFileSync(path.join(headCloneDir, "README.md"), "fork pr main branch\n");
+  execFileSync("git", ["add", "README.md"], { cwd: headCloneDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fork pr main branch"], {
+    cwd: headCloneDir,
+    stdio: "pipe",
+  });
+  const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: headCloneDir, stdio: "pipe" })
     .toString()
     .trim();
-  execSync("git push origin main", { cwd: headCloneDir, stdio: "pipe" });
-  execSync(
-    `git --git-dir=${JSON.stringify(baseRemoteDir)} fetch ${JSON.stringify(headRemoteDir)} main`,
-    { stdio: "pipe" },
-  );
-  execSync(
-    `git --git-dir=${JSON.stringify(baseRemoteDir)} update-ref refs/pull/526/head ${prHead}`,
-    { stdio: "pipe" },
-  );
-  execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["push", "origin", "main"], { cwd: headCloneDir, stdio: "pipe" });
+  execFileSync("git", [`--git-dir=${baseRemoteDir}`, "fetch", headRemoteDir, "main"], {
+    stdio: "pipe",
+  });
+  execFileSync("git", [`--git-dir=${baseRemoteDir}`, "update-ref", "refs/pull/526/head", prHead], {
+    stdio: "pipe",
+  });
+  execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
 
   return { tempDir, repoDir, headRemoteDir, paseoHome };
 }
@@ -284,7 +288,9 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
   test("branches off an explicit refName base", async () => {
     const { tempDir, repoDir, paseoHome } = createGitRepoWithDevBranch();
     cleanupPaths.push(tempDir);
-    const devTip = execSync("git rev-parse dev", { cwd: repoDir, stdio: "pipe" }).toString().trim();
+    const devTip = execFileSync("git", ["rev-parse", "dev"], { cwd: repoDir, stdio: "pipe" })
+      .toString()
+      .trim();
 
     const result = await createCoreWorktree(
       {
@@ -298,7 +304,7 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
       createCoreDeps(),
     );
 
-    const mergeBase = execSync(`git merge-base HEAD ${JSON.stringify(devTip)}`, {
+    const mergeBase = execFileSync("git", ["merge-base", "HEAD", devTip], {
       cwd: result.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -327,7 +333,7 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
       createCoreDeps(),
     );
 
-    const branch = execSync("git branch --show-current", {
+    const branch = execFileSync("git", ["branch", "--show-current"], {
       cwd: result.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -392,10 +398,13 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
       createCoreDeps({ github }),
     );
 
-    const sourceBranch = execSync("git branch --show-current", { cwd: repoDir, stdio: "pipe" })
+    const sourceBranch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    })
       .toString()
       .trim();
-    const worktreeBranch = execSync("git branch --show-current", {
+    const worktreeBranch = execFileSync("git", ["branch", "--show-current"], {
       cwd: result.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -403,15 +412,19 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
       .trim();
     const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
     writeFileSync(path.join(result.worktree.worktreePath, "FOLLOWUP.md"), "maintainer edit\n");
-    execSync("git add FOLLOWUP.md", { cwd: result.worktree.worktreePath, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'maintainer edit'", {
+    execFileSync("git", ["add", "FOLLOWUP.md"], {
       cwd: result.worktree.worktreePath,
       stdio: "pipe",
     });
-    const pushDryRun = execSync("git push --dry-run 2>&1", {
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "maintainer edit"], {
       cwd: result.worktree.worktreePath,
       stdio: "pipe",
-    }).toString();
+    });
+    const pushDryRunResult = spawnSync("git", ["push", "--dry-run"], {
+      cwd: result.worktree.worktreePath,
+      encoding: "utf8",
+    });
+    const pushDryRun = `${pushDryRunResult.stdout}${pushDryRunResult.stderr}`;
 
     expect(sourceBranch).toBe("main");
     expect(result.intent).toEqual({
@@ -473,7 +486,7 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
     expect(first.worktree.branchName).toBe("therainisme/main");
     expect(second.worktree.branchName).toBe("therainisme/main-1");
     expect(
-      execSync("git config --get remote.paseo-pr-526.push", {
+      execFileSync("git", ["config", "--get", "remote.paseo-pr-526.push"], {
         cwd: second.worktree.worktreePath,
         stdio: "pipe",
       })

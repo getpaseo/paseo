@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1158,7 +1158,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     const repoDir = join(tempDir, "repo");
     const nestedWorkspaceDir = join(repoDir, "packages", "app");
     mkdirSync(nestedWorkspaceDir, { recursive: true });
-    execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
 
     const worktrees = [
       {
@@ -1314,18 +1314,21 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-diff-")));
     const repoDir = join(tempDir, "repo");
     mkdirSync(repoDir, { recursive: true });
-    execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-    execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
-    execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "test@test.com"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
     writeFileSync(join(repoDir, "tracked.txt"), "before\n");
-    execSync("git add tracked.txt", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
       cwd: repoDir,
       stdio: "pipe",
     });
     writeFileSync(join(repoDir, "tracked.txt"), "before\nafter\n");
     writeFileSync(join(repoDir, "staged.txt"), "staged\n");
-    execSync("git add staged.txt", { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["add", "staged.txt"], { cwd: repoDir, stdio: "pipe" });
 
     const service = createService({
       getCheckoutDiff: getCheckoutDiffUncached as never,
@@ -1467,7 +1470,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     const repoDir = join(tempDir, "repo");
     mkdirSync(join(repoDir, "ignored", "deep"), { recursive: true });
     mkdirSync(join(repoDir, "kept"), { recursive: true });
-    execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
     writeFileSync(join(repoDir, ".gitignore"), "ignored/\n");
     writeFileSync(join(repoDir, "ignored", "log.txt"), "noise\n");
     writeFileSync(join(repoDir, "ignored", "deep", "log.txt"), "noise\n");
