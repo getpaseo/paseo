@@ -1,6 +1,3 @@
-const IGNORED_ARG_PREFIXES = ["-psn_", "--no-sandbox"];
-
-export const DESKTOP_CLI_ENV = "PASEO_DESKTOP_CLI";
 const PASEO_NODE_ENV = "PASEO_NODE_ENV";
 
 export interface NodeEntrypointSpec {
@@ -26,12 +23,6 @@ interface CreateNodeEntrypointInvocationInput {
   baseEnv: NodeJS.ProcessEnv;
 }
 
-interface ParseCliPassthroughArgsFromArgvInput {
-  argv: string[];
-  isDefaultApp: boolean;
-  forceCli: boolean;
-}
-
 export function createElectronNodeEnv(
   baseEnv: NodeJS.ProcessEnv,
   options?: { isPackaged?: boolean },
@@ -41,26 +32,6 @@ export function createElectronNodeEnv(
     ELECTRON_RUN_AS_NODE: "1",
     ...(options?.isPackaged === true ? { [PASEO_NODE_ENV]: "production" } : {}),
   };
-}
-
-export function parseCliPassthroughArgsFromArgv(
-  input: ParseCliPassthroughArgsFromArgvInput,
-): string[] | null {
-  const startIndex = input.isDefaultApp ? 2 : 1;
-  const effective: string[] = [];
-
-  for (const arg of input.argv.slice(startIndex)) {
-    if (IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
-      continue;
-    }
-    effective.push(arg);
-  }
-
-  if (input.forceCli) {
-    return effective;
-  }
-
-  return effective.length > 0 ? effective : null;
 }
 
 export function createNodeEntrypointInvocation(

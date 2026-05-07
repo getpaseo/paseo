@@ -1,9 +1,5 @@
 import { pathToFileURL } from "node:url";
 
-process.stderr.write(
-  `[paseo-runner] argv=${JSON.stringify(process.argv)} run-as-node=${process.env.ELECTRON_RUN_AS_NODE ?? "<unset>"} execPath=${process.execPath}\n`,
-);
-
 export async function main(): Promise<void> {
   const [argvMode, entryPath, ...args] = process.argv.slice(2);
   if (argvMode !== "bare" && argvMode !== "node-script") {
