@@ -12,6 +12,7 @@ import {
   createGitHubService,
   resolveGitHubRepo,
   type GitHubService,
+  type PullRequestMergeable,
 } from "../services/github-service.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
@@ -2309,6 +2310,7 @@ export interface PullRequestStatus {
   headRefName: string;
   isMerged: boolean;
   isDraft?: boolean;
+  mergeable?: PullRequestMergeable;
   checks?: PullRequestCheck[];
   checksStatus?: ChecksStatus;
   reviewDecision?: ReviewDecision;

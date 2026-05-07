@@ -56,7 +56,10 @@ import {
   type HighlightToken,
 } from "@/hooks/use-checkout-diff-query";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
-import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
+import {
+  useCheckoutPrStatusQuery,
+  type CheckoutPrStatusPayload,
+} from "@/hooks/use-checkout-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { DiffScroll } from "./diff-scroll";
 import {
@@ -1417,6 +1420,11 @@ interface GitActionRunners {
   runPush: (args: { serverId: string; cwd: string }) => Promise<void>;
   runPullAndPush: (args: { serverId: string; cwd: string }) => Promise<void>;
   runCreatePr: (args: { serverId: string; cwd: string }) => Promise<void>;
+  runMergePr: (args: {
+    serverId: string;
+    cwd: string;
+    method: "merge" | "squash" | "rebase";
+  }) => Promise<void>;
   runMergeBranch: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
   runMergeFromBase: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
   runArchiveWorktree: (args: {
@@ -1446,6 +1454,9 @@ interface GitActionHandlers {
   handlePush: () => void;
   handlePullAndPush: () => void;
   handleCreatePr: () => void;
+  handleMergePrSquash: () => void;
+  handleMergePrMerge: () => void;
+  handleMergePrRebase: () => void;
   handleMergeBranch: () => void;
   handleMergeFromBase: () => void;
   handleArchiveWorktree: () => void;
@@ -1525,6 +1536,35 @@ function useGitActionHandlers({
       });
   }, [cwd, persistShipDefault, runners, serverId, toastActionError, toastActionSuccess]);
 
+  const handleMergePr = useCallback(
+    (method: "merge" | "squash" | "rebase") => {
+      void persistShipDefault("pr");
+      void runners
+        .runMergePr({ serverId, cwd, method })
+        .then(() => {
+          onMergeBranchSuccess();
+          toastActionSuccess("PR merged");
+          return;
+        })
+        .catch((err) => {
+          toastActionError(err, "Failed to merge PR");
+        });
+    },
+    [
+      cwd,
+      onMergeBranchSuccess,
+      persistShipDefault,
+      runners,
+      serverId,
+      toastActionError,
+      toastActionSuccess,
+    ],
+  );
+
+  const handleMergePrSquash = useCallback(() => handleMergePr("squash"), [handleMergePr]);
+  const handleMergePrMerge = useCallback(() => handleMergePr("merge"), [handleMergePr]);
+  const handleMergePrRebase = useCallback(() => handleMergePr("rebase"), [handleMergePr]);
+
   const handleMergeBranch = useCallback(() => {
     if (!baseRef) {
       toastError("Base ref unavailable");
@@ -1593,6 +1633,9 @@ function useGitActionHandlers({
     handlePush,
     handlePullAndPush,
     handleCreatePr,
+    handleMergePrSquash,
+    handleMergePrMerge,
+    handleMergePrRebase,
     handleMergeBranch,
     handleMergeFromBase,
     handleArchiveWorktree,
@@ -1654,6 +1697,15 @@ interface DerivedBranchState {
   currentBranch: string | null | undefined;
 }
 
+type PullRequestStatus = NonNullable<CheckoutPrStatusPayload["status"]>;
+
+interface PullRequestPolicyState {
+  pullRequestState: string | null;
+  pullRequestIsDraft: boolean;
+  pullRequestIsMerged: boolean;
+  pullRequestMergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+}
+
 function deriveBranchState(
   gitStatus: DerivedStatusState["gitStatus"],
   prStatus: { url?: string | null; isMerged?: boolean | null } | null | undefined,
@@ -1668,6 +1720,17 @@ function deriveBranchState(
     isPaseoOwnedWorktree: gitStatus?.isPaseoOwnedWorktree ?? false,
     isMergedPullRequest: Boolean(prStatus?.isMerged),
     currentBranch: gitStatus?.currentBranch,
+  };
+}
+
+function derivePullRequestPolicyState(
+  prStatus: PullRequestStatus | null | undefined,
+): PullRequestPolicyState {
+  return {
+    pullRequestState: prStatus?.state ?? null,
+    pullRequestIsDraft: prStatus?.isDraft ?? false,
+    pullRequestIsMerged: prStatus?.isMerged ?? false,
+    pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
   };
 }
 
@@ -1711,6 +1774,9 @@ function computeDisabledStates(
     pushDisabled: actionsDisabled || statuses.pushStatus === pending,
     pullAndPushDisabled: actionsDisabled || statuses.pullAndPushStatus === pending,
     prDisabled: actionsDisabled || statuses.prCreateStatus === pending,
+    mergePrSquashDisabled: actionsDisabled || statuses.mergePrSquashStatus === pending,
+    mergePrMergeDisabled: actionsDisabled || statuses.mergePrMergeStatus === pending,
+    mergePrRebaseDisabled: actionsDisabled || statuses.mergePrRebaseStatus === pending,
     mergeDisabled: actionsDisabled || statuses.mergeStatus === pending,
     mergeFromBaseDisabled: actionsDisabled || statuses.mergeFromBaseStatus === pending,
     archiveDisabled: actionsDisabled || statuses.archiveStatus === pending,
@@ -1755,6 +1821,9 @@ interface GitActionsStatusInputs {
   pushStatus: CheckoutGitActionStatus;
   pullAndPushStatus: CheckoutGitActionStatus;
   prCreateStatus: CheckoutGitActionStatus;
+  mergePrSquashStatus: CheckoutGitActionStatus;
+  mergePrMergeStatus: CheckoutGitActionStatus;
+  mergePrRebaseStatus: CheckoutGitActionStatus;
   mergeStatus: CheckoutGitActionStatus;
   mergeFromBaseStatus: CheckoutGitActionStatus;
   archiveStatus: CheckoutGitActionStatus;
@@ -1766,6 +1835,9 @@ interface GitActionsDisabledInputs {
   pushDisabled: boolean;
   pullAndPushDisabled: boolean;
   prDisabled: boolean;
+  mergePrSquashDisabled: boolean;
+  mergePrMergeDisabled: boolean;
+  mergePrRebaseDisabled: boolean;
   mergeDisabled: boolean;
   mergeFromBaseDisabled: boolean;
   archiveDisabled: boolean;
@@ -1777,6 +1849,10 @@ interface BuildGitActionsParams {
     githubFeaturesEnabled: boolean;
     hasPullRequest: boolean;
     pullRequestUrl: string | null;
+    pullRequestState: string | null;
+    pullRequestIsDraft: boolean;
+    pullRequestIsMerged: boolean;
+    pullRequestMergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
     hasRemote: boolean;
     isPaseoOwnedWorktree: boolean;
     isOnBaseBranch: boolean;
@@ -1835,6 +1911,24 @@ function buildGitActionsForPane({
         status: policy.hasPullRequest ? "idle" : statuses.prCreateStatus,
         icon: <GitHubIcon size={16} color={iconColor} />,
         handler: handlers.handlePr,
+      },
+      "merge-pr-squash": {
+        disabled: disabled.mergePrSquashDisabled,
+        status: statuses.mergePrSquashStatus,
+        icon: <GitCommitHorizontal size={16} color={iconColor} />,
+        handler: handlers.handleMergePrSquash,
+      },
+      "merge-pr-merge": {
+        disabled: disabled.mergePrMergeDisabled,
+        status: statuses.mergePrMergeStatus,
+        icon: <GitMerge size={16} color={iconColor} />,
+        handler: handlers.handleMergePrMerge,
+      },
+      "merge-pr-rebase": {
+        disabled: disabled.mergePrRebaseDisabled,
+        status: statuses.mergePrRebaseStatus,
+        icon: <GitBranch size={16} color={iconColor} />,
+        handler: handlers.handleMergePrRebase,
       },
       "merge-branch": {
         disabled: disabled.mergeDisabled,
@@ -2319,6 +2413,15 @@ export function GitDiffPane({
   const prCreateStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "create-pr" }),
   );
+  const mergePrSquashStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-pr-squash" }),
+  );
+  const mergePrMergeStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-pr-merge" }),
+  );
+  const mergePrRebaseStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-pr-rebase" }),
+  );
   const mergeStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "merge-branch" }),
   );
@@ -2334,6 +2437,7 @@ export function GitDiffPane({
   const runPush = useCheckoutGitActionsStore((state) => state.push);
   const runPullAndPush = useCheckoutGitActionsStore((state) => state.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
+  const runMergePr = useCheckoutGitActionsStore((state) => state.mergePr);
   const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
   const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
@@ -2378,6 +2482,7 @@ export function GitDiffPane({
       runPush,
       runPullAndPush,
       runCreatePr,
+      runMergePr,
       runMergeBranch,
       runMergeFromBase,
       runArchiveWorktree,
@@ -2386,6 +2491,7 @@ export function GitDiffPane({
       runArchiveWorktree,
       runCommit,
       runCreatePr,
+      runMergePr,
       runMergeBranch,
       runMergeFromBase,
       runPull,
@@ -2400,6 +2506,9 @@ export function GitDiffPane({
     handlePush,
     handlePullAndPush,
     handleCreatePr,
+    handleMergePrSquash,
+    handleMergePrMerge,
+    handleMergePrRebase,
     handleMergeBranch,
     handleMergeFromBase,
     handleArchiveWorktree,
@@ -2501,6 +2610,7 @@ export function GitDiffPane({
   const prErrorMessage = computePrErrorMessage(githubFeaturesEnabled, prPayloadError);
   const branchLabel = computeBranchLabel(gitStatus?.currentBranch, notGit);
   const branchState = useMemo(() => deriveBranchState(gitStatus, prStatus), [gitStatus, prStatus]);
+  const pullRequestPolicyState = useMemo(() => derivePullRequestPolicyState(prStatus), [prStatus]);
   const {
     aheadCount,
     behindBaseCount,
@@ -2532,6 +2642,9 @@ export function GitDiffPane({
       pushStatus,
       pullAndPushStatus,
       prCreateStatus,
+      mergePrSquashStatus,
+      mergePrMergeStatus,
+      mergePrRebaseStatus,
       mergeStatus,
       mergeFromBaseStatus,
       archiveStatus,
@@ -2540,6 +2653,9 @@ export function GitDiffPane({
       archiveStatus,
       commitStatus,
       mergeFromBaseStatus,
+      mergePrMergeStatus,
+      mergePrRebaseStatus,
+      mergePrSquashStatus,
       mergeStatus,
       prCreateStatus,
       pullAndPushStatus,
@@ -2608,6 +2724,9 @@ export function GitDiffPane({
       handlePush,
       handlePullAndPush,
       handleCreatePr,
+      handleMergePrSquash,
+      handleMergePrMerge,
+      handleMergePrRebase,
       handleMergeBranch,
       handleMergeFromBase,
       handleArchiveWorktree,
@@ -2617,6 +2736,9 @@ export function GitDiffPane({
       handleArchiveWorktree,
       handleCommit,
       handleCreatePr,
+      handleMergePrMerge,
+      handleMergePrRebase,
+      handleMergePrSquash,
       handleMergeBranch,
       handleMergeFromBase,
       handlePr,
@@ -2634,6 +2756,7 @@ export function GitDiffPane({
           githubFeaturesEnabled,
           hasPullRequest,
           pullRequestUrl: prStatus?.url ?? null,
+          ...pullRequestPolicyState,
           hasRemote,
           isPaseoOwnedWorktree,
           isOnBaseBranch,
@@ -2670,6 +2793,7 @@ export function GitDiffPane({
       isOnBaseBranch,
       isPaseoOwnedWorktree,
       prStatus?.url,
+      pullRequestPolicyState,
       shipDefault,
       shouldPromoteArchive,
       theme.colors.foregroundMuted,

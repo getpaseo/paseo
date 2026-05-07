@@ -124,6 +124,7 @@ function createGitHubServiceForStatus(
       url: "https://github.com/getpaseo/paseo/pull/1",
       number: 1,
     }),
+    mergePullRequest: async () => ({ success: true }),
     isAuthenticated: async () => true,
     invalidate: () => {},
   };

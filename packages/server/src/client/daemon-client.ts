@@ -30,6 +30,7 @@ import type {
   CheckoutPullResponse,
   CheckoutPushResponse,
   CheckoutPrCreateResponse,
+  CheckoutPrMergeResponse,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
   CheckoutSwitchBranchResponse,
@@ -263,6 +264,7 @@ type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPullPayload = CheckoutPullResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
+type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
@@ -2740,6 +2742,23 @@ export class DaemonClient {
         baseRef: input.baseRef,
       },
       responseType: "checkout_pr_create_response",
+      timeout: 60000,
+    });
+  }
+
+  async checkoutPrMerge(
+    cwd: string,
+    input: { method: "merge" | "squash" | "rebase" },
+    requestId?: string,
+  ): Promise<CheckoutPrMergePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_pr_merge_request",
+        cwd,
+        mergeMethod: input.method,
+      },
+      responseType: "checkout_pr_merge_response",
       timeout: 60000,
     });
   }

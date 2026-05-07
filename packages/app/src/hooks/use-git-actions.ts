@@ -56,6 +56,9 @@ function useGitActionStatuses(
   pushStatus: CheckoutGitActionStatus;
   pullAndPushStatus: CheckoutGitActionStatus;
   prCreateStatus: CheckoutGitActionStatus;
+  mergePrSquashStatus: CheckoutGitActionStatus;
+  mergePrMergeStatus: CheckoutGitActionStatus;
+  mergePrRebaseStatus: CheckoutGitActionStatus;
   mergeStatus: CheckoutGitActionStatus;
   mergeFromBaseStatus: CheckoutGitActionStatus;
   archiveStatus: CheckoutGitActionStatus;
@@ -75,6 +78,15 @@ function useGitActionStatuses(
   const prCreateStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "create-pr" }),
   );
+  const mergePrSquashStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-pr-squash" }),
+  );
+  const mergePrMergeStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-pr-merge" }),
+  );
+  const mergePrRebaseStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-pr-rebase" }),
+  );
   const mergeStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "merge-branch" }),
   );
@@ -90,6 +102,9 @@ function useGitActionStatuses(
     pushStatus,
     pullAndPushStatus,
     prCreateStatus,
+    mergePrSquashStatus,
+    mergePrMergeStatus,
+    mergePrRebaseStatus,
     mergeStatus,
     mergeFromBaseStatus,
     archiveStatus,
@@ -187,6 +202,7 @@ function useGitActionRunners() {
   const runPush = useCheckoutGitActionsStore((state) => state.push);
   const runPullAndPush = useCheckoutGitActionsStore((state) => state.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
+  const runMergePr = useCheckoutGitActionsStore((state) => state.mergePr);
   const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
   const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
@@ -196,6 +212,7 @@ function useGitActionRunners() {
     runPush,
     runPullAndPush,
     runCreatePr,
+    runMergePr,
     runMergeBranch,
     runMergeFromBase,
     runArchiveWorktree,
@@ -212,6 +229,9 @@ interface UseGitActionsInput {
     pullAndPush: ReactElement;
     viewPr: ReactElement;
     createPr: ReactElement;
+    mergePrSquash: ReactElement;
+    mergePrMerge: ReactElement;
+    mergePrRebase: ReactElement;
     merge: ReactElement;
     mergeFromBase: ReactElement;
     archive: ReactElement;
@@ -293,6 +313,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     pushStatus,
     pullAndPushStatus,
     prCreateStatus,
+    mergePrSquashStatus,
+    mergePrMergeStatus,
+    mergePrRebaseStatus,
     mergeStatus,
     mergeFromBaseStatus,
     archiveStatus,
@@ -304,6 +327,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     runPush,
     runPullAndPush,
     runCreatePr,
+    runMergePr,
     runMergeBranch,
     runMergeFromBase,
     runArchiveWorktree,
@@ -380,6 +404,22 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
         toastActionError(err, "Failed to create PR");
       });
   }, [cwd, persistShipDefault, runCreatePr, serverId, toastActionError, toastActionSuccess]);
+
+  const handleMergePr = useCallback(
+    (method: "merge" | "squash" | "rebase") => {
+      void persistShipDefault("pr");
+      void runMergePr({ serverId, cwd, method })
+        .then(() => {
+          setPostShipArchiveSuggested(true);
+          toastActionSuccess("PR merged");
+          return;
+        })
+        .catch((err) => {
+          toastActionError(err, "Failed to merge PR");
+        });
+    },
+    [cwd, persistShipDefault, runMergePr, serverId, toastActionError, toastActionSuccess],
+  );
 
   const handleMergeBranch = useCallback(() => {
     if (!baseRef) {
@@ -466,6 +506,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const commitDisabled = isActionDisabled(actionsDisabled, commitStatus);
   const pullDisabled = isActionDisabled(actionsDisabled, pullStatus);
   const prDisabled = isActionDisabled(actionsDisabled, prCreateStatus);
+  const mergePrSquashDisabled = isActionDisabled(actionsDisabled, mergePrSquashStatus);
+  const mergePrMergeDisabled = isActionDisabled(actionsDisabled, mergePrMergeStatus);
+  const mergePrRebaseDisabled = isActionDisabled(actionsDisabled, mergePrRebaseStatus);
   const mergeDisabled = isActionDisabled(actionsDisabled, mergeStatus);
   const mergeFromBaseDisabled = isActionDisabled(actionsDisabled, mergeFromBaseStatus);
   const pushDisabled = isActionDisabled(actionsDisabled, pushStatus);
@@ -485,6 +528,10 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handleCreatePr();
   }, [prStatus?.url, handleCreatePr]);
 
+  const handleMergePrSquash = useCallback(() => handleMergePr("squash"), [handleMergePr]);
+  const handleMergePrMerge = useCallback(() => handleMergePr("merge"), [handleMergePr]);
+  const handleMergePrRebase = useCallback(() => handleMergePr("rebase"), [handleMergePr]);
+
   // Build actions
   const gitActions: GitActions = useMemo(() => {
     return buildGitActions({
@@ -492,6 +539,10 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       githubFeaturesEnabled,
       hasPullRequest,
       pullRequestUrl: prStatus?.url ?? null,
+      pullRequestState: prStatus?.state ?? null,
+      pullRequestIsDraft: prStatus?.isDraft ?? false,
+      pullRequestIsMerged: prStatus?.isMerged ?? false,
+      pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
       hasRemote,
       isPaseoOwnedWorktree,
       isOnBaseBranch,
@@ -535,6 +586,24 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           icon: hasPullRequest ? icons.viewPr : icons.createPr,
           handler: handlePrAction,
         },
+        "merge-pr-squash": {
+          disabled: mergePrSquashDisabled,
+          status: mergePrSquashStatus,
+          icon: icons.mergePrSquash,
+          handler: handleMergePrSquash,
+        },
+        "merge-pr-merge": {
+          disabled: mergePrMergeDisabled,
+          status: mergePrMergeStatus,
+          icon: icons.mergePrMerge,
+          handler: handleMergePrMerge,
+        },
+        "merge-pr-rebase": {
+          disabled: mergePrRebaseDisabled,
+          status: mergePrRebaseStatus,
+          icon: icons.mergePrRebase,
+          handler: handleMergePrRebase,
+        },
         "merge-branch": {
           disabled: mergeDisabled,
           status: mergeStatus,
@@ -560,6 +629,10 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     hasRemote,
     hasPullRequest,
     prStatus?.url,
+    prStatus?.state,
+    prStatus?.isDraft,
+    prStatus?.isMerged,
+    prStatus?.mergeable,
     aheadCount,
     behindBaseCount,
     isPaseoOwnedWorktree,
@@ -576,6 +649,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     pushDisabled,
     pullAndPushDisabled,
     prDisabled,
+    mergePrSquashDisabled,
+    mergePrMergeDisabled,
+    mergePrRebaseDisabled,
     mergeDisabled,
     mergeFromBaseDisabled,
     archiveDisabled,
@@ -584,6 +660,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     pushStatus,
     pullAndPushStatus,
     prCreateStatus,
+    mergePrSquashStatus,
+    mergePrMergeStatus,
+    mergePrRebaseStatus,
     mergeStatus,
     mergeFromBaseStatus,
     archiveStatus,
@@ -592,6 +671,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handlePush,
     handlePullAndPush,
     handlePrAction,
+    handleMergePrSquash,
+    handleMergePrMerge,
+    handleMergePrRebase,
     handleMergeBranch,
     handleMergeFromBase,
     handleArchiveWorktree,

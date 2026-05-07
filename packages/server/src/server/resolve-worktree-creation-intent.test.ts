@@ -42,6 +42,7 @@ function createResolverHarness(): ResolverHarness {
       number: 1,
       url: "https://github.com/acme/repo/pull/1",
     }),
+    mergePullRequest: async () => ({ success: true }),
     isAuthenticated: async () => true,
     invalidate: () => {},
   };

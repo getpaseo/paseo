@@ -20,7 +20,11 @@ import {
   resolveBranchCheckout,
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
-import { createGitHubService, type GitHubService } from "../services/github-service.js";
+import {
+  createGitHubService,
+  type GitHubService,
+  type PullRequestMergeable,
+} from "../services/github-service.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { resolveGitHubRemote, type GitHubRemoteIdentity } from "../utils/github-remote.js";
@@ -78,6 +82,7 @@ export interface WorkspaceGitRuntimeSnapshot {
       headRefName: string;
       isMerged: boolean;
       isDraft?: boolean;
+      mergeable?: PullRequestMergeable;
       checks?: Array<{
         name: string;
         status: "success" | "failure" | "pending" | "skipped" | "cancelled";

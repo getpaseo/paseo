@@ -67,6 +67,7 @@ function status(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
     headRefName: "feature/pr-pane",
     isMerged: false,
     isDraft: false,
+    mergeable: "UNKNOWN",
     checks: [],
     reviewDecision: null,
     repoOwner: "getpaseo",

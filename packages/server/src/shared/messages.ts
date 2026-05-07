@@ -1272,6 +1272,13 @@ export const CheckoutPrCreateRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutPrMergeRequestSchema = z.object({
+  type: z.literal("checkout_pr_merge_request"),
+  cwd: z.string(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]),
+  requestId: z.string(),
+});
+
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
   cwd: z.string(),
@@ -1719,6 +1726,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPullRequestSchema,
   CheckoutPushRequestSchema,
   CheckoutPrCreateRequestSchema,
+  CheckoutPrMergeRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
@@ -2661,6 +2669,11 @@ export const CheckoutPrStatusSchema = z.object({
   headRefName: z.string(),
   isMerged: z.boolean(),
   isDraft: z.boolean().optional().default(false),
+  mergeable: z
+    .enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"])
+    .catch("UNKNOWN")
+    .optional()
+    .default("UNKNOWN"),
   checks: z
     .array(
       z.object({
@@ -2777,6 +2790,16 @@ export const CheckoutPrCreateResponseSchema = z.object({
     cwd: z.string(),
     url: z.string().nullable(),
     number: z.number().nullable(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutPrMergeResponseSchema = z.object({
+  type: z.literal("checkout_pr_merge_response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -3338,6 +3361,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPullResponseSchema,
   CheckoutPushResponseSchema,
   CheckoutPrCreateResponseSchema,
+  CheckoutPrMergeResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
@@ -3585,6 +3609,8 @@ export type CheckoutPushRequest = z.infer<typeof CheckoutPushRequestSchema>;
 export type CheckoutPushResponse = z.infer<typeof CheckoutPushResponseSchema>;
 export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
+export type CheckoutPrMergeRequest = z.infer<typeof CheckoutPrMergeRequestSchema>;
+export type CheckoutPrMergeResponse = z.infer<typeof CheckoutPrMergeResponseSchema>;
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;
 export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
 export type PullRequestTimelineRequest = z.infer<typeof PullRequestTimelineRequestSchema>;

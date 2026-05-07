@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildGitActions, type BuildGitActionsInput } from "./git-actions-policy";
+import {
+  buildGitActions,
+  gitActionNeedsMenuSeparator,
+  type BuildGitActionsInput,
+  type GitActionId,
+} from "./git-actions-policy";
 
 function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitActionsInput {
   return {
@@ -8,6 +13,10 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
     githubFeaturesEnabled: true,
     hasPullRequest: false,
     pullRequestUrl: null,
+    pullRequestState: null,
+    pullRequestIsDraft: false,
+    pullRequestIsMerged: false,
+    pullRequestMergeable: "UNKNOWN",
     hasRemote: false,
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
@@ -42,6 +51,21 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
         handler: () => undefined,
       },
       pr: {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
+      "merge-pr-squash": {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
+      "merge-pr-merge": {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
+      "merge-pr-rebase": {
         disabled: false,
         status: "idle",
         handler: () => undefined,
@@ -158,6 +182,9 @@ describe("git-actions-policy", () => {
       "merge-from-base",
       "merge-branch",
       "pr",
+      "merge-pr-squash",
+      "merge-pr-merge",
+      "merge-pr-rebase",
     ]);
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
@@ -212,5 +239,166 @@ describe("git-actions-policy", () => {
 
     expect(hidden.secondary.some((action) => action.id === "archive-worktree")).toBe(false);
     expect(shown.secondary.some((action) => action.id === "archive-worktree")).toBe(true);
+  });
+
+  it("promotes squash-and-merge when an open PR is mergeable and the branch is in sync", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        shipDefault: "pr",
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({
+      id: "merge-pr-squash",
+      label: "Squash and merge",
+    });
+  });
+
+  it("respects the ship preference when choosing between PR merge and local merge", () => {
+    const prPreferredActions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        shipDefault: "pr",
+      }),
+    );
+    const localMergePreferredActions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        shipDefault: "merge",
+      }),
+    );
+
+    expect(prPreferredActions.primary).toMatchObject({
+      id: "merge-pr-squash",
+      label: "Squash and merge",
+    });
+    expect(localMergePreferredActions.primary).toMatchObject({
+      id: "merge-branch",
+      label: "Merge locally",
+    });
+    expect(
+      localMergePreferredActions.secondary.some((action) => action.id === "merge-pr-squash"),
+    ).toBe(true);
+  });
+
+  it("keeps the merge-pr actions in the feature branch menu", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+      }),
+    );
+
+    expect(actions.secondary.map((action) => action.id)).toEqual([
+      "pull",
+      "push",
+      "pull-and-push",
+      "merge-from-base",
+      "merge-branch",
+      "pr",
+      "merge-pr-squash",
+      "merge-pr-merge",
+      "merge-pr-rebase",
+    ]);
+  });
+
+  it("uses Merge locally for the local merge action", () => {
+    const actions = buildGitActions(
+      createInput({
+        isOnBaseBranch: false,
+        aheadCount: 2,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "merge-branch");
+
+    expect(action).toMatchObject({ label: "Merge locally" });
+  });
+
+  it.each([
+    [
+      "draft",
+      { pullRequestIsDraft: true },
+      "Merge PR isn't available because the pull request is still a draft",
+    ],
+    [
+      "merged",
+      { pullRequestIsMerged: true },
+      "Merge PR isn't available because the pull request is already merged",
+    ],
+    [
+      "closed",
+      { pullRequestState: "closed" },
+      "Merge PR isn't available because the pull request is closed",
+    ],
+    [
+      "conflicting",
+      { pullRequestMergeable: "CONFLICTING" as const },
+      "Merge PR isn't available because the pull request has conflicts",
+    ],
+  ])("marks merge-pr actions unavailable when the PR is %s", (_name, overrides, message) => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        ...overrides,
+      }),
+    );
+    const mergePrActions = actions.secondary.filter((action) =>
+      ["merge-pr-squash", "merge-pr-merge", "merge-pr-rebase"].includes(action.id),
+    );
+
+    expect(mergePrActions).toHaveLength(3);
+    expect(mergePrActions.map((action) => action.unavailableMessage)).toEqual([
+      message,
+      message,
+      message,
+    ]);
+    expect(mergePrActions.map((action) => action.disabled)).toEqual([true, true, true]);
+  });
+
+  it("groups merge-pr actions behind their own menu separator", () => {
+    const separatorIds: GitActionId[] = ["merge-from-base", "merge-pr-squash", "archive-worktree"];
+    const nonSeparatorIds: GitActionId[] = [
+      "commit",
+      "pull",
+      "push",
+      "pull-and-push",
+      "pr",
+      "merge-pr-merge",
+      "merge-pr-rebase",
+      "merge-branch",
+    ];
+
+    expect(separatorIds.every(gitActionNeedsMenuSeparator)).toBe(true);
+    expect(nonSeparatorIds.some(gitActionNeedsMenuSeparator)).toBe(false);
   });
 });

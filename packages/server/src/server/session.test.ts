@@ -65,6 +65,7 @@ interface SessionHandlerInternals {
   handleCheckoutMergeFromBaseRequest(params: unknown): Promise<unknown>;
   handleCheckoutCommitRequest(params: unknown): Promise<unknown>;
   handleCheckoutPrCreateRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPrMergeRequest(params: unknown): Promise<unknown>;
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
@@ -288,6 +289,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     invalidate: vi.fn(),
     searchIssuesAndPrs: vi.fn(),
     createPullRequest: vi.fn(),
+    mergePullRequest: vi.fn(),
   };
   const checkoutDiffManager = options.checkoutDiffManager ?? {
     scheduleRefreshForCwd: vi.fn(),
@@ -1022,6 +1024,7 @@ describe("session PR status payload normalization", () => {
       headRefName: "feature/pr-pane",
       isMerged: false,
       isDraft: true,
+      mergeable: "MERGEABLE",
       checks: [
         {
           name: "typecheck",
@@ -1037,6 +1040,7 @@ describe("session PR status payload normalization", () => {
 
     expect(payload).toHaveProperty("repoOwner", "internal-owner");
     expect(payload).toHaveProperty("repoName", "internal-repo");
+    expect(payload).toHaveProperty("mergeable", "MERGEABLE");
     expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
   });
 });
@@ -1694,6 +1698,91 @@ describe("session checkout pull request creation", () => {
         number: 2,
         error: null,
         requestId: "request-pr-create",
+      },
+    });
+  });
+});
+
+describe("session checkout pull request merge", () => {
+  test("merges the current pull request and refreshes GitHub state", async () => {
+    const messages: unknown[] = [];
+    const github = {
+      invalidate: vi.fn(),
+      mergePullRequest: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const workspaceGitService = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        github: {
+          pullRequest: {
+            number: 42,
+          },
+        },
+      }),
+    };
+    const session = createSessionForTest({ github, workspaceGitService, messages });
+
+    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+      type: "checkout_pr_merge_request",
+      cwd: "/tmp/request-worktree",
+      mergeMethod: "squash",
+      requestId: "request-pr-merge",
+    });
+
+    expect(github.mergePullRequest).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+      prNumber: 42,
+      mergeMethod: "squash",
+    });
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+      force: true,
+      reason: "merge-pr",
+    });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(messages).toContainEqual({
+      type: "checkout_pr_merge_response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        success: true,
+        error: null,
+        requestId: "request-pr-merge",
+      },
+    });
+  });
+
+  test("surfaces merge errors verbatim", async () => {
+    const messages: unknown[] = [];
+    const github = {
+      invalidate: vi.fn(),
+      mergePullRequest: vi.fn().mockRejectedValue(new Error("base branch has conflicts")),
+    };
+    const workspaceGitService = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        github: {
+          pullRequest: {
+            number: 42,
+          },
+        },
+      }),
+    };
+    const session = createSessionForTest({ github, workspaceGitService, messages });
+
+    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+      type: "checkout_pr_merge_request",
+      cwd: "/tmp/request-worktree",
+      mergeMethod: "merge",
+      requestId: "request-pr-merge-failure",
+    });
+
+    expect(messages).toContainEqual({
+      type: "checkout_pr_merge_response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        success: false,
+        error: {
+          code: "UNKNOWN",
+          message: "base branch has conflicts",
+        },
+        requestId: "request-pr-merge-failure",
       },
     });
   });

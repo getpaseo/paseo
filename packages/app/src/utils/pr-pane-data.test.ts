@@ -23,6 +23,7 @@ const baseStatus: CheckoutPrStatus = {
   headRefName: "feature/pr-pane",
   isMerged: false,
   isDraft: false,
+  mergeable: "UNKNOWN",
   checks: [],
   reviewDecision: null,
 };

@@ -270,6 +270,7 @@ type GitMutationRefreshReason =
   | "push"
   | "merge-to-base"
   | "merge-from-base"
+  | "merge-pr"
   | "create-pr"
   | "switch-branch"
   | "create-branch"
@@ -2012,6 +2013,13 @@ export class Session {
   }
 
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (isStashRequestMessage(msg)) {
+      return this.dispatchStashMessage(msg);
+    }
+    if (isPullRequestMessage(msg)) {
+      return this.dispatchPullRequestMessage(msg);
+    }
+
     switch (msg.type) {
       case "checkout_status_request":
         return this.handleCheckoutStatusRequest(msg);
@@ -2028,12 +2036,6 @@ export class Session {
         return undefined;
       case "checkout_switch_branch_request":
         return this.handleCheckoutSwitchBranchRequest(msg);
-      case "stash_save_request":
-        return this.handleStashSaveRequest(msg);
-      case "stash_pop_request":
-        return this.handleStashPopRequest(msg);
-      case "stash_list_request":
-        return this.handleStashListRequest(msg);
       case "checkout_commit_request":
         return this.handleCheckoutCommitRequest(msg);
       case "checkout_merge_request":
@@ -2044,16 +2046,49 @@ export class Session {
         return this.handleCheckoutPullRequest(msg);
       case "checkout_push_request":
         return this.handleCheckoutPushRequest(msg);
-      case "checkout_pr_create_request":
-        return this.handleCheckoutPrCreateRequest(msg);
-      case "checkout_pr_status_request":
-        return this.handleCheckoutPrStatusRequest(msg);
-      case "pull_request_timeline_request":
-        return this.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
         return this.handleGitHubSearchRequest(msg);
       default:
         return undefined;
+    }
+  }
+
+  private dispatchStashMessage(
+    msg: Extract<
+      SessionInboundMessage,
+      | { type: "stash_save_request" }
+      | { type: "stash_pop_request" }
+      | { type: "stash_list_request" }
+    >,
+  ): Promise<void> {
+    switch (msg.type) {
+      case "stash_save_request":
+        return this.handleStashSaveRequest(msg);
+      case "stash_pop_request":
+        return this.handleStashPopRequest(msg);
+      case "stash_list_request":
+        return this.handleStashListRequest(msg);
+    }
+  }
+
+  private dispatchPullRequestMessage(
+    msg: Extract<
+      SessionInboundMessage,
+      | { type: "checkout_pr_create_request" }
+      | { type: "checkout_pr_merge_request" }
+      | { type: "checkout_pr_status_request" }
+      | { type: "pull_request_timeline_request" }
+    >,
+  ): Promise<void> {
+    switch (msg.type) {
+      case "checkout_pr_create_request":
+        return this.handleCheckoutPrCreateRequest(msg);
+      case "checkout_pr_merge_request":
+        return this.handleCheckoutPrMergeRequest(msg);
+      case "checkout_pr_status_request":
+        return this.handleCheckoutPrStatusRequest(msg);
+      case "pull_request_timeline_request":
+        return this.handlePullRequestTimelineRequest(msg);
     }
   }
 
@@ -5275,6 +5310,47 @@ export class Session {
           cwd,
           url: null,
           number: null,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutPrMergeRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pr_merge_request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
+      const prNumber = snapshot.github.pullRequest?.number;
+      if (typeof prNumber !== "number") {
+        throw new Error("Unable to determine GitHub pull request number for merge");
+      }
+
+      await this.github.mergePullRequest({
+        cwd,
+        prNumber,
+        mergeMethod: msg.mergeMethod,
+      });
+      await this.notifyGitMutation(cwd, "merge-pr", { invalidateGithub: true });
+
+      this.emit({
+        type: "checkout_pr_merge_response",
+        payload: {
+          cwd,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_pr_merge_response",
+        payload: {
+          cwd,
+          success: false,
           error: toCheckoutError(error),
           requestId,
         },
@@ -8755,10 +8831,41 @@ export function normalizeCheckoutPrStatusPayload(
     headRefName: status.headRefName,
     isMerged: status.isMerged,
     isDraft: status.isDraft ?? false,
+    mergeable: status.mergeable ?? "UNKNOWN",
     checks: status.checks ?? [],
     checksStatus: status.checksStatus,
     reviewDecision: status.reviewDecision,
   };
+}
+
+type StashRequestMessage = Extract<
+  SessionInboundMessage,
+  { type: "stash_save_request" } | { type: "stash_pop_request" } | { type: "stash_list_request" }
+>;
+
+type PullRequestMessage = Extract<
+  SessionInboundMessage,
+  | { type: "checkout_pr_create_request" }
+  | { type: "checkout_pr_merge_request" }
+  | { type: "checkout_pr_status_request" }
+  | { type: "pull_request_timeline_request" }
+>;
+
+function isStashRequestMessage(msg: SessionInboundMessage): msg is StashRequestMessage {
+  return (
+    msg.type === "stash_save_request" ||
+    msg.type === "stash_pop_request" ||
+    msg.type === "stash_list_request"
+  );
+}
+
+function isPullRequestMessage(msg: SessionInboundMessage): msg is PullRequestMessage {
+  return (
+    msg.type === "checkout_pr_create_request" ||
+    msg.type === "checkout_pr_merge_request" ||
+    msg.type === "checkout_pr_status_request" ||
+    msg.type === "pull_request_timeline_request"
+  );
 }
 
 function isValidPullRequestTimelineIdentity(options: {
