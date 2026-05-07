@@ -4346,7 +4346,12 @@ export class Session {
       appVisibilityChangedAt,
     };
 
-    // Flush pending events and reconnect state on first heartbeat.
+    // On reconnect heartbeat: treat all agents as reconnecting so that
+    // flushReconnectEvents sends agent updates to every agent (not just
+    // the ones that were in the reconnectingAgents set before the client
+    // sent its heartbeat).
+    const allAgents = this.agentManager.listAgents();
+    this.reconnectingAgents = new Set(allAgents.map((a) => a.id));
     this.flushReconnectEvents();
   }
 
@@ -4375,25 +4380,22 @@ export class Session {
   private handleReconnectWakeUp(): void {
     const agents = this.agentManager.listAgents();
     for (const agent of agents) {
-      // Wake up all active agents, but skip closed (no session).
-      if (agent.lifecycle !== "closed") {
-        // Send a lightweight status event as a "wake" signal.
-        this.onMessage({
-          type: "agent_stream",
-          payload: {
-            agentId: agent.id,
-            event: {
-              type: "timeline",
-              item: {
-                type: "user_message",
-                text: "[Reconnect wakeup]",
-              },
-              provider: agent.provider,
+      // Send a lightweight status event as a "wake" signal.
+      this.onMessage({
+        type: "agent_stream",
+        payload: {
+          agentId: agent.id,
+          event: {
+            type: "timeline",
+            item: {
+              type: "user_message",
+              text: "[Reconnect wakeup]",
             },
-            timestamp: new Date().toISOString(),
+            provider: agent.provider,
           },
-        });
-      }
+          timestamp: new Date().toISOString(),
+        },
+      });
     }
   }
 

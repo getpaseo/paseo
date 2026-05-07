@@ -158,7 +158,7 @@ describe("session reconnect flow", () => {
     expect(onMessage).toHaveBeenCalled();
   });
 
-  test("handleReconnectWakeUp wakes all active agents (not closed)", () => {
+  test("handleReconnectWakeUp wakes all agents including closed", () => {
     const { session, onMessage } = createSession({
       agentIds: [
         "agent-running",
@@ -178,16 +178,16 @@ describe("session reconnect flow", () => {
 
     (session as any).handleReconnectWakeUp();
 
-    // Should send "wakeup" to running, idle, error, initializing — NOT closed
+    // Should send "wakeup" to all agents including closed
     const callArgs = onMessage.mock.calls.map((c) => c[0]);
-    expect(callArgs).toHaveLength(4);
+    expect(callArgs).toHaveLength(5);
 
     const agentIds = callArgs.map((c) => (c as any).payload?.agentId);
     expect(agentIds).toContain("agent-running");
     expect(agentIds).toContain("agent-idle");
     expect(agentIds).toContain("agent-error");
     expect(agentIds).toContain("agent-initializing");
-    expect(agentIds).not.toContain("agent-closed");
+    expect(agentIds).toContain("agent-closed");
 
     // Each wakeup event should be a timeline event with "Reconnect wakeup"
     for (const call of callArgs) {
