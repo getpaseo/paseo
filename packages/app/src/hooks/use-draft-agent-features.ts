@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentProvider, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
+import {
+  mergeProviderPreferences,
+  mergeWorkspaceAgentDefaults,
+  useFormPreferences,
+} from "./use-form-preferences";
 import {
   applyFeatureValues,
   pruneFeatureValues,
@@ -21,18 +25,33 @@ export function useDraftAgentFeatures(input: {
   modeId: string | null | undefined;
   modelId: string | null | undefined;
   thinkingOptionId: string | null | undefined;
+  workspaceDefaultsKey?: string | null;
 }) {
-  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId } = input;
+  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, workspaceDefaultsKey } =
+    input;
   const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>({});
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
   const normalizedProvider = provider ?? null;
-  const persistedFeatureValues = useMemo(
-    () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
-    [preferences.providerPreferences, provider],
-  );
+  const workspaceDefaults = workspaceDefaultsKey
+    ? preferences.workspaceAgentDefaults?.[workspaceDefaultsKey]
+    : undefined;
+  const persistedFeatureValues = useMemo(() => {
+    if (!provider) {
+      return {};
+    }
+    if (workspaceDefaults?.provider === provider) {
+      return workspaceDefaults.featureValues ?? {};
+    }
+    return preferences.providerPreferences?.[provider]?.featureValues ?? {};
+  }, [
+    preferences.providerPreferences,
+    provider,
+    workspaceDefaults?.featureValues,
+    workspaceDefaults?.provider,
+  ]);
 
   const draftConfig = useMemo<DraftFeatureConfig | null>(() => {
     if (!normalizedProvider || !normalizedCwd) {
@@ -112,20 +131,34 @@ export function useDraftAgentFeatures(input: {
         return;
       }
       void updatePreferences((current) =>
-        mergeProviderPreferences({
-          preferences: current,
-          provider,
-          updates: {
-            featureValues: {
-              [featureId]: value,
-            },
-          },
-        }),
+        workspaceDefaultsKey
+          ? mergeWorkspaceAgentDefaults({
+              preferences: current,
+              workspaceKey: workspaceDefaultsKey,
+              updates: {
+                provider,
+                model: modelId || undefined,
+                modeId: modeId || undefined,
+                thinkingOptionId: thinkingOptionId || undefined,
+                featureValues: {
+                  [featureId]: value,
+                },
+              },
+            })
+          : mergeProviderPreferences({
+              preferences: current,
+              provider,
+              updates: {
+                featureValues: {
+                  [featureId]: value,
+                },
+              },
+            }),
       ).catch((error) => {
         console.warn("[useDraftAgentFeatures] persist feature preference failed", error);
       });
     },
-    [provider, updatePreferences],
+    [modeId, modelId, provider, thinkingOptionId, updatePreferences, workspaceDefaultsKey],
   );
 
   return {

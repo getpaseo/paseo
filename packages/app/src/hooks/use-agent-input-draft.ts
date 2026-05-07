@@ -30,6 +30,7 @@ interface AgentInputDraftComposerOptions {
   isVisible?: boolean;
   onlineServerIds?: string[];
   lockedWorkingDir?: string;
+  workspaceDefaultsKey?: string | null;
 }
 
 interface UseAgentInputDraftInput {
@@ -67,6 +68,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     isVisible: composerOptions?.isVisible ?? false,
     isCreateFlow: true,
     onlineServerIds: composerOptions?.onlineServerIds ?? [],
+    workspaceDefaultsKey: composerOptions?.workspaceDefaultsKey,
   });
   const draftKey = useMemo(
     () =>
@@ -239,6 +241,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     modeId: formState.selectedMode,
     modelId: effectiveModelId,
     thinkingOptionId: effectiveThinkingOptionId,
+    workspaceDefaultsKey: composerOptions?.workspaceDefaultsKey,
   });
 
   const commandDraftConfig = useMemo(

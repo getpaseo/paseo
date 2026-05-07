@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWorkspaceAgentDefaultsKey,
   buildFavoriteModelKey,
   isFavoriteModel,
   mergeProviderPreferences,
+  mergeWorkspaceAgentDefaults,
   toggleFavoriteModel,
 } from "./use-form-preferences";
 
@@ -90,6 +92,118 @@ describe("mergeProviderPreferences", () => {
             fast_mode: true,
             plan_mode: true,
           },
+        },
+      },
+    });
+  });
+});
+
+describe("workspace agent defaults", () => {
+  it("builds a stable key from server and workspace ids", () => {
+    expect(
+      buildWorkspaceAgentDefaultsKey({
+        serverId: "host-1",
+        workspaceId: "/repo/worktree-a",
+      }),
+    ).toBe('["host-1","/repo/worktree-a"]');
+  });
+
+  it("stores workspace-scoped defaults without dropping global preferences", () => {
+    expect(
+      mergeWorkspaceAgentDefaults({
+        preferences: {
+          provider: "claude",
+          providerPreferences: {
+            claude: {
+              model: "claude-sonnet-4-6",
+            },
+          },
+          favoriteModels: [{ provider: "codex", modelId: "gpt-5.4" }],
+        },
+        workspaceKey: "workspace-a",
+        updates: {
+          provider: "codex",
+          model: "gpt-5.4",
+          modeId: "auto",
+          thinkingOptionId: "high",
+        },
+      }),
+    ).toEqual({
+      provider: "claude",
+      providerPreferences: {
+        claude: {
+          model: "claude-sonnet-4-6",
+        },
+      },
+      favoriteModels: [{ provider: "codex", modelId: "gpt-5.4" }],
+      workspaceAgentDefaults: {
+        "workspace-a": {
+          provider: "codex",
+          model: "gpt-5.4",
+          modeId: "auto",
+          thinkingOptionId: "high",
+        },
+      },
+    });
+  });
+
+  it("merges feature defaults for one workspace without touching another", () => {
+    expect(
+      mergeWorkspaceAgentDefaults({
+        preferences: {
+          workspaceAgentDefaults: {
+            "workspace-a": {
+              provider: "codex",
+              featureValues: { webSearch: true },
+            },
+            "workspace-b": {
+              provider: "claude",
+              featureValues: { plan: true },
+            },
+          },
+        },
+        workspaceKey: "workspace-a",
+        updates: {
+          featureValues: { webSearch: false, networkAccess: true },
+        },
+      }),
+    ).toEqual({
+      workspaceAgentDefaults: {
+        "workspace-a": {
+          provider: "codex",
+          featureValues: { webSearch: false, networkAccess: true },
+        },
+        "workspace-b": {
+          provider: "claude",
+          featureValues: { plan: true },
+        },
+      },
+    });
+  });
+
+  it("clears provider-specific defaults when the workspace provider changes", () => {
+    expect(
+      mergeWorkspaceAgentDefaults({
+        preferences: {
+          workspaceAgentDefaults: {
+            "workspace-a": {
+              provider: "codex",
+              model: "gpt-5.4",
+              modeId: "auto",
+              thinkingOptionId: "high",
+              featureValues: { webSearch: true },
+            },
+          },
+        },
+        workspaceKey: "workspace-a",
+        updates: {
+          provider: "claude",
+        },
+      }),
+    ).toEqual({
+      workspaceAgentDefaults: {
+        "workspace-a": {
+          provider: "claude",
         },
       },
     });

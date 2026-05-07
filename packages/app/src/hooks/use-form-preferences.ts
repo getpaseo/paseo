@@ -21,6 +21,14 @@ export interface FavoriteModelRow {
   description?: string;
 }
 
+const workspaceAgentDefaultsSchema = z.object({
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  modeId: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
+  featureValues: z.record(z.unknown()).optional(),
+});
+
 const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
@@ -39,8 +47,10 @@ const formPreferencesSchema = z.object({
       }),
     )
     .optional(),
+  workspaceAgentDefaults: z.record(workspaceAgentDefaultsSchema).optional(),
 });
 
+export type WorkspaceAgentDefaults = z.infer<typeof workspaceAgentDefaultsSchema>;
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
 export type FormPreferences = z.infer<typeof formPreferencesSchema>;
 
@@ -93,6 +103,44 @@ export function mergeProviderPreferences(args: {
         ...existing,
         ...updates,
         ...(nextThinkingByModel ? { thinkingByModel: nextThinkingByModel } : {}),
+        ...(nextFeatureValues ? { featureValues: nextFeatureValues } : {}),
+      },
+    },
+  };
+}
+
+export function buildWorkspaceAgentDefaultsKey(input: {
+  serverId: string;
+  workspaceId: string;
+}): string {
+  return JSON.stringify([input.serverId, input.workspaceId]);
+}
+
+export function mergeWorkspaceAgentDefaults(args: {
+  preferences: FormPreferences;
+  workspaceKey: string;
+  updates: Partial<WorkspaceAgentDefaults>;
+}): FormPreferences {
+  const { preferences, workspaceKey, updates } = args;
+  const existingWorkspaceDefaults = preferences.workspaceAgentDefaults ?? {};
+  const existing = existingWorkspaceDefaults[workspaceKey] ?? {};
+  const base =
+    updates.provider && existing.provider && updates.provider !== existing.provider ? {} : existing;
+  const nextFeatureValues =
+    updates.featureValues === undefined
+      ? base.featureValues
+      : {
+          ...base.featureValues,
+          ...updates.featureValues,
+        };
+
+  return {
+    ...preferences,
+    workspaceAgentDefaults: {
+      ...existingWorkspaceDefaults,
+      [workspaceKey]: {
+        ...base,
+        ...updates,
         ...(nextFeatureValues ? { featureValues: nextFeatureValues } : {}),
       },
     },

@@ -12,13 +12,16 @@ import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
   mergeProviderPreferences,
+  mergeWorkspaceAgentDefaults,
   type FormPreferences,
+  type WorkspaceAgentDefaults,
 } from "./use-form-preferences";
 import {
   resolveAgentForm,
   resolveEffectiveModel,
   normalizeSelectedModelId,
   resolveDefaultModelId,
+  resolveThinkingOptionId,
   mergeSelectedComposerPreferences,
   combineInitialValues,
   buildProviderDefinitionMap,
@@ -39,6 +42,7 @@ export interface UseAgentFormStateOptions {
   isCreateFlow?: boolean;
   isTargetDaemonReady?: boolean;
   onlineServerIds?: string[];
+  workspaceDefaultsKey?: string | null;
 }
 
 export interface UseAgentFormStateResult {
@@ -126,17 +130,80 @@ function buildAllProviderModels(
   return map;
 }
 
+export function resolveWorkspaceAgentDefaults(input: {
+  preferences: FormPreferences;
+  workspaceDefaultsKey?: string | null;
+}): WorkspaceAgentDefaults | null {
+  const key = input.workspaceDefaultsKey?.trim();
+  if (!key) {
+    return null;
+  }
+  const defaults = input.preferences.workspaceAgentDefaults?.[key];
+  return defaults?.provider ? defaults : null;
+}
+
+export function resolveWorkspaceScopedFormPreferences(input: {
+  preferences: FormPreferences;
+  workspaceDefaults: WorkspaceAgentDefaults | null;
+}): FormPreferences {
+  const { preferences, workspaceDefaults } = input;
+  const defaults = workspaceDefaults;
+  if (!defaults) {
+    return preferences;
+  }
+  const provider = defaults.provider?.trim();
+  if (!provider) {
+    return preferences;
+  }
+
+  const model = defaults.model?.trim();
+  const thinkingOptionId = defaults.thinkingOptionId?.trim();
+
+  return {
+    provider,
+    providerPreferences: {
+      [provider]: {
+        ...(model ? { model } : {}),
+        ...(defaults.modeId ? { mode: defaults.modeId } : {}),
+        ...(model && thinkingOptionId ? { thinkingByModel: { [model]: thinkingOptionId } } : {}),
+        ...(defaults.featureValues ? { featureValues: defaults.featureValues } : {}),
+      },
+    },
+    ...(preferences.favoriteModels ? { favoriteModels: preferences.favoriteModels } : {}),
+    ...(preferences.workspaceAgentDefaults
+      ? { workspaceAgentDefaults: preferences.workspaceAgentDefaults }
+      : {}),
+  };
+}
+
 async function persistProviderPreferences(input: {
   provider: AgentProvider;
   formState: FormState;
   availableModels: AgentModelDefinition[] | null;
+  workspaceDefaultsKey?: string | null;
   updatePreferences: (
     updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences),
   ) => Promise<void>;
 }): Promise<void> {
-  const { provider, formState, availableModels, updatePreferences } = input;
+  const { provider, formState, availableModels, workspaceDefaultsKey, updatePreferences } = input;
   const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
   const modelId = resolvedModel?.id ?? formState.model;
+  if (workspaceDefaultsKey) {
+    await updatePreferences((current) =>
+      mergeWorkspaceAgentDefaults({
+        preferences: current,
+        workspaceKey: workspaceDefaultsKey,
+        updates: {
+          provider,
+          model: modelId || undefined,
+          modeId: formState.modeId || undefined,
+          thinkingOptionId: formState.thinkingOptionId || undefined,
+        },
+      }),
+    );
+    return;
+  }
+
   await updatePreferences((current) =>
     mergeProviderPreferences({
       preferences: current,
@@ -160,9 +227,22 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     isCreateFlow = true,
     isTargetDaemonReady: _isTargetDaemonReady = true,
     onlineServerIds = [],
+    workspaceDefaultsKey = null,
   } = options;
 
   const { preferences, isLoading: isPreferencesLoading, updatePreferences } = useFormPreferences();
+  const workspaceDefaults = useMemo(
+    () => resolveWorkspaceAgentDefaults({ preferences, workspaceDefaultsKey }),
+    [preferences, workspaceDefaultsKey],
+  );
+  const formPreferences = useMemo(
+    () =>
+      resolveWorkspaceScopedFormPreferences({
+        preferences,
+        workspaceDefaults,
+      }),
+    [preferences, workspaceDefaults],
+  );
 
   const daemons = useHosts();
 
@@ -274,9 +354,9 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     }
 
     if (!hasResolvedRef.current) {
-      hydrationPreferencesRef.current = preferences;
+      hydrationPreferencesRef.current = formPreferences;
     }
-    const hydrationPreferences = hydrationPreferencesRef.current ?? preferences;
+    const hydrationPreferences = hydrationPreferencesRef.current ?? formPreferences;
 
     dispatch({
       type: "RESOLVE",
@@ -292,7 +372,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     isCreateFlow,
     isPreferencesLoading,
     combinedInitialValues,
-    preferences,
+    formPreferences,
     availableModels,
     snapshotResolvableProviderDefinitionMap,
   ]);
@@ -336,7 +416,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       }
       const providerModels = allProviderModels.get(provider) ?? null;
       const providerDef = selectableProviderDefinitionMap.get(provider);
-      const providerPrefs = preferences?.providerPreferences?.[provider];
+      const providerPrefs = formPreferences.providerPreferences?.[provider];
 
       dispatch({
         type: "SET_PROVIDER_FROM_USER",
@@ -345,13 +425,22 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         providerDef,
         providerPrefs,
       });
-      void updatePreferences({ provider });
+      void updatePreferences((current) =>
+        workspaceDefaultsKey
+          ? mergeWorkspaceAgentDefaults({
+              preferences: current,
+              workspaceKey: workspaceDefaultsKey,
+              updates: { provider },
+            })
+          : { ...current, provider },
+      );
     },
     [
       allProviderModels,
-      preferences?.providerPreferences,
+      formPreferences.providerPreferences,
       selectableProviderDefinitionMap,
       updatePreferences,
+      workspaceDefaultsKey,
     ],
   );
 
@@ -372,17 +461,33 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         providerDef,
         providerModels,
       });
+      const nextThinkingOptionId = resolveThinkingOptionId({
+        availableModels: providerModels,
+        modelId: nextModelId,
+        requestedThinkingOptionId: "",
+      });
       void updatePreferences((current) =>
-        mergeSelectedComposerPreferences({
-          preferences: current,
-          provider,
-          updates: {
-            model: nextModelId || undefined,
-          },
-        }),
+        workspaceDefaultsKey
+          ? mergeWorkspaceAgentDefaults({
+              preferences: current,
+              workspaceKey: workspaceDefaultsKey,
+              updates: {
+                provider,
+                model: nextModelId || undefined,
+                modeId: providerDef?.defaultModeId ?? undefined,
+                thinkingOptionId: nextThinkingOptionId || undefined,
+              },
+            })
+          : mergeSelectedComposerPreferences({
+              preferences: current,
+              provider,
+              updates: {
+                model: nextModelId || undefined,
+              },
+            }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updatePreferences],
+    [allProviderModels, selectableProviderDefinitionMap, updatePreferences, workspaceDefaultsKey],
   );
 
   const setModeFromUser = useCallback(
@@ -391,17 +496,26 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       const provider = reducerStateRef.current.form.provider;
       if (provider) {
         void updatePreferences((current) =>
-          mergeSelectedComposerPreferences({
-            preferences: current,
-            provider,
-            updates: {
-              mode: modeId || undefined,
-            },
-          }),
+          workspaceDefaultsKey
+            ? mergeWorkspaceAgentDefaults({
+                preferences: current,
+                workspaceKey: workspaceDefaultsKey,
+                updates: {
+                  provider,
+                  modeId: modeId || undefined,
+                },
+              })
+            : mergeSelectedComposerPreferences({
+                preferences: current,
+                provider,
+                updates: {
+                  mode: modeId || undefined,
+                },
+              }),
         );
       }
     },
-    [updatePreferences],
+    [updatePreferences, workspaceDefaultsKey],
   );
 
   const setModelFromUser = useCallback(
@@ -411,18 +525,36 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       if (provider) {
         const normalizedModelId = normalizeSelectedModelId(modelId);
         const nextModelId = normalizedModelId || resolveDefaultModelId(availableModels);
+        const requestedThinkingOptionId = reducerStateRef.current.userModified.thinkingOptionId
+          ? reducerStateRef.current.form.thinkingOptionId
+          : "";
+        const nextThinkingOptionId = resolveThinkingOptionId({
+          availableModels,
+          modelId: nextModelId,
+          requestedThinkingOptionId,
+        });
         void updatePreferences((current) =>
-          mergeSelectedComposerPreferences({
-            preferences: current,
-            provider,
-            updates: {
-              model: nextModelId || undefined,
-            },
-          }),
+          workspaceDefaultsKey
+            ? mergeWorkspaceAgentDefaults({
+                preferences: current,
+                workspaceKey: workspaceDefaultsKey,
+                updates: {
+                  provider,
+                  model: nextModelId || undefined,
+                  thinkingOptionId: nextThinkingOptionId || undefined,
+                },
+              })
+            : mergeSelectedComposerPreferences({
+                preferences: current,
+                provider,
+                updates: {
+                  model: nextModelId || undefined,
+                },
+              }),
         );
       }
     },
-    [availableModels, updatePreferences],
+    [availableModels, updatePreferences, workspaceDefaultsKey],
   );
 
   const setThinkingOptionFromUser = useCallback(
@@ -431,19 +563,29 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       const { provider, model: modelId } = reducerStateRef.current.form;
       if (provider && modelId) {
         void updatePreferences((current) =>
-          mergeSelectedComposerPreferences({
-            preferences: current,
-            provider,
-            updates: {
-              thinkingByModel: {
-                [modelId]: thinkingOptionId,
-              },
-            },
-          }),
+          workspaceDefaultsKey
+            ? mergeWorkspaceAgentDefaults({
+                preferences: current,
+                workspaceKey: workspaceDefaultsKey,
+                updates: {
+                  provider,
+                  model: modelId,
+                  thinkingOptionId: thinkingOptionId || undefined,
+                },
+              })
+            : mergeSelectedComposerPreferences({
+                preferences: current,
+                provider,
+                updates: {
+                  thinkingByModel: {
+                    [modelId]: thinkingOptionId,
+                  },
+                },
+              }),
         );
       }
     },
-    [updatePreferences],
+    [updatePreferences, workspaceDefaultsKey],
   );
 
   const setWorkingDir = useCallback((value: string) => {
@@ -474,9 +616,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       provider: formState.provider,
       formState,
       availableModels,
+      workspaceDefaultsKey,
       updatePreferences,
     });
-  }, [availableModels, formState, updatePreferences]);
+  }, [availableModels, formState, updatePreferences, workspaceDefaultsKey]);
 
   const agentDefinition = formState.provider
     ? providerDefinitionMap.get(formState.provider)

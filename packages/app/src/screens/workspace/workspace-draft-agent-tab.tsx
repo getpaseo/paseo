@@ -10,6 +10,7 @@ import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-at
 import type { ImageAttachment } from "@/components/message-input";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
+import { buildWorkspaceAgentDefaultsKey } from "@/hooks/use-form-preferences";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
@@ -304,6 +305,10 @@ export function WorkspaceDraftAgentTab({
       }),
     [draftId, serverId, tabId],
   );
+  const workspaceDefaultsKey = useMemo(
+    () => buildWorkspaceAgentDefaultsKey({ serverId, workspaceId }),
+    [serverId, workspaceId],
+  );
   const draftInput = useAgentInputDraft({
     draftKey: draftStoreKey,
     initialCwd: workspaceDirectory ?? "",
@@ -313,6 +318,7 @@ export function WorkspaceDraftAgentTab({
       isVisible: true,
       onlineServerIds: isConnected ? [serverId] : [],
       lockedWorkingDir: workspaceDirectory ?? undefined,
+      workspaceDefaultsKey,
     },
   });
   const composerState = draftInput.composerState;
