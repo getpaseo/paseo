@@ -216,7 +216,7 @@ function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: S
           <Check size={14} color={theme.colors.foregroundMuted} />
           <Text style={styles.mutedText}>Installed</Text>
         </View>
-        <Button variant="ghost" size="sm" onPress={onUninstall} disabled={isWorking}>
+        <Button variant="outline" size="sm" onPress={onUninstall} disabled={isWorking}>
           Uninstall
         </Button>
       </View>
@@ -229,7 +229,7 @@ function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: S
         <Button variant="outline" size="sm" onPress={onUpdate} disabled={isWorking}>
           {isWorking ? "Working..." : "Update"}
         </Button>
-        <Button variant="ghost" size="sm" onPress={onUninstall} disabled={isWorking}>
+        <Button variant="outline" size="sm" onPress={onUninstall} disabled={isWorking}>
           Uninstall
         </Button>
       </View>
