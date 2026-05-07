@@ -4,7 +4,13 @@
 
 ## 问题根源
 
-Paseo daemon 运行在 **npm 安装的包** (`~/.npm-packages/...`) 中，而不是直接从源码运行。新代码变更必须先构建并将编译产物复制到 npm 包位置才能生效。
+Paseo daemon 运行在 **npm 安装的包** (`~/.npm-packages/lib/node_modules/@getpaseo/server/`) 中，而不是直接从源码运行。新代码变更必须先构建并将编译产物复制到 npm 包位置才能生效。
+
+**症状：**
+- iOS/CLI 连接后 session 刷不出（心跳未正确触发 reconnect flush）
+- 模型列表不显示自定义配置（需重新安装）
+- 新功能/修复在 `npm run dev` 后不生效
+- `paseo daemon status` 报告 unresponsive（心跳延迟未生效）
 
 **症状：**
 
@@ -43,16 +49,24 @@ npm run build:daemon
 
 ### 3. 安装到 npm 包
 
+Server 直接安装在 `@getpaseo/server/` 下（非 nested）：
+
 ```bash
-cp -r packages/server/dist/* ~/.npm-packages/lib/node_modules/@getpaseo/cli/node_modules/@getpaseo/server/dist/
+cp -r packages/server/dist/* ~/.npm-packages/lib/node_modules/@getpaseo/server/
 ```
 
-### 4. 验证
+**验证路径：**
 
 ```bash
-# 确认新代码已生效
-grep -c "readCustomModelFromSettings" ~/.npm-packages/lib/node_modules/@getpaseo/cli/node_modules/@getpaseo/server/dist/server/server/agent/providers/claude/claude-models.js
-# 应返回 2（函数定义 + 调用点）
+ls ~/.npm-packages/lib/node_modules/@getpaseo/server/dist/server/server/ | head -3
+```
+
+### 4. 验证代码更新
+
+```bash
+# 确认重连优化代码已生效
+grep -c "reconnectingAgents" ~/.npm-packages/lib/node_modules/@getpaseo/server/dist/server/server/session.js
+# 应返回 10（heartbeat 修复 + 各引用点）
 ```
 
 ### 5. 重启 Daemon
@@ -67,7 +81,7 @@ npm run dev --workspace=@getpaseo/server
 
 ```bash
 # 一键执行：拉取 + 构建 + 安装 + 重启
-git pull --rebase origin main && npm run build:daemon && cp -r packages/server/dist/* ~/.npm-packages/lib/node_modules/@getpaseo/cli/node_modules/@getpaseo/server/dist/ && kill $(lsof -ti :6767) 2>/dev/null && echo "Done"
+git pull --rebase origin main && npm run build:daemon && cp -r packages/server/dist/* ~/.npm-packages/lib/node_modules/@getpaseo/server/ && kill $(lsof -ti :6767) 2>/dev/null && echo "Done"
 ```
 
 ## 故障排查
@@ -139,6 +153,18 @@ iOS 客户端断线重连后，daemon 需要：
 1. 缓冲断线期间的 agent 事件（`pendingEvents`）
 2. 重连时批量刷新事件（`flushReconnectEvents`）
 3. 唤醒所有运行中的 agent（`handleReconnectWakeUp`）
+
+**v0.1.70+ 重连 Bug 修复：**
+
+- **Bug 1: 心跳未正确触发重连刷新** — heartbeat 中 `reconnectingAgents` 为空导致 `flushReconnectEvents` 直接返回
+  - **修复：** heartbeat 中强制将所有 agent 加入 `reconnectingAgents`，确保 flush 对全部 agent 生效
+- **Bug 2: closed agent 被过滤** — `handleReconnectWakeUp` 中 `lifecycle !== "closed"` 排除了 closed agent
+  - **修复：** 移除 closed 过滤，closed agent 也可被消息激活
+
+**测试：**
+```bash
+npx vitest run packages/server/src/server/session.reconnect.test.ts
+```
 
 **v0.1.70+ 重连 Bug 修复：**
 
