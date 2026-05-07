@@ -39,11 +39,8 @@ import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.j
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
-const PID_POLL_INTERVAL_MS = 100;
 const STARTUP_POLL_INTERVAL_MS = 200;
 const STARTUP_POLL_MAX_ATTEMPTS = 150;
-const STOP_TIMEOUT_MS = 15_000;
-const KILL_TIMEOUT_MS = 3_000;
 const DETACHED_STARTUP_GRACE_MS = 1200;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
@@ -132,50 +129,10 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-function signalProcessSafely(pid: number, signal: NodeJS.Signals): boolean {
-  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return false;
-  try {
-    process.kill(pid, signal);
-    return true;
-  } catch (err) {
-    if (typeof err === "object" && err !== null && "code" in err) {
-      if (err.code === "ESRCH") return false;
-      if (err.code === "EPERM") return true;
-    }
-    throw err;
-  }
-}
-
-function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean {
-  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return false;
-  if (process.platform === "win32") return signalProcessSafely(pid, signal);
-  try {
-    process.kill(-pid, signal);
-    return true;
-  } catch (err) {
-    if (typeof err === "object" && err !== null && "code" in err) {
-      if (err.code === "ESRCH") return signalProcessSafely(pid, signal);
-      if (err.code === "EPERM") return true;
-    }
-    throw err;
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  async function poll(): Promise<boolean> {
-    if (!isProcessRunning(pid)) return true;
-    if (Date.now() >= deadline) return !isProcessRunning(pid);
-    await sleep(PID_POLL_INTERVAL_MS);
-    return poll();
-  }
-  return poll();
 }
 
 function tailFile(filePath: string, lines = 50): string {
@@ -445,19 +402,7 @@ export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {
   const status = await resolveDesktopDaemonStatus();
   if (status.status !== "running" || !status.pid) return status;
 
-  const pid = status.pid;
-  signalProcessSafely(pid, "SIGTERM");
-
-  let stopped = await waitForPidExit(pid, STOP_TIMEOUT_MS);
-  if (!stopped) {
-    signalProcessGroupSafely(pid, "SIGKILL");
-    stopped = await waitForPidExit(pid, KILL_TIMEOUT_MS);
-  }
-
-  if (!stopped) {
-    throw new Error(`Timed out waiting for daemon PID ${pid} to stop`);
-  }
-
+  await stopDesktopDaemonViaCli();
   return await resolveDesktopDaemonStatus();
 }
 

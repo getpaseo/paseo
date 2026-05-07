@@ -81,7 +81,7 @@ export function resolveNodeExecPath(): string {
     if (markerIndex !== -1) {
       const bundleRoot = process.execPath.substring(0, markerIndex + ".app".length);
       const name = path.basename(process.execPath);
-      const helperPath = path.join(
+      const helperPath = path.posix.join(
         bundleRoot,
         "Contents",
         "Frameworks",
