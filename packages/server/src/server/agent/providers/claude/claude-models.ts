@@ -47,6 +47,13 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
   },
   {
     provider: "claude",
+    id: "claude-sonnet-4-6[1m]",
+    label: "Sonnet 4.6 1M",
+    description: "Sonnet 4.6 with 1M context window",
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
     id: "claude-sonnet-4-6",
     label: "Sonnet 4.6",
     description: "Sonnet 4.6 · Best for everyday tasks",
