@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { findExecutable } from "./executable.js";
 import { spawnProcess } from "./spawn.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 interface SpawnResult {
   code: number | null;
@@ -136,10 +137,9 @@ async function runFixture(params: {
 }
 
 function withWindowsPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
-  const pathKey =
-    process.platform === "win32"
-      ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
-      : "PATH";
+  const pathKey = isPlatform("win32")
+    ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
+    : "PATH";
   const previousPath = process.env[pathKey];
   const previousPathExt = process.env.PATHEXT;
 
@@ -169,7 +169,7 @@ afterEach(() => {
   }
 });
 
-describe.runIf(process.platform === "win32")("Windows spawn launch regression", () => {
+describe.runIf(isPlatform("win32"))("Windows spawn launch regression", () => {
   test("launches a cmd shim from a path with spaces without corrupting JSON args", async () => {
     const fixture = makeFixture();
 
@@ -227,7 +227,7 @@ describe.runIf(process.platform === "win32")("Windows spawn launch regression", 
   });
 });
 
-describe.skipIf(process.platform === "win32")("spawn launch regression smoke", () => {
+describe.skipIf(isPlatform("win32"))("spawn launch regression smoke", () => {
   test("direct launch with a space-containing executable works on this platform", async () => {
     const fixture = makeFixture();
 

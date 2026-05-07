@@ -27,6 +27,7 @@ function loadConfigForTest(repoRoot: string): PaseoConfig | null {
 }
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
+import { isPlatform } from "../test-utils/platform.js";
 import {
   mkdtempSync,
   mkdirSync,
@@ -69,7 +70,7 @@ function createLegacyWorktreeForTest(
   });
 }
 
-describe.skipIf(process.platform === "win32")("createWorktree", () => {
+describe.skipIf(isPlatform("win32"))("createWorktree", () => {
   let tempDir: string;
   let repoDir: string;
   let paseoHome: string;

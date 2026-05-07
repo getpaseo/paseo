@@ -41,6 +41,7 @@ import {
 } from "./paseo-worktree-service.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -713,118 +714,126 @@ describe("runWorktreeSetupInBackground", () => {
     expect(emitWorkspaceUpdateForCwd).toHaveBeenCalledWith(worktreePath);
   });
 
-  test("emits running setup snapshots before completed for real setup commands", async () => {
-    const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
-        worktree: {
-          setup: ["sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\""],
+  // POSIX-only: setup command is hardcoded to sh, printf, and sleep.
+  test.skipIf(isPlatform("win32"))(
+    "emits running setup snapshots before completed for real setup commands",
+    async () => {
+      const { tempDir, repoDir } = createGitRepo({
+        paseoConfig: {
+          worktree: {
+            setup: ["sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\""],
+          },
         },
-      },
-    });
-    cleanupPaths.push(tempDir);
+      });
+      cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
-    const createdWorktree = await createLegacyWorktreeForTest({
-      branchName: "feature-running-setup",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "feature-running-setup",
-      runSetup: false,
-      paseoHome,
-    });
-    const worktreePath = createdWorktree.worktreePath;
-    const emitted: SessionOutboundMessage[] = [];
-    const snapshots = new Map<string, unknown>();
-    const logger = createLogger();
-    const emitWorkspaceUpdateForCwd = vi.fn(async () => {});
-    const archiveWorkspaceRecord = vi.fn(async () => {});
-
-    await runWorktreeSetupInBackground(
-      {
+      const paseoHome = path.join(tempDir, ".paseo");
+      const createdWorktree = await createLegacyWorktreeForTest({
+        branchName: "feature-running-setup",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "feature-running-setup",
+        runSetup: false,
         paseoHome,
-        emitWorkspaceUpdateForCwd,
-        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
-          snapshots.set(workspaceId, snapshot),
-        emit: (message) => emitted.push(message),
-        sessionLogger: logger,
-        terminalManager: null,
-        archiveWorkspaceRecord,
-      },
-      {
-        requestCwd: repoDir,
-        repoRoot: repoDir,
-        workspaceId: "43",
-        worktree: {
-          branchName: "feature-running-setup",
+      });
+      const worktreePath = createdWorktree.worktreePath;
+      const emitted: SessionOutboundMessage[] = [];
+      const snapshots = new Map<string, unknown>();
+      const logger = createLogger();
+      const emitWorkspaceUpdateForCwd = vi.fn(async () => {});
+      const archiveWorkspaceRecord = vi.fn(async () => {});
+
+      await runWorktreeSetupInBackground(
+        {
+          paseoHome,
+          emitWorkspaceUpdateForCwd,
+          cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
+            snapshots.set(workspaceId, snapshot),
+          emit: (message) => emitted.push(message),
+          sessionLogger: logger,
+          terminalManager: null,
+          archiveWorkspaceRecord,
+        },
+        {
+          requestCwd: repoDir,
+          repoRoot: repoDir,
+          workspaceId: "43",
+          worktree: {
+            branchName: "feature-running-setup",
+            worktreePath,
+          },
+          shouldBootstrap: true,
+          slug: "feature-running-setup",
           worktreePath,
         },
-        shouldBootstrap: true,
-        slug: "feature-running-setup",
-        worktreePath,
-      },
-    );
+      );
 
-    const progressMessages = emitted.filter(
-      (message): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
-        message.type === "workspace_setup_progress",
-    );
-    expect(progressMessages.length).toBeGreaterThan(1);
-    expect(progressMessages[0]?.payload).toMatchObject({
-      workspaceId: "43",
-      status: "running",
-      error: null,
-      detail: {
-        type: "worktree_setup",
-        worktreePath,
-        branchName: "feature-running-setup",
-        log: "",
-        commands: [],
-      },
-    });
-    expect(progressMessages.at(-1)?.payload.status).toBe("completed");
+      const progressMessages = emitted.filter(
+        (
+          message,
+        ): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
+          message.type === "workspace_setup_progress",
+      );
+      expect(progressMessages.length).toBeGreaterThan(1);
+      expect(progressMessages[0]?.payload).toMatchObject({
+        workspaceId: "43",
+        status: "running",
+        error: null,
+        detail: {
+          type: "worktree_setup",
+          worktreePath,
+          branchName: "feature-running-setup",
+          log: "",
+          commands: [],
+        },
+      });
+      expect(progressMessages.at(-1)?.payload.status).toBe("completed");
 
-    const runningMessages = progressMessages.filter(
-      (message) => message.payload.status === "running",
-    );
-    expect(runningMessages.length).toBeGreaterThan(0);
-    expect(
-      progressMessages.findIndex((message) => message.payload.status === "running"),
-    ).toBeLessThan(progressMessages.findIndex((message) => message.payload.status === "completed"));
+      const runningMessages = progressMessages.filter(
+        (message) => message.payload.status === "running",
+      );
+      expect(runningMessages.length).toBeGreaterThan(0);
+      expect(
+        progressMessages.findIndex((message) => message.payload.status === "running"),
+      ).toBeLessThan(
+        progressMessages.findIndex((message) => message.payload.status === "completed"),
+      );
 
-    const setupOutputMessage = runningMessages.find((message) =>
-      message.payload.detail.commands[0]?.log.includes("phase-one"),
-    );
-    expect(setupOutputMessage?.payload.detail.log).toContain("phase-one");
-    expect(setupOutputMessage?.payload.detail.commands[0]).toMatchObject({
-      index: 1,
-      command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
-      log: expect.stringContaining("phase-one"),
-      status: "running",
-    });
+      const setupOutputMessage = runningMessages.find((message) =>
+        message.payload.detail.commands[0]?.log.includes("phase-one"),
+      );
+      expect(setupOutputMessage?.payload.detail.log).toContain("phase-one");
+      expect(setupOutputMessage?.payload.detail.commands[0]).toMatchObject({
+        index: 1,
+        command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
+        log: expect.stringContaining("phase-one"),
+        status: "running",
+      });
 
-    expect(progressMessages.at(-1)?.payload).toMatchObject({
-      workspaceId: "43",
-      status: "completed",
-      error: null,
-      detail: {
-        type: "worktree_setup",
-        worktreePath,
-        branchName: "feature-running-setup",
-      },
-    });
-    expect(progressMessages.at(-1)?.payload.detail.log).toContain("phase-two");
-    expect(progressMessages.at(-1)?.payload.detail.commands[0]).toMatchObject({
-      index: 1,
-      command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
-      log: expect.stringContaining("phase-two"),
-      status: "completed",
-      exitCode: 0,
-    });
-    expect(snapshots.get("43")).toMatchObject({
-      status: "completed",
-      error: null,
-    });
-  });
+      expect(progressMessages.at(-1)?.payload).toMatchObject({
+        workspaceId: "43",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "worktree_setup",
+          worktreePath,
+          branchName: "feature-running-setup",
+        },
+      });
+      expect(progressMessages.at(-1)?.payload.detail.log).toContain("phase-two");
+      expect(progressMessages.at(-1)?.payload.detail.commands[0]).toMatchObject({
+        index: 1,
+        command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
+        log: expect.stringContaining("phase-two"),
+        status: "completed",
+        exitCode: 0,
+      });
+      expect(snapshots.get("43")).toMatchObject({
+        status: "completed",
+        error: null,
+      });
+    },
+  );
 
   test("emits completed when reusing an existing worktree without bootstrapping or auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({

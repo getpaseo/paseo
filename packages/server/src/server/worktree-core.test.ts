@@ -17,6 +17,7 @@ import {
   createWorktreeCore as createCoreWorktree,
   resolveWorktreeRepoRoot,
 } from "./worktree-core.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 function createGitHubServiceStub(): GitHubService {
   return {
@@ -161,7 +162,7 @@ function createForkGitHubPrRemoteRepo(): {
   return { tempDir, repoDir, headRemoteDir, paseoHome };
 }
 
-describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
+describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
   const cleanupPaths: string[] = [];
 
   afterEach(() => {

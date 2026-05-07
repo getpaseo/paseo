@@ -47,6 +47,7 @@ import {
   asDaemonConfigStore,
   createProviderSnapshotManagerStub,
 } from "./test-utils/session-stubs.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 interface SessionHandlerInternals {
   startVoiceTurnController(): Promise<void>;
@@ -705,39 +706,46 @@ describe("project config RPC authorization", () => {
     ]);
   });
 
-  test("read_project_config_request accepts a symlink to an active project root", async () => {
-    const repoRoot = makeRoot();
-    writeFileSync(join(repoRoot, "paseo.json"), JSON.stringify({ worktree: { setup: "npm ci" } }));
-    const linkRoot = join(makeRoot(), "link");
-    symlinkSync(repoRoot, linkRoot, "dir");
-    const messages: unknown[] = [];
-    const session = createSessionForTest({
-      messages,
-      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
-    });
+  // POSIX-only: creates a directory symlink without Windows privileges.
+  test.skipIf(isPlatform("win32"))(
+    "read_project_config_request accepts a symlink to an active project root",
+    async () => {
+      const repoRoot = makeRoot();
+      writeFileSync(
+        join(repoRoot, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "npm ci" } }),
+      );
+      const linkRoot = join(makeRoot(), "link");
+      symlinkSync(repoRoot, linkRoot, "dir");
+      const messages: unknown[] = [];
+      const session = createSessionForTest({
+        messages,
+        projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+      });
 
-    await session.handleMessage({
-      type: "read_project_config_request",
-      requestId: "read-symlink-1",
-      repoRoot: linkRoot,
-    });
+      await session.handleMessage({
+        type: "read_project_config_request",
+        requestId: "read-symlink-1",
+        repoRoot: linkRoot,
+      });
 
-    expect(messages).toEqual([
-      {
-        type: "read_project_config_response",
-        payload: {
-          requestId: "read-symlink-1",
-          repoRoot,
-          ok: true,
-          config: { worktree: { setup: "npm ci" } },
-          revision: expect.objectContaining({
-            mtimeMs: expect.any(Number),
-            size: expect.any(Number),
-          }),
+      expect(messages).toEqual([
+        {
+          type: "read_project_config_response",
+          payload: {
+            requestId: "read-symlink-1",
+            repoRoot,
+            ok: true,
+            config: { worktree: { setup: "npm ci" } },
+            revision: expect.objectContaining({
+              mtimeMs: expect.any(Number),
+              size: expect.any(Number),
+            }),
+          },
         },
-      },
-    ]);
-  });
+      ]);
+    },
+  );
 
   test("read_project_config_request rejects archived and unknown roots with project_not_found", async () => {
     const archivedRoot = makeRoot();
