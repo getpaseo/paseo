@@ -607,7 +607,7 @@ test("unsupported persisted agents are excluded from active lists but preserved 
   const storedRecord = {
     id: "agent-unsupported",
     provider: "gemini",
-    cwd: "/tmp/history",
+    cwd: path.resolve("/tmp/history"),
     createdAt: "2026-04-13T10:13:11.457Z",
     updatedAt: "2026-04-13T10:16:06.556Z",
     lastActivityAt: "2026-04-13T10:16:06.556Z",
@@ -1717,9 +1717,12 @@ test("active-scoped fetch_agents pages within active scope instead of global his
 
 test("legacy unscoped fetch_agents keeps global workspace behavior", async () => {
   const session = createSessionForWorkspaceTests();
+  const legacyRoot = path.resolve("/tmp/legacy");
+  const activeCwd = path.join(legacyRoot, "active");
+  const archivedCwd = path.join(legacyRoot, "archived");
   const project = createPersistedProjectRecord({
     projectId: "proj-legacy-global",
-    rootPath: "/tmp/legacy",
+    rootPath: legacyRoot,
     kind: "non_git",
     displayName: "legacy",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -1728,7 +1731,7 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
   const activeWorkspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-legacy-active",
     projectId: project.projectId,
-    cwd: "/tmp/legacy/active",
+    cwd: activeCwd,
     kind: "directory",
     displayName: "active",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -1737,7 +1740,7 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
   const archivedWorkspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-legacy-archived",
     projectId: project.projectId,
-    cwd: "/tmp/legacy/archived",
+    cwd: archivedCwd,
     kind: "directory",
     displayName: "archived",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -1750,13 +1753,13 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
   session.listAgentPayloads = async () => [
     makeAgent({
       id: "legacy-active",
-      cwd: "/tmp/legacy/active",
+      cwd: activeCwd,
       status: "idle",
       updatedAt: "2026-03-01T12:01:00.000Z",
     }),
     makeAgent({
       id: "legacy-archived-workspace",
-      cwd: "/tmp/legacy/archived",
+      cwd: archivedCwd,
       status: "idle",
       updatedAt: "2026-03-01T12:00:00.000Z",
     }),
@@ -1776,9 +1779,10 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
 test("fetch_agent_history_request pages archived historical rows separately", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
+  const historyCwd = path.resolve("/tmp/history");
   const project = createPersistedProjectRecord({
     projectId: "proj-history",
-    rootPath: "/tmp/history",
+    rootPath: historyCwd,
     kind: "non_git",
     displayName: "history",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -1787,7 +1791,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-history",
     projectId: project.projectId,
-    cwd: "/tmp/history",
+    cwd: historyCwd,
     kind: "directory",
     displayName: "history",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -1804,7 +1808,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
     {
       ...makeAgent({
         id: "history-archived",
-        cwd: "/tmp/history",
+        cwd: historyCwd,
         status: "idle",
         updatedAt: "2026-03-01T12:00:00.000Z",
       }),
@@ -1845,7 +1849,7 @@ test("fetch_agent_request still resolves archived historical agents", async () =
   const agent = {
     ...makeAgent({
       id: "archived-history-agent",
-      cwd: "/tmp/history-detail",
+      cwd: path.resolve("/tmp/history-detail"),
       status: "idle",
       updatedAt: "2026-03-01T12:00:00.000Z",
     }),
@@ -2400,7 +2404,7 @@ test("open_project_response returns immediately even when the GitHub fetch is sl
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const cwd = "/tmp/slow-github-repo";
+  const cwd = path.resolve("/tmp/slow-github-repo");
 
   session.emit = (message) => {
     if (isSessionOutboundMessage(message)) emitted.push(message);
@@ -2462,7 +2466,7 @@ test("open_project_request emits a workspace_update with githubRuntime once the 
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const cwd = "/tmp/github-runtime-repo";
+  const cwd = path.resolve("/tmp/github-runtime-repo");
   const snapshot = createWorkspaceRuntimeSnapshot(cwd);
 
   let listener: ((snapshot: WorkspaceGitRuntimeSnapshot) => void) | null = null;
@@ -2554,8 +2558,8 @@ test("open_project_request does not match a new child directory to an existing p
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const home = "/Users/moboudra";
-  const worktree = "/Users/moboudra/.paseo/worktrees/project-config-lifecycle-textarea";
+  const home = path.resolve("/Users/moboudra");
+  const worktree = path.join(home, ".paseo", "worktrees", "project-config-lifecycle-textarea");
 
   projects.set(
     home,
@@ -2618,8 +2622,8 @@ test("open_project_request does not unarchive an archived parent workspace for a
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const home = "/Users/moboudra";
-  const worktree = "/Users/moboudra/.paseo/worktrees/project-config-lifecycle-textarea";
+  const home = path.resolve("/Users/moboudra");
+  const worktree = path.join(home, ".paseo", "worktrees", "project-config-lifecycle-textarea");
   const archivedAt = "2026-04-24T08:00:00.000Z";
 
   projects.set(
@@ -2686,8 +2690,14 @@ test("open_project_request reclassifies an archived directory workspace when git
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const cwd = "/Users/moboudra/.paseo/worktrees/orchestrate/desktop-daemon-settings";
-  const repoRoot = "/Users/moboudra/dev/paseo";
+  const repoRoot = path.resolve("/Users/moboudra/dev/paseo");
+  const cwd = path.join(
+    path.resolve("/Users/moboudra"),
+    ".paseo",
+    "worktrees",
+    "orchestrate",
+    "desktop-daemon-settings",
+  );
   const remoteProjectId = "remote:github.com/getpaseo/paseo";
   const archivedAt = "2026-04-24T09:48:36.168Z";
 
@@ -2778,8 +2788,14 @@ test("open_project_request reclassifies an active directory workspace when git m
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const cwd = "/Users/moboudra/.paseo/worktrees/orchestrate/desktop-daemon-settings";
-  const repoRoot = "/Users/moboudra/dev/paseo";
+  const repoRoot = path.resolve("/Users/moboudra/dev/paseo");
+  const cwd = path.join(
+    path.resolve("/Users/moboudra"),
+    ".paseo",
+    "worktrees",
+    "orchestrate",
+    "desktop-daemon-settings",
+  );
 
   projects.set(
     cwd,
@@ -2888,8 +2904,14 @@ test("open_project_request groups a plain git worktree under an existing repo pr
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const cwd = "/Users/moboudra/.paseo/worktrees/orchestrate/desktop-daemon-settings";
-  const repoRoot = "/Users/moboudra/dev/paseo";
+  const repoRoot = path.resolve("/Users/moboudra/dev/paseo");
+  const cwd = path.join(
+    path.resolve("/Users/moboudra"),
+    ".paseo",
+    "worktrees",
+    "orchestrate",
+    "desktop-daemon-settings",
+  );
 
   projects.set(
     repoRoot,

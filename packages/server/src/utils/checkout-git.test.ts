@@ -81,7 +81,7 @@ function createLegacyWorktreeForTest(
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
-  const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
+  const tempDir = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
   const repoDir = join(tempDir, "repo");
   mkdirSync(repoDir, { recursive: true });
   execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
@@ -319,7 +319,7 @@ const x = 1;
       return;
     }
     expect(status.currentBranch).toBe("main");
-    expect(realpathSync(status.repoRoot)).toBe(realpathSync(repoDir));
+    expect(realpathSync.native(status.repoRoot)).toBe(realpathSync.native(repoDir));
     expect(status.isPaseoOwnedWorktree).toBe(false);
     expect(status.mainRepoRoot ?? null).toBeNull();
   });
@@ -870,10 +870,10 @@ const x = 1;
 
     const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(realpathSync(status.repoRoot)).toBe(realpathSync(result.worktreePath));
+    expect(realpathSync.native(status.repoRoot)).toBe(realpathSync.native(result.worktreePath));
     expect(status.isDirty).toBe(true);
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
+    expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(realpathSync.native(repoDir));
 
     const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { paseoHome });
     expect(diff.diff).toContain("-hello");
@@ -905,9 +905,9 @@ const x = 1;
     if (!status.isGit) {
       return;
     }
-    expect(realpathSync(status.repoRoot)).toBe(realpathSync(result.worktreePath));
+    expect(realpathSync.native(status.repoRoot)).toBe(realpathSync.native(result.worktreePath));
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
+    expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(realpathSync.native(repoDir));
   });
 
   it("returns mainRepoRoot pointing to first non-bare worktree for bare repos", async () => {
@@ -930,7 +930,9 @@ const x = 1;
     const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(mainCheckoutDir));
+    expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(
+      realpathSync.native(mainCheckoutDir),
+    );
   });
 
   it("detects plain git worktrees from git alone", async () => {
@@ -941,9 +943,9 @@ const x = 1;
 
     const status = await getCheckoutStatus(worktreeDir, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktreeDir));
+    expect(realpathSync.native(status.repoRoot)).toBe(realpathSync.native(worktreeDir));
     expect(status.isPaseoOwnedWorktree).toBe(false);
-    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
+    expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(realpathSync.native(repoDir));
     expect(status.currentBranch).toBe("feature/plain");
   });
 
@@ -1020,7 +1022,7 @@ const x = 1;
 
     const mutatedCwd = await mergeToBase(featureWorktree.worktreePath, {}, { paseoHome });
 
-    expect(realpathSync(mutatedCwd)).toBe(realpathSync(baseWorktreePath));
+    expect(realpathSync.native(mutatedCwd)).toBe(realpathSync.native(baseWorktreePath));
     expect(mutatedCwd).not.toBe(featureWorktree.worktreePath);
   });
 
@@ -2017,9 +2019,9 @@ const x = 1;
     const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
     expect(status.currentBranch).toBe("feature");
-    expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktree.worktreePath));
+    expect(realpathSync.native(status.repoRoot)).toBe(realpathSync.native(worktree.worktreePath));
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
+    expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(realpathSync.native(repoDir));
     expect(status.baseRef).toBe("main");
   });
 

@@ -259,7 +259,7 @@ describe("LoopService", () => {
     const loop = await service.runLoop({
       prompt: "Create done.txt when the task is actually fixed.",
       cwd: workspaceDir,
-      verifyChecks: [`${JSON.stringify(process.execPath)} ${JSON.stringify(verifyScriptPath)}`],
+      verifyChecks: [`node ${JSON.stringify(path.basename(verifyScriptPath))}`],
       sleepMs: 1,
       maxIterations: 3,
     });

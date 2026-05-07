@@ -486,7 +486,7 @@ function createWorkspaceArchivingDeps() {
 }
 
 function createGitRepo(options?: { paseoConfig?: Record<string, unknown> }) {
-  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "worktree-session-test-")));
+  const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-session-test-")));
   const repoDir = path.join(tempDir, "repo");
   mkdirSync(repoDir, { recursive: true });
   execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
@@ -1460,7 +1460,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     });
     const resolvedCwd = resolveDefaultBranch.mock.calls[0]?.[0];
     expect(resolvedCwd).toBeDefined();
-    expect(realpathSync(resolvedCwd ?? "")).toBe(realpathSync(repoDir));
+    expect(realpathSync.native(resolvedCwd ?? "")).toBe(realpathSync.native(repoDir));
   });
 });
 
@@ -1603,7 +1603,9 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           shouldBootstrap: true,
         }),
       );
-      expect(realpathSync(backgroundInput?.repoRoot ?? "")).toBe(realpathSync(repoDir));
+      expect(realpathSync.native(backgroundInput?.repoRoot ?? "")).toBe(
+        realpathSync.native(repoDir),
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

@@ -55,9 +55,9 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    const resolvedResults = results.map((result) => realpathSync(result));
-    expect(resolvedResults).toContain(realpathSync(path.join(homeDir, "projects")));
-    expect(resolvedResults).toContain(realpathSync(path.join(homeDir, "projects", "paseo")));
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    expect(resolvedResults).toContain(realpathSync.native(path.join(homeDir, "projects")));
+    expect(resolvedResults).toContain(realpathSync.native(path.join(homeDir, "projects", "paseo")));
     expect(results).not.toContain(path.join(homeDir, "projects", "README.md"));
   });
 
@@ -68,8 +68,8 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    expect(results.map((result) => realpathSync(result))).toEqual([
-      realpathSync(path.join(homeDir, "projects", "paseo")),
+    expect(results.map((result) => realpathSync.native(result))).toEqual([
+      realpathSync.native(path.join(homeDir, "projects", "paseo")),
     ]);
   });
 
@@ -85,8 +85,9 @@ describe("searchHomeDirectories", () => {
       limit: 30,
     });
 
-    const exactIndex = results.indexOf(exactSegmentPath);
-    const prefixIndex = results.indexOf(prefixSegmentPath);
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    const exactIndex = resolvedResults.indexOf(realpathSync.native(exactSegmentPath));
+    const prefixIndex = resolvedResults.indexOf(realpathSync.native(prefixSegmentPath));
     expect(exactIndex).toBeGreaterThanOrEqual(0);
     expect(prefixIndex).toBeGreaterThanOrEqual(0);
     expect(exactIndex).toBeLessThan(prefixIndex);
@@ -104,8 +105,9 @@ describe("searchHomeDirectories", () => {
       limit: 30,
     });
 
-    const earlierIndex = results.indexOf(earlierPath);
-    const laterIndex = results.indexOf(laterPath);
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    const earlierIndex = resolvedResults.indexOf(realpathSync.native(earlierPath));
+    const laterIndex = resolvedResults.indexOf(realpathSync.native(laterPath));
     expect(earlierIndex).toBeGreaterThanOrEqual(0);
     expect(laterIndex).toBeGreaterThanOrEqual(0);
     expect(earlierIndex).toBeLessThan(laterIndex);
