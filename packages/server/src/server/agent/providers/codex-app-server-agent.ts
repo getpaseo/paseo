@@ -33,6 +33,7 @@ import { homedir } from "node:os";
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
+import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -51,10 +52,14 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { terminateProcessTree } from "../../../utils/process-tree.js";
+import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
+import {
+  renderProviderImageOutputAsAssistantMarkdown,
+  type ProviderImageOutput,
+} from "./provider-image-output.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -85,6 +90,13 @@ const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
+const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "webSearch",
+  "collabAgentToolCall",
+]);
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
   "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.";
 
@@ -127,6 +139,10 @@ function parseGoalSubcommand(args: string | undefined): GoalSubcommand {
   if (lower === "resume") return { kind: "resume" };
   if (lower === "clear") return { kind: "clear" };
   return { kind: "set", objective: trimmed };
+}
+
+function formatOutOfBandStatusMessage(text: string): string {
+  return `${text.replace(/\n+$/u, "")}\n\n`;
 }
 
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
@@ -787,7 +803,7 @@ class CodexAppServerClient {
     } catch {
       // ignore
     }
-    const result = await terminateProcessTree(this.child, {
+    const result = await terminateWithTreeKill(this.child, {
       gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
       onForceSignal: () => {
@@ -1202,6 +1218,10 @@ function normalizeCodexThreadItemType(rawType: string | undefined): string | und
       return "webSearch";
     case "CollabAgentToolCall":
       return "collabAgentToolCall";
+    case "ImageView":
+      return "imageView";
+    case "ImageGeneration":
+      return "imageGeneration";
     default:
       return rawType;
   }
@@ -1544,6 +1564,84 @@ function mapCodexThreadUserMessageItem(
   return { type: "user_message", text };
 }
 
+function firstStringField(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+): string | null {
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function codexImageOutputFromResult(result: unknown): ProviderImageOutput | null {
+  if (typeof result === "string") {
+    const trimmed = result.trim();
+    if (
+      trimmed.toLowerCase().startsWith("data:image/") ||
+      (/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed) && trimmed.length > 64)
+    ) {
+      return { data: trimmed };
+    }
+    return { url: trimmed };
+  }
+  const resultRecord = toObjectRecord(result);
+  if (!resultRecord) {
+    return null;
+  }
+  return {
+    path: firstStringField(resultRecord, ["path", "savedPath", "saved_path"]),
+    url: firstStringField(resultRecord, ["url"]),
+    data: firstStringField(resultRecord, ["data"]),
+    mimeType: firstStringField(resultRecord, ["mimeType", "mime_type"]),
+  };
+}
+
+function writeImageAttachmentSync(mimeType: string, data: string): string {
+  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
+  fsSync.mkdirSync(attachmentsDir, { recursive: true });
+  const normalized = normalizeImageData(mimeType, data);
+  const extension = getImageExtension(normalized.mimeType);
+  const filename = `${randomUUID()}.${extension}`;
+  const filePath = path.join(attachmentsDir, filename);
+  fsSync.writeFileSync(filePath, Buffer.from(normalized.data, "base64"));
+  return filePath;
+}
+
+function materializeCodexImageOutput(image: { data: string; mimeType: string | null }): {
+  path: string;
+} {
+  return {
+    path: writeImageAttachmentSync(image.mimeType ?? "image/png", image.data),
+  };
+}
+
+function mapCodexThreadImageItem(
+  normalizedType: string,
+  normalizedItem: Record<string, unknown>,
+): AgentTimelineItem | null {
+  if (normalizedType === "imageView") {
+    return renderProviderImageOutputAsAssistantMarkdown({
+      path: firstStringField(normalizedItem, ["path"]),
+    });
+  }
+
+  const savedPath = firstStringField(normalizedItem, ["savedPath", "saved_path"]);
+  const result = codexImageOutputFromResult(normalizedItem.result);
+  return renderProviderImageOutputAsAssistantMarkdown(
+    {
+      path: savedPath ?? result?.path ?? null,
+      url: result?.url ?? null,
+      data: result?.data ?? null,
+      mimeType: result?.mimeType ?? null,
+    },
+    { materialize: materializeCodexImageOutput },
+  );
+}
+
 function threadItemToTimeline(
   item: unknown,
   options?: { includeUserMessage?: boolean; cwd?: string | null },
@@ -1560,6 +1658,13 @@ function threadItemToTimeline(
       ? { ...itemRecord, type: normalizedType }
       : itemRecord;
 
+  if (normalizedType === "imageView" || normalizedType === "imageGeneration") {
+    return mapCodexThreadImageItem(normalizedType, normalizedItem);
+  }
+  if (normalizedType && CODEX_TOOL_THREAD_ITEM_TYPES.has(normalizedType)) {
+    return mapCodexToolCallFromThreadItem(normalizedItem, { cwd });
+  }
+
   switch (normalizedType) {
     case "userMessage":
       return mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
@@ -1572,12 +1677,6 @@ function threadItemToTimeline(
       return mapCodexThreadPlanItem(normalizedItem);
     case "reasoning":
       return mapCodexThreadReasoningItem(normalizedItem);
-    case "commandExecution":
-    case "fileChange":
-    case "mcpToolCall":
-    case "webSearch":
-    case "collabAgentToolCall":
-      return mapCodexToolCallFromThreadItem(normalizedItem, { cwd });
     default:
       return null;
   }
@@ -3514,7 +3613,7 @@ class CodexAppServerAgentSession implements AgentSession {
     const subcommand = parseGoalSubcommand(parsed.args);
     return {
       run: async ({ emit }) => {
-        const text = await this.executeGoalSubcommand(subcommand);
+        const text = formatOutOfBandStatusMessage(await this.executeGoalSubcommand(subcommand));
         emit({
           type: "timeline",
           provider: CODEX_PROVIDER,

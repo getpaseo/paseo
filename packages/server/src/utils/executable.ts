@@ -1,8 +1,7 @@
-import type { ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { extname } from "node:path";
-import { spawnProcess } from "./spawn.js";
+import { execCommand } from "./spawn.js";
 import { isWindowsCommandScript } from "./windows-command.js";
 
 export { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
@@ -18,6 +17,25 @@ function hasPathSeparator(value: string): boolean {
 }
 
 async function enumerateCandidates(name: string): Promise<string[]> {
+  if (process.platform !== "win32" && existsSync("/usr/bin/which")) {
+    return enumerateCandidatesViaSystemWhich(name);
+  }
+  return enumerateCandidatesViaLibrary(name);
+}
+
+async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]> {
+  try {
+    const { stdout } = await execCommand("/usr/bin/which", ["-a", name], {
+      timeout: 3000,
+      killSignal: "SIGKILL",
+    });
+    return Array.from(new Set(stdout.trim().split("\n").filter(Boolean)));
+  } catch {
+    return [];
+  }
+}
+
+async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
   let candidates: string[];
   try {
     candidates = await which(name, { all: true });
@@ -39,57 +57,42 @@ async function enumerateCandidates(name: string): Promise<string[]> {
   });
 }
 
-async function probeExecutable(executablePath: string): Promise<boolean> {
-  return await new Promise((resolve) => {
-    let pendingResolve: ((result: boolean) => void) | null = resolve;
-    let started = false;
-    let timer: NodeJS.Timeout | undefined;
-
-    const settle = (result: boolean) => {
-      if (!pendingResolve) {
-        return;
-      }
-      const fn = pendingResolve;
-      pendingResolve = null;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      fn(result);
-    };
-
-    let child: ChildProcess;
-    try {
-      child = spawnProcess(executablePath, ["--version"], {
-        stdio: "ignore",
-        // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.
-        shell: isWindowsCommandScript(executablePath),
-      });
-    } catch {
-      settle(false);
-      return;
-    }
-
-    timer = setTimeout(() => {
-      if (started) {
-        child.kill();
-        settle(true);
-        return;
-      }
-      settle(false);
-    }, PROBE_TIMEOUT_MS) as unknown as NodeJS.Timeout;
-    timer.unref();
-
-    child.once("spawn", () => {
-      started = true;
+export async function probeExecutable(
+  executablePath: string,
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  try {
+    await execCommand(executablePath, ["--version"], {
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+      maxBuffer: 64 * 1024,
+      shell: isWindowsCommandScript(executablePath),
     });
-    child.once("error", () => {
-      // ENOENT/EACCES/EPERM/UNKNOWN here means the OS could not start the candidate.
-      settle(started);
-    });
-    child.once("exit", () => {
-      settle(started);
-    });
-  });
+    return true;
+  } catch (error) {
+    return classifyProbeError(error);
+  }
+}
+
+function classifyProbeError(error: unknown): boolean {
+  const err = error as NodeJS.ErrnoException & {
+    killed?: boolean;
+  };
+  if (err.killed) {
+    return true;
+  }
+  if (typeof err.code === "number") {
+    return true;
+  }
+  if (
+    err.code === "ENOENT" ||
+    err.code === "EACCES" ||
+    err.code === "ENOEXEC" ||
+    err.code === "UNKNOWN"
+  ) {
+    return false;
+  }
+  return false;
 }
 
 /**
@@ -109,18 +112,23 @@ export function executableExists(
   return null;
 }
 
-export async function findExecutable(name: string): Promise<string | null> {
+export async function findExecutable(
+  name: string,
+  probeTimeoutMs = PROBE_TIMEOUT_MS,
+): Promise<string | null> {
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
   }
 
   if (hasPathSeparator(trimmed)) {
-    return (await probeExecutable(trimmed)) ? trimmed : null;
+    return (await probeExecutable(trimmed, probeTimeoutMs)) ? trimmed : null;
   }
 
   const candidates = await enumerateCandidates(trimmed);
-  const probeResults = await Promise.all(candidates.map((candidate) => probeExecutable(candidate)));
+  const probeResults = await Promise.all(
+    candidates.map((candidate) => probeExecutable(candidate, probeTimeoutMs)),
+  );
   const firstMatch = probeResults.findIndex((result) => result);
   return firstMatch === -1 ? null : candidates[firstMatch];
 }

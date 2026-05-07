@@ -39,7 +39,6 @@ import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../path-utils.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
-import { captureTerminalLines } from "../../terminal/terminal-capture.js";
 import type {
   AgentWorktreeSetupContinuation,
   CreatePaseoWorktreeSetupContinuationInput,
@@ -1433,12 +1432,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         throw new Error("Terminal manager is not configured");
       }
 
-      const terminal = terminalManager.getTerminal(terminalId);
-      if (!terminal) {
+      if (!terminalManager.getTerminal(terminalId)) {
         throw new Error(`Terminal ${terminalId} not found`);
       }
 
-      const capture = captureTerminalLines(terminal, {
+      const capture = await terminalManager.captureTerminal(terminalId, {
         start: scrollback ? 0 : start,
         end,
         stripAnsi,

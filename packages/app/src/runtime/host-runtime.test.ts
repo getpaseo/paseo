@@ -1596,6 +1596,85 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("probeAndUpsertConnection learns the real server id before storing a direct host", async () => {
+    const connection: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const probeClient = makeConnectedProbeClient(5);
+    const seenProbeHosts: string[] = [];
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host, connection: probedConnection }) => {
+          seenProbeHosts.push(host.serverId);
+          expect(probedConnection).toEqual(connection);
+          return {
+            client: probeClient as unknown as DaemonClient,
+            serverId: "srv_real_direct",
+            hostname: "mbp",
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    const result = await store.probeAndUpsertConnection({ connection });
+
+    expect(result.serverId).toBe("srv_real_direct");
+    expect(result.hostname).toBe("mbp");
+    expect(seenProbeHosts).toEqual([""]);
+    expect(probeClient.closeCalls).toBe(0);
+    expect(store.getHosts()).toMatchObject([
+      {
+        serverId: "srv_real_direct",
+        label: "mbp",
+        connections: [connection],
+      },
+    ]);
+
+    store.syncHosts([]);
+  });
+
+  it("probeAndUpsertConnection replaces a matching placeholder host with the real server id", async () => {
+    const connection: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: "srv_real_direct",
+          hostname: "mbp",
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    (
+      store as unknown as {
+        hosts: HostProfile[];
+      }
+    ).hosts = [
+      makeHost({
+        serverId: "local:lan:6767",
+        label: "local:lan:6767",
+        connections: [connection],
+        preferredConnectionId: connection.id,
+      }),
+    ];
+
+    await store.probeAndUpsertConnection({ connection });
+
+    expect(store.getHosts().map((host) => host.serverId)).toEqual(["srv_real_direct"]);
+    expect(store.getHosts()[0]?.label).toBe("mbp");
+
+    store.syncHosts([]);
+  });
+
   it("uses the advertised hostname when adding a relay host from a pairing offer", async () => {
     const store = new HostRuntimeStore({
       deps: {

@@ -64,7 +64,10 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
-function createSession(configOverrides: Partial<AgentSessionConfig> = {}): CodexTestSession {
+function createSession(
+  configOverrides: Partial<AgentSessionConfig> = {},
+  options: { goalsEnabled?: boolean } = {},
+): CodexTestSession {
   const session = new __codexAppServerInternals.CodexAppServerAgentSession(
     createConfig(configOverrides),
     null,
@@ -72,6 +75,9 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}): Codex
     () => {
       throw new Error("Test session cannot spawn Codex app-server");
     },
+    {},
+    false,
+    options.goalsEnabled === true,
   ) as CodexTestSession;
   session.connected = true;
   session.currentThreadId = "test-thread";
@@ -81,6 +87,14 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}): Codex
 
 function asInternals(session: CodexTestSession): CodexSessionTestAccess {
   return castInternals<CodexSessionTestAccess>(session);
+}
+
+function markdownImageSource(markdown: string): string {
+  const match = markdown.match(/^!\[[^\]]*]\((.*)\)$/);
+  if (!match) {
+    throw new Error(`Expected markdown image, got: ${markdown}`);
+  }
+  return match[1].replace(/\\\)/g, ")");
 }
 
 describe("Codex app-server provider", () => {
@@ -879,6 +893,45 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("appends blank-line spacing to /goal status messages", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({}, { goalsEnabled: true });
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: ["test-thread"] };
+        }
+        return {};
+      }),
+    };
+
+    const handler = session.tryHandleOutOfBand?.("/goal ship feature");
+    expect(handler).not.toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(requests).toContainEqual({
+      method: "thread/goal/set",
+      params: {
+        threadId: "test-thread",
+        objective: "ship feature",
+        status: "active",
+      },
+    });
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "Goal set: ship feature\n\n",
+        },
+      },
+    ]);
+  });
+
   test("maps question responses from headers back to question ids and completes the tool call", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -1063,6 +1116,126 @@ describe("Codex app-server provider", () => {
         },
       }),
     });
+  });
+
+  test("emits imageView thread items as assistant markdown images using the path", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "image-view-1",
+        type: "imageView",
+        path: "/tmp/paseo image.png",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          text: "![Image](/tmp/paseo image.png)",
+        },
+      },
+    ]);
+  });
+
+  test.each([
+    ["savedPath", { savedPath: "/tmp/generated-camel.png" }, "/tmp/generated-camel.png"],
+    ["saved_path", { saved_path: "/tmp/generated-snake.png" }, "/tmp/generated-snake.png"],
+  ])(
+    "emits imageGeneration thread items with %s as assistant markdown images",
+    (_fieldName, imageFields, expectedPath) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      asInternals(session).handleNotification("item/completed", {
+        item: {
+          id: `image-generation-${_fieldName}`,
+          type: "imageGeneration",
+          status: "completed",
+          ...imageFields,
+        },
+      });
+
+      expect(events).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: "test-turn",
+          item: {
+            type: "assistant_message",
+            text: `![Image](${expectedPath})`,
+          },
+        },
+      ]);
+    },
+  );
+
+  test("materializes imageGeneration base64 results before rendering markdown", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "image-generation-base64",
+        type: "imageGeneration",
+        status: "completed",
+        result: `data:image/png;base64,${ONE_BY_ONE_PNG_BASE64}`,
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event).toMatchObject({
+      type: "timeline",
+      provider: "codex",
+      turnId: "test-turn",
+      item: { type: "assistant_message" },
+    });
+    if (event?.type !== "timeline" || event.item.type !== "assistant_message") {
+      throw new Error("Expected assistant timeline event");
+    }
+    expect(event.item.text).not.toContain("data:image");
+    expect(event.item.text).not.toContain(ONE_BY_ONE_PNG_BASE64);
+    const source = markdownImageSource(event.item.text);
+    expect(source).toMatch(/paseo-attachments\/.+\.png$/);
+    expect(existsSync(source)).toBe(true);
+    rmSync(source, { force: true });
+  });
+
+  test("ignores incomplete imageGeneration thread items without failing the turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(() =>
+      asInternals(session).handleNotification("item/completed", {
+        item: {
+          id: "image-generation-incomplete",
+          type: "imageGeneration",
+          status: "in_progress",
+        },
+      }),
+    ).not.toThrow();
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "turn_completed",
+        provider: "codex",
+        turnId: "test-turn",
+        usage: undefined,
+      },
+    ]);
   });
 
   test("emits usage_updated on token usage updates and keeps usage on turn completion", () => {

@@ -22,6 +22,7 @@ import {
 import type { CreatePaseoWorktreeWorkflowFn } from "../worktree-session.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
+import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 interface LooseSafeParseResult {
   success: boolean;
@@ -134,6 +135,23 @@ function createTestDeps(): TestDeps {
       agentStorage: agentStorageSpies,
     },
   };
+}
+
+function createTerminalManagerStub(overrides: Partial<TerminalManager> = {}): TerminalManager {
+  return {
+    getTerminals: vi.fn().mockResolvedValue([]),
+    createTerminal: vi.fn(),
+    registerCwdEnv: vi.fn(),
+    getTerminal: vi.fn(),
+    getTerminalState: vi.fn().mockResolvedValue(null),
+    killTerminal: vi.fn(),
+    killTerminalAndWait: vi.fn().mockResolvedValue(undefined),
+    captureTerminal: vi.fn().mockResolvedValue({ lines: [], totalLines: 0 }),
+    listDirectories: vi.fn().mockReturnValue([]),
+    killAll: vi.fn(),
+    subscribeTerminalsChanged: vi.fn().mockReturnValue(() => {}),
+    ...overrides,
+  } as unknown as TerminalManager;
 }
 
 function createProviderDefinition(overrides: Partial<ProviderDefinition>): ProviderDefinition {
@@ -338,6 +356,53 @@ function createPaseoWorktreeForMcpTest(options: {
     return result;
   };
 }
+
+describe("terminal MCP tools", () => {
+  const logger = createTestLogger();
+
+  it("captures terminal output through the terminal manager authority", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const captureTerminal = vi.fn().mockResolvedValue({
+      lines: ["from worker scrollback"],
+      totalLines: 42,
+    });
+    const terminalManager = createTerminalManagerStub({
+      getTerminal: vi.fn().mockReturnValue({
+        id: "term-1",
+        name: "daemon",
+        cwd: process.cwd(),
+        getState: vi.fn().mockReturnValue({ scrollback: [], grid: [[]] }),
+      }),
+      captureTerminal,
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      terminalManager,
+      logger,
+    });
+    const tool = registeredTool(server, "capture_terminal");
+
+    const response = await tool.callback({
+      terminalId: "term-1",
+      scrollback: true,
+      stripAnsi: false,
+      start: -10,
+      end: -1,
+    });
+
+    expect(captureTerminal).toHaveBeenCalledWith("term-1", {
+      start: 0,
+      end: -1,
+      stripAnsi: false,
+    });
+    expect(response.structuredContent).toEqual({
+      terminalId: "term-1",
+      lines: ["from worker scrollback"],
+      totalLines: 42,
+    });
+  });
+});
 
 describe("create_agent MCP tool", () => {
   const logger = createTestLogger();

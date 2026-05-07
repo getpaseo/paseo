@@ -47,7 +47,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { terminateProcessTree } from "../../../utils/process-tree.js";
+import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
@@ -975,7 +975,7 @@ export class OpenCodeServerManager {
     if (server.process.killed) {
       return;
     }
-    const result = await terminateProcessTree(server.process, {
+    const result = await terminateWithTreeKill(server.process, {
       gracefulTimeoutMs: OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
       onForceSignal: () => {

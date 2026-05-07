@@ -79,6 +79,7 @@ import {
   createProviderEnvSpec,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import { buildSelfNodeCommand } from "../../paseo-env.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand, spawnProcess } from "../../../utils/spawn.js";
@@ -342,14 +343,26 @@ function applyRuntimeSettingsToClaudeOptions(
       // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
       // or the user overrides the command via runtime settings, use that directly.
       const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
-      const command = isDefaultRuntime ? process.execPath : resolved.command;
-      const child = spawnProcess(command, resolved.args, {
+      const providerEnvSpec = createProviderEnvSpec({
+        baseEnv: spawnOptions.env,
+        runtimeSettings,
+        overlays: [launchEnv],
+      });
+      const providerEnv = createProviderEnv({
+        baseEnv: spawnOptions.env,
+        runtimeSettings,
+        overlays: [launchEnv],
+      });
+      const selfNodeCommand = isDefaultRuntime
+        ? buildSelfNodeCommand(resolved.args, providerEnv)
+        : null;
+      const command = selfNodeCommand?.command ?? resolved.command;
+      const args = selfNodeCommand?.args ?? resolved.args;
+      const child = spawnProcess(command, args, {
         cwd: spawnOptions.cwd,
-        ...createProviderEnvSpec({
-          baseEnv: spawnOptions.env,
-          runtimeSettings,
-          overlays: [launchEnv],
-        }),
+        ...(selfNodeCommand
+          ? { env: selfNodeCommand.env, envMode: "internal" as const }
+          : providerEnvSpec),
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
         // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON

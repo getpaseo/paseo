@@ -1,10 +1,5 @@
-import {
-  captureTerminalLines,
-  createTerminal,
-  type CaptureTerminalLinesResult,
-  type TerminalSession,
-  type TerminalStateSnapshot,
-} from "./terminal.js";
+import { createTerminal, type TerminalSession, type TerminalStateSnapshot } from "./terminal.js";
+import { captureTerminalLines, type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { resolve, sep, win32, posix } from "node:path";
 
 export interface TerminalListItem {

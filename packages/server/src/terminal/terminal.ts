@@ -8,11 +8,6 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
-export {
-  captureTerminalLines,
-  type CaptureTerminalLinesOptions,
-  type CaptureTerminalLinesResult,
-} from "./terminal-capture.js";
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);

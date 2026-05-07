@@ -1,8 +1,10 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { buildSelfNodeCommand } from "../server/paseo-env.js";
 import { execCommand, spawnProcess } from "./spawn.js";
 
 const printEnvScript = `
@@ -93,7 +95,7 @@ describe("execCommand", () => {
     expect(parsePrintedEnv(result.stdout)).toEqual({
       CUSTOM: "from-overlay",
       ELECTRON_NO_ATTACH_CONSOLE: null,
-      ELECTRON_RUN_AS_NODE: "1",
+      ELECTRON_RUN_AS_NODE: null,
       PASEO_DESKTOP_MANAGED: null,
       PASEO_NODE_ENV: null,
       PASEO_SUPERVISED: null,
@@ -150,7 +152,7 @@ describe("execCommand", () => {
     expect(parsePrintedEnv(Buffer.concat(stdoutChunks).toString())).toEqual({
       CUSTOM: "spawn-overlay",
       ELECTRON_NO_ATTACH_CONSOLE: null,
-      ELECTRON_RUN_AS_NODE: "1",
+      ELECTRON_RUN_AS_NODE: null,
       PASEO_DESKTOP_MANAGED: null,
       PASEO_NODE_ENV: null,
       PASEO_SUPERVISED: null,
@@ -178,6 +180,39 @@ describe("execCommand", () => {
       PASEO_DESKTOP_MANAGED: null,
       PASEO_NODE_ENV: "production",
       PASEO_SUPERVISED: "1",
+    });
+  });
+
+  test("does not realpath commands while finalizing external command env", async () => {
+    const realpathSpy = vi.spyOn(fs.realpathSync, "native");
+
+    await execCommand("/some/random/binary", ["--version"], {
+      env: {
+        PATH: process.env.PATH,
+      },
+      timeout: 100,
+    }).catch(() => {});
+
+    expect(realpathSpy).not.toHaveBeenCalled();
+  });
+
+  test("self node command explicitly enables Electron node mode", async () => {
+    const command = buildSelfNodeCommand(["-e", printEnvScript], {
+      CUSTOM: "from-helper",
+    });
+
+    const result = await execCommand(command.command, command.args, {
+      env: command.env,
+      envMode: "internal",
+    });
+
+    expect(parsePrintedEnv(result.stdout)).toEqual({
+      CUSTOM: "from-helper",
+      ELECTRON_NO_ATTACH_CONSOLE: null,
+      ELECTRON_RUN_AS_NODE: "1",
+      PASEO_DESKTOP_MANAGED: null,
+      PASEO_NODE_ENV: null,
+      PASEO_SUPERVISED: null,
     });
   });
 });

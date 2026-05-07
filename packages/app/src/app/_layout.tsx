@@ -65,6 +65,7 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
+  hasConfiguredLocalDaemonOverride,
   useHostMutations,
   useHostRuntimeClient,
   useHosts,
@@ -326,6 +327,8 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const daemonStartError = useDaemonStartLastError();
   const daemonStartIsRunning = useDaemonStartIsRunning();
+  const waitForConfiguredLocalDaemon =
+    hasConfiguredLocalDaemonOverride() && !shouldUseDesktopDaemon();
 
   const [hasGivenUpWaitingForHost, setHasGivenUpWaitingForHost] = useState(false);
   useEffect(() => {
@@ -333,6 +336,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
       anyOnlineHostServerId ||
       daemonStartError ||
       daemonStartIsRunning ||
+      waitForConfiguredLocalDaemon ||
       hasGivenUpWaitingForHost
     ) {
       return;
@@ -343,7 +347,13 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [anyOnlineHostServerId, daemonStartError, daemonStartIsRunning, hasGivenUpWaitingForHost]);
+  }, [
+    anyOnlineHostServerId,
+    daemonStartError,
+    daemonStartIsRunning,
+    waitForConfiguredLocalDaemon,
+    hasGivenUpWaitingForHost,
+  ]);
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });

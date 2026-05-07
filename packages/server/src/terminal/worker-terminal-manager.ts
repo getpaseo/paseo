@@ -4,13 +4,13 @@ import { randomUUID } from "node:crypto";
 import type { TerminalState } from "../shared/messages.js";
 import type {
   ClientMessage,
-  CaptureTerminalLinesResult,
   ServerMessage,
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
   TerminalSession,
   TerminalStateSnapshot,
 } from "./terminal.js";
+import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import type {
   TerminalListItem,
   TerminalManager,

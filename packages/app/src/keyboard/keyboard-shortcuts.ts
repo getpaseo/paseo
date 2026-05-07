@@ -52,6 +52,8 @@ interface ShortcutWhen {
   mac?: boolean;
   /** true = desktop only, false = web only */
   desktop?: boolean;
+  /** false = disabled when a text-editing surface is focused */
+  editable?: false;
   /** false = disabled when terminal is focused */
   terminal?: false;
   /** false = disabled when command center is open */
@@ -454,7 +456,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-left-cmd-shift-left",
     action: "workspace.pane.focus.left",
     combo: "Cmd+Shift+ArrowLeft",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-left",
       section: "tabs-panes",
@@ -466,7 +468,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-right-cmd-shift-right",
     action: "workspace.pane.focus.right",
     combo: "Cmd+Shift+ArrowRight",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-right",
       section: "tabs-panes",
@@ -478,7 +480,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-up-cmd-shift-up",
     action: "workspace.pane.focus.up",
     combo: "Cmd+Shift+ArrowUp",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-up",
       section: "tabs-panes",
@@ -490,7 +492,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-down-cmd-shift-down",
     action: "workspace.pane.focus.down",
     combo: "Cmd+Shift+ArrowDown",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-down",
       section: "tabs-panes",
@@ -1035,6 +1037,12 @@ function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutCo
   if (!when) return true;
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktop !== undefined && when.desktop !== context.isDesktop) return false;
+  if (
+    when.editable === false &&
+    (context.focusScope === "message-input" || context.focusScope === "editable")
+  ) {
+    return false;
+  }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
   if (when.focusScope !== undefined && context.focusScope !== when.focusScope) return false;

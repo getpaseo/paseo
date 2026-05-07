@@ -364,6 +364,16 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false },
     },
     {
+      name: "keeps Cmd+Shift+ArrowRight available for message input selection",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+    },
+    {
+      name: "keeps Cmd+Shift+ArrowLeft available for generic editable selection",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "editable" },
+    },
+    {
       name: "keeps space typing available in message input",
       event: { key: " ", code: "Space" },
       context: { focusScope: "message-input" },

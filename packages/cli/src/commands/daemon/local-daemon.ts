@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -272,27 +273,40 @@ function signalProcessSafely(pid: number, signal: NodeJS.Signals): boolean {
   }
 }
 
-function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean {
+async function signalProcessTreeSafely(pid: number, signal: NodeJS.Signals): Promise<boolean> {
   if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
     return false;
   }
 
-  if (process.platform === "win32") {
-    return signalProcessSafely(pid, signal);
-  }
+  return new Promise((resolve, reject) => {
+    treeKill(pid, signal, (err) => {
+      if (!err) {
+        resolve(true);
+        return;
+      }
 
+      const code = readNodeErrnoCode(err);
+      if (code === "ESRCH") {
+        resolve(false);
+        return;
+      }
+      if (code === "EPERM") {
+        resolve(true);
+        return;
+      }
+      reject(err);
+    });
+  });
+}
+
+async function signalProcessTreeOrOwnerSafely(
+  pid: number,
+  signal: NodeJS.Signals,
+): Promise<boolean> {
   try {
-    process.kill(-pid, signal);
-    return true;
-  } catch (err) {
-    const code = readNodeErrnoCode(err);
-    if (code === "ESRCH") {
-      return signalProcessSafely(pid, signal);
-    }
-    if (code === "EPERM") {
-      return true;
-    }
-    throw err;
+    return await signalProcessTreeSafely(pid, signal);
+  } catch {
+    return signalProcessSafely(pid, signal);
   }
 }
 
@@ -530,7 +544,7 @@ export async function stopLocalDaemon(
   const fallbackMessage = shutdownAttempt.requested ? null : shutdownAttempt.reason;
   let forced = false;
   if (!lifecycleRequested) {
-    const signaled = signalProcessSafely(pid, "SIGTERM");
+    const signaled = await signalProcessTreeOrOwnerSafely(pid, "SIGTERM");
     if (!signaled) {
       return {
         action: "not_running",
@@ -545,7 +559,7 @@ export async function stopLocalDaemon(
   let stopped = await waitForPidExit(pid, timeoutMs);
   if (!stopped && options.force) {
     forced = true;
-    signalProcessGroupSafely(pid, "SIGKILL");
+    await signalProcessTreeOrOwnerSafely(pid, "SIGKILL");
     stopped = await waitForPidExit(pid, killTimeoutMs);
   }
 
