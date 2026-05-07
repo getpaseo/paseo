@@ -138,11 +138,11 @@ it("throws for relative paths", async () => {
 
 it("does not reject Windows absolute paths as relative", async () => {
   manager = createTerminalManager();
-  // Should pass path validation (not throw "cwd must be absolute path").
-  // The terminal may or may not spawn successfully on non-Windows hosts,
-  // so we only assert the validation error is absent.
+  const cwd = mkdtempSync(join(tmpdir(), "terminal-manager-absolute-path-"));
+  temporaryDirs.push(cwd);
+
   try {
-    await manager.createTerminal({ cwd: "C:\\Users\\foo\\project" });
+    await manager.createTerminal({ cwd });
   } catch (error) {
     expect((error as Error).message).not.toBe("cwd must be absolute path");
   }
