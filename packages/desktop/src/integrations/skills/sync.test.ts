@@ -70,6 +70,11 @@ describe("syncSkills", () => {
       "utf-8",
     );
     expect(agentsContent).toBe("new paseo content");
+    const claudeContent = await fs.readFile(
+      path.join(sandbox.claudeDir, "paseo", "SKILL.md"),
+      "utf-8",
+    );
+    expect(claudeContent).toBe("new paseo content");
     const codexContent = await fs.readFile(
       path.join(sandbox.codexDir, "paseo", "SKILL.md"),
       "utf-8",
@@ -107,10 +112,10 @@ describe("syncSkills", () => {
       ),
     ).toBe("roles content");
 
-    const claudeLink = path.join(sandbox.claudeDir, "paseo-epic");
-    const lstat = await fs.lstat(claudeLink);
-    expect(lstat.isSymbolicLink()).toBe(true);
-    expect(await fs.readFile(path.join(claudeLink, "references", "roles.md"), "utf-8")).toBe(
+    const claudeSkillDir = path.join(sandbox.claudeDir, "paseo-epic");
+    expect((await fs.lstat(claudeSkillDir)).isDirectory()).toBe(true);
+    expect(await fs.readFile(path.join(claudeSkillDir, "SKILL.md"), "utf-8")).toBe("epic content");
+    expect(await fs.readFile(path.join(claudeSkillDir, "references", "roles.md"), "utf-8")).toBe(
       "roles content",
     );
   });
@@ -295,35 +300,5 @@ describe("removeSkill", () => {
         codexDir: sandbox.codexDir,
       }),
     ).resolves.toBeUndefined();
-  });
-
-  it("removes a symlinked claude target without nuking the agents real files", async () => {
-    if (process.platform === "win32") return;
-
-    await writeBundleSkill(sandbox.sourceDir, "paseo", {
-      "SKILL.md": "real content",
-      "references/r.md": "ref",
-    });
-    await syncSkills({
-      sourceDir: sandbox.sourceDir,
-      agentsDir: sandbox.agentsDir,
-      claudeDir: sandbox.claudeDir,
-      codexDir: sandbox.codexDir,
-      skillNames: ["paseo"],
-    });
-
-    const claudeLink = path.join(sandbox.claudeDir, "paseo");
-    expect((await fs.lstat(claudeLink)).isSymbolicLink()).toBe(true);
-    const agentsTarget = path.join(sandbox.agentsDir, "paseo");
-
-    await removeSkill("paseo", {
-      agentsDir: agentsTarget + "-not-here",
-      claudeDir: sandbox.claudeDir,
-      codexDir: sandbox.codexDir + "-not-here",
-    });
-
-    await expect(fs.access(claudeLink)).rejects.toThrow();
-    expect(await fs.readFile(path.join(agentsTarget, "SKILL.md"), "utf-8")).toBe("real content");
-    expect(await fs.readFile(path.join(agentsTarget, "references", "r.md"), "utf-8")).toBe("ref");
   });
 });

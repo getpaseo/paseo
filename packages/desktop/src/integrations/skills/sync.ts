@@ -7,7 +7,6 @@ export interface SkillSyncOptions {
   claudeDir: string;
   codexDir: string;
   skillNames: readonly string[];
-  platform?: NodeJS.Platform;
   onSkillError?: (skillName: string, error: unknown) => void;
 }
 
@@ -53,36 +52,6 @@ async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<numbe
   return changed;
 }
 
-async function ensureClaudeSkillLink(
-  skillName: string,
-  agentsDir: string,
-  claudeDir: string,
-  platform: NodeJS.Platform,
-): Promise<number> {
-  await fs.mkdir(claudeDir, { recursive: true });
-  const target = path.join(agentsDir, skillName);
-  const linkPath = path.join(claudeDir, skillName);
-
-  // Always rebuild the link rather than diffing it. fs.rm with force: true is
-  // a no-op when nothing is there, and matches existing install behavior.
-  // On Windows, `fs.rm` does not follow junctions, so the agents-side content
-  // is preserved.
-  await fs.rm(linkPath, { recursive: true, force: true });
-
-  if (platform === "win32") {
-    try {
-      // Junctions don't require Developer Mode / admin like regular symlinks do.
-      await fs.symlink(target, linkPath, "junction");
-      return 0;
-    } catch {
-      return await syncDirectoryFiles(target, linkPath);
-    }
-  }
-
-  await fs.symlink(target, linkPath);
-  return 0;
-}
-
 export interface RemoveSkillTargets {
   agentsDir: string;
   claudeDir: string;
@@ -101,7 +70,6 @@ export async function removeSkill(skillName: string, targets: RemoveSkillTargets
 }
 
 export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncResult> {
-  const platform = options.platform ?? process.platform;
   let changedFiles = 0;
   let processedSkills = 0;
 
@@ -117,11 +85,9 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
         path.join(options.agentsDir, skillName),
       );
 
-      changedFiles += await ensureClaudeSkillLink(
-        skillName,
-        options.agentsDir,
-        options.claudeDir,
-        platform,
+      changedFiles += await syncDirectoryFiles(
+        bundleSkillDir,
+        path.join(options.claudeDir, skillName),
       );
 
       changedFiles += await syncDirectoryFiles(
