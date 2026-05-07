@@ -10,7 +10,7 @@ import {
   serializeConnectionUri,
   serializeConnectionUriForStorage,
 } from "@/utils/daemon-endpoints";
-import { DaemonConnectionTestError, connectToDaemon } from "@/utils/test-daemon-connection";
+import { DaemonConnectionTestError } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
@@ -267,7 +267,7 @@ export interface AddHostModalProps {
 export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
   const { theme } = useUnistyles();
   const daemons = useHosts();
-  const { upsertDirectConnection } = useHostMutations();
+  const { probeAndUpsertDirectConnection } = useHostMutations();
   const isMobile = useIsCompactFormFactor();
 
   const [isSaving, setIsSaving] = useState(false);
@@ -336,22 +336,12 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       setIsSaving(true);
       setErrorMessage("");
 
-      const { client, serverId, hostname } = await connectToDaemon({
-        id: "probe",
-        type: "directTcp",
+      const { profile, serverId, hostname } = await probeAndUpsertDirectConnection({
         endpoint: connection.endpoint,
         useTls: connection.useTls,
         ...(connection.password ? { password: connection.password } : {}),
       });
-      await client.close().catch(() => undefined);
       const isNewHost = !daemons.some((daemon) => daemon.serverId === serverId);
-      const profile = await upsertDirectConnection({
-        serverId,
-        endpoint: connection.endpoint,
-        useTls: connection.useTls,
-        ...(connection.password ? { password: connection.password } : {}),
-        label: hostname ?? undefined,
-      });
 
       onSaved?.({ profile, serverId, hostname, isNewHost });
       handleClose();
@@ -381,7 +371,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     onSaved,
     password,
     port,
-    upsertDirectConnection,
+    probeAndUpsertDirectConnection,
     useTls,
   ]);
 
