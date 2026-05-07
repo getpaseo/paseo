@@ -17,7 +17,7 @@ function hasPathSeparator(value: string): boolean {
 }
 
 async function enumerateCandidates(name: string): Promise<string[]> {
-  if (process.platform !== "win32") {
+  if (process.platform !== "win32" && existsSync("/usr/bin/which")) {
     return enumerateCandidatesViaSystemWhich(name);
   }
   return enumerateCandidatesViaLibrary(name);
