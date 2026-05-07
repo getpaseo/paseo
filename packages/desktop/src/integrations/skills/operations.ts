@@ -1,23 +1,20 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import log from "electron-log/main";
-import {
-  diffSkills,
-  hashBundle,
-  readManifest,
-  type SkillManifest,
-  type SkillOp,
-  writeManifest,
-} from "./manifest.js";
 import {
   getAgentsSkillsDir,
   getBundledSkillsDir,
   getClaudeSkillsDir,
   getCodexSkillsDir,
 } from "./paths.js";
-import { removeSkill, syncSkills } from "./sync.js";
+import { listFilesRecursive, removeSkill, syncSkills } from "./sync.js";
 
-export type SkillsState = "fresh" | "up-to-date" | "drift";
+export type SkillsState = "not-installed" | "up-to-date" | "drift";
+
+export type SkillOp =
+  | { kind: "add"; name: string }
+  | { kind: "update"; name: string }
+  | { kind: "delete"; name: string };
 
 export interface SkillsStatus {
   state: SkillsState;
@@ -31,15 +28,19 @@ export interface SkillTargets {
   codexDir: string;
 }
 
-const SKILL_NAMES = [
+export const PASEO_SKILL_NAMES = [
   "paseo",
   "paseo-advisor",
+  "paseo-chat",
   "paseo-committee",
   "paseo-epic",
   "paseo-handoff",
   "paseo-loop",
   "paseo-orchestrate",
-];
+  "paseo-orchestrator",
+] as const;
+
+type SkillFiles = Map<string, string>;
 
 function resolveSkillTargets(): SkillTargets {
   return {
@@ -50,134 +51,114 @@ function resolveSkillTargets(): SkillTargets {
   };
 }
 
-async function agentsDirHasSkillContent(agentsDir: string): Promise<boolean> {
-  let entries: string[];
-  try {
-    entries = await fs.readdir(agentsDir);
-  } catch {
-    return false;
+async function hashSkillDir(skillDir: string): Promise<SkillFiles | null> {
+  const stat = await fs.stat(skillDir).catch(() => null);
+  if (!stat?.isDirectory()) return null;
+
+  const rels = await listFilesRecursive(skillDir);
+  const files: SkillFiles = new Map();
+  for (const rel of rels) {
+    const buf = await fs.readFile(path.join(skillDir, rel));
+    const sha = createHash("sha256").update(buf).digest("hex");
+    files.set(toPosix(rel), sha);
   }
-  return entries.some((name) => !name.startsWith("."));
+  return files;
 }
 
-export async function migrateLegacyInstallIfNeeded(
-  targets?: SkillTargets,
-): Promise<{ migrated: boolean; skillCount: number }> {
-  const t = targets ?? resolveSkillTargets();
-  const existingManifest = await readManifest(t.agentsDir);
-  if (existingManifest !== null) {
-    return { migrated: false, skillCount: 0 };
+async function hashSkills(rootDir: string): Promise<Map<string, SkillFiles>> {
+  const out = new Map<string, SkillFiles>();
+  for (const name of PASEO_SKILL_NAMES) {
+    const files = await hashSkillDir(path.join(rootDir, name));
+    if (files !== null) out.set(name, files);
   }
+  return out;
+}
 
-  const existing: string[] = [];
-  for (const name of SKILL_NAMES) {
-    const stat = await fs.stat(path.join(t.agentsDir, name)).catch(() => null);
-    if (stat?.isDirectory()) existing.push(name);
+function diff(bundle: Map<string, SkillFiles>, disk: Map<string, SkillFiles>): SkillOp[] {
+  const ops: SkillOp[] = [];
+  for (const name of PASEO_SKILL_NAMES) {
+    const b = bundle.get(name);
+    const d = disk.get(name);
+    if (b && !d) ops.push({ kind: "add", name });
+    else if (b && d && !filesEqual(b, d)) ops.push({ kind: "update", name });
+    else if (!b && d) ops.push({ kind: "delete", name });
   }
-  if (existing.length === 0) {
-    return { migrated: false, skillCount: 0 };
-  }
+  ops.sort((a, b) => compareStrings(a.name, b.name));
+  return ops;
+}
 
-  const synthesized = await hashBundle(t.agentsDir, existing);
-  await writeManifest(t.agentsDir, { version: 1, skills: synthesized });
-  log.info("[integrations] migrated legacy skills install", {
-    skillCount: synthesized.length,
-  });
-  return { migrated: true, skillCount: synthesized.length };
+function filesEqual(a: SkillFiles, b: SkillFiles): boolean {
+  if (a.size !== b.size) return false;
+  for (const [rel, sha] of a) {
+    if (b.get(rel) !== sha) return false;
+  }
+  return true;
+}
+
+function toPosix(p: string): string {
+  return p.split(path.sep).join("/");
+}
+
+function compareStrings(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 export async function getSkillsStatus(targets?: SkillTargets): Promise<SkillsStatus> {
   const t = targets ?? resolveSkillTargets();
-  await migrateLegacyInstallIfNeeded(t);
+  const [bundle, disk] = await Promise.all([hashSkills(t.sourceDir), hashSkills(t.agentsDir)]);
+  const ops = diff(bundle, disk);
 
-  const bundle = await hashBundle(t.sourceDir, SKILL_NAMES);
-  const manifest = await readManifest(t.agentsDir);
-  const ops = diffSkills(bundle, manifest);
+  if (disk.size === 0) return { state: "not-installed", ops };
+  if (ops.length === 0) return { state: "up-to-date", ops };
+  return { state: "drift", ops };
+}
 
-  if (manifest === null) {
-    const hasContent = await agentsDirHasSkillContent(t.agentsDir);
-    return { state: hasContent ? "drift" : "fresh", ops };
+async function applySkills(targets: SkillTargets): Promise<SkillsStatus> {
+  const status = await getSkillsStatus(targets);
+
+  const writes = status.ops
+    .filter((op) => op.kind === "add" || op.kind === "update")
+    .map((op) => op.name);
+  if (writes.length > 0) {
+    await syncSkills({
+      sourceDir: targets.sourceDir,
+      agentsDir: targets.agentsDir,
+      claudeDir: targets.claudeDir,
+      codexDir: targets.codexDir,
+      skillNames: writes,
+    });
   }
 
-  return { state: ops.length === 0 ? "up-to-date" : "drift", ops };
+  for (const op of status.ops) {
+    if (op.kind !== "delete") continue;
+    await removeSkill(op.name, {
+      agentsDir: targets.agentsDir,
+      claudeDir: targets.claudeDir,
+      codexDir: targets.codexDir,
+    });
+  }
+
+  return getSkillsStatus(targets);
 }
 
 export async function installSkills(targets?: SkillTargets): Promise<SkillsStatus> {
-  const t = targets ?? resolveSkillTargets();
-  await migrateLegacyInstallIfNeeded(t);
-  log.info("[integrations] installSkills", t);
-
-  const result = await syncSkills({
-    ...t,
-    skillNames: SKILL_NAMES,
-    onSkillError: (skillName, error) => {
-      log.warn("[integrations] skill install failed", { skillName, error });
-    },
-  });
-  log.info("[integrations] installSkills done", result);
-
-  const bundle = await hashBundle(t.sourceDir, SKILL_NAMES);
-  const manifest: SkillManifest = { version: 1, skills: bundle };
-  await writeManifest(t.agentsDir, manifest);
-
-  return getSkillsStatus(t);
+  return applySkills(targets ?? resolveSkillTargets());
 }
 
 export async function updateSkills(targets?: SkillTargets): Promise<SkillsStatus> {
-  const t = targets ?? resolveSkillTargets();
-  await migrateLegacyInstallIfNeeded(t);
-  const bundle = await hashBundle(t.sourceDir, SKILL_NAMES);
-  const manifest = await readManifest(t.agentsDir);
-  const ops = diffSkills(bundle, manifest);
-
-  const writes = ops.filter((op) => op.kind === "add" || op.kind === "update").map((op) => op.name);
-  if (writes.length > 0) {
-    const result = await syncSkills({
-      ...t,
-      skillNames: writes,
-      onSkillError: (skillName, error) => {
-        log.warn("[integrations] skill update failed", { skillName, error });
-      },
-    });
-    log.info("[integrations] updateSkills writes done", result);
-  }
-
-  for (const op of ops) {
-    if (op.kind !== "delete") continue;
-    try {
-      await removeSkill(op.name, {
-        agentsDir: t.agentsDir,
-        claudeDir: t.claudeDir,
-        codexDir: t.codexDir,
-      });
-    } catch (error) {
-      log.warn("[integrations] skill delete failed", { skillName: op.name, error });
-    }
-  }
-
-  await writeManifest(t.agentsDir, { version: 1, skills: bundle });
-  return getSkillsStatus(t);
+  return applySkills(targets ?? resolveSkillTargets());
 }
 
 export async function uninstallSkills(targets?: SkillTargets): Promise<SkillsStatus> {
   const t = targets ?? resolveSkillTargets();
-  await migrateLegacyInstallIfNeeded(t);
-  const manifest = await readManifest(t.agentsDir);
-
-  if (manifest) {
-    for (const skill of manifest.skills) {
-      try {
-        await removeSkill(skill.name, {
-          agentsDir: t.agentsDir,
-          claudeDir: t.claudeDir,
-          codexDir: t.codexDir,
-        });
-      } catch (error) {
-        log.warn("[integrations] skill uninstall failed", { skillName: skill.name, error });
-      }
-    }
+  for (const name of PASEO_SKILL_NAMES) {
+    await removeSkill(name, {
+      agentsDir: t.agentsDir,
+      claudeDir: t.claudeDir,
+      codexDir: t.codexDir,
+    });
   }
-
-  await fs.rm(path.join(t.agentsDir, ".paseo-manifest.json"), { force: true });
   return getSkillsStatus(t);
 }

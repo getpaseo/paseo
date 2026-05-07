@@ -131,7 +131,8 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
 
       processedSkills++;
     } catch (error) {
-      options.onSkillError?.(skillName, error);
+      if (!options.onSkillError) throw error;
+      options.onSkillError(skillName, error);
     }
   }
 

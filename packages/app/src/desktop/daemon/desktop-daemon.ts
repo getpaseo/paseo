@@ -220,7 +220,7 @@ export async function installCli(): Promise<InstallStatus> {
   return parseInstallStatus(await invokeDesktopCommand("install_cli"));
 }
 
-export type SkillsState = "fresh" | "up-to-date" | "drift";
+export type SkillsState = "not-installed" | "up-to-date" | "drift";
 
 export type SkillOp =
   | { kind: "add"; name: string }
@@ -234,7 +234,7 @@ export interface SkillsStatus {
 
 function parseSkillsState(value: unknown): SkillsState {
   switch (value) {
-    case "fresh":
+    case "not-installed":
     case "up-to-date":
     case "drift":
       return value;
