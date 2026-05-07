@@ -19,6 +19,8 @@ describe("searchHomeDirectories", () => {
 
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(outsideDir, { recursive: true });
+    homeDir = realpathSync(homeDir);
+    outsideDir = realpathSync(outsideDir);
 
     mkdirSync(path.join(homeDir, "projects", "paseo"), { recursive: true });
     mkdirSync(path.join(homeDir, "projects", "playground"), { recursive: true });

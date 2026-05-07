@@ -23,6 +23,7 @@ import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 
@@ -1460,47 +1461,51 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
-  test("Linux working tree walker excludes gitignored directories", async () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+  // POSIX-only: this asserts Linux working-tree walker behavior around ignored directories.
+  test.skipIf(isPlatform("win32"))(
+    "Linux working tree walker excludes gitignored directories",
+    async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
 
-    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-ignored-")));
-    const repoDir = join(tempDir, "repo");
-    mkdirSync(join(repoDir, "ignored", "deep"), { recursive: true });
-    mkdirSync(join(repoDir, "kept"), { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
-    writeFileSync(join(repoDir, ".gitignore"), "ignored/\n");
-    writeFileSync(join(repoDir, "ignored", "log.txt"), "noise\n");
-    writeFileSync(join(repoDir, "ignored", "deep", "log.txt"), "noise\n");
-    writeFileSync(join(repoDir, "kept", "file.txt"), "keep\n");
+      const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-ignored-")));
+      const repoDir = join(tempDir, "repo");
+      mkdirSync(join(repoDir, "ignored", "deep"), { recursive: true });
+      mkdirSync(join(repoDir, "kept"), { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+      writeFileSync(join(repoDir, ".gitignore"), "ignored/\n");
+      writeFileSync(join(repoDir, "ignored", "log.txt"), "noise\n");
+      writeFileSync(join(repoDir, "ignored", "deep", "log.txt"), "noise\n");
+      writeFileSync(join(repoDir, "kept", "file.txt"), "keep\n");
 
-    const watchedPaths: string[] = [];
-    const watchSpy = (watchPath: string) => {
-      watchedPaths.push(watchPath);
-      return { close: vi.fn(), on: vi.fn().mockReturnThis() };
-    };
+      const watchedPaths: string[] = [];
+      const watchSpy = (watchPath: string) => {
+        watchedPaths.push(watchPath);
+        return { close: vi.fn(), on: vi.fn().mockReturnThis() };
+      };
 
-    const service = createService({
-      watch: watchSpy as never,
-      readdir: readdir as never,
-      runGitCommand: runGitCommandReal as never,
-      getCheckoutStatus: getCheckoutStatusUncached as never,
-      resolveAbsoluteGitDir: resolveAbsoluteGitDirReal as never,
-    });
+      const service = createService({
+        watch: watchSpy as never,
+        readdir: readdir as never,
+        runGitCommand: runGitCommandReal as never,
+        getCheckoutStatus: getCheckoutStatusUncached as never,
+        resolveAbsoluteGitDir: resolveAbsoluteGitDirReal as never,
+      });
 
-    try {
-      const subscription = await service.requestWorkingTreeWatch(repoDir, vi.fn());
+      try {
+        const subscription = await service.requestWorkingTreeWatch(repoDir, vi.fn());
 
-      const ignoredRoot = join(repoDir, "ignored");
-      expect(watchedPaths.filter((path) => path.startsWith(ignoredRoot))).toEqual([]);
-      expect(watchedPaths).toContain(repoDir);
-      expect(watchedPaths).toContain(join(repoDir, "kept"));
+        const ignoredRoot = join(repoDir, "ignored");
+        expect(watchedPaths.filter((path) => path.startsWith(ignoredRoot))).toEqual([]);
+        expect(watchedPaths).toContain(repoDir);
+        expect(watchedPaths).toContain(join(repoDir, "kept"));
 
-      subscription.unsubscribe();
-    } finally {
-      service.dispose();
-      rmSync(tempDir, { recursive: true, force: true });
-      Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
-    }
-  });
+        subscription.unsubscribe();
+      } finally {
+        service.dispose();
+        rmSync(tempDir, { recursive: true, force: true });
+        Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+      }
+    },
+  );
 });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import os from "node:os";
 import path, { join } from "node:path";
 import type { FSWatcher } from "node:fs";
 import type pino from "pino";
@@ -8,6 +9,7 @@ import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
 
@@ -632,7 +634,8 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
-  test("watches nested repository directories on Linux", async () => {
+  // POSIX-only: this asserts Linux recursive-watch fallback behavior.
+  test.skipIf(isPlatform("win32"))("watches nested repository directories on Linux", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -756,19 +759,18 @@ describe("WorkspaceGitServiceImpl", () => {
       resolveAbsoluteGitDir,
     });
 
-    const subscription = await service.requestWorkingTreeWatch("/tmp/plain", vi.fn());
-    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(
-      "/tmp/plain",
-    );
+    const plainCwd = path.join(os.tmpdir(), "plain");
+    const subscription = await service.requestWorkingTreeWatch(plainCwd, vi.fn());
+    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(plainCwd);
 
     expect(subscription.repoRoot).toBeNull();
     const expectedRecursive = process.platform !== "linux";
     expect(watch).toHaveBeenCalledWith(
-      "/tmp/plain",
+      plainCwd,
       { recursive: expectedRecursive },
       expect.any(Function),
     );
-    expect(target?.repoWatchPath).toBe("/tmp/plain");
+    expect(target?.repoWatchPath).toBe(plainCwd);
     expect(target?.fallbackRefreshInterval).not.toBeNull();
 
     subscription.unsubscribe();

@@ -233,6 +233,8 @@ describe("LoopService", () => {
 
   test("runs fresh worker agents until verify-check passes", async () => {
     const state = { workerRuns: 0 };
+    const verifyScriptPath = path.join(workspaceDir, "verify-check.cjs");
+    writeFileSync(verifyScriptPath, 'require("fs").accessSync("done.txt");\n');
     const manager = new AgentManager({
       clients: {
         claude: new ScriptedAgentClient("claude", {
@@ -257,9 +259,7 @@ describe("LoopService", () => {
     const loop = await service.runLoop({
       prompt: "Create done.txt when the task is actually fixed.",
       cwd: workspaceDir,
-      verifyChecks: [
-        `${JSON.stringify(process.execPath)} -e "require('fs').accessSync('done.txt')"`,
-      ],
+      verifyChecks: [`${JSON.stringify(process.execPath)} ${JSON.stringify(verifyScriptPath)}`],
       sleepMs: 1,
       maxIterations: 3,
     });

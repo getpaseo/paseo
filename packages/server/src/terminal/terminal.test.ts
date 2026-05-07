@@ -72,7 +72,8 @@ describe("createTerminal", () => {
     expect(humanizeProcessTitle("/bin/bash /tmp/dev.sh")).toBe("dev.sh");
   });
 
-  it("ensures darwin prebuild spawn-helper is executable", () => {
+  // macOS-only: node-pty ships the spawn-helper prebuild only for darwin.
+  it.runIf(isPlatform("darwin"))("ensures darwin prebuild spawn-helper is executable", () => {
     const packageRoot = mkdtempSync(join(tmpdir(), "terminal-node-pty-helper-"));
     temporaryDirs.push(packageRoot);
     const prebuildDir = join(packageRoot, "prebuilds", `darwin-${process.arch}`);
@@ -117,10 +118,13 @@ describe("createTerminal", () => {
   });
 
   it("uses custom name when provided", async () => {
+    const shell = isPlatform("win32")
+      ? (process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe")
+      : "/bin/sh";
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
+        cwd: realpathSync(tmpdir()),
+        shell,
         env: { PS1: "$ " },
         name: "Dev Server",
       }),
@@ -132,7 +136,7 @@ describe("createTerminal", () => {
   it("uses default shell if not specified", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
+        cwd: realpathSync(tmpdir()),
       }),
     );
 
@@ -140,10 +144,13 @@ describe("createTerminal", () => {
   });
 
   it("uses default rows and cols", async () => {
+    const shell = isPlatform("win32")
+      ? (process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe")
+      : "/bin/sh";
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
+        cwd: realpathSync(tmpdir()),
+        shell,
         env: { PS1: "$ " },
       }),
     );
@@ -154,10 +161,13 @@ describe("createTerminal", () => {
   });
 
   it("respects custom rows and cols", async () => {
+    const shell = isPlatform("win32")
+      ? (process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe")
+      : "/bin/sh";
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
+        cwd: realpathSync(tmpdir()),
+        shell,
         env: { PS1: "$ " },
         rows: 40,
         cols: 120,

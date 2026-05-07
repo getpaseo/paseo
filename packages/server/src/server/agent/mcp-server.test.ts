@@ -25,6 +25,7 @@ import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
+const TARGET_CWD = resolvePath("/tmp/target");
 
 interface LooseSafeParseResult {
   success: boolean;
@@ -1956,28 +1957,32 @@ describe("agent snapshot MCP serialization", () => {
     spies.agentManager.listAgents.mockReturnValue([
       createManagedAgent({
         id: "running-target",
-        cwd: "/tmp/target",
+        cwd: TARGET_CWD,
         lifecycle: "running",
         updatedAt: new Date(recent),
       }),
       createManagedAgent({
         id: "idle-target",
-        cwd: "/tmp/target",
+        cwd: TARGET_CWD,
         lifecycle: "idle",
         updatedAt: new Date(recent),
       }),
       createManagedAgent({
         id: "old-running-target",
-        cwd: "/tmp/target",
+        cwd: TARGET_CWD,
         lifecycle: "running",
         createdAt: new Date(old),
         updatedAt: new Date(old),
       }),
     ]);
     spies.agentStorage.list.mockResolvedValue([
-      createStoredRecord({ id: "recent-archived", cwd: "/tmp/target", archivedAt: recent }),
-      createStoredRecord({ id: "old-archived", cwd: "/tmp/target", archivedAt: old }),
-      createStoredRecord({ id: "recent-other-cwd", cwd: "/tmp/other", archivedAt: recent }),
+      createStoredRecord({ id: "recent-archived", cwd: TARGET_CWD, archivedAt: recent }),
+      createStoredRecord({ id: "old-archived", cwd: TARGET_CWD, archivedAt: old }),
+      createStoredRecord({
+        id: "recent-other-cwd",
+        cwd: resolvePath("/tmp/other"),
+        archivedAt: recent,
+      }),
     ]);
 
     const server = await createAgentMcpServer({
@@ -1990,7 +1995,7 @@ describe("agent snapshot MCP serialization", () => {
     });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.callback({
-      cwd: "/tmp/target",
+      cwd: TARGET_CWD,
       includeArchived: true,
       sinceHours: 48,
       statuses: ["running", "closed"],

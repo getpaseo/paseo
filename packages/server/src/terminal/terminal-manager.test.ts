@@ -27,14 +27,31 @@ async function waitForCondition(
 let manager: TerminalManager;
 const temporaryDirs: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   if (manager) {
+    const terminalsByCwd = await Promise.all(
+      manager.listDirectories().map((cwd) => manager.getTerminals(cwd)),
+    );
+    await Promise.all(
+      terminalsByCwd
+        .flat()
+        .map((terminal) =>
+          manager.killTerminalAndWait(terminal.id, { gracefulTimeoutMs: 50, forceTimeoutMs: 50 }),
+        ),
+    );
     manager.killAll();
   }
+  await new Promise((resolve) => setTimeout(resolve, 50));
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
     if (dir) {
-      rmSync(dir, { recursive: true, force: true });
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EBUSY") {
+          throw error;
+        }
+      }
     }
   }
 });
