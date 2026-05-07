@@ -1,6 +1,14 @@
 import os from "node:os";
 import path from "node:path";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 import type {
@@ -220,11 +228,12 @@ describe("LoopService", () => {
   let storage: AgentStorage;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(os.tmpdir(), "loop-service-"));
+    tmpDir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "loop-service-")));
     paseoHome = path.join(tmpDir, "paseo-home");
     workspaceDir = path.join(tmpDir, "workspace");
     storage = new AgentStorage(path.join(tmpDir, "agents"), logger);
     mkdirSync(workspaceDir, { recursive: true });
+    workspaceDir = realpathSync.native(workspaceDir);
   });
 
   afterEach(() => {
