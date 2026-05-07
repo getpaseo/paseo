@@ -1184,7 +1184,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
 
       expect(listPaseoWorktrees).toHaveBeenCalledTimes(1);
       expect(listPaseoWorktrees).toHaveBeenCalledWith({
-        cwd: realpathSync.native(repoDir),
+        cwd: realpathSync.native(repoDir).replace(/\\/g, "/"),
         paseoHome: "/tmp/paseo-test",
       });
     } finally {
