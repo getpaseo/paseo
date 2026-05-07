@@ -1458,7 +1458,9 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       baseBranch: "main",
       branchName: "resolver-feature",
     });
-    expect(resolveDefaultBranch).toHaveBeenCalledWith(repoDir);
+    const resolvedCwd = resolveDefaultBranch.mock.calls[0]?.[0];
+    expect(resolvedCwd).toBeDefined();
+    expect(realpathSync(resolvedCwd ?? "")).toBe(realpathSync(repoDir));
   });
 });
 
@@ -1590,10 +1592,10 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           cwd: registeredWorktreePath,
         }),
       );
-      expect(backgroundWork).toHaveBeenCalledWith(
+      const backgroundInput = backgroundWork.mock.calls[0]?.[0];
+      expect(backgroundInput).toEqual(
         expect.objectContaining({
           requestCwd: repoDir,
-          repoRoot: repoDir,
           worktree: {
             branchName: "response-after-create",
             worktreePath: registeredWorktreePath,
@@ -1601,6 +1603,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           shouldBootstrap: true,
         }),
       );
+      expect(realpathSync(backgroundInput?.repoRoot ?? "")).toBe(realpathSync(repoDir));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

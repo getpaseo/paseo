@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import {
   buildTerminalEnvironment,
   createTerminal,
@@ -15,6 +16,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -24,6 +26,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const hasZsh = existsSync("/bin/zsh");
+if (isPlatform("win32") && !process.env.ComSpec && !process.env.COMSPEC) {
+  process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
+}
 
 type TerminalRow = ReturnType<TerminalSession["getState"]>["grid"][number];
 
@@ -186,9 +191,7 @@ describe("createTerminal", () => {
   it("creates a terminal session with an id, name, and cwd", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
+        cwd: realpathSync(tmpdir()),
       }),
     );
 
@@ -196,10 +199,11 @@ describe("createTerminal", () => {
     expect(typeof session.id).toBe("string");
     expect(session.id.length).toBeGreaterThan(0);
     expect(session.name).toBe("Terminal");
-    expect(session.cwd).toBe("/tmp");
+    expect(session.cwd).toBe(realpathSync(tmpdir()));
   });
 
-  it("sets zsh wrapper env when spawning zsh", () => {
+  // POSIX-only: zsh shell integration is only installed for POSIX shells.
+  it.skipIf(isPlatform("win32"))("sets zsh wrapper env when spawning zsh", () => {
     const resolvedEnv = buildTerminalEnvironment({
       shell: "/bin/zsh",
       env: {
@@ -271,9 +275,12 @@ describe("createTerminal", () => {
   it("captures exit diagnostics from the terminal buffer", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        command: "/bin/sh",
-        args: ["-lc", "printf 'launch failed\\ncommand missing\\n'; exit 127"],
+        cwd: realpathSync(tmpdir()),
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write('launch failed\\ncommand missing\\n'); process.exit(127);",
+        ],
       }),
     );
 
@@ -291,7 +298,8 @@ describe("createTerminal", () => {
   });
 });
 
-describe("send input", () => {
+// POSIX-only: shell command assertions depend on POSIX prompt and command syntax.
+describe.skipIf(isPlatform("win32"))("send input", () => {
   it("executes a simple echo command", async () => {
     const session = trackSession(
       await createTerminal({
@@ -365,7 +373,8 @@ describe("send input", () => {
   });
 });
 
-describe("terminal title", () => {
+// POSIX-only: title fixtures depend on POSIX shell printf/zsh behavior.
+describe.skipIf(isPlatform("win32"))("terminal title", () => {
   it.skipIf(!hasZsh)("restores the user's ZDOTDIR through the zsh wrapper", async () => {
     const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-home-"));
     temporaryDirs.push(homeDir);
@@ -681,7 +690,8 @@ describe("terminal title", () => {
   });
 });
 
-describe("colors", () => {
+// POSIX-only: ANSI color fixtures depend on POSIX shell printf behavior.
+describe.skipIf(isPlatform("win32"))("colors", () => {
   it("captures ANSI 16 color codes (mode 1)", async () => {
     const session = trackSession(
       await createTerminal({
@@ -793,9 +803,7 @@ describe("resize", () => {
   it("updates terminal dimensions on resize", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
+        cwd: realpathSync(tmpdir()),
         rows: 24,
         cols: 80,
       }),
@@ -813,9 +821,7 @@ describe("resize", () => {
   it("grid reflects new dimensions after resize", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
+        cwd: realpathSync(tmpdir()),
         rows: 24,
         cols: 80,
       }),
@@ -832,9 +838,7 @@ describe("resize", () => {
   it("exposes the current size without extracting full state", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
+        cwd: realpathSync(tmpdir()),
         rows: 24,
         cols: 80,
       }),
@@ -849,13 +853,12 @@ describe("resize", () => {
   });
 });
 
-describe("subscribe", () => {
+// POSIX-only: subscription fixtures assert POSIX shell prompts and echo output.
+describe.skipIf(isPlatform("win32"))("subscribe", () => {
   it("receives a snapshot on initial subscription", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
+        cwd: realpathSync(tmpdir()),
       }),
     );
 
@@ -1066,7 +1069,8 @@ function lastNonEmptyLineIsPrompt(state: ReturnType<TerminalSession["getState"]>
   return last === "$";
 }
 
-describe("terminal protocol queries", () => {
+// POSIX-only: protocol query fixtures drive foreground apps through a POSIX shell.
+describe.skipIf(isPlatform("win32"))("terminal protocol queries", () => {
   it("delivers a DA1 reply to a foreground app on stdin", async () => {
     const helperPath = writeDaHelper("terminal-da-helper-");
 
@@ -1161,7 +1165,8 @@ describe("terminal protocol queries", () => {
   });
 });
 
-describe("stream snapshots", () => {
+// POSIX-only: stream snapshot fixtures assert POSIX shell prompts and echo output.
+describe.skipIf(isPlatform("win32"))("stream snapshots", () => {
   it("streams raw output messages without replay metadata", async () => {
     const session = trackSession(
       await createTerminal({
@@ -1228,7 +1233,8 @@ describe("stream snapshots", () => {
   });
 });
 
-describe("getState", () => {
+// POSIX-only: state fixtures assert POSIX shell output and ANSI command syntax.
+describe.skipIf(isPlatform("win32"))("getState", () => {
   it("returns current terminal state with grid", async () => {
     const session = trackSession(
       await createTerminal({
@@ -1300,7 +1306,8 @@ describe("getState", () => {
   });
 });
 
-describe("scrollback", () => {
+// POSIX-only: scrollback fixture uses POSIX seq output and shell prompts.
+describe.skipIf(isPlatform("win32"))("scrollback", () => {
   it("preserves scrollback buffer", async () => {
     const session = trackSession(
       await createTerminal({
@@ -1338,7 +1345,8 @@ describe("scrollback", () => {
   });
 });
 
-describe("kill", () => {
+// POSIX-only: kill fixtures assert POSIX shell process behavior.
+describe.skipIf(isPlatform("win32"))("kill", () => {
   it("terminates the shell process", async () => {
     const session = trackSession(
       await createTerminal({
@@ -1377,9 +1385,7 @@ describe("mouse events", () => {
   it("accepts mouse events without throwing", async () => {
     const session = trackSession(
       await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
+        cwd: realpathSync(tmpdir()),
       }),
     );
 

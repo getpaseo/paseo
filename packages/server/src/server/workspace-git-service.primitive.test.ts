@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   createGitHubService,
@@ -23,6 +23,8 @@ import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
+
+const REPO_CWD = resolvePath("/tmp/repo");
 
 function createLogger() {
   const logger = {
@@ -230,11 +232,11 @@ function buildDefaultServiceDeps() {
     listBranchSuggestions: vi.fn(async () => []),
     listPaseoWorktrees: vi.fn(async () => []),
     github: createGitHubServiceStub(),
-    resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+    resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
     hasOriginRemote: vi.fn(async () => false),
     runGitFetch: vi.fn(async () => {}),
     runGitCommand: vi.fn(async () => ({
-      stdout: "/tmp/repo\n",
+      stdout: `${REPO_CWD}\n`,
       stderr: "",
       truncated: false,
       exitCode: 0,
@@ -273,9 +275,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(createSnapshot("/tmp/repo"));
+    await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
     nowMs += 1_000;
-    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(createSnapshot("/tmp/repo"));
+    await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
@@ -292,7 +294,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getPullRequestStatus,
     });
 
-    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(createSnapshot("/tmp/repo"));
+    await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getCheckoutShortstat).toHaveBeenCalledTimes(1);
@@ -307,22 +309,22 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const service = createService({ getCheckoutStatus });
     const listener = vi.fn();
 
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
     expect(subscription).toEqual({ unsubscribe: expect.any(Function) });
     expect(getCheckoutStatus).not.toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalled();
-    expect(service.peekSnapshot("/tmp/repo")).toBeNull();
+    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
 
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
-    expect(service.peekSnapshot("/tmp/repo")).toBeNull();
+    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
 
-    checkoutStatusDeferred.resolve(createCheckoutStatus("/tmp/repo"));
+    checkoutStatusDeferred.resolve(createCheckoutStatus(REPO_CWD));
 
-    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(createSnapshot("/tmp/repo"));
-    expect(service.peekSnapshot("/tmp/repo")).toEqual(createSnapshot("/tmp/repo"));
+    await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
+    expect(service.peekSnapshot(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
 
     subscription.unsubscribe();
     service.dispose();
@@ -336,9 +338,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       now: () => new Date(nowMs),
     });
 
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
     nowMs = 1;
-    await service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
+    await service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
@@ -348,15 +350,15 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("forced getSnapshot emits even when the fingerprint matches", async () => {
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService({ getCheckoutStatus });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     const listener = vi.fn();
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
-    await service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
+    await service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(createSnapshot("/tmp/repo"));
+    expect(listener).toHaveBeenCalledWith(createSnapshot(REPO_CWD));
 
     subscription.unsubscribe();
     service.dispose();
@@ -371,13 +373,13 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     const listener = vi.fn();
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
     nowMs = 3_000;
-    await service.refresh("/tmp/repo");
+    await service.refresh(REPO_CWD);
 
     expect(listener).not.toHaveBeenCalled();
 
@@ -390,17 +392,17 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const getCheckoutStatus = vi.fn(async () => checkoutStatusDeferred.promise);
     const service = createService({ getCheckoutStatus });
 
-    const first = service.getSnapshot("/tmp/repo");
-    const second = service.getSnapshot("/tmp/repo/.");
+    const first = service.getSnapshot(REPO_CWD);
+    const second = service.getSnapshot(join(REPO_CWD, "."));
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
-    checkoutStatusDeferred.resolve(createCheckoutStatus("/tmp/repo"));
+    checkoutStatusDeferred.resolve(createCheckoutStatus(REPO_CWD));
 
     await expect(Promise.all([first, second])).resolves.toEqual([
-      createSnapshot("/tmp/repo"),
-      createSnapshot("/tmp/repo"),
+      createSnapshot(REPO_CWD),
+      createSnapshot(REPO_CWD),
     ]);
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
@@ -424,24 +426,24 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(
-      createSnapshot("/tmp/repo", {
+    await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(
+      createSnapshot(REPO_CWD, {
         git: { diffStat: { additions: 4, deletions: 2 } },
       }),
     );
 
     nowMs += 16_000;
-    const first = service.getSnapshot("/tmp/repo");
+    const first = service.getSnapshot(REPO_CWD);
     await flushPromises();
-    const second = service.getSnapshot("/tmp/repo");
+    const second = service.getSnapshot(REPO_CWD);
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getCheckoutShortstat).toHaveBeenCalledTimes(1);
 
-    refreshStatus.resolve(createCheckoutStatus("/tmp/repo", { currentBranch: "feature" }));
+    refreshStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
 
-    const freshSnapshot = createSnapshot("/tmp/repo", {
+    const freshSnapshot = createSnapshot(REPO_CWD, {
       git: {
         currentBranch: "feature",
         diffStat: { additions: 4, deletions: 2 },
@@ -461,11 +463,11 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     nowMs = 3_000;
     for (let index = 0; index < 5; index += 1) {
-      service.scheduleRefreshForCwd("/tmp/repo");
+      service.scheduleRefreshForCwd(REPO_CWD);
     }
     await vi.advanceTimersByTimeAsync(500);
     await flushPromises();
@@ -480,20 +482,20 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const secondRefresh = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()
-      .mockImplementationOnce(async () => createCheckoutStatus("/tmp/repo"))
+      .mockImplementationOnce(async () => createCheckoutStatus(REPO_CWD))
       .mockImplementationOnce(async () => secondRefresh.promise)
-      .mockImplementation(async () => createCheckoutStatus("/tmp/repo"));
+      .mockImplementation(async () => createCheckoutStatus(REPO_CWD));
     const service = createService({
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     nowMs = 3_000;
-    const refreshPromise = service.refresh("/tmp/repo");
+    const refreshPromise = service.refresh(REPO_CWD);
     await flushPromises();
-    const forcedPromise = service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
-    const duplicateForcedPromise = service.getSnapshot("/tmp/repo", {
+    const forcedPromise = service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
+    const duplicateForcedPromise = service.getSnapshot(REPO_CWD, {
       force: true,
       reason: "test",
     });
@@ -501,7 +503,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
-    secondRefresh.resolve(createCheckoutStatus("/tmp/repo"));
+    secondRefresh.resolve(createCheckoutStatus(REPO_CWD));
     await Promise.all([refreshPromise, forcedPromise, duplicateForcedPromise]);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(3);
@@ -513,19 +515,19 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const forcedRefresh = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()
-      .mockImplementationOnce(async () => createCheckoutStatus("/tmp/repo"))
+      .mockImplementationOnce(async () => createCheckoutStatus(REPO_CWD))
       .mockImplementationOnce(async () => forcedRefresh.promise);
     const service = createService({ getCheckoutStatus });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
-    const first = service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
+    const first = service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
     await flushPromises();
-    const second = service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
+    const second = service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
-    forcedRefresh.resolve(createCheckoutStatus("/tmp/repo"));
+    forcedRefresh.resolve(createCheckoutStatus(REPO_CWD));
     await Promise.all([first, second]);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
@@ -537,18 +539,18 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const forcedRefresh = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()
-      .mockImplementationOnce(async () => createCheckoutStatus("/tmp/repo"))
+      .mockImplementationOnce(async () => createCheckoutStatus(REPO_CWD))
       .mockImplementationOnce(async () => forcedRefresh.promise);
     const service = createService({ getCheckoutStatus });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
-    const forcePromise = service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
+    const forcePromise = service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
     await flushPromises();
-    service.scheduleRefreshForCwd("/tmp/repo");
+    service.scheduleRefreshForCwd(REPO_CWD);
     await vi.advanceTimersByTimeAsync(500);
     await flushPromises();
 
-    forcedRefresh.resolve(createCheckoutStatus("/tmp/repo"));
+    forcedRefresh.resolve(createCheckoutStatus(REPO_CWD));
     await forcePromise;
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
@@ -563,12 +565,12 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     nowMs = 3_000;
-    await service.refresh("/tmp/repo");
+    await service.refresh(REPO_CWD);
     nowMs = 3_001;
-    await service.refresh("/tmp/repo");
+    await service.refresh(REPO_CWD);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
@@ -582,10 +584,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     nowMs = 16_000;
-    await service.getSnapshot("/tmp/repo");
+    await service.getSnapshot(REPO_CWD);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
@@ -601,7 +603,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getPullRequestStatus,
       now: () => new Date(nowMs),
     });
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     nowMs = 60_000;
@@ -609,7 +611,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
-    expect(getPullRequestStatus).toHaveBeenLastCalledWith("/tmp/repo", expect.anything(), {
+    expect(getPullRequestStatus).toHaveBeenLastCalledWith(REPO_CWD, expect.anything(), {
       force: false,
       reason: "self-heal-git",
     });
@@ -623,7 +625,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const resolveAbsoluteGitDir = vi
       .fn<() => Promise<string | null>>()
       .mockRejectedValueOnce(new Error("git dir temporarily unavailable"))
-      .mockResolvedValue("/tmp/repo/.git");
+      .mockResolvedValue(join(REPO_CWD, ".git"));
     const watch = vi.fn(() => createWatcher() as never);
     const service = createService({
       resolveAbsoluteGitDir,
@@ -631,7 +633,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       now: () => new Date(nowMs),
     });
 
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
@@ -642,7 +644,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await flushPromises();
 
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(2);
-    expect(resolveAbsoluteGitDir).toHaveBeenLastCalledWith("/tmp/repo");
+    expect(resolveAbsoluteGitDir).toHaveBeenLastCalledWith(REPO_CWD);
 
     subscription.unsubscribe();
     service.dispose();
@@ -659,11 +661,11 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService({
       getCheckoutStatus,
-      resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
       watch,
     });
 
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     await vi.waitFor(() => {
@@ -697,7 +699,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       github,
     });
 
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     await vi.waitFor(() => {
@@ -744,7 +746,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       github,
       now: () => new Date(nowMs),
     });
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     nowMs = 20_000;
@@ -777,7 +779,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       github,
     });
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     expect(retainCurrentPullRequestStatusPoll).not.toHaveBeenCalled();
@@ -801,7 +803,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       github,
     });
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     await vi.waitFor(() => {
@@ -819,8 +821,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    const first = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
-    const second = service.registerWorkspace({ cwd: "/tmp/repo/." }, vi.fn());
+    const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const second = service.registerWorkspace({ cwd: join(REPO_CWD, ".") }, vi.fn());
     await flushPromises();
 
     nowMs = 60_000;
@@ -841,7 +843,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
 
     subscription.unsubscribe();
     nowMs = 60_000;
@@ -860,7 +862,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
 
     service.dispose();
     nowMs = 60_000;
@@ -875,24 +877,24 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const selfHealRefresh = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()
-      .mockImplementationOnce(async () => createCheckoutStatus("/tmp/repo"))
+      .mockImplementationOnce(async () => createCheckoutStatus(REPO_CWD))
       .mockImplementationOnce(async () => selfHealRefresh.promise);
     const service = createService({
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
-    const directRead = service.getSnapshot("/tmp/repo");
+    const directRead = service.getSnapshot(REPO_CWD);
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
-    selfHealRefresh.resolve(createCheckoutStatus("/tmp/repo"));
+    selfHealRefresh.resolve(createCheckoutStatus(REPO_CWD));
     await directRead;
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
@@ -923,8 +925,8 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.validateBranchRef("/tmp/repo", "feature");
-    const second = service.validateBranchRef("/tmp/repo/.", "feature");
+    const first = service.validateBranchRef(REPO_CWD, "feature");
+    const second = service.validateBranchRef(join(REPO_CWD, "."), "feature");
     await flushPromises();
 
     expect(resolveBranchCheckout).toHaveBeenCalledTimes(1);
@@ -935,10 +937,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     ]);
 
     nowMs = 1_000;
-    await service.validateBranchRef("/tmp/repo", "feature");
+    await service.validateBranchRef(REPO_CWD, "feature");
     expect(resolveBranchCheckout).toHaveBeenCalledTimes(1);
 
-    await service.validateBranchRef("/tmp/repo", "feature", { force: true, reason: "test" });
+    await service.validateBranchRef(REPO_CWD, "feature", { force: true, reason: "test" });
     expect(resolveBranchCheckout).toHaveBeenCalledTimes(2);
 
     service.dispose();
@@ -968,15 +970,15 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.hasLocalBranch("/tmp/repo", "feature");
-    const second = service.hasLocalBranch("/tmp/repo/.", "feature");
+    const first = service.hasLocalBranch(REPO_CWD, "feature");
+    const second = service.hasLocalBranch(join(REPO_CWD, "."), "feature");
     await flushPromises();
 
     expect(runGitCommand).toHaveBeenCalledTimes(1);
     expect(runGitCommand).toHaveBeenCalledWith(
       ["rev-parse", "--verify", "--quiet", "refs/heads/feature"],
       expect.objectContaining({
-        cwd: "/tmp/repo",
+        cwd: REPO_CWD,
         acceptExitCodes: [0, 1],
       }),
     );
@@ -990,11 +992,11 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
 
     nowMs = 1_000;
-    await expect(service.hasLocalBranch("/tmp/repo", "feature")).resolves.toBe(true);
+    await expect(service.hasLocalBranch(REPO_CWD, "feature")).resolves.toBe(true);
     expect(runGitCommand).toHaveBeenCalledTimes(1);
 
     await expect(
-      service.hasLocalBranch("/tmp/repo", "feature", { force: true, reason: "test" }),
+      service.hasLocalBranch(REPO_CWD, "feature", { force: true, reason: "test" }),
     ).resolves.toBe(false);
     expect(runGitCommand).toHaveBeenCalledTimes(2);
 
@@ -1013,18 +1015,18 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(service.validateBranchRef("/tmp/repo", "feature")).resolves.toEqual({
+    await expect(service.validateBranchRef(REPO_CWD, "feature")).resolves.toEqual({
       kind: "local",
       name: "feature-old",
     });
 
     nowMs = 16_000;
     resolveBranchCheckout.mockClear();
-    await expect(service.validateBranchRef("/tmp/repo", "feature")).rejects.toThrow("git is busy");
+    await expect(service.validateBranchRef(REPO_CWD, "feature")).rejects.toThrow("git is busy");
     expect(resolveBranchCheckout).toHaveBeenCalledTimes(1);
 
     nowMs = 16_500;
-    await expect(service.validateBranchRef("/tmp/repo", "feature")).resolves.toEqual({
+    await expect(service.validateBranchRef(REPO_CWD, "feature")).resolves.toEqual({
       kind: "local",
       name: "feature-old",
     });
@@ -1046,8 +1048,8 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.suggestBranchesForCwd("/tmp/repo", { query: "feat", limit: 5 });
-    const second = service.suggestBranchesForCwd("/tmp/repo/.", {
+    const first = service.suggestBranchesForCwd(REPO_CWD, { query: "feat", limit: 5 });
+    const second = service.suggestBranchesForCwd(join(REPO_CWD, "."), {
       query: "feat",
       limit: 5,
     });
@@ -1058,11 +1060,11 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     await expect(Promise.all([first, second])).resolves.toEqual([suggestions, suggestions]);
 
     nowMs = 1_000;
-    await service.suggestBranchesForCwd("/tmp/repo", { query: "feat", limit: 5 });
+    await service.suggestBranchesForCwd(REPO_CWD, { query: "feat", limit: 5 });
     expect(listBranchSuggestions).toHaveBeenCalledTimes(1);
 
     await service.suggestBranchesForCwd(
-      "/tmp/repo",
+      REPO_CWD,
       { query: "feat", limit: 5 },
       { force: true, reason: "test" },
     );
@@ -1096,8 +1098,8 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.listStashes("/tmp/repo", { paseoOnly: true });
-    const second = service.listStashes("/tmp/repo/.", { paseoOnly: true });
+    const first = service.listStashes(REPO_CWD, { paseoOnly: true });
+    const second = service.listStashes(join(REPO_CWD, "."), { paseoOnly: true });
     await flushPromises();
 
     expect(runGitCommand).toHaveBeenCalledTimes(1);
@@ -1114,10 +1116,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     ]);
 
     nowMs = 1_000;
-    await service.listStashes("/tmp/repo", { paseoOnly: true });
+    await service.listStashes(REPO_CWD, { paseoOnly: true });
     expect(runGitCommand).toHaveBeenCalledTimes(1);
 
-    await service.listStashes("/tmp/repo", { paseoOnly: true }, { force: true, reason: "test" });
+    await service.listStashes(REPO_CWD, { paseoOnly: true }, { force: true, reason: "test" });
     expect(runGitCommand).toHaveBeenCalledTimes(2);
 
     service.dispose();
@@ -1138,16 +1140,16 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.listWorktrees("/tmp/repo");
-    const second = service.listWorktrees("/tmp/repo/.");
+    const first = service.listWorktrees(REPO_CWD);
+    const second = service.listWorktrees(join(REPO_CWD, "."));
     await expect(Promise.all([first, second])).resolves.toEqual([worktrees, worktrees]);
     expect(listPaseoWorktrees).toHaveBeenCalledTimes(1);
 
     nowMs = 1_000;
-    await service.listWorktrees("/tmp/repo");
+    await service.listWorktrees(REPO_CWD);
     expect(listPaseoWorktrees).toHaveBeenCalledTimes(1);
 
-    await service.listWorktrees("/tmp/repo", { force: true, reason: "test" });
+    await service.listWorktrees(REPO_CWD, { force: true, reason: "test" });
     expect(listPaseoWorktrees).toHaveBeenCalledTimes(2);
 
     service.dispose();
@@ -1202,8 +1204,8 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.resolveDefaultBranch("/tmp/repo");
-    const second = service.resolveDefaultBranch("/tmp/repo/.");
+    const first = service.resolveDefaultBranch(REPO_CWD);
+    const second = service.resolveDefaultBranch(join(REPO_CWD, "."));
     await flushPromises();
 
     expect(resolveRepositoryDefaultBranch).toHaveBeenCalledTimes(1);
@@ -1211,10 +1213,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     await expect(Promise.all([first, second])).resolves.toEqual(["main", "main"]);
 
     nowMs = 1_000;
-    await service.resolveDefaultBranch("/tmp/repo");
+    await service.resolveDefaultBranch(REPO_CWD);
     expect(resolveRepositoryDefaultBranch).toHaveBeenCalledTimes(1);
 
-    await service.resolveDefaultBranch("/tmp/repo", { force: true, reason: "test" });
+    await service.resolveDefaultBranch(REPO_CWD, { force: true, reason: "test" });
     expect(resolveRepositoryDefaultBranch).toHaveBeenCalledTimes(2);
 
     service.dispose();
@@ -1226,25 +1228,25 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     const getCheckoutStatus = vi
       .fn()
       .mockImplementationOnce(async () => checkoutDeferred.promise)
-      .mockResolvedValue(createCheckoutStatus("/tmp/repo"));
+      .mockResolvedValue(createCheckoutStatus(REPO_CWD));
     const service = createService({
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
 
-    const first = service.resolveRepoRoot("/tmp/repo");
-    const second = service.resolveRepoRoot("/tmp/repo/.");
+    const first = service.resolveRepoRoot(REPO_CWD);
+    const second = service.resolveRepoRoot(join(REPO_CWD, "."));
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
-    checkoutDeferred.resolve(createCheckoutStatus("/tmp/repo"));
-    await expect(Promise.all([first, second])).resolves.toEqual(["/tmp/repo", "/tmp/repo"]);
+    checkoutDeferred.resolve(createCheckoutStatus(REPO_CWD));
+    await expect(Promise.all([first, second])).resolves.toEqual([REPO_CWD, REPO_CWD]);
 
     nowMs = 1_000;
-    await service.resolveRepoRoot("/tmp/repo");
+    await service.resolveRepoRoot(REPO_CWD);
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
-    await service.resolveRepoRoot("/tmp/repo", { force: true, reason: "test" });
+    await service.resolveRepoRoot(REPO_CWD, { force: true, reason: "test" });
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 
     service.dispose();
@@ -1262,11 +1264,11 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(service.resolveRepoRemoteUrl("/tmp/repo")).resolves.toBe(
+    await expect(service.resolveRepoRemoteUrl(REPO_CWD)).resolves.toBe(
       "https://github.com/getpaseo/paseo.git",
     );
     nowMs = 1_000;
-    await expect(service.resolveRepoRemoteUrl("/tmp/repo/.")).resolves.toBe(
+    await expect(service.resolveRepoRemoteUrl(join(REPO_CWD, "."))).resolves.toBe(
       "https://github.com/getpaseo/paseo.git",
     );
 
@@ -1281,7 +1283,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       createCheckoutStatus(cwd, {
         currentBranch: "feature/service-metadata",
         remoteUrl: "https://github.com/getpaseo/paseo.git",
-        repoRoot: "/tmp/repo",
+        repoRoot: REPO_CWD,
       }),
     );
     const service = createService({
@@ -1290,7 +1292,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     });
 
     await expect(
-      service.getWorkspaceGitMetadata("/tmp/repo", { directoryName: "Local Repo" }),
+      service.getWorkspaceGitMetadata(REPO_CWD, { directoryName: "Local Repo" }),
     ).resolves.toEqual({
       projectKind: "git",
       projectDisplayName: "getpaseo/paseo",
@@ -1298,13 +1300,13 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       gitRemote: "https://github.com/getpaseo/paseo.git",
       isWorktree: false,
       projectSlug: "paseo",
-      repoRoot: "/tmp/repo",
+      repoRoot: REPO_CWD,
       currentBranch: "feature/service-metadata",
       remoteUrl: "https://github.com/getpaseo/paseo.git",
     });
 
     nowMs = 1_000;
-    await service.getWorkspaceGitMetadata("/tmp/repo/.", { directoryName: "Local Repo" });
+    await service.getWorkspaceGitMetadata(join(REPO_CWD, "."), { directoryName: "Local Repo" });
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
@@ -1360,8 +1362,8 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       .mockResolvedValue({ diff: "second" });
     const service = createService({ getCheckoutDiff, now: () => new Date(0) });
 
-    const first = service.getCheckoutDiff("/tmp/repo", { mode: "uncommitted" });
-    const second = service.getCheckoutDiff("/tmp/repo/.", { mode: "uncommitted" });
+    const first = service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" });
+    const second = service.getCheckoutDiff(join(REPO_CWD, "."), { mode: "uncommitted" });
     await flushPromises();
 
     expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
@@ -1386,16 +1388,12 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(service.getCheckoutDiff("/tmp/repo", { mode: "uncommitted" })).resolves.toEqual({
+    await expect(service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" })).resolves.toEqual({
       diff: "first",
     });
     nowMs = 1;
     await expect(
-      service.getCheckoutDiff(
-        "/tmp/repo",
-        { mode: "uncommitted" },
-        { force: true, reason: "test" },
-      ),
+      service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" }, { force: true, reason: "test" }),
     ).resolves.toEqual({ diff: "forced" });
 
     expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
@@ -1415,15 +1413,15 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    await expect(service.getCheckoutDiff("/tmp/repo", { mode: "uncommitted" })).resolves.toEqual({
+    await expect(service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" })).resolves.toEqual({
       diff: "first",
     });
     nowMs = 16_000;
-    await expect(service.getCheckoutDiff("/tmp/repo", { mode: "uncommitted" })).rejects.toThrow(
+    await expect(service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" })).rejects.toThrow(
       "git is busy",
     );
     nowMs = 16_500;
-    await expect(service.getCheckoutDiff("/tmp/repo", { mode: "uncommitted" })).resolves.toEqual({
+    await expect(service.getCheckoutDiff(REPO_CWD, { mode: "uncommitted" })).resolves.toEqual({
       diff: "first",
     });
 
@@ -1444,13 +1442,13 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     });
 
     await expect(
-      service.getCheckoutDiff("/tmp/repo", { mode: "base", baseRef: "main" }),
+      service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "main" }),
     ).resolves.toEqual({ diff: "main" });
     await expect(
-      service.getCheckoutDiff("/tmp/repo", { mode: "base", baseRef: "release" }),
+      service.getCheckoutDiff(REPO_CWD, { mode: "base", baseRef: "release" }),
     ).resolves.toEqual({ diff: "release" });
     await expect(
-      service.getCheckoutDiff("/tmp/repo", {
+      service.getCheckoutDiff(REPO_CWD, {
         mode: "base",
         baseRef: "main",
         ignoreWhitespace: true,

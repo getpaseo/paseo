@@ -319,7 +319,7 @@ const x = 1;
       return;
     }
     expect(status.currentBranch).toBe("main");
-    expect(status.repoRoot).toBe(repoDir);
+    expect(realpathSync(status.repoRoot)).toBe(realpathSync(repoDir));
     expect(status.isPaseoOwnedWorktree).toBe(false);
     expect(status.mainRepoRoot ?? null).toBeNull();
   });
@@ -870,10 +870,10 @@ const x = 1;
 
     const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(status.repoRoot).toBe(result.worktreePath);
+    expect(realpathSync(status.repoRoot)).toBe(realpathSync(result.worktreePath));
     expect(status.isDirty).toBe(true);
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(status.mainRepoRoot).toBe(repoDir);
+    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
 
     const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { paseoHome });
     expect(diff.diff).toContain("-hello");
@@ -905,9 +905,9 @@ const x = 1;
     if (!status.isGit) {
       return;
     }
-    expect(status.repoRoot).toBe(result.worktreePath);
+    expect(realpathSync(status.repoRoot)).toBe(realpathSync(result.worktreePath));
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(status.mainRepoRoot).toBe(repoDir);
+    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
   });
 
   it("returns mainRepoRoot pointing to first non-bare worktree for bare repos", async () => {
@@ -930,7 +930,7 @@ const x = 1;
     const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(status.mainRepoRoot).toBe(mainCheckoutDir);
+    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(mainCheckoutDir));
   });
 
   it("detects plain git worktrees from git alone", async () => {
@@ -941,9 +941,9 @@ const x = 1;
 
     const status = await getCheckoutStatus(worktreeDir, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(status.repoRoot).toBe(worktreeDir);
+    expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktreeDir));
     expect(status.isPaseoOwnedWorktree).toBe(false);
-    expect(status.mainRepoRoot).toBe(repoDir);
+    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
     expect(status.currentBranch).toBe("feature/plain");
   });
 
@@ -1020,7 +1020,7 @@ const x = 1;
 
     const mutatedCwd = await mergeToBase(featureWorktree.worktreePath, {}, { paseoHome });
 
-    expect(mutatedCwd).toBe(baseWorktreePath);
+    expect(realpathSync(mutatedCwd)).toBe(realpathSync(baseWorktreePath));
     expect(mutatedCwd).not.toBe(featureWorktree.worktreePath);
   });
 
@@ -1149,7 +1149,9 @@ const x = 1;
     await pullCurrentBranch(repoDir);
 
     execFileSync("git", ["merge-base", "--is-ancestor", remoteCommit, "HEAD"], { cwd: repoDir });
-    expect(readFileSync(join(repoDir, "pulled.txt"), "utf8")).toBe("remote\n");
+    expect(readFileSync(join(repoDir, "pulled.txt"), "utf8").replace(/\r\n/g, "\n")).toBe(
+      "remote\n",
+    );
   });
 
   it("invalidates GitHub cache after successful local git mutation paths", async () => {
@@ -2015,9 +2017,9 @@ const x = 1;
     const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
     expect(status.currentBranch).toBe("feature");
-    expect(status.repoRoot).toBe(worktree.worktreePath);
+    expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktree.worktreePath));
     expect(status.isPaseoOwnedWorktree).toBe(true);
-    expect(status.mainRepoRoot).toBe(repoDir);
+    expect(realpathSync(status.mainRepoRoot ?? "")).toBe(realpathSync(repoDir));
     expect(status.baseRef).toBe("main");
   });
 

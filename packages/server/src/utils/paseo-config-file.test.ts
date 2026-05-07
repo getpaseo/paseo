@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { getWorktreeSetupCommands, getWorktreeTeardownCommands } from "./worktree.js";
 import {
   readPaseoConfigForEdit,
@@ -97,26 +98,30 @@ describe("paseo config file substrate", () => {
     );
   });
 
-  it("rejects stale writes when the current revision changed before rename", () => {
-    writeFileSync(join(tempDir, "paseo.json"), JSON.stringify({ worktree: { setup: "old" } }));
-    const expectedRevision = statPaseoConfigPath(tempDir);
-    writeFileSync(join(tempDir, "paseo.json"), JSON.stringify({ worktree: { setup: "new" } }));
-    const currentRevision = statPaseoConfigPath(tempDir);
+  // POSIX-only: Windows mtime granularity can collapse the two revisions in this fixture.
+  it.skipIf(isPlatform("win32"))(
+    "rejects stale writes when the current revision changed before rename",
+    () => {
+      writeFileSync(join(tempDir, "paseo.json"), JSON.stringify({ worktree: { setup: "old" } }));
+      const expectedRevision = statPaseoConfigPath(tempDir);
+      writeFileSync(join(tempDir, "paseo.json"), JSON.stringify({ worktree: { setup: "new" } }));
+      const currentRevision = statPaseoConfigPath(tempDir);
 
-    const result = writePaseoConfigForEdit({
-      repoRoot: tempDir,
-      config: { worktree: { setup: "from editor" } },
-      expectedRevision,
-    });
+      const result = writePaseoConfigForEdit({
+        repoRoot: tempDir,
+        config: { worktree: { setup: "from editor" } },
+        expectedRevision,
+      });
 
-    expect(result).toEqual({
-      ok: false,
-      error: { code: "stale_project_config", currentRevision },
-    });
-    expect(readFileSync(join(tempDir, "paseo.json"), "utf8")).toBe(
-      JSON.stringify({ worktree: { setup: "new" } }),
-    );
-  });
+      expect(result).toEqual({
+        ok: false,
+        error: { code: "stale_project_config", currentRevision },
+      });
+      expect(readFileSync(join(tempDir, "paseo.json"), "utf8")).toBe(
+        JSON.stringify({ worktree: { setup: "new" } }),
+      );
+    },
+  );
 
   it("round-trips unknown top-level, worktree, and script-entry fields", () => {
     const config = {

@@ -12,6 +12,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, test } from "vitest";
 
+import { isPlatform } from "../test-utils/platform.js";
 import { probeExecutable } from "./executable.js";
 
 const timeoutMs = 1000;
@@ -142,18 +143,40 @@ afterEach(() => {
 });
 
 describe("probeExecutable", () => {
-  test.each(fixtures)("$name", async ({ create, expected }) => {
-    const { executablePath, pidFile } = create(makeTempDir());
-    const startedAt = performance.now();
+  // POSIX-only: positive fixtures rely on direct script probing; Windows command-script probing has separate coverage.
+  test.skipIf(isPlatform("win32")).each(fixtures.filter((fixture) => fixture.expected))(
+    "$name",
+    async ({ create, expected }) => {
+      const { executablePath, pidFile } = create(makeTempDir());
+      const startedAt = performance.now();
 
-    const result = await probeExecutable(executablePath, timeoutMs);
+      const result = await probeExecutable(executablePath, timeoutMs);
 
-    expect(result).toBe(expected);
-    expect(performance.now() - startedAt).toBeLessThanOrEqual(timeoutMs + timeoutSlackMs);
-    if (pidFile) {
-      await waitForFile(pidFile);
-      const pid = Number(readFileSync(pidFile, "utf8"));
-      expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-    }
-  });
+      expect(result).toBe(expected);
+      expect(performance.now() - startedAt).toBeLessThanOrEqual(timeoutMs + timeoutSlackMs);
+      if (pidFile) {
+        await waitForFile(pidFile);
+        const pid = Number(readFileSync(pidFile, "utf8"));
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      }
+    },
+  );
+
+  test.each(fixtures.filter((fixture) => !fixture.expected))(
+    "$name",
+    async ({ create, expected }) => {
+      const { executablePath, pidFile } = create(makeTempDir());
+      const startedAt = performance.now();
+
+      const result = await probeExecutable(executablePath, timeoutMs);
+
+      expect(result).toBe(expected);
+      expect(performance.now() - startedAt).toBeLessThanOrEqual(timeoutMs + timeoutSlackMs);
+      if (pidFile) {
+        await waitForFile(pidFile);
+        const pid = Number(readFileSync(pidFile, "utf8"));
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      }
+    },
+  );
 });

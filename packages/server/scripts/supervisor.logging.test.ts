@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "vitest";
+import { isPlatform } from "../src/test-utils/platform.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
@@ -116,17 +117,21 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain("raw stderr line\n");
   });
 
-  test("logs worker signal exits even when the worker cannot log", async () => {
-    const result = await runSupervisorFixture({
-      workerSource: `
+  // POSIX-only: Windows reports the worker self-kill as an exit code, not SIGKILL.
+  test.skipIf(isPlatform("win32"))(
+    "logs worker signal exits even when the worker cannot log",
+    async () => {
+      const result = await runSupervisorFixture({
+        workerSource: `
         process.kill(process.pid, "SIGKILL");
       `,
-    });
+      });
 
-    expect(result.code).toBe(1);
-    expect(result.signal).toBeNull();
-    expect(result.log).toContain('"msg":"Worker exited"');
-    expect(result.log).toContain('"signal":"SIGKILL"');
-    expect(result.log).toContain("Supervisor exiting");
-  });
+      expect(result.code).toBe(1);
+      expect(result.signal).toBeNull();
+      expect(result.log).toContain('"msg":"Worker exited"');
+      expect(result.log).toContain('"signal":"SIGKILL"');
+      expect(result.log).toContain("Supervisor exiting");
+    },
+  );
 });

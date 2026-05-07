@@ -53,8 +53,9 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    expect(results).toContain(path.join(homeDir, "projects"));
-    expect(results).toContain(path.join(homeDir, "projects", "paseo"));
+    const resolvedResults = results.map((result) => realpathSync(result));
+    expect(resolvedResults).toContain(realpathSync(path.join(homeDir, "projects")));
+    expect(resolvedResults).toContain(realpathSync(path.join(homeDir, "projects", "paseo")));
     expect(results).not.toContain(path.join(homeDir, "projects", "README.md"));
   });
 
@@ -65,7 +66,9 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    expect(results).toEqual([path.join(homeDir, "projects", "paseo")]);
+    expect(results.map((result) => realpathSync(result))).toEqual([
+      realpathSync(path.join(homeDir, "projects", "paseo")),
+    ]);
   });
 
   it("prioritizes exact segment matches before segment-prefix matches", async () => {

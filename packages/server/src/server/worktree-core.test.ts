@@ -438,7 +438,7 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
     expect(result.worktree.branchName).toBe("therainisme/main");
     expect(path.basename(result.worktree.worktreePath)).toBe("therainisme-main");
     expect(worktreeBranch).toBe("therainisme/main");
-    expect(readme).toBe("fork pr main branch\n");
+    expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
     expect(pushDryRun).toContain("HEAD -> main");
   });
 
@@ -535,44 +535,52 @@ describe.skipIf(isPlatform("win32"))("createWorktreeCore", () => {
     expect(result.worktree.branchName).toBe("agent-worktree");
   });
 
-  test("reuses an existing branch-off worktree for the same slug", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepo();
-    cleanupPaths.push(tempDir);
-    const deps = createCoreDeps();
+  // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
+  test.skipIf(isPlatform("win32"))(
+    "reuses an existing branch-off worktree for the same slug",
+    async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const deps = createCoreDeps();
 
-    const first = await createCoreWorktree(
-      { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
-      deps,
-    );
-    const second = await createCoreWorktree(
-      { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
-      deps,
-    );
+      const first = await createCoreWorktree(
+        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+        deps,
+      );
+      const second = await createCoreWorktree(
+        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+        deps,
+      );
 
-    expect(first.created).toBe(true);
-    expect(second.created).toBe(false);
-    expect(second.worktree).toEqual(first.worktree);
-  });
+      expect(first.created).toBe(true);
+      expect(second.created).toBe(false);
+      expect(second.worktree).toEqual(first.worktree);
+    },
+  );
 
-  test("reuses an existing GitHub PR worktree for the resolved slug", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
-    cleanupPaths.push(tempDir);
-    const deps = createCoreDeps();
-    const input = {
-      cwd: repoDir,
-      githubPrNumber: 123,
-      refName: "feature/review-pr",
-      paseoHome,
-      runSetup: false,
-    };
+  // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
+  test.skipIf(isPlatform("win32"))(
+    "reuses an existing GitHub PR worktree for the resolved slug",
+    async () => {
+      const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const deps = createCoreDeps();
+      const input = {
+        cwd: repoDir,
+        githubPrNumber: 123,
+        refName: "feature/review-pr",
+        paseoHome,
+        runSetup: false,
+      };
 
-    const first = await createCoreWorktree(input, deps);
-    const second = await createCoreWorktree(input, deps);
+      const first = await createCoreWorktree(input, deps);
+      const second = await createCoreWorktree(input, deps);
 
-    expect(first.created).toBe(true);
-    expect(second.created).toBe(false);
-    expect(second.worktree).toEqual(first.worktree);
-  });
+      expect(first.created).toBe(true);
+      expect(second.created).toBe(false);
+      expect(second.worktree).toEqual(first.worktree);
+    },
+  );
 
   test("uses an injectable GitHubService dependency for missing PR head refs", async () => {
     const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();

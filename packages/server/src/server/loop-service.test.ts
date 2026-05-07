@@ -257,7 +257,9 @@ describe("LoopService", () => {
     const loop = await service.runLoop({
       prompt: "Create done.txt when the task is actually fixed.",
       cwd: workspaceDir,
-      verifyChecks: ["test -f done.txt"],
+      verifyChecks: [
+        `${JSON.stringify(process.execPath)} -e "require('fs').accessSync('done.txt')"`,
+      ],
       sleepMs: 1,
       maxIterations: 3,
     });

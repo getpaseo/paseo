@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { isPlatform } from "../../../test-utils/platform.js";
 import type { AgentProvider } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
@@ -77,23 +78,31 @@ describe("default provider availability", () => {
     await expect(client.isAvailable()).resolves.toBe(false);
   });
 
-  test("Codex reports available when the default command resolves from PATH", async () => {
-    const binDir = makeTempDir("provider-availability-codex-");
-    isolatePathTo(binDir);
-    writeProviderShim(binDir, "codex");
-    const client = new CodexAppServerAgentClient(createTestLogger());
+  // POSIX-only: Windows command-script PATH probing is covered by executable tests.
+  test.skipIf(isPlatform("win32"))(
+    "Codex reports available when the default command resolves from PATH",
+    async () => {
+      const binDir = makeTempDir("provider-availability-codex-");
+      isolatePathTo(binDir);
+      writeProviderShim(binDir, "codex");
+      const client = new CodexAppServerAgentClient(createTestLogger());
 
-    await expect(client.isAvailable()).resolves.toBe(true);
-  });
+      await expect(client.isAvailable()).resolves.toBe(true);
+    },
+  );
 
-  test("OpenCode reports available when the default command resolves from PATH", async () => {
-    const binDir = makeTempDir("provider-availability-opencode-");
-    isolatePathTo(binDir);
-    writeProviderShim(binDir, "opencode");
-    const client = new OpenCodeAgentClient(createTestLogger());
+  // POSIX-only: Windows command-script PATH probing is covered by executable tests.
+  test.skipIf(isPlatform("win32"))(
+    "OpenCode reports available when the default command resolves from PATH",
+    async () => {
+      const binDir = makeTempDir("provider-availability-opencode-");
+      isolatePathTo(binDir);
+      writeProviderShim(binDir, "opencode");
+      const client = new OpenCodeAgentClient(createTestLogger());
 
-    await expect(client.isAvailable()).resolves.toBe(true);
-  });
+      await expect(client.isAvailable()).resolves.toBe(true);
+    },
+  );
 
   test("AgentManager reports Codex unavailable without throwing", async () => {
     const binDir = makeTempDir("provider-availability-manager-bin-");

@@ -13,6 +13,7 @@ import {
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 const cleanupPaths: string[] = [];
 
@@ -65,41 +66,45 @@ test("creates a worktree and registers it in the source workspace project withou
   ]);
 });
 
-test("reuses an existing worktree and still upserts the workspace", async () => {
-  const { repoDir, tempDir } = createGitRepo();
-  cleanupPaths.push(tempDir);
-  const paseoHome = path.join(tempDir, ".paseo");
-  const firstDeps = createDeps();
-  const first = await createPaseoWorktree(
-    {
-      cwd: repoDir,
-      worktreeSlug: "reuse-me",
-      runSetup: false,
-      paseoHome,
-    },
-    firstDeps,
-  );
-  const events: string[] = [];
-  const deps = createDeps({
-    events,
-    projects: firstDeps.projects,
-    workspaces: firstDeps.workspaces,
-  });
+// POSIX-only: Windows git worktree paths need separate canonicalization coverage.
+test.skipIf(isPlatform("win32"))(
+  "reuses an existing worktree and still upserts the workspace",
+  async () => {
+    const { repoDir, tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+    const firstDeps = createDeps();
+    const first = await createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "reuse-me",
+        runSetup: false,
+        paseoHome,
+      },
+      firstDeps,
+    );
+    const events: string[] = [];
+    const deps = createDeps({
+      events,
+      projects: firstDeps.projects,
+      workspaces: firstDeps.workspaces,
+    });
 
-  const second = await createPaseoWorktree(
-    {
-      cwd: repoDir,
-      worktreeSlug: "reuse-me",
-      runSetup: false,
-      paseoHome,
-    },
-    deps,
-  );
+    const second = await createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "reuse-me",
+        runSetup: false,
+        paseoHome,
+      },
+      deps,
+    );
 
-  expect(second.created).toBe(false);
-  expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
-  expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
-});
+    expect(second.created).toBe(false);
+    expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
+    expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
+  },
+);
 
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();

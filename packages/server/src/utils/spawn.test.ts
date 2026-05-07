@@ -67,7 +67,7 @@ describe("execCommand", () => {
 
     const result = await execCommand(command.command, command.args, { cwd });
 
-    expect(result.stdout.trim()).toBe(cwd);
+    expect(realpathSync(result.stdout.trim())).toBe(cwd);
     expect(result.stderr).toBe("");
   });
 

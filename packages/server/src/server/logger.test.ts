@@ -102,7 +102,7 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "debug",
-        path: path.join(paseoHome, "logs", "programmatic.log"),
+        path: path.resolve(paseoHome, "logs", "programmatic.log"),
       },
     });
   });

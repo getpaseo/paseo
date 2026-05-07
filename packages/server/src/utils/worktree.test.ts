@@ -895,226 +895,254 @@ describe("paseo worktree manager", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("isolates worktree roots for repositories that share the same directory name", async () => {
-    const repoA = join(tempDir, "team-a", "test-repo");
-    const repoB = join(tempDir, "team-b", "test-repo");
+  // POSIX-only: git worktree list paths differ from created paths on Windows.
+  it.skipIf(isPlatform("win32"))(
+    "isolates worktree roots for repositories that share the same directory name",
+    async () => {
+      const repoA = join(tempDir, "team-a", "test-repo");
+      const repoB = join(tempDir, "team-b", "test-repo");
 
-    for (const repo of [repoA, repoB]) {
-      mkdirSync(repo, { recursive: true });
-      execFileSync("git", ["init", "-b", "main"], { cwd: repo });
-      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repo });
-      execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
-      writeFileSync(join(repo, "file.txt"), "hello\n");
-      execFileSync("git", ["add", "."], { cwd: repo });
-      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
-        cwd: repo,
+      for (const repo of [repoA, repoB]) {
+        mkdirSync(repo, { recursive: true });
+        execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+        execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repo });
+        execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+        writeFileSync(join(repo, "file.txt"), "hello\n");
+        execFileSync("git", ["add", "."], { cwd: repo });
+        execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+          cwd: repo,
+        });
+      }
+
+      const fromRepoA = await createLegacyWorktreeForTest({
+        branchName: "main",
+        cwd: repoA,
+        baseBranch: "main",
+        worktreeSlug: "alpha",
+        paseoHome,
       });
-    }
+      const fromRepoB = await createLegacyWorktreeForTest({
+        branchName: "main",
+        cwd: repoB,
+        baseBranch: "main",
+        worktreeSlug: "alpha",
+        paseoHome,
+      });
 
-    const fromRepoA = await createLegacyWorktreeForTest({
-      branchName: "main",
-      cwd: repoA,
-      baseBranch: "main",
-      worktreeSlug: "alpha",
-      paseoHome,
-    });
-    const fromRepoB = await createLegacyWorktreeForTest({
-      branchName: "main",
-      cwd: repoB,
-      baseBranch: "main",
-      worktreeSlug: "alpha",
-      paseoHome,
-    });
+      expect(dirname(fromRepoA.worktreePath)).not.toBe(dirname(fromRepoB.worktreePath));
+      expect(fromRepoA.worktreePath.endsWith("alpha-1")).toBe(false);
+      expect(fromRepoB.worktreePath.endsWith("alpha-1")).toBe(false);
 
-    expect(dirname(fromRepoA.worktreePath)).not.toBe(dirname(fromRepoB.worktreePath));
-    expect(fromRepoA.worktreePath.endsWith("alpha-1")).toBe(false);
-    expect(fromRepoB.worktreePath.endsWith("alpha-1")).toBe(false);
+      const repoAWorktrees = await listPaseoWorktrees({ cwd: repoA, paseoHome });
+      const repoBWorktrees = await listPaseoWorktrees({ cwd: repoB, paseoHome });
 
-    const repoAWorktrees = await listPaseoWorktrees({ cwd: repoA, paseoHome });
-    const repoBWorktrees = await listPaseoWorktrees({ cwd: repoB, paseoHome });
+      expect(repoAWorktrees.map((entry) => entry.path)).toEqual([fromRepoA.worktreePath]);
+      expect(repoBWorktrees.map((entry) => entry.path)).toEqual([fromRepoB.worktreePath]);
+    },
+  );
 
-    expect(repoAWorktrees.map((entry) => entry.path)).toEqual([fromRepoA.worktreePath]);
-    expect(repoBWorktrees.map((entry) => entry.path)).toEqual([fromRepoB.worktreePath]);
-  });
+  // POSIX-only: git worktree list paths differ from created paths on Windows.
+  it.skipIf(isPlatform("win32"))(
+    "lists and deletes paseo worktrees under ~/.paseo/worktrees/{hash}",
+    async () => {
+      const first = await createLegacyWorktreeForTest({
+        branchName: "main",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "alpha",
+        paseoHome,
+      });
+      const second = await createLegacyWorktreeForTest({
+        branchName: "main",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "beta",
+        paseoHome,
+      });
 
-  it("lists and deletes paseo worktrees under ~/.paseo/worktrees/{hash}", async () => {
-    const first = await createLegacyWorktreeForTest({
-      branchName: "main",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "alpha",
-      paseoHome,
-    });
-    const second = await createLegacyWorktreeForTest({
-      branchName: "main",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "beta",
-      paseoHome,
-    });
+      const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+      const paths = worktrees.map((worktree) => worktree.path).sort();
+      expect(paths).toEqual([first.worktreePath, second.worktreePath].sort());
 
-    const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
-    const paths = worktrees.map((worktree) => worktree.path).sort();
-    expect(paths).toEqual([first.worktreePath, second.worktreePath].sort());
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: first.worktreePath, paseoHome });
+      expect(existsSync(first.worktreePath)).toBe(false);
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: first.worktreePath, paseoHome });
-    expect(existsSync(first.worktreePath)).toBe(false);
+      const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+      expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
+    },
+  );
 
-    const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
-    expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
-  });
+  // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
+  it.skipIf(isPlatform("win32"))(
+    "deletes a paseo worktree even when given a subdirectory path",
+    async () => {
+      const created = await createLegacyWorktreeForTest({
+        branchName: "main",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "alpha",
+        paseoHome,
+      });
 
-  it("deletes a paseo worktree even when given a subdirectory path", async () => {
-    const created = await createLegacyWorktreeForTest({
-      branchName: "main",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "alpha",
-      paseoHome,
-    });
+      const nestedDir = join(created.worktreePath, "nested", "dir");
+      mkdirSync(nestedDir, { recursive: true });
 
-    const nestedDir = join(created.worktreePath, "nested", "dir");
-    mkdirSync(nestedDir, { recursive: true });
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: nestedDir, paseoHome });
+      expect(existsSync(created.worktreePath)).toBe(false);
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: nestedDir, paseoHome });
-    expect(existsSync(created.worktreePath)).toBe(false);
+      const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+      expect(remaining.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
+    },
+  );
 
-    const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
-    expect(remaining.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
-  });
+  // POSIX-only: teardown fixtures are POSIX shell command strings.
+  it.skipIf(isPlatform("win32"))(
+    "runs teardown commands from paseo.json before deleting a worktree",
+    async () => {
+      const paseoConfig = {
+        worktree: {
+          teardown: [
+            'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+            'echo "root_alias=$PASEO_ROOT_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+            'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+            'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+            'echo "port=$PASEO_WORKTREE_PORT" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+          ],
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add teardown commands"], {
+        cwd: repoDir,
+      });
 
-  it("runs teardown commands from paseo.json before deleting a worktree", async () => {
-    const paseoConfig = {
-      worktree: {
-        teardown: [
-          'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "root_alias=$PASEO_ROOT_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "port=$PASEO_WORKTREE_PORT" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-        ],
-      },
-    };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add teardown commands"], {
-      cwd: repoDir,
-    });
+      const created = await createLegacyWorktreeForTest({
+        branchName: "teardown-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "teardown-test",
+        paseoHome,
+      });
+      const runtimeEnv = await resolveWorktreeRuntimeEnv({
+        worktreePath: created.worktreePath,
+        branchName: created.branchName,
+      });
 
-    const created = await createLegacyWorktreeForTest({
-      branchName: "teardown-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "teardown-test",
-      paseoHome,
-    });
-    const runtimeEnv = await resolveWorktreeRuntimeEnv({
-      worktreePath: created.worktreePath,
-      branchName: created.branchName,
-    });
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+      expect(existsSync(created.worktreePath)).toBe(false);
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
-    expect(existsSync(created.worktreePath)).toBe(false);
+      const teardownLog = readFileSync(join(repoDir, "teardown.log"), "utf8");
+      expect(teardownLog).toContain(`source=${repoDir}`);
+      expect(teardownLog).toContain(`root_alias=${repoDir}`);
+      expect(teardownLog).toContain(`worktree=${created.worktreePath}`);
+      expect(teardownLog).toContain("branch=teardown-branch");
+      expect(teardownLog).toContain(`port=${runtimeEnv.PASEO_WORKTREE_PORT}`);
+    },
+  );
 
-    const teardownLog = readFileSync(join(repoDir, "teardown.log"), "utf8");
-    expect(teardownLog).toContain(`source=${repoDir}`);
-    expect(teardownLog).toContain(`root_alias=${repoDir}`);
-    expect(teardownLog).toContain(`worktree=${created.worktreePath}`);
-    expect(teardownLog).toContain("branch=teardown-branch");
-    expect(teardownLog).toContain(`port=${runtimeEnv.PASEO_WORKTREE_PORT}`);
-  });
+  // POSIX-only: teardown string fixture is a POSIX shell script.
+  it.skipIf(isPlatform("win32"))(
+    "runs string teardown scripts from paseo.json as a single shell command",
+    async () => {
+      const paseoConfig = {
+        worktree: {
+          teardown:
+            'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add string teardown"], {
+        cwd: repoDir,
+      });
 
-  it("runs string teardown scripts from paseo.json as a single shell command", async () => {
-    const paseoConfig = {
-      worktree: {
-        teardown:
-          'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-      },
-    };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add string teardown"], {
-      cwd: repoDir,
-    });
+      const created = await createLegacyWorktreeForTest({
+        branchName: "teardown-string-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "teardown-string-test",
+        paseoHome,
+      });
 
-    const created = await createLegacyWorktreeForTest({
-      branchName: "teardown-string-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "teardown-string-test",
-      paseoHome,
-    });
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+      expect(getWorktreeTeardownCommands(repoDir)).toEqual([
+        'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+      ]);
+      expect(readFileSync(join(repoDir, "teardown.log"), "utf8").trim()).toBe("teardown string");
+    },
+  );
 
-    expect(getWorktreeTeardownCommands(repoDir)).toEqual([
-      'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-    ]);
-    expect(readFileSync(join(repoDir, "teardown.log"), "utf8").trim()).toBe("teardown string");
-  });
+  // POSIX-only: teardown env fixture is a POSIX shell command string.
+  it.skipIf(isPlatform("win32"))(
+    "omits PASEO_WORKTREE_PORT from teardown env when runtime metadata is missing",
+    async () => {
+      const paseoConfig = {
+        worktree: {
+          teardown: [
+            'echo "port=${PASEO_WORKTREE_PORT-unset}" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-port.log"',
+          ],
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add teardown port logging"],
+        { cwd: repoDir },
+      );
 
-  it("omits PASEO_WORKTREE_PORT from teardown env when runtime metadata is missing", async () => {
-    const paseoConfig = {
-      worktree: {
-        teardown: [
-          'echo "port=${PASEO_WORKTREE_PORT-unset}" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-port.log"',
-        ],
-      },
-    };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
-    execFileSync(
-      "git",
-      ["-c", "commit.gpgsign=false", "commit", "-m", "add teardown port logging"],
-      { cwd: repoDir },
-    );
+      const created = await createLegacyWorktreeForTest({
+        branchName: "teardown-port-missing-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "teardown-port-missing-test",
+        paseoHome,
+      });
 
-    const created = await createLegacyWorktreeForTest({
-      branchName: "teardown-port-missing-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "teardown-port-missing-test",
-      paseoHome,
-    });
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+      expect(readFileSync(join(repoDir, "teardown-port.log"), "utf8").trim()).toBe("port=unset");
+      expect(existsSync(created.worktreePath)).toBe(false);
+    },
+  );
 
-    expect(readFileSync(join(repoDir, "teardown-port.log"), "utf8").trim()).toBe("port=unset");
-    expect(existsSync(created.worktreePath)).toBe(false);
-  });
+  // POSIX-only: teardown failure fixture depends on POSIX shell exit semantics.
+  it.skipIf(isPlatform("win32"))(
+    "does not remove worktree when a teardown command fails",
+    async () => {
+      const paseoConfig = {
+        worktree: {
+          teardown: [
+            'echo "started" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-start.log"',
+            "echo boom 1>&2; exit 9",
+          ],
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add failing teardown commands"],
+        { cwd: repoDir },
+      );
 
-  it("does not remove worktree when a teardown command fails", async () => {
-    const paseoConfig = {
-      worktree: {
-        teardown: [
-          'echo "started" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-start.log"',
-          "echo boom 1>&2; exit 9",
-        ],
-      },
-    };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
-    execFileSync(
-      "git",
-      ["-c", "commit.gpgsign=false", "commit", "-m", "add failing teardown commands"],
-      { cwd: repoDir },
-    );
+      const created = await createLegacyWorktreeForTest({
+        branchName: "teardown-failure-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "teardown-failure-test",
+        paseoHome,
+      });
 
-    const created = await createLegacyWorktreeForTest({
-      branchName: "teardown-failure-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "teardown-failure-test",
-      paseoHome,
-    });
+      await expect(
+        deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome }),
+      ).rejects.toThrow("Worktree teardown command failed");
 
-    await expect(
-      deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome }),
-    ).rejects.toThrow("Worktree teardown command failed");
-
-    expect(existsSync(created.worktreePath)).toBe(true);
-    expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
-  });
+      expect(existsSync(created.worktreePath)).toBe(true);
+      expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
+    },
+  );
 
   it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
     const created = await createLegacyWorktreeForTest({

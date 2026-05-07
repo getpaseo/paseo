@@ -35,13 +35,6 @@ function writeExecutable(filePath: string, content: string): string {
   return filePath;
 }
 
-function writeInvokableFixture(dir: string, name: string): string {
-  if (isPlatform("win32")) {
-    return writeExecutable(path.join(dir, `${name}.cmd`), "@echo off\r\necho 0.1\r\n");
-  }
-  return writeExecutable(path.join(dir, name), "#!/bin/sh\necho 0.1\n");
-}
-
 function writeBrokenAbsoluteFixture(dir: string): string {
   const filePath = isPlatform("win32") ? path.join(dir, "broken.exe") : path.join(dir, "broken");
   writeFileSync(filePath, "not executable");
@@ -110,10 +103,7 @@ describe("findExecutable", () => {
   });
 
   test("returns an invokable absolute path", async () => {
-    const dir = makeTempDir();
-    const fixture = writeInvokableFixture(dir, "absolute-ok");
-
-    await expect(findExecutable(fixture)).resolves.toBe(fixture);
+    await expect(findExecutable(process.execPath)).resolves.toBe(process.execPath);
   });
 
   test("returns null for an absolute path that cannot spawn", async () => {
