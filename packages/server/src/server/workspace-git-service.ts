@@ -40,6 +40,9 @@ const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
 const WORKSPACE_GIT_CONSUMER_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
+const LINUX_WATCH_MAX_DIRS = 5_000;
+const LINUX_WATCH_REFRESH_COOLDOWN_MS = 2_000;
+const LINUX_WATCH_IGNORE_TTL_MS = 5 * 60 * 1_000;
 
 const linuxWatchReaddirConcurrency =
   parseInt(process.env.PASEO_LINUX_WATCH_READDIR_CONCURRENCY ?? "16", 10) || 16;
@@ -323,6 +326,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly repoTargets = new Map<string, RepoGitTarget>();
   private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
+  private readonly linuxIgnoredDirsCache = new Map<string, { ignored: Set<string>; ts: number }>();
   private readonly branchValidationCache = new Map<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitBranchValidationResult>
@@ -1195,6 +1199,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             "Failed to refresh Linux working tree watchers",
           );
         }
+        if (target.linuxTreeRefreshQueued) {
+          await new Promise((r) => setTimeout(r, LINUX_WATCH_REFRESH_COOLDOWN_MS));
+        }
       } while (target.linuxTreeRefreshQueued);
     })();
 
@@ -1206,11 +1213,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private async listLinuxWatchDirectories(rootPath: string): Promise<string[]> {
+    const ignored = await this.loadLinuxIgnoredDirs(rootPath);
     const directories: string[] = [];
     let currentLevel: string[] = [rootPath];
+    let capped = false;
 
     while (currentLevel.length > 0) {
       directories.push(...currentLevel);
+      if (directories.length >= LINUX_WATCH_MAX_DIRS) {
+        capped = true;
+        break;
+      }
       const readResults = await Promise.all(
         currentLevel.map((directory) =>
           linuxWatchReaddirLimit(async () => {
@@ -1231,13 +1244,57 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (!entry.isDirectory() || entry.name === ".git") {
             continue;
           }
-          nextLevel.push(join(directory, entry.name));
+          const childPath = join(directory, entry.name);
+          if (ignored.has(childPath)) {
+            continue;
+          }
+          nextLevel.push(childPath);
         }
       }
       currentLevel = nextLevel;
     }
 
+    if (capped) {
+      this.logger.warn(
+        { rootPath, limit: LINUX_WATCH_MAX_DIRS, walked: directories.length },
+        "Linux working tree exceeds watcher cap; skipping deeper directories",
+      );
+    }
+
     return directories;
+  }
+
+  private async loadLinuxIgnoredDirs(rootPath: string): Promise<Set<string>> {
+    const cached = this.linuxIgnoredDirsCache.get(rootPath);
+    if (cached && Date.now() - cached.ts < LINUX_WATCH_IGNORE_TTL_MS) {
+      return cached.ignored;
+    }
+
+    const ignored = new Set<string>();
+    try {
+      const result = await this.deps.runGitCommand(
+        ["ls-files", "-o", "-i", "--directory", "--exclude-standard"],
+        { cwd: rootPath, env: READ_ONLY_GIT_ENV },
+      );
+      for (const raw of result.stdout.split("\n")) {
+        if (!raw.endsWith("/")) {
+          continue;
+        }
+        const rel = raw.replace(/\/+$/, "");
+        if (!rel) {
+          continue;
+        }
+        ignored.add(resolve(rootPath, rel));
+      }
+    } catch (error) {
+      this.logger.debug(
+        { err: error, rootPath },
+        "Failed to load gitignore directories; falling back to name-based skip only",
+      );
+    }
+
+    this.linuxIgnoredDirsCache.set(rootPath, { ignored, ts: Date.now() });
+    return ignored;
   }
 
   private async refreshWorkspaceTarget(
@@ -1587,6 +1644,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.watchers = [];
     target.watchedPaths.clear();
     target.listeners.clear();
+    if (target.repoWatchPath) {
+      this.linuxIgnoredDirsCache.delete(target.repoWatchPath);
+    }
   }
 
   private closeRepoTarget(target: RepoGitTarget): void {
