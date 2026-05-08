@@ -20,6 +20,10 @@ interface AgentTimelineState {
   nextSeq: number;
 }
 
+interface InMemoryAgentTimelineStoreOptions {
+  maxItems?: number | null;
+}
+
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
@@ -145,6 +149,15 @@ function fetchReset(
 
 export class InMemoryAgentTimelineStore {
   private readonly states = new Map<string, AgentTimelineState>();
+  private readonly maxItems: number | null;
+
+  constructor(options?: InMemoryAgentTimelineStoreOptions) {
+    const maxItems = options?.maxItems;
+    this.maxItems =
+      typeof maxItems === "number" && Number.isFinite(maxItems) && maxItems >= 0
+        ? Math.floor(maxItems)
+        : null;
+  }
 
   has(agentId: string): boolean {
     return this.states.has(agentId);
@@ -155,10 +168,15 @@ export class InMemoryAgentTimelineStore {
     const rows = options?.rows?.length
       ? options.rows.map(cloneRow)
       : this.buildRowsFromItems(options?.items ?? [], options?.nextSeq ?? 1, timestamp);
-    const nextSeq = options?.nextSeq ?? (rows.length ? rows[rows.length - 1].seq + 1 : 1);
+    const nextSeqCandidate = options?.nextSeq ?? (rows.length ? rows[rows.length - 1].seq + 1 : 1);
+    const trimmedRows = this.trimRowsToMax(rows);
+    const nextSeq =
+      trimmedRows.length > 0
+        ? Math.max(nextSeqCandidate, trimmedRows[trimmedRows.length - 1].seq + 1)
+        : nextSeqCandidate;
     this.states.set(agentId, {
       epoch: options?.epoch ?? randomUUID(),
-      rows,
+      rows: trimmedRows,
       nextSeq,
     });
   }
@@ -253,6 +271,7 @@ export class InMemoryAgentTimelineStore {
     };
     state.nextSeq += 1;
     state.rows.push(row);
+    this.trimRowsToMax(state.rows);
     return cloneRow(row);
   }
 
@@ -334,5 +353,13 @@ export class InMemoryAgentTimelineStore {
       nextSeq += 1;
       return row;
     });
+  }
+
+  private trimRowsToMax(rows: AgentTimelineRow[]): AgentTimelineRow[] {
+    if (this.maxItems === null || rows.length <= this.maxItems) {
+      return rows;
+    }
+    rows.splice(0, rows.length - this.maxItems);
+    return rows;
   }
 }

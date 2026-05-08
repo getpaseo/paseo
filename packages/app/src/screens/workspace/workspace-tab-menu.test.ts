@@ -128,4 +128,34 @@ describe("buildWorkspaceTabMenuEntries", () => {
       }),
     );
   });
+
+  it("allows recovery-specific reload copy for closed external sessions", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-menu-agent_123",
+      reloadAgentLabel: "Resume in tmux",
+      reloadAgentTooltip:
+        "Paseo will relaunch this closed external Codex session inside tmux so the phone can manage it again.",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        kind: "item",
+        key: "reload-agent",
+        label: "Resume in tmux",
+        tooltip:
+          "Paseo will relaunch this closed external Codex session inside tmux so the phone can manage it again.",
+      }),
+    );
+  });
 });

@@ -23,6 +23,9 @@ import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostn
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+// Keep daemon history residency finite until older history can be fetched from persistence on demand.
+export const DEFAULT_AGENT_TIMELINE_MAX_ITEMS = 1000;
+const DEFAULT_EXTERNAL_CODEX_RELAUNCH_COMMAND = "codex";
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
@@ -38,6 +41,33 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   }
 
   return undefined;
+}
+
+function parseNonNegativeIntegerEnv(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return undefined;
+  }
+
+  return Number.parseInt(trimmed, 10);
+}
+
+function parseCommandExecutableEnv(
+  value: string | undefined,
+  fallback: string,
+): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return [fallback];
+  }
+  return [normalized];
 }
 
 function normalizeLogEnv(value: string | undefined): string | undefined {
@@ -269,6 +299,16 @@ export function loadConfig(
   const { mcpEnabled, mcpInjectIntoAgents, hostnames, appBaseUrl } =
     resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
+  const agentTimelineMaxItems =
+    parseNonNegativeIntegerEnv(env.PASEO_AGENT_TIMELINE_MAX_ITEMS) ??
+    persisted.daemon?.agentTimeline?.maxItems ??
+    DEFAULT_AGENT_TIMELINE_MAX_ITEMS;
+  const externalCodexRelaunchCommand = parseCommandExecutableEnv(
+    env.PASEO_EXTERNAL_CODEX_RELAUNCH_COMMAND,
+    DEFAULT_EXTERNAL_CODEX_RELAUNCH_COMMAND,
+  );
+  const tmuxCodexBridgeEnabled = parseBooleanEnv(env.PASEO_TMUX_CODEX_BRIDGE_ENABLED) ?? true;
+
   const relay = resolveRelayConfig({
     env,
     persisted,
@@ -299,10 +339,13 @@ export function loadConfig(
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},
+    agentTimelineMaxItems,
     relayEnabled: relay.enabled,
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,
+    externalCodexRelaunchCommand,
+    tmuxCodexBridgeEnabled,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,
