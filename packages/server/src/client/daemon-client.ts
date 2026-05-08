@@ -31,6 +31,7 @@ import type {
   CheckoutPushResponse,
   CheckoutPrCreateResponse,
   CheckoutPrMergeResponse,
+  CheckoutPrMergeMethod,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
   CheckoutSwitchBranchResponse,
@@ -2748,7 +2749,7 @@ export class DaemonClient {
 
   async checkoutPrMerge(
     cwd: string,
-    input: { method: "merge" | "squash" | "rebase" },
+    input: { method: CheckoutPrMergeMethod },
     requestId?: string,
   ): Promise<CheckoutPrMergePayload> {
     return this.sendCorrelatedSessionRequest({

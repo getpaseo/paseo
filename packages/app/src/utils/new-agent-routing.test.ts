@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CheckoutStatusPayload } from "@/hooks/use-checkout-status-query";
+import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import {
   parseAgentKey,
   resolveNewAgentWorkingDir,

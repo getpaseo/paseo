@@ -4,8 +4,8 @@ import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@server/shared/messages";
-import { mapPrPaneData, type PrPaneData } from "../utils/pr-pane-data";
-import { useCheckoutPrStatusQuery } from "./use-checkout-pr-status-query";
+import { mapPrPaneData, type PrPaneData } from "@/git/pr-pane-data";
+import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 
 type CheckoutPrStatusPayloadError = CheckoutPrStatusResponse["payload"]["error"];
 type PullRequestTimeline = PullRequestTimelineResponse["payload"];

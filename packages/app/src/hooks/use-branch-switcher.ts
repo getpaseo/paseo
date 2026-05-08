@@ -3,7 +3,7 @@ import { useQuery, type QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import type { ToastApi } from "@/components/toast-host";
-import { invalidateCheckoutGitQueriesForClient } from "@/stores/checkout-git-actions-store";
+import { invalidateCheckoutGitQueriesForClient } from "@/git/actions-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
 interface UseBranchSwitcherInput {

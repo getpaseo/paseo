@@ -559,17 +559,6 @@ export class GitHubCommandError extends Error {
   }
 }
 
-export class GitHubPullRequestMergeError extends Error {
-  readonly kind = "pull-request-merge-error";
-  readonly stderr: string;
-
-  constructor(params: { stderr: string }) {
-    super(params.stderr);
-    this.name = "GitHubPullRequestMergeError";
-    this.stderr = params.stderr;
-  }
-}
-
 interface CreateGitHubServiceOptions {
   ttlMs?: number;
   runner?: GitHubCommandRunner;
@@ -1061,18 +1050,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     },
 
     async mergePullRequest(input) {
-      try {
-        await run(["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`], {
-          cwd: input.cwd,
-          envOverlay: { GH_PROMPT_DISABLED: "1" },
-        });
-        return { success: true };
-      } catch (error) {
-        if (error instanceof GitHubCommandError || error instanceof GitHubAuthenticationError) {
-          throw new GitHubPullRequestMergeError({ stderr: error.stderr });
-        }
-        throw error;
-      }
+      await run(["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`], {
+        cwd: input.cwd,
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      });
+      return { success: true };
     },
 
     isAuthenticated(input) {

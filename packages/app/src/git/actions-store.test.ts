@@ -9,7 +9,7 @@ import {
   invalidateCheckoutGitQueriesForClient,
   isLocalWorktreeArchivePending,
   useCheckoutGitActionsStore,
-} from "@/stores/checkout-git-actions-store";
+} from "@/git/actions-store";
 import {
   clearWorkspaceArchivePending,
   isWorkspaceArchivePending,

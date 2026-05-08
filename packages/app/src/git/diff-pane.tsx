@@ -25,7 +25,6 @@ import {
   type ViewStyle,
   type TextStyle,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -46,22 +45,15 @@ import {
   WrapText,
 } from "lucide-react-native";
 import {
-  useCheckoutGitActionsStore,
-  type CheckoutGitActionStatus,
-} from "@/stores/checkout-git-actions-store";
-import {
   useCheckoutDiffQuery,
   type ParsedDiffFile,
   type DiffLine,
   type HighlightToken,
-} from "@/hooks/use-checkout-diff-query";
-import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
-import {
-  useCheckoutPrStatusQuery,
-  type CheckoutPrStatusPayload,
-} from "@/hooks/use-checkout-pr-status-query";
+} from "@/git/use-diff-query";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
+import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
-import { DiffScroll } from "./diff-scroll";
+import { DiffScroll } from "@/components/diff-scroll";
 import {
   darkHighlightColors,
   lightHighlightColors,
@@ -69,7 +61,7 @@ import {
 } from "@getpaseo/highlight";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
-import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
+import { shouldAnchorHeaderBeforeCollapse } from "@/git/diff-scroll";
 import {
   buildSplitDiffRows,
   buildUnifiedDiffLines,
@@ -86,16 +78,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { GitHubIcon } from "@/components/icons/github-icon";
-import { buildGitActions, type GitActions } from "@/components/git-actions-policy";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
-import { resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
-import { openExternalUrl } from "@/utils/open-external-url";
-import { GitActionsSplitButton } from "@/components/git-actions-split-button";
+import { GitActionsSplitButton } from "@/git/actions-split-button";
+import { useGitActions } from "@/git/use-actions";
 import { usePanelStore } from "@/stores/panel-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
-import { useToast } from "@/contexts/toast-context";
 import {
   formatDiffContentText,
   formatDiffGutterText,
@@ -123,11 +111,7 @@ import {
   type InlineReviewActions,
 } from "@/review";
 
-export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
-
-function openURLInNewTab(url: string): void {
-  void openExternalUrl(url);
-}
+export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
 function fileHeaderPressableStyle({ pressed }: PressableStateCallbackType) {
   return [styles.fileHeader, pressed && styles.fileHeaderPressed];
@@ -1277,16 +1261,6 @@ function getDiffContentLength(file: ParsedDiffFile): number {
   return contentLength;
 }
 
-function computeBranchLabel(currentBranch: string | null | undefined, notGit: boolean): string {
-  if (currentBranch && currentBranch !== "HEAD") {
-    return currentBranch;
-  }
-  if (notGit) {
-    return "Not a git repository";
-  }
-  return "Unknown";
-}
-
 function computeEmptyMessage(
   hideWhitespace: boolean,
   diffMode: "uncommitted" | "base",
@@ -1414,234 +1388,6 @@ function DiffBodyContent({
   );
 }
 
-interface GitActionRunners {
-  runCommit: (args: { serverId: string; cwd: string }) => Promise<void>;
-  runPull: (args: { serverId: string; cwd: string }) => Promise<void>;
-  runPush: (args: { serverId: string; cwd: string }) => Promise<void>;
-  runPullAndPush: (args: { serverId: string; cwd: string }) => Promise<void>;
-  runCreatePr: (args: { serverId: string; cwd: string }) => Promise<void>;
-  runMergePr: (args: {
-    serverId: string;
-    cwd: string;
-    method: "merge" | "squash" | "rebase";
-  }) => Promise<void>;
-  runMergeBranch: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
-  runMergeFromBase: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
-  runArchiveWorktree: (args: {
-    serverId: string;
-    cwd: string;
-    worktreePath: string;
-  }) => Promise<void>;
-}
-
-interface GitActionHandlersDeps {
-  serverId: string;
-  cwd: string;
-  baseRef: string | undefined;
-  status: ReturnType<typeof useCheckoutStatusQuery>["status"];
-  runners: GitActionRunners;
-  persistShipDefault: (next: "merge" | "pr") => Promise<void>;
-  toastError: (message: string) => void;
-  toastActionError: (error: unknown, fallback: string) => void;
-  toastActionSuccess: (message: string) => void;
-  onMergeBranchSuccess: () => void;
-  onArchiveSuccess: (targetWorkingDir: string) => void;
-}
-
-interface GitActionHandlers {
-  handleCommit: () => void;
-  handlePull: () => void;
-  handlePush: () => void;
-  handlePullAndPush: () => void;
-  handleCreatePr: () => void;
-  handleMergePrSquash: () => void;
-  handleMergePrMerge: () => void;
-  handleMergePrRebase: () => void;
-  handleMergeBranch: () => void;
-  handleMergeFromBase: () => void;
-  handleArchiveWorktree: () => void;
-}
-
-function useGitActionHandlers({
-  serverId,
-  cwd,
-  baseRef,
-  status,
-  runners,
-  persistShipDefault,
-  toastError,
-  toastActionError,
-  toastActionSuccess,
-  onMergeBranchSuccess,
-  onArchiveSuccess,
-}: GitActionHandlersDeps): GitActionHandlers {
-  const handleCommit = useCallback(() => {
-    void runners
-      .runCommit({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Committed");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to commit");
-      });
-  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
-
-  const handlePull = useCallback(() => {
-    void runners
-      .runPull({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Pulled");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to pull");
-      });
-  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
-
-  const handlePush = useCallback(() => {
-    void runners
-      .runPush({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Pushed");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to push");
-      });
-  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
-
-  const handlePullAndPush = useCallback(() => {
-    void runners
-      .runPullAndPush({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Pulled and pushed");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to pull and push");
-      });
-  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
-
-  const handleCreatePr = useCallback(() => {
-    void persistShipDefault("pr");
-    void runners
-      .runCreatePr({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("PR created");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to create PR");
-      });
-  }, [cwd, persistShipDefault, runners, serverId, toastActionError, toastActionSuccess]);
-
-  const handleMergePr = useCallback(
-    (method: "merge" | "squash" | "rebase") => {
-      void persistShipDefault("pr");
-      void runners
-        .runMergePr({ serverId, cwd, method })
-        .then(() => {
-          onMergeBranchSuccess();
-          toastActionSuccess("PR merged");
-          return;
-        })
-        .catch((err) => {
-          toastActionError(err, "Failed to merge PR");
-        });
-    },
-    [
-      cwd,
-      onMergeBranchSuccess,
-      persistShipDefault,
-      runners,
-      serverId,
-      toastActionError,
-      toastActionSuccess,
-    ],
-  );
-
-  const handleMergePrSquash = useCallback(() => handleMergePr("squash"), [handleMergePr]);
-  const handleMergePrMerge = useCallback(() => handleMergePr("merge"), [handleMergePr]);
-  const handleMergePrRebase = useCallback(() => handleMergePr("rebase"), [handleMergePr]);
-
-  const handleMergeBranch = useCallback(() => {
-    if (!baseRef) {
-      toastError("Base ref unavailable");
-      return;
-    }
-    void persistShipDefault("merge");
-    void runners
-      .runMergeBranch({ serverId, cwd, baseRef })
-      .then(() => {
-        onMergeBranchSuccess();
-        toastActionSuccess("Merged");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to merge");
-      });
-  }, [
-    baseRef,
-    cwd,
-    onMergeBranchSuccess,
-    persistShipDefault,
-    runners,
-    serverId,
-    toastActionError,
-    toastActionSuccess,
-    toastError,
-  ]);
-
-  const handleMergeFromBase = useCallback(() => {
-    if (!baseRef) {
-      toastError("Base ref unavailable");
-      return;
-    }
-    void runners
-      .runMergeFromBase({ serverId, cwd, baseRef })
-      .then(() => {
-        toastActionSuccess("Updated");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to merge from base");
-      });
-  }, [baseRef, cwd, runners, serverId, toastActionError, toastActionSuccess, toastError]);
-
-  const handleArchiveWorktree = useCallback(() => {
-    const worktreePath = status?.cwd;
-    if (!worktreePath) {
-      toastError("Worktree path unavailable");
-      return;
-    }
-    const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
-    void runners
-      .runArchiveWorktree({ serverId, cwd, worktreePath })
-      .then(() => {
-        onArchiveSuccess(targetWorkingDir);
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to archive worktree");
-      });
-  }, [cwd, onArchiveSuccess, runners, serverId, status, toastActionError, toastError]);
-
-  return {
-    handleCommit,
-    handlePull,
-    handlePush,
-    handlePullAndPush,
-    handleCreatePr,
-    handleMergePrSquash,
-    handleMergePrMerge,
-    handleMergePrRebase,
-    handleMergeBranch,
-    handleMergeFromBase,
-    handleArchiveWorktree,
-  };
-}
-
 interface DeriveStatusStateInputs {
   status: ReturnType<typeof useCheckoutStatusQuery>["status"];
   isStatusLoading: boolean;
@@ -1685,55 +1431,6 @@ function deriveStatusState({
   };
 }
 
-interface DerivedBranchState {
-  aheadCount: number;
-  behindBaseCount: number;
-  aheadOfOrigin: number;
-  behindOfOrigin: number;
-  hasPullRequest: boolean;
-  hasRemote: boolean;
-  isPaseoOwnedWorktree: boolean;
-  isMergedPullRequest: boolean;
-  currentBranch: string | null | undefined;
-}
-
-type PullRequestStatus = NonNullable<CheckoutPrStatusPayload["status"]>;
-
-interface PullRequestPolicyState {
-  pullRequestState: string | null;
-  pullRequestIsDraft: boolean;
-  pullRequestIsMerged: boolean;
-  pullRequestMergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-}
-
-function deriveBranchState(
-  gitStatus: DerivedStatusState["gitStatus"],
-  prStatus: { url?: string | null; isMerged?: boolean | null } | null | undefined,
-): DerivedBranchState {
-  return {
-    aheadCount: gitStatus?.aheadBehind?.ahead ?? 0,
-    behindBaseCount: gitStatus?.aheadBehind?.behind ?? 0,
-    aheadOfOrigin: gitStatus?.aheadOfOrigin ?? 0,
-    behindOfOrigin: gitStatus?.behindOfOrigin ?? 0,
-    hasPullRequest: Boolean(prStatus?.url),
-    hasRemote: gitStatus?.hasRemote ?? false,
-    isPaseoOwnedWorktree: gitStatus?.isPaseoOwnedWorktree ?? false,
-    isMergedPullRequest: Boolean(prStatus?.isMerged),
-    currentBranch: gitStatus?.currentBranch,
-  };
-}
-
-function derivePullRequestPolicyState(
-  prStatus: PullRequestStatus | null | undefined,
-): PullRequestPolicyState {
-  return {
-    pullRequestState: prStatus?.state ?? null,
-    pullRequestIsDraft: prStatus?.isDraft ?? false,
-    pullRequestIsMerged: prStatus?.isMerged ?? false,
-    pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
-  };
-}
-
 function computeBaseRefLabel(baseRef: string | undefined): string {
   if (!baseRef) return "base";
   const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
@@ -1748,39 +1445,6 @@ function computeCommittedDiffDescription(
     return undefined;
   }
   return branchLabel === baseRefLabel ? undefined : `${branchLabel} -> ${baseRefLabel}`;
-}
-
-function computeShouldPromoteArchive(
-  isPaseoOwnedWorktree: boolean,
-  hasUncommittedChanges: boolean,
-  postShipArchiveSuggested: boolean,
-  isMergedPullRequest: boolean,
-): boolean {
-  return (
-    isPaseoOwnedWorktree &&
-    !hasUncommittedChanges &&
-    (postShipArchiveSuggested || isMergedPullRequest)
-  );
-}
-
-function computeDisabledStates(
-  actionsDisabled: boolean,
-  statuses: GitActionsStatusInputs,
-): GitActionsDisabledInputs {
-  const pending = "pending";
-  return {
-    commitDisabled: actionsDisabled || statuses.commitStatus === pending,
-    pullDisabled: actionsDisabled || statuses.pullStatus === pending,
-    pushDisabled: actionsDisabled || statuses.pushStatus === pending,
-    pullAndPushDisabled: actionsDisabled || statuses.pullAndPushStatus === pending,
-    prDisabled: actionsDisabled || statuses.prCreateStatus === pending,
-    mergePrSquashDisabled: actionsDisabled || statuses.mergePrSquashStatus === pending,
-    mergePrMergeDisabled: actionsDisabled || statuses.mergePrMergeStatus === pending,
-    mergePrRebaseDisabled: actionsDisabled || statuses.mergePrRebaseStatus === pending,
-    mergeDisabled: actionsDisabled || statuses.mergeStatus === pending,
-    mergeFromBaseDisabled: actionsDisabled || statuses.mergeFromBaseStatus === pending,
-    archiveDisabled: actionsDisabled || statuses.archiveStatus === pending,
-  };
 }
 
 function computePrErrorMessage(
@@ -1802,156 +1466,6 @@ function buildToggleButtonStyle(
   ];
 }
 
-function createPrHandler(
-  prStatus: { url?: string | null } | null | undefined,
-  handleCreatePr: () => void,
-): () => void {
-  return () => {
-    if (prStatus?.url) {
-      openURLInNewTab(prStatus.url);
-      return;
-    }
-    handleCreatePr();
-  };
-}
-
-interface GitActionsStatusInputs {
-  commitStatus: CheckoutGitActionStatus;
-  pullStatus: CheckoutGitActionStatus;
-  pushStatus: CheckoutGitActionStatus;
-  pullAndPushStatus: CheckoutGitActionStatus;
-  prCreateStatus: CheckoutGitActionStatus;
-  mergePrSquashStatus: CheckoutGitActionStatus;
-  mergePrMergeStatus: CheckoutGitActionStatus;
-  mergePrRebaseStatus: CheckoutGitActionStatus;
-  mergeStatus: CheckoutGitActionStatus;
-  mergeFromBaseStatus: CheckoutGitActionStatus;
-  archiveStatus: CheckoutGitActionStatus;
-}
-
-interface GitActionsDisabledInputs {
-  commitDisabled: boolean;
-  pullDisabled: boolean;
-  pushDisabled: boolean;
-  pullAndPushDisabled: boolean;
-  prDisabled: boolean;
-  mergePrSquashDisabled: boolean;
-  mergePrMergeDisabled: boolean;
-  mergePrRebaseDisabled: boolean;
-  mergeDisabled: boolean;
-  mergeFromBaseDisabled: boolean;
-  archiveDisabled: boolean;
-}
-
-interface BuildGitActionsParams {
-  policy: {
-    isGit: boolean;
-    githubFeaturesEnabled: boolean;
-    hasPullRequest: boolean;
-    pullRequestUrl: string | null;
-    pullRequestState: string | null;
-    pullRequestIsDraft: boolean;
-    pullRequestIsMerged: boolean;
-    pullRequestMergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-    hasRemote: boolean;
-    isPaseoOwnedWorktree: boolean;
-    isOnBaseBranch: boolean;
-    hasUncommittedChanges: boolean;
-    baseRefAvailable: boolean;
-    baseRefLabel: string;
-    aheadCount: number;
-    behindBaseCount: number;
-    aheadOfOrigin: number;
-    behindOfOrigin: number;
-    shouldPromoteArchive: boolean;
-    shipDefault: "merge" | "pr";
-  };
-  statuses: GitActionsStatusInputs;
-  disabled: GitActionsDisabledInputs;
-  handlers: GitActionHandlers & { handlePr: () => void };
-  iconColor: string;
-}
-
-function buildGitActionsForPane({
-  policy,
-  statuses,
-  disabled,
-  handlers,
-  iconColor,
-}: BuildGitActionsParams): GitActions {
-  return buildGitActions({
-    ...policy,
-    runtime: {
-      commit: {
-        disabled: disabled.commitDisabled,
-        status: statuses.commitStatus,
-        icon: <GitCommitHorizontal size={16} color={iconColor} />,
-        handler: handlers.handleCommit,
-      },
-      pull: {
-        disabled: disabled.pullDisabled,
-        status: statuses.pullStatus,
-        icon: <Download size={16} color={iconColor} />,
-        handler: handlers.handlePull,
-      },
-      push: {
-        disabled: disabled.pushDisabled,
-        status: statuses.pushStatus,
-        icon: <Upload size={16} color={iconColor} />,
-        handler: handlers.handlePush,
-      },
-      "pull-and-push": {
-        disabled: disabled.pullAndPushDisabled,
-        status: statuses.pullAndPushStatus,
-        icon: <ArrowDownUp size={16} color={iconColor} />,
-        handler: handlers.handlePullAndPush,
-      },
-      pr: {
-        disabled: disabled.prDisabled,
-        status: policy.hasPullRequest ? "idle" : statuses.prCreateStatus,
-        icon: <GitHubIcon size={16} color={iconColor} />,
-        handler: handlers.handlePr,
-      },
-      "merge-pr-squash": {
-        disabled: disabled.mergePrSquashDisabled,
-        status: statuses.mergePrSquashStatus,
-        icon: <GitCommitHorizontal size={16} color={iconColor} />,
-        handler: handlers.handleMergePrSquash,
-      },
-      "merge-pr-merge": {
-        disabled: disabled.mergePrMergeDisabled,
-        status: statuses.mergePrMergeStatus,
-        icon: <GitMerge size={16} color={iconColor} />,
-        handler: handlers.handleMergePrMerge,
-      },
-      "merge-pr-rebase": {
-        disabled: disabled.mergePrRebaseDisabled,
-        status: statuses.mergePrRebaseStatus,
-        icon: <GitBranch size={16} color={iconColor} />,
-        handler: handlers.handleMergePrRebase,
-      },
-      "merge-branch": {
-        disabled: disabled.mergeDisabled,
-        status: statuses.mergeStatus,
-        icon: <GitMerge size={16} color={iconColor} />,
-        handler: handlers.handleMergeBranch,
-      },
-      "merge-from-base": {
-        disabled: disabled.mergeFromBaseDisabled,
-        status: statuses.mergeFromBaseStatus,
-        icon: <RefreshCcw size={16} color={iconColor} />,
-        handler: handlers.handleMergeFromBase,
-      },
-      "archive-worktree": {
-        disabled: disabled.archiveDisabled,
-        status: statuses.archiveStatus,
-        icon: <Archive size={16} color={iconColor} />,
-        handler: handlers.handleArchiveWorktree,
-      },
-    },
-  });
-}
-
 function shouldEnableCheckoutDiff(input: { paneEnabled: boolean; isGit: boolean }): boolean {
   return input.paneEnabled && input.isGit;
 }
@@ -1964,13 +1478,10 @@ export function GitDiffPane({
   enabled,
 }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
-  const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
   const canUseSplitLayout = isWeb && !isMobile;
   const [diffModeOverride, setDiffModeOverride] = useState<ReviewDraftMode | null>(null);
-  const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
-  const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
   const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
     useChangesPreferences();
   const wrapLines = changesPreferences.wrapLines;
@@ -2037,15 +1548,7 @@ export function GitDiffPane({
     error: statusError,
   } = useCheckoutStatusQuery({ serverId, cwd });
   const statusState = deriveStatusState({ status, isStatusLoading, isStatusError, statusError });
-  const {
-    gitStatus,
-    isGit,
-    notGit,
-    statusErrorMessage,
-    baseRef,
-    hasUncommittedChanges,
-    actionsDisabled,
-  } = statusState;
+  const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges } = statusState;
 
   // Auto-select diff mode based on state: uncommitted when dirty, base when clean
   const autoDiffMode: ReviewDraftMode = hasUncommittedChanges ? "uncommitted" : "base";
@@ -2135,11 +1638,7 @@ export function GitDiffPane({
     setWorkspaceAttachments,
     workspaceAttachmentScopeKey,
   ]);
-  const {
-    status: prStatus,
-    githubFeaturesEnabled,
-    payloadError: prPayloadError,
-  } = useCheckoutPrStatusQuery({
+  const { githubFeaturesEnabled, payloadError: prPayloadError } = useCheckoutPrStatusQuery({
     serverId,
     cwd,
     enabled: isGit,
@@ -2173,45 +1672,6 @@ export function GitDiffPane({
   const diffBodyLineHeight = theme.lineHeight.diff;
   const diffBodyChromeHeight = theme.borderWidth[1] * 2;
   const statusBodyHeightEstimate = diffBodyChromeHeight + theme.spacing[4] * 2 + diffBodyLineHeight;
-  const shipDefaultStorageKey = useMemo(() => {
-    if (!gitStatus?.repoRoot) {
-      return null;
-    }
-    return `@paseo:changes-ship-default:${gitStatus.repoRoot}`;
-  }, [gitStatus?.repoRoot]);
-
-  useEffect(() => {
-    if (!shipDefaultStorageKey) {
-      return;
-    }
-    let isActive = true;
-    AsyncStorage.getItem(shipDefaultStorageKey)
-      .then((value) => {
-        if (!isActive) return;
-        if (value === "pr" || value === "merge") {
-          setShipDefault(value);
-        }
-        return;
-      })
-      .catch(() => undefined);
-    return () => {
-      isActive = false;
-    };
-  }, [shipDefaultStorageKey]);
-
-  const persistShipDefault = useCallback(
-    async (next: "merge" | "pr") => {
-      setShipDefault(next);
-      if (!shipDefaultStorageKey) return;
-      try {
-        await AsyncStorage.setItem(shipDefaultStorageKey, next);
-      } catch {
-        // Ignore persistence failures; default will reset to "merge".
-      }
-    },
-    [shipDefaultStorageKey],
-  );
-
   const { flatItems, stickyHeaderIndices } = useMemo(() => {
     const items: DiffFlatItem[] = [];
     const stickyIndices: number[] = [];
@@ -2398,134 +1858,6 @@ export function GitDiffPane({
     setDiffModeOverride(null);
   }, [autoDiffMode]);
 
-  const commitStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "commit" }),
-  );
-  const pullStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "pull" }),
-  );
-  const pushStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "push" }),
-  );
-  const pullAndPushStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "pull-and-push" }),
-  );
-  const prCreateStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "create-pr" }),
-  );
-  const mergePrSquashStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-pr-squash" }),
-  );
-  const mergePrMergeStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-pr-merge" }),
-  );
-  const mergePrRebaseStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-pr-rebase" }),
-  );
-  const mergeStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-branch" }),
-  );
-  const mergeFromBaseStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-from-base" }),
-  );
-  const archiveStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "archive-worktree" }),
-  );
-
-  const runCommit = useCheckoutGitActionsStore((state) => state.commit);
-  const runPull = useCheckoutGitActionsStore((state) => state.pull);
-  const runPush = useCheckoutGitActionsStore((state) => state.push);
-  const runPullAndPush = useCheckoutGitActionsStore((state) => state.pullAndPush);
-  const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
-  const runMergePr = useCheckoutGitActionsStore((state) => state.mergePr);
-  const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
-  const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
-  const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-
-  const toastActionError = useCallback(
-    (error: unknown, fallback: string) => {
-      const message = error instanceof Error ? error.message : fallback;
-      toast.error(message);
-    },
-    [toast],
-  );
-
-  const toastActionSuccess = useCallback(
-    (message: string) => {
-      toast.show(message, { variant: "success" });
-    },
-    [toast],
-  );
-
-  const handleMergeBranchSuccess = useCallback(() => {
-    setPostShipArchiveSuggested(true);
-  }, []);
-
-  const handleArchiveSuccess = useCallback(
-    (targetWorkingDir: string) => {
-      navigateToWorkspace(serverId, targetWorkingDir);
-    },
-    [serverId],
-  );
-
-  const toastError = useCallback(
-    (message: string) => {
-      toast.error(message);
-    },
-    [toast],
-  );
-
-  const runners = useMemo<GitActionRunners>(
-    () => ({
-      runCommit,
-      runPull,
-      runPush,
-      runPullAndPush,
-      runCreatePr,
-      runMergePr,
-      runMergeBranch,
-      runMergeFromBase,
-      runArchiveWorktree,
-    }),
-    [
-      runArchiveWorktree,
-      runCommit,
-      runCreatePr,
-      runMergePr,
-      runMergeBranch,
-      runMergeFromBase,
-      runPull,
-      runPullAndPush,
-      runPush,
-    ],
-  );
-
-  const {
-    handleCommit,
-    handlePull,
-    handlePush,
-    handlePullAndPush,
-    handleCreatePr,
-    handleMergePrSquash,
-    handleMergePrMerge,
-    handleMergePrRebase,
-    handleMergeBranch,
-    handleMergeFromBase,
-    handleArchiveWorktree,
-  } = useGitActionHandlers({
-    serverId,
-    cwd,
-    baseRef,
-    status,
-    runners,
-    persistShipDefault,
-    toastError,
-    toastActionError,
-    toastActionSuccess,
-    onMergeBranchSuccess: handleMergeBranchSuccess,
-    onArchiveSuccess: handleArchiveSuccess,
-  });
-
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
       if (item.type === "header") {
@@ -2608,65 +1940,29 @@ export function GitDiffPane({
   const hasChanges = files.length > 0;
   const diffErrorMessage = diffPayloadError?.message ?? null;
   const prErrorMessage = computePrErrorMessage(githubFeaturesEnabled, prPayloadError);
-  const branchLabel = computeBranchLabel(gitStatus?.currentBranch, notGit);
-  const branchState = useMemo(() => deriveBranchState(gitStatus, prStatus), [gitStatus, prStatus]);
-  const pullRequestPolicyState = useMemo(() => derivePullRequestPolicyState(prStatus), [prStatus]);
-  const {
-    aheadCount,
-    behindBaseCount,
-    aheadOfOrigin,
-    behindOfOrigin,
-    hasPullRequest,
-    hasRemote,
-    isPaseoOwnedWorktree,
-    isMergedPullRequest,
-    currentBranch,
-  } = branchState;
   const baseRefLabel = useMemo(() => computeBaseRefLabel(baseRef), [baseRef]);
+  const iconColor = theme.colors.foregroundMuted;
+  const gitActionsIcons = useMemo(
+    () => ({
+      commit: <GitCommitHorizontal size={16} color={iconColor} />,
+      pull: <Download size={16} color={iconColor} />,
+      push: <Upload size={16} color={iconColor} />,
+      pullAndPush: <ArrowDownUp size={16} color={iconColor} />,
+      viewPr: <GitHubIcon size={16} color={iconColor} />,
+      createPr: <GitHubIcon size={16} color={iconColor} />,
+      mergePrSquash: <GitCommitHorizontal size={16} color={iconColor} />,
+      mergePrMerge: <GitMerge size={16} color={iconColor} />,
+      mergePrRebase: <GitBranch size={16} color={iconColor} />,
+      merge: <GitMerge size={16} color={iconColor} />,
+      mergeFromBase: <RefreshCcw size={16} color={iconColor} />,
+      archive: <Archive size={16} color={iconColor} />,
+    }),
+    [iconColor],
+  );
+  const { gitActions, branchLabel } = useGitActions({ serverId, cwd, icons: gitActionsIcons });
   const committedDiffDescription = useMemo(
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
     [baseRefLabel, branchLabel],
-  );
-  const isOnBaseBranch = currentBranch === baseRefLabel;
-  const shouldPromoteArchive = computeShouldPromoteArchive(
-    isPaseoOwnedWorktree,
-    hasUncommittedChanges,
-    postShipArchiveSuggested,
-    isMergedPullRequest,
-  );
-
-  const gitActionsStatuses = useMemo<GitActionsStatusInputs>(
-    () => ({
-      commitStatus,
-      pullStatus,
-      pushStatus,
-      pullAndPushStatus,
-      prCreateStatus,
-      mergePrSquashStatus,
-      mergePrMergeStatus,
-      mergePrRebaseStatus,
-      mergeStatus,
-      mergeFromBaseStatus,
-      archiveStatus,
-    }),
-    [
-      archiveStatus,
-      commitStatus,
-      mergeFromBaseStatus,
-      mergePrMergeStatus,
-      mergePrRebaseStatus,
-      mergePrSquashStatus,
-      mergeStatus,
-      prCreateStatus,
-      pullAndPushStatus,
-      pullStatus,
-      pushStatus,
-    ],
-  );
-
-  const gitActionsDisabled = useMemo<GitActionsDisabledInputs>(
-    () => computeDisabledStates(actionsDisabled, gitActionsStatuses),
-    [actionsDisabled, gitActionsStatuses],
   );
 
   const emptyMessage = computeEmptyMessage(
@@ -2698,109 +1994,6 @@ export function GitDiffPane({
       foregroundMutedColor={theme.colors.foregroundMuted}
     />
   );
-
-  useEffect(() => {
-    setPostShipArchiveSuggested(false);
-  }, [cwd]);
-
-  // ==========================================================================
-  // Git Actions (Data-Oriented)
-  // ==========================================================================
-  // All possible actions are computed as data, then partitioned into:
-  // - primary: The main CTA button
-  // - secondary: Dropdown next to primary button
-  // - menu: Kebab overflow menu
-  // ==========================================================================
-
-  const handlePr = useMemo(
-    () => createPrHandler(prStatus, handleCreatePr),
-    [handleCreatePr, prStatus],
-  );
-
-  const gitActionsHandlers = useMemo(
-    () => ({
-      handleCommit,
-      handlePull,
-      handlePush,
-      handlePullAndPush,
-      handleCreatePr,
-      handleMergePrSquash,
-      handleMergePrMerge,
-      handleMergePrRebase,
-      handleMergeBranch,
-      handleMergeFromBase,
-      handleArchiveWorktree,
-      handlePr,
-    }),
-    [
-      handleArchiveWorktree,
-      handleCommit,
-      handleCreatePr,
-      handleMergePrMerge,
-      handleMergePrRebase,
-      handleMergePrSquash,
-      handleMergeBranch,
-      handleMergeFromBase,
-      handlePr,
-      handlePull,
-      handlePullAndPush,
-      handlePush,
-    ],
-  );
-
-  const gitActions: GitActions = useMemo(
-    () =>
-      buildGitActionsForPane({
-        policy: {
-          isGit,
-          githubFeaturesEnabled,
-          hasPullRequest,
-          pullRequestUrl: prStatus?.url ?? null,
-          ...pullRequestPolicyState,
-          hasRemote,
-          isPaseoOwnedWorktree,
-          isOnBaseBranch,
-          hasUncommittedChanges,
-          baseRefAvailable: Boolean(baseRef),
-          baseRefLabel,
-          aheadCount,
-          behindBaseCount,
-          aheadOfOrigin,
-          behindOfOrigin,
-          shouldPromoteArchive,
-          shipDefault,
-        },
-        statuses: gitActionsStatuses,
-        disabled: gitActionsDisabled,
-        handlers: gitActionsHandlers,
-        iconColor: theme.colors.foregroundMuted,
-      }),
-    [
-      aheadCount,
-      aheadOfOrigin,
-      baseRef,
-      baseRefLabel,
-      behindBaseCount,
-      behindOfOrigin,
-      gitActionsDisabled,
-      gitActionsHandlers,
-      gitActionsStatuses,
-      githubFeaturesEnabled,
-      hasPullRequest,
-      hasRemote,
-      hasUncommittedChanges,
-      isGit,
-      isOnBaseBranch,
-      isPaseoOwnedWorktree,
-      prStatus?.url,
-      pullRequestPolicyState,
-      shipDefault,
-      shouldPromoteArchive,
-      theme.colors.foregroundMuted,
-    ],
-  );
-
-  // Helper to get display label based on status
 
   return (
     <View style={styles.container}>

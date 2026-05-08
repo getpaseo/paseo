@@ -6,20 +6,8 @@ import path from "path";
 import { z } from "zod";
 
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
-import {
-  createWorktree as createWorktreePrimitive,
-  type CreateWorktreeOptions,
-  type WorktreeConfig,
-} from "../../utils/worktree.js";
-
-interface LegacyCreateWorktreeTestOptions {
-  branchName: string;
-  cwd: string;
-  baseBranch: string;
-  worktreeSlug: string;
-  runSetup?: boolean;
-  paseoHome?: string;
-}
+import { createWorktree as createWorktreePrimitive } from "../../utils/worktree.js";
+import type { PullRequestMergeable } from "../../shared/messages.js";
 
 const GhPrViewSchema = z.object({
   state: z.string(),
@@ -28,26 +16,6 @@ const GhPrViewSchema = z.object({
 });
 
 type GhPrView = z.infer<typeof GhPrViewSchema>;
-
-function createLegacyWorktreeForTest(
-  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
-): Promise<WorktreeConfig> {
-  if ("source" in options) {
-    return createWorktreePrimitive(options);
-  }
-
-  return createWorktreePrimitive({
-    cwd: options.cwd,
-    worktreeSlug: options.worktreeSlug,
-    source: {
-      kind: "branch-off",
-      baseBranch: options.baseBranch,
-      branchName: options.branchName,
-    },
-    runSetup: options.runSetup ?? true,
-    paseoHome: options.paseoHome,
-  });
-}
 
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
@@ -158,12 +126,6 @@ function deleteRepoOrThrow(fullName: string | null): void {
   }
 }
 
-function throwIfCleanupFailed(error: unknown): void {
-  if (error) {
-    throw error;
-  }
-}
-
 function readGhPrView(prNumber: number, repoFullName: string): GhPrView {
   return GhPrViewSchema.parse(
     JSON.parse(
@@ -172,13 +134,6 @@ function readGhPrView(prNumber: number, repoFullName: string): GhPrView {
       }).toString(),
     ),
   );
-}
-
-function requirePrNumber(prNumber: number | null): number {
-  if (prNumber === null) {
-    throw new Error("checkoutPrCreate returned success without a PR number");
-  }
-  return prNumber;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -192,7 +147,7 @@ async function pollForMergeable(
   worktreePath: string,
 ): Promise<number | undefined> {
   const deadline = Date.now() + 30000;
-  let lastMergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" = "UNKNOWN";
+  let lastMergeable: PullRequestMergeable = "UNKNOWN";
 
   while (Date.now() < deadline) {
     const prStatus = await ctx.client.checkoutPrStatus(worktreePath);
@@ -234,6 +189,7 @@ describe("daemon checkout PR merge loop", () => {
       let agentId: string | null = null;
       let worktreePath: string | null = null;
 
+      let repoCleanupError: unknown;
       try {
         initGitRepo(repoDir);
 
@@ -252,11 +208,15 @@ describe("daemon checkout PR merge loop", () => {
         );
         execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
 
-        const worktree = await createLegacyWorktreeForTest({
-          branchName: "merge-pr-squash",
+        const worktree = await createWorktreePrimitive({
           cwd: repoDir,
-          baseBranch: "main",
           worktreeSlug: "merge-pr-squash",
+          source: {
+            kind: "branch-off",
+            baseBranch: "main",
+            branchName: "merge-pr-squash",
+          },
+          runSetup: true,
           paseoHome: ctx.daemon.paseoHome,
         });
         worktreePath = worktree.worktreePath;
@@ -292,7 +252,10 @@ describe("daemon checkout PR merge loop", () => {
         expect(prCreate.url).toContain(repoName);
         expect(prCreate.number).not.toBeNull();
 
-        const prNumber = requirePrNumber(prCreate.number);
+        if (prCreate.number === null) {
+          throw new Error("checkoutPrCreate returned success without a PR number");
+        }
+        const prNumber = prCreate.number;
 
         const mergeablePrNumber = await pollForMergeable(ctx, worktree.worktreePath);
         expect(mergeablePrNumber).toBe(prNumber);
@@ -340,14 +303,15 @@ describe("daemon checkout PR merge loop", () => {
         if (agentId) {
           await ctx.client.deleteAgent(agentId).catch(() => undefined);
         }
-        let repoCleanupError: unknown;
         try {
           deleteRepoOrThrow(repoFullName);
         } catch (error) {
           repoCleanupError = error;
         }
         rmSync(repoDir, { recursive: true, force: true });
-        throwIfCleanupFailed(repoCleanupError);
+      }
+      if (repoCleanupError) {
+        throw repoCleanupError;
       }
     },
     180000,

@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { ComposerAttachment } from "@/attachments/types";
-import type { ParsedDiffFile } from "@/hooks/use-checkout-diff-query";
+import type { ParsedDiffFile } from "@/git/use-diff-query";
 import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
 import type { AgentAttachment } from "@server/shared/messages";

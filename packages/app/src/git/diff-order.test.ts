@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareCheckoutDiffPaths, orderCheckoutDiffFiles } from "./checkout-diff-order";
+import { compareCheckoutDiffPaths, orderCheckoutDiffFiles } from "./diff-order";
 
 function createFile(path: string, additions = 0) {
   return {

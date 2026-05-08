@@ -1,4 +1,4 @@
-import type { DiffLine, ParsedDiffFile } from "@/hooks/use-checkout-diff-query";
+import type { DiffLine, ParsedDiffFile } from "@/git/use-diff-query";
 
 type ReviewSide = "old" | "new";
 type ReviewableLineType = "add" | "remove" | "context";

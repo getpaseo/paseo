@@ -10,8 +10,8 @@ import {
   Upload,
 } from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
-import { GitActionsSplitButton } from "@/components/git-actions-split-button";
-import { useGitActions } from "@/hooks/use-git-actions";
+import { GitActionsSplitButton } from "@/git/actions-split-button";
+import { useGitActions } from "@/git/use-actions";
 import type { Theme } from "@/styles/theme";
 
 interface WorkspaceGitActionsProps {

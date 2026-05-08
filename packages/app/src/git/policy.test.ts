@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildGitActions,
-  gitActionNeedsMenuSeparator,
-  type BuildGitActionsInput,
-  type GitActionId,
-} from "./git-actions-policy";
+import { buildGitActions, type BuildGitActionsInput } from "./policy";
 
 function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitActionsInput {
   return {
@@ -351,7 +346,7 @@ describe("git-actions-policy", () => {
     ],
     [
       "closed",
-      { pullRequestState: "closed" },
+      { pullRequestState: "closed" as const },
       "Merge PR isn't available because the pull request is closed",
     ],
     [
@@ -385,20 +380,38 @@ describe("git-actions-policy", () => {
     expect(mergePrActions.map((action) => action.disabled)).toEqual([true, true, true]);
   });
 
-  it("groups merge-pr actions behind their own menu separator", () => {
-    const separatorIds: GitActionId[] = ["merge-from-base", "merge-pr-squash", "archive-worktree"];
-    const nonSeparatorIds: GitActionId[] = [
-      "commit",
+  it("groups merge-pr actions behind their own menu separator via startsGroup", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        isPaseoOwnedWorktree: true,
+      }),
+    );
+
+    const allActions = [...actions.secondary];
+
+    const groupStarters = allActions
+      .filter((action) => action.startsGroup)
+      .map((action) => action.id);
+    const nonGroupStarters = allActions
+      .filter((action) => !action.startsGroup)
+      .map((action) => action.id);
+
+    expect(groupStarters).toEqual(["merge-from-base", "merge-pr-squash", "archive-worktree"]);
+    expect(nonGroupStarters).toEqual([
       "pull",
       "push",
       "pull-and-push",
+      "merge-branch",
       "pr",
       "merge-pr-merge",
       "merge-pr-rebase",
-      "merge-branch",
-    ];
-
-    expect(separatorIds.every(gitActionNeedsMenuSeparator)).toBe(true);
-    expect(nonSeparatorIds.some(gitActionNeedsMenuSeparator)).toBe(false);
+    ]);
   });
 });

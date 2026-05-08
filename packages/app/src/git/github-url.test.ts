@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGitHubBranchTreeUrl, parseGitHubRepoFromRemote } from "./github-repo-url";
+import { buildGitHubBranchTreeUrl, parseGitHubRepoFromRemote } from "./github-url";
 
 describe("parseGitHubRepoFromRemote", () => {
   it.each([

@@ -16,14 +16,14 @@ import {
   MessageSquare,
 } from "lucide-react-native";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { getActivityVerb, getStateLabel } from "@/utils/pr-pane-data";
+import { getActivityVerb, getStateLabel } from "@/git/pr-pane-data";
 import type {
   CheckStatus,
   PrPaneActivity,
   PrPaneCheck,
   PrPaneData,
   PrState,
-} from "@/utils/pr-pane-data";
+} from "@/git/pr-pane-data";
 
 function rowPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.row, Boolean(hovered) && styles.hoverable];

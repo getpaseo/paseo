@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldAnchorHeaderBeforeCollapse } from "./git-diff-scroll";
+import { shouldAnchorHeaderBeforeCollapse } from "./diff-scroll";
 
 describe("shouldAnchorHeaderBeforeCollapse", () => {
   it("skips anchor when header is fully visible in viewport", () => {

@@ -1,4 +1,5 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import type { CheckoutPrMergeMethod } from "@server/shared/messages";
 import { create } from "zustand";
 import { queryClient as appQueryClient } from "@/query/query-client";
 import {
@@ -265,7 +266,7 @@ interface CheckoutGitActionsStoreState {
   mergePr: (params: {
     serverId: string;
     cwd: string;
-    method: "merge" | "squash" | "rebase";
+    method: CheckoutPrMergeMethod;
   }) => Promise<void>;
   mergeBranch: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
   mergeFromBase: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;

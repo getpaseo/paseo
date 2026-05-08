@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { getStateLabel } from "@/utils/pr-pane-data";
+import { getStateLabel } from "@/git/pr-pane-data";
 
 export async function openPrPane(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open explorer" }).click();

@@ -19,11 +19,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useToast } from "@/contexts/toast-context";
-import {
-  gitActionNeedsMenuSeparator,
-  type GitAction,
-  type GitActions,
-} from "@/components/git-actions-policy";
+import type { GitAction, GitActions } from "@/git/policy";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -167,7 +163,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
                     action={action}
                     onSelect={handleActionSelect}
                     archiveShortcutKeys={archiveShortcutKeys}
-                    needsSeparator={gitActionNeedsMenuSeparator(action.id)}
+                    needsSeparator={action.startsGroup}
                     showSeparator={index > 0}
                     closeOnSelect={
                       action.status === "idle" && action.id === "pr" && action.label === "View PR"
