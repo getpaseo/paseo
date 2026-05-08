@@ -87,6 +87,7 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import { preprocessImages } from "./agent/preprocess-image.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentTimelineCursor,
@@ -2931,7 +2932,8 @@ export class Session {
     );
 
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = this.buildAgentPrompt(promptText, images, attachments);
+    const processedImages = await preprocessImages(images, this.sessionLogger);
+    const prompt = this.buildAgentPrompt(promptText, processedImages, attachments);
 
     try {
       await sendPromptToAgent({
@@ -7294,7 +7296,8 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = this.buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const processedImages = await preprocessImages(msg.images, this.sessionLogger);
+      const prompt = this.buildAgentPrompt(msg.text, processedImages, msg.attachments);
       this.sessionLogger.trace(
         { agentId, messageId: msg.messageId, textPrefix: msg.text.slice(0, 80) },
         "send_agent_message_request: dispatching shared sendPromptToAgent",
