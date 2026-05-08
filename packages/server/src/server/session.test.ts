@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 import { EventEmitter } from "events";
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 import pino from "pino";
@@ -643,6 +643,37 @@ describe("file explorer binary responses", () => {
       requestId: "req-new-client",
       payload: new Uint8Array(),
     });
+  });
+
+  test("saves workspace file content through a scoped request", async () => {
+    const cwd = makeRoot();
+    const messages: unknown[] = [];
+    const binaryMessages: Uint8Array[] = [];
+    const session = createSessionForTest({ messages, binaryMessages });
+
+    await session.handleMessage({
+      type: "workspace_file_save_request",
+      cwd,
+      path: "diagram.drawio",
+      contentBase64: Buffer.from("<mxfile />", "utf8").toString("base64"),
+      requestId: "req-save",
+    });
+
+    expect(binaryMessages).toEqual([]);
+    expect(messages).toEqual([
+      {
+        type: "workspace_file_save_response",
+        payload: expect.objectContaining({
+          cwd,
+          path: "diagram.drawio",
+          size: 10,
+          modifiedAt: expect.any(String),
+          error: null,
+          requestId: "req-save",
+        }),
+      },
+    ]);
+    expect(readFileSync(join(cwd, "diagram.drawio"), "utf8")).toBe("<mxfile />");
   });
 });
 

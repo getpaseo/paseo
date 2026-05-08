@@ -258,12 +258,16 @@ export function FileExplorerPane({
       : undefined,
   );
 
-  const { requestDirectoryListing, requestFileDownloadToken, selectExplorerEntry } =
-    useFileExplorerActions({
-      serverId,
-      workspaceId,
-      workspaceRoot: normalizedWorkspaceRoot,
-    });
+  const {
+    requestDirectoryListing,
+    requestFileDownloadToken,
+    requestFileBytes,
+    selectExplorerEntry,
+  } = useFileExplorerActions({
+    serverId,
+    workspaceId,
+    workspaceRoot: normalizedWorkspaceRoot,
+  });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
   const expandedPathsArray = usePanelStore((state) =>
@@ -367,8 +371,16 @@ export function FileExplorerPane({
         daemonProfile,
         startDownload,
         requestFileDownloadToken,
+        requestFileBytes,
       }),
-    [daemonProfile, requestFileDownloadToken, serverId, startDownload, workspaceScopeId],
+    [
+      daemonProfile,
+      requestFileBytes,
+      requestFileDownloadToken,
+      serverId,
+      startDownload,
+      workspaceScopeId,
+    ],
   );
 
   const handleSortCycle = useCallback(() => {
@@ -734,6 +746,7 @@ function downloadExplorerEntry({
   daemonProfile,
   startDownload,
   requestFileDownloadToken,
+  requestFileBytes,
 }: {
   entry: ExplorerEntry;
   workspaceScopeId: string | undefined;
@@ -743,6 +756,7 @@ function downloadExplorerEntry({
   requestFileDownloadToken: (
     targetPath: string,
   ) => ReturnType<StartDownloadParams["requestFileDownloadToken"]>;
+  requestFileBytes: NonNullable<StartDownloadParams["requestFileBytes"]>;
 }): void {
   if (!workspaceScopeId || entry.kind !== "file") {
     return;
@@ -754,6 +768,7 @@ function downloadExplorerEntry({
     path: entry.path,
     daemonProfile,
     requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
+    requestFileBytes: (targetPath) => requestFileBytes(targetPath),
   });
 }
 

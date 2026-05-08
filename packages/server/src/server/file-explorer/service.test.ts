@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { listDirectoryEntries, readExplorerFile } from "./service.js";
+import { listDirectoryEntries, readExplorerFile, writeExplorerFile } from "./service.js";
 
 async function createHomeTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.homedir(), prefix));
@@ -98,6 +98,67 @@ describe("file explorer service", () => {
       expect(result.mimeType).toBe("application/octet-stream");
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes base64 file content inside the workspace", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      await mkdir(path.join(root, "docs"), { recursive: true });
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "docs/diagram.drawio",
+        contentBase64: Buffer.from("<mxfile />", "utf8").toString("base64"),
+      });
+
+      expect(result.path).toBe("docs/diagram.drawio");
+      expect(result.size).toBe(10);
+
+      const readBack = await readExplorerFile({
+        root,
+        relativePath: "docs/diagram.drawio",
+      });
+      expect(readBack.content).toBe("<mxfile />");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale writes when size or modified time changed", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      await writeFile(path.join(root, "diagram.drawio"), "old", "utf-8");
+
+      await expect(
+        writeExplorerFile({
+          root,
+          relativePath: "diagram.drawio",
+          contentBase64: Buffer.from("new", "utf8").toString("base64"),
+          expectedSize: 10,
+        }),
+      ).rejects.toThrow("File changed on disk");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write outside the workspace", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+    const outside = await createTempDir("paseo-file-explorer-outside-");
+
+    try {
+      await expect(
+        writeExplorerFile({
+          root,
+          relativePath: path.relative(root, path.join(outside, "diagram.drawio")),
+          contentBase64: Buffer.from("secret", "utf8").toString("base64"),
+        }),
+      ).rejects.toThrow("Access outside of workspace is not allowed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 

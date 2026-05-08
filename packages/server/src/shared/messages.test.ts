@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { FileExplorerRequestSchema, SessionOutboundMessageSchema } from "./messages.js";
+import {
+  FileExplorerRequestSchema,
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
+} from "./messages.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
   return {
@@ -158,6 +162,52 @@ describe("file explorer request compatibility", () => {
       type: "file_explorer_request",
       requestId: "req-new",
       acceptBinary: true,
+    });
+  });
+});
+
+describe("workspace file save message compatibility", () => {
+  test("save request accepts optional stale-write guards", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "workspace_file_save_request",
+      cwd: "/repo/app",
+      path: "docs/diagram.drawio",
+      contentBase64: "PGRpYWdyYW0vPg==",
+      requestId: "req-save",
+      expectedModifiedAt: "2026-05-05T00:00:00.000Z",
+      expectedSize: 12,
+    });
+
+    expect(parsed).toMatchObject({
+      type: "workspace_file_save_request",
+      cwd: "/repo/app",
+      path: "docs/diagram.drawio",
+      requestId: "req-save",
+      expectedModifiedAt: "2026-05-05T00:00:00.000Z",
+      expectedSize: 12,
+    });
+  });
+
+  test("save response parses with nullable error for old-compatible clients", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "workspace_file_save_response",
+      payload: {
+        cwd: "/repo/app",
+        path: "docs/diagram.drawio",
+        size: 14,
+        modifiedAt: "2026-05-05T00:00:01.000Z",
+        error: null,
+        requestId: "req-save",
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      type: "workspace_file_save_response",
+      payload: {
+        path: "docs/diagram.drawio",
+        size: 14,
+        error: null,
+      },
     });
   });
 });

@@ -484,6 +484,116 @@ test("readFile resolves from binary file frames when the daemon supports them", 
   expect(new TextDecoder().decode(result.bytes)).toBe("hello");
 });
 
+test("readFile allows longer-running file content transfers", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  vi.useFakeTimers();
+  try {
+    let settled = false;
+    let rejection: Error | null = null;
+    const responsePromise = client.readFile("/tmp/project", "report.docx", "req-slow-file").then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        settled = true;
+        rejection = error instanceof Error ? error : new Error(String(error));
+        return undefined;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(50_000);
+    await responsePromise;
+    expect(settled).toBe(true);
+    expect(rejection?.message).toContain("Timeout waiting for message (60000ms)");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("saveFile sends workspace file save request and returns saved metadata", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.saveFile(
+    "/tmp/project",
+    "diagram.drawio",
+    new TextEncoder().encode("<mxfile />"),
+    {
+      requestId: "req-save",
+      expectedModifiedAt: "2026-05-05T00:00:00.000Z",
+      expectedSize: 10,
+    },
+  );
+
+  expect(JSON.parse(String(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "workspace_file_save_request",
+      cwd: "/tmp/project",
+      path: "diagram.drawio",
+      contentBase64: "PG14ZmlsZSAvPg==",
+      expectedModifiedAt: "2026-05-05T00:00:00.000Z",
+      expectedSize: 10,
+      requestId: "req-save",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace_file_save_response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "diagram.drawio",
+        size: 10,
+        modifiedAt: "2026-05-05T00:00:01.000Z",
+        error: null,
+        requestId: "req-save",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    cwd: "/tmp/project",
+    path: "diagram.drawio",
+    size: 10,
+    modifiedAt: "2026-05-05T00:00:01.000Z",
+    error: null,
+    requestId: "req-save",
+  });
+});
+
 test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

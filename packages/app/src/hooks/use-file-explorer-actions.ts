@@ -243,6 +243,23 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [client, normalizedWorkspaceRoot],
   );
 
+  const requestFileBytes = useCallback(
+    async (path: string) => {
+      if (!normalizedWorkspaceRoot) {
+        throw new Error("Workspace is unavailable");
+      }
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+      const file = await client.readFile(normalizedWorkspaceRoot, path);
+      return {
+        bytes: file.bytes,
+        mimeType: file.mime,
+      };
+    },
+    [client, normalizedWorkspaceRoot],
+  );
+
   const selectExplorerEntry = useCallback(
     (path: string | null) => {
       updateExplorerState((state) => ({
@@ -258,6 +275,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     requestDirectoryListing,
     requestFilePreview,
     requestFileDownloadToken,
+    requestFileBytes,
     selectExplorerEntry,
   };
 }
