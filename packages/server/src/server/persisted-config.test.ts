@@ -1,6 +1,25 @@
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { PersistedConfigSchema } from "./persisted-config.js";
+import {
+  loadPersistedConfig,
+  PersistedConfigSchema,
+  savePersistedConfig,
+} from "./persisted-config.js";
+import { PRIVATE_FILE_MODE } from "./private-files.js";
+
+const MODE_MASK = 0o777;
+const PERMISSIVE_FILE_MODE = 0o644;
+
+function createTempHome(): string {
+  return mkdtempSync(path.join(tmpdir(), "paseo-config-"));
+}
+
+function modeOf(filePath: string): number {
+  return statSync(filePath).mode & MODE_MASK;
+}
 
 describe("PersistedConfigSchema daemon auth config", () => {
   test("accepts optional daemon password hash", () => {
@@ -463,5 +482,50 @@ describe("PersistedConfigSchema voice mode config", () => {
     });
 
     expect(parsed.features?.voiceMode?.turnDetection?.provider).toBe("local");
+  });
+});
+
+describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {
+  test("initializes config.json with private permissions", () => {
+    const home = createTempHome();
+    try {
+      loadPersistedConfig(home);
+
+      expect(modeOf(path.join(home, "config.json"))).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("repairs permissive config.json permissions when loading", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, "{}\n", { mode: PERMISSIVE_FILE_MODE });
+      chmodSync(configPath, PERMISSIVE_FILE_MODE);
+
+      loadPersistedConfig(home);
+
+      expect(modeOf(configPath)).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("saves config.json with private permissions", () => {
+    const home = createTempHome();
+    try {
+      savePersistedConfig(home, {
+        providers: {
+          openai: {
+            apiKey: "secret",
+          },
+        },
+      });
+
+      expect(modeOf(path.join(home, "config.json"))).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
