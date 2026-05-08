@@ -28,11 +28,15 @@ export interface AgentScreenMachineInput {
   isArchivingCurrentAgent: boolean;
   isHistorySyncing: boolean;
   needsAuthoritativeSync: boolean;
+  deferAuthoritativeSync?: boolean;
   shouldUseOptimisticStream: boolean;
   hasHydratedHistoryBefore: boolean;
 }
 
 function shouldBlockInitialAuthoritativeReadyState(input: AgentScreenMachineInput): boolean {
+  if (input.deferAuthoritativeSync === true) {
+    return false;
+  }
   return (
     !input.shouldUseOptimisticStream &&
     !input.hasHydratedHistoryBefore &&
@@ -141,7 +145,10 @@ function resolveAgentScreenSync(args: {
   if (input.missingAgentState.kind === "error") {
     return { status: "sync_error" };
   }
-  if (input.needsAuthoritativeSync || input.isHistorySyncing) {
+  if (
+    input.deferAuthoritativeSync !== true &&
+    (input.needsAuthoritativeSync || input.isHistorySyncing)
+  ) {
     return {
       status: "catching_up",
       ui: resolveCatchingUpUi({

@@ -137,6 +137,8 @@ import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import { createRequireBearerMiddleware, type DaemonAuthConfig } from "./auth.js";
+import { TmuxCodexBridgeService } from "./tmux-codex-bridge-service.js";
+import { CodexProcessBridgeService } from "./codex-process-bridge-service.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -189,6 +191,7 @@ export interface PaseoDaemonConfig {
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
   agentStoragePath: string;
   relayEnabled?: boolean;
+  agentTimelineMaxItems?: number;
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   relayUseTls?: boolean;
@@ -203,6 +206,8 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  externalCodexRelaunchCommand?: string[];
+  tmuxCodexBridgeEnabled?: boolean;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 }
@@ -506,6 +511,31 @@ export async function createPaseoDaemon(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
   );
+  const tmuxCodexBridge =
+    config.tmuxCodexBridgeEnabled === false
+      ? null
+      : new TmuxCodexBridgeService({
+          logger,
+          paseoHome: config.paseoHome,
+          agentManager,
+          agentStorage,
+          projectRegistry,
+          workspaceRegistry,
+          workspaceGitService,
+          relaunchCommand: config.externalCodexRelaunchCommand,
+        });
+  if (tmuxCodexBridge) {
+    await tmuxCodexBridge.start();
+  }
+  const codexProcessBridge = new CodexProcessBridgeService({
+    logger,
+    paseoHome: config.paseoHome,
+    agentManager,
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService,
+  });
+  await codexProcessBridge.start();
   logger.info(
     "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
   );
@@ -842,6 +872,8 @@ export async function createPaseoDaemon(
             (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
             workspaceGitService,
             github,
+            tmuxCodexBridge,
+            codexProcessBridge,
           );
 
           if (relayEnabled) {
@@ -901,6 +933,8 @@ export async function createPaseoDaemon(
       runtimeSettings: config.agentProviderSettings,
       providerOverrides: config.providerOverrides,
     });
+    await codexProcessBridge.stop().catch(() => undefined);
+    await tmuxCodexBridge?.stop().catch(() => undefined);
     terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);

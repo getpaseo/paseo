@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { __private__ } from "./use-all-agents-list";
+import { buildAllAgentsList } from "@/utils/aggregated-agent";
 import type { Agent } from "@/stores/session-store";
 
 const AGENT_TIMESTAMP = new Date("2026-03-08T10:00:00.000Z");
@@ -52,7 +52,7 @@ describe("useAllAgentsList", () => {
       archivedAt: new Date("2026-03-08T11:00:00.000Z"),
     });
 
-    const result = __private__.buildAllAgentsList({
+    const result = buildAllAgentsList({
       agents: [visibleAgent, archivedAgent],
       serverId: "server-1",
       serverLabel: "Local",
@@ -69,7 +69,7 @@ describe("useAllAgentsList", () => {
       archivedAt: new Date("2026-03-08T11:00:00.000Z"),
     });
 
-    const result = __private__.buildAllAgentsList({
+    const result = buildAllAgentsList({
       agents: [visibleAgent, archivedAgent],
       serverId: "server-1",
       serverLabel: "Local",

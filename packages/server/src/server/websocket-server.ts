@@ -46,6 +46,8 @@ import type { ScriptRouteStore } from "./script-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import type { TmuxCodexBridgeService } from "./tmux-codex-bridge-service.js";
+import type { CodexProcessBridgeService } from "./codex-process-bridge-service.js";
 import { computeNotificationPlan, type ClientPresenceState } from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
@@ -354,6 +356,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: GitHubService;
   private readonly workspaceGitService: WorkspaceGitService;
+  private readonly tmuxCodexBridge: TmuxCodexBridgeService | null;
+  private readonly codexProcessBridge: CodexProcessBridgeService | null;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly daemonConfigStore: DaemonConfigStore;
@@ -453,6 +457,8 @@ export class VoiceAssistantWebSocketServer {
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
     workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
+    tmuxCodexBridge?: TmuxCodexBridgeService | null,
+    codexProcessBridge?: CodexProcessBridgeService | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -476,6 +482,8 @@ export class VoiceAssistantWebSocketServer {
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
+    this.tmuxCodexBridge = tmuxCodexBridge ?? null;
+    this.codexProcessBridge = codexProcessBridge ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.daemonConfigStore = daemonConfigStore;
@@ -908,6 +916,8 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      tmuxCodexBridge: this.tmuxCodexBridge,
+      codexProcessBridge: this.codexProcessBridge,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,

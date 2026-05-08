@@ -759,6 +759,28 @@ export class AgentManager {
     });
   }
 
+  async adoptSession(
+    session: AgentSession,
+    config: AgentSessionConfig,
+    agentId: string,
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+      timeline?: AgentTimelineItem[];
+      timelineRows?: AgentTimelineRow[];
+      timelineNextSeq?: number;
+      historyPrimed?: boolean;
+      lastUsage?: AgentUsage;
+      lastError?: string;
+      attention?: AttentionState;
+    },
+  ): Promise<ManagedAgent> {
+    const normalizedConfig = await this.normalizeConfig(config);
+    return this.registerSession(session, normalizedConfig, agentId, options);
+  }
+
   private buildCreateSessionOptions(options?: {
     persistSession?: boolean;
   }): AgentCreateSessionOptions | undefined {

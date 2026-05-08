@@ -47,6 +47,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { deriveWorkspaceTabAgentManagementState } from "@/screens/workspace/workspace-agent-management";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import {
   WorkspaceTabPresentationResolver,
@@ -58,6 +59,7 @@ import {
   type WorkspaceDesktopTabActions,
   type WorkspaceTabMenuEntry,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { Theme } from "@/styles/theme";
 
@@ -829,12 +831,23 @@ function ResolvedDesktopTabChip({
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
 }) {
+  const agentId = item.tab.target.kind === "agent" ? item.tab.target.agentId : null;
+  const agent =
+    useSessionStore((state) =>
+      agentId ? (state.sessions[normalizedServerId]?.agents?.get(agentId) ?? null) : null,
+    ) ?? null;
+  const agentManagementState = useMemo(
+    () => deriveWorkspaceTabAgentManagementState(agent),
+    [agent],
+  );
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
         tab: item.tab,
         index,
         tabCount,
+        reloadAgentLabel: agentManagementState.reloadLabel,
+        reloadAgentTooltip: agentManagementState.reloadTooltip,
         onCopyResumeCommand,
         onCopyAgentId,
         onReloadAgent,
@@ -844,6 +857,8 @@ function ResolvedDesktopTabChip({
         onCloseOtherTabs,
       }),
     [
+      agentManagementState.reloadLabel,
+      agentManagementState.reloadTooltip,
       index,
       item.tab,
       onCloseOtherTabs,

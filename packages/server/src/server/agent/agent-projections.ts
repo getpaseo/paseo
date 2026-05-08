@@ -14,7 +14,11 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
-import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "../persistence-hooks.js";
+import {
+  isStoredAgentProviderAvailable,
+  resolveStoredAgentTitle,
+  toAgentPersistenceHandle,
+} from "../persistence-hooks.js";
 export type { ManagedAgent };
 
 interface ProjectionOptions {
@@ -214,7 +218,7 @@ export function buildStoredAgentPayload(
     availableModes: [],
     pendingPermissions: [],
     persistence,
-    title: record.title ?? record.config?.title ?? null,
+    title: resolveStoredAgentTitle(record),
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,

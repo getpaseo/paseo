@@ -58,10 +58,8 @@ import {
   type VoiceTurnController,
 } from "./voice/voice-turn-controller.js";
 import {
-  buildConfigOverrides,
-  extractTimestamps,
   isStoredAgentProviderAvailable,
-  toAgentPersistenceHandle,
+  resolveStoredAgentTitle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import { sendPromptToAgent, unarchiveAgentState } from "./agent/mcp-shared.js";
@@ -130,6 +128,8 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import type { TmuxCodexBridgeService } from "./tmux-codex-bridge-service.js";
+import type { CodexProcessBridgeService } from "./codex-process-bridge-service.js";
 import {
   checkoutLiteFromGitSnapshot,
   normalizeWorkspaceId as normalizePersistedWorkspaceId,
@@ -462,6 +462,10 @@ type FetchAgentHistoryRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_agent_history_request" }
 >;
+type FetchRecoverableAgentsRequestMessage = Extract<
+  SessionInboundMessage,
+  { type: "fetch_recoverable_agents_request" }
+>;
 type AgentDirectoryRequestMessage = FetchAgentsRequestMessage | FetchAgentHistoryRequestMessage;
 type FetchAgentsRequestFilter = NonNullable<FetchAgentsRequestMessage["filter"]>;
 type FetchAgentsRequestSort = NonNullable<FetchAgentsRequestMessage["sort"]>[number];
@@ -471,6 +475,12 @@ type FetchAgentsResponsePayload = Extract<
 >["payload"];
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
+type FetchRecoverableAgentsResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_recoverable_agents_response" }
+>["payload"];
+type FetchRecoverableAgentsResponseEntry = FetchRecoverableAgentsResponsePayload["entries"][number];
+type FetchRecoverableAgentsResponsePageInfo = FetchRecoverableAgentsResponsePayload["pageInfo"];
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
 interface AgentUpdatesSubscriptionState {
@@ -565,6 +575,8 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  tmuxCodexBridge?: TmuxCodexBridgeService | null;
+  codexProcessBridge?: CodexProcessBridgeService | null;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
@@ -793,6 +805,8 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly tmuxCodexBridge: TmuxCodexBridgeService | null;
+  private readonly codexProcessBridge: CodexProcessBridgeService | null;
   private readonly chatService: FileBackedChatService;
   private readonly scheduleService: ScheduleService;
   private readonly loopService: LoopService;
@@ -878,6 +892,8 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      tmuxCodexBridge,
+      codexProcessBridge,
       chatService,
       scheduleService,
       loopService,
@@ -923,6 +939,8 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.tmuxCodexBridge = tmuxCodexBridge ?? null;
+    this.codexProcessBridge = codexProcessBridge ?? null;
     this.chatService = chatService;
     this.scheduleService = scheduleService;
     this.loopService = loopService;
@@ -1375,7 +1393,7 @@ export class Session {
 
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
     const storedRecord = await this.agentStorage.get(agent.id);
-    const title = storedRecord?.title ?? storedRecord?.config?.title ?? null;
+    const title = storedRecord ? resolveStoredAgentTitle(storedRecord) : null;
     const payload = toAgentPayload(agent, { title });
     const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
     if (storedUpdatedAt) {
@@ -1583,12 +1601,17 @@ export class Session {
     options?: { refreshGit?: boolean },
   ): Promise<string> {
     const normalizedCwd = normalizePersistedWorkspaceId(cwd);
+    const getCheckout = (this.workspaceGitService as Partial<WorkspaceGitService>).getCheckout;
+    if (typeof getCheckout !== "function") {
+      const snapshot = this.workspaceGitService.peekSnapshot(normalizedCwd);
+      return normalizePersistedWorkspaceId(snapshot?.git.repoRoot ?? normalizedCwd);
+    }
     if (options?.refreshGit === false) {
       const snapshot = this.workspaceGitService.peekSnapshot(normalizedCwd);
       return normalizePersistedWorkspaceId(snapshot?.git.repoRoot ?? normalizedCwd);
     }
 
-    const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
+    const checkout = await getCheckout.call(this.workspaceGitService, normalizedCwd);
     return normalizePersistedWorkspaceId(checkout.worktreeRoot ?? normalizedCwd);
   }
 
@@ -1816,6 +1839,8 @@ export class Session {
     switch (msg.type) {
       case "fetch_agents_request":
         return this.handleFetchAgents(msg);
+      case "fetch_recoverable_agents_request":
+        return this.handleFetchRecoverableAgents(msg);
       case "fetch_agent_history_request":
         return this.handleFetchAgentHistory(msg);
       case "fetch_agent_request":
@@ -2713,6 +2738,8 @@ export class Session {
     const existing = await ensureAgentLoaded(agentId, {
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      tmuxCodexBridge: this.tmuxCodexBridge,
+      codexProcessBridge: this.codexProcessBridge,
       logger: this.sessionLogger,
     });
     this.sessionLogger.info(
@@ -3271,24 +3298,13 @@ export class Session {
         await this.interruptAgentIfRunning(agentId);
         snapshot = await this.agentManager.reloadAgentSession(agentId);
       } else {
-        const record = await this.agentStorage.get(agentId);
-        if (!record) {
-          throw new Error(`Agent not found: ${agentId}`);
-        }
-        const providerRegistry = this.getProviderRegistry();
-        if (!isStoredAgentProviderAvailable(record, Object.keys(providerRegistry))) {
-          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
-        }
-        const handle = toAgentPersistenceHandle(providerRegistry, record.persistence);
-        if (!handle) {
-          throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
-        }
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          buildConfigOverrides(record),
-          agentId,
-          extractTimestamps(record),
-        );
+        snapshot = await ensureAgentLoaded(agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          tmuxCodexBridge: this.tmuxCodexBridge,
+          codexProcessBridge: this.codexProcessBridge,
+          logger: this.sessionLogger,
+        });
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId);
       await this.forwardAgentUpdate(snapshot);
@@ -5703,6 +5719,21 @@ export class Session {
     return agents;
   }
 
+  private async listRecoverableAgentPayloads(): Promise<AgentSnapshotPayload[]> {
+    const liveIds = new Set(this.agentManager.listAgents().map((agent) => agent.id));
+    const registeredProviderIds = this.getRegisteredProviderIds();
+    const registryRecords = await this.agentStorage.list();
+
+    return registryRecords
+      .filter((record) => !liveIds.has(record.id) && !record.internal)
+      .filter((record) => isStoredAgentProviderAvailable(record, registeredProviderIds))
+      .map((record) => this.buildStoredAgentPayload(record, registeredProviderIds))
+      .filter(
+        (agent) =>
+          agent.status === "closed" && agent.archivedAt == null && agent.persistence != null,
+      );
+  }
+
   private async resolveAgentIdentifier(
     identifier: string,
   ): Promise<{ ok: true; agentId: string } | { ok: false; error: string }> {
@@ -5739,7 +5770,7 @@ export class Session {
       };
     }
 
-    const titleMatches = storedRecords.filter((record) => record.title === trimmed);
+    const titleMatches = storedRecords.filter((record) => resolveStoredAgentTitle(record) === trimmed);
     if (titleMatches.length === 1) {
       return { ok: true, agentId: titleMatches[0].id };
     }
@@ -5900,7 +5931,7 @@ export class Session {
       if (existing) {
         return existing;
       }
-      const placementPromise = this.buildProjectPlacementForCwd(cwd);
+      const placementPromise = this.buildProjectPlacementForCwd(cwd, { fallback: true });
       placementByCwd.set(cwd, placementPromise);
       return placementPromise;
     };
@@ -5933,6 +5964,62 @@ export class Session {
 
     return {
       entries: pagedEntries,
+      pageInfo: {
+        nextCursor,
+        prevCursor: request.page?.cursor ?? null,
+        hasMore,
+      },
+    };
+  }
+
+  private async listFetchRecoverableAgentsEntries(
+    request: FetchRecoverableAgentsRequestMessage,
+  ): Promise<{
+    entries: FetchRecoverableAgentsResponseEntry[];
+    pageInfo: FetchRecoverableAgentsResponsePageInfo;
+  }> {
+    const sort = this.agentsPager.normalizeSort(request.sort as FetchAgentsRequestSort[] | undefined);
+    let candidates = await this.listRecoverableAgentPayloads();
+
+    candidates.sort((left, right) => this.agentsPager.compare(left, right, sort));
+    const cursorToken = request.page?.cursor;
+    if (cursorToken) {
+      const cursor = this.decodeAgentCursor(cursorToken, sort);
+      candidates = candidates.filter(
+        (agent) => this.agentsPager.compareWithCursor(agent, cursor, sort) > 0,
+      );
+    }
+
+    const limit = request.page?.limit ?? 200;
+    const pagedAgents = candidates.slice(0, limit);
+    const hasMore = candidates.length > limit;
+    const nextCursor =
+      hasMore && pagedAgents.length > 0
+        ? this.agentsPager.encode(pagedAgents[pagedAgents.length - 1], sort)
+        : null;
+
+    const placementByCwd = new Map<string, Promise<ProjectPlacementPayload | null>>();
+    const getPlacement = (cwd: string): Promise<ProjectPlacementPayload | null> => {
+      const existing = placementByCwd.get(cwd);
+      if (existing) {
+        return existing;
+      }
+      const placementPromise = this.buildProjectPlacementForCwd(cwd, { fallback: true });
+      placementByCwd.set(cwd, placementPromise);
+      return placementPromise;
+    };
+
+    const entries = (
+      await Promise.all(
+        pagedAgents.map(async (agent) => {
+          const project = await getPlacement(agent.cwd);
+          return project ? ({ agent, project } satisfies FetchRecoverableAgentsResponseEntry) : null;
+        }),
+      )
+    ).filter((entry): entry is FetchRecoverableAgentsResponseEntry => entry !== null);
+
+    return {
+      entries,
       pageInfo: {
         nextCursor,
         prevCursor: request.page?.cursor ?? null,
@@ -6612,6 +6699,38 @@ export class Session {
     }
   }
 
+  private async handleFetchRecoverableAgents(
+    request: FetchRecoverableAgentsRequestMessage,
+  ): Promise<void> {
+    try {
+      const payload = await this.listFetchRecoverableAgentsEntries(request);
+      payload.entries = payload.entries.filter((entry) =>
+        this.isProviderVisibleToClient(entry.agent.provider),
+      );
+      this.emit({
+        type: "fetch_recoverable_agents_response",
+        payload: {
+          requestId: request.requestId,
+          ...payload,
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof SessionRequestError ? error.code : "fetch_recoverable_agents_failed";
+      const message = error instanceof Error ? error.message : "Failed to fetch recoverable agents";
+      this.sessionLogger.error({ err: error }, "Failed to handle fetch_recoverable_agents_request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: request.type,
+          error: message,
+          code,
+        },
+      });
+    }
+  }
+
   private async handleFetchAgentHistory(
     request: Extract<SessionInboundMessage, { type: "fetch_agent_history_request" }>,
   ): Promise<void> {
@@ -7172,6 +7291,8 @@ export class Session {
       const snapshot = await ensureAgentLoaded(msg.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        tmuxCodexBridge: this.tmuxCodexBridge,
+        codexProcessBridge: this.codexProcessBridge,
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
