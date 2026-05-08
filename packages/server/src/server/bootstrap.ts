@@ -464,6 +464,7 @@ export async function createPaseoDaemon(
     },
     providerDefinitions: providerRegistry,
     registry: agentStorage,
+    maxTimelineItems: config.agentTimelineMaxItems,
     logger,
   });
 

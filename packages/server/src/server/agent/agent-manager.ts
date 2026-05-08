@@ -124,6 +124,7 @@ type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 export interface AgentManagerOptions {
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
+  maxTimelineItems?: number;
   idFactory?: () => string;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
@@ -382,7 +383,7 @@ export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly agents = new Map<string, LiveManagedAgent>();
-  private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly timelineStore: InMemoryAgentTimelineStore;
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly foregroundRuns = new ForegroundRunState();
@@ -399,6 +400,15 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
 
   constructor(options: AgentManagerOptions) {
+    const maxTimelineItems = options?.maxTimelineItems;
+    this.timelineStore = new InMemoryAgentTimelineStore({
+      maxItems:
+        typeof maxTimelineItems === "number" &&
+        Number.isFinite(maxTimelineItems) &&
+        maxTimelineItems >= 0
+          ? Math.floor(maxTimelineItems)
+          : null,
+    });
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;

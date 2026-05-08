@@ -9,6 +9,7 @@ import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/components/agent-stream-view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
+import { ExternalSessionCallout } from "@/components/external-session-callout";
 import { Composer } from "@/components/composer";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
@@ -56,6 +57,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { describeExternalSessionRecovery } from "@/utils/external-session";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 
@@ -612,6 +614,9 @@ function ChatAgentContent({
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
+  const agentRecord = useSessionStore((state) =>
+    resolveChatAgentFromSession(state, serverId, agentId),
+  );
   const projectPlacement = useStoreWithEqualityFn(
     useSessionStore,
     (state) => {
@@ -650,6 +655,12 @@ function ChatAgentContent({
   const [missingAgentState, setMissingAgentState] = useState<AgentScreenMissingState>({
     kind: "idle",
   });
+  const externalRecoveryDescriptor = useMemo(
+    () => (agentRecord ? describeExternalSessionRecovery(agentRecord) : null),
+    [agentRecord],
+  );
+  const shouldRecoverClosedExternalSession =
+    externalRecoveryDescriptor?.canRecoverWhenClosed === true;
 
   const pendingCreate = useMemo(
     () => findPendingCreateForPanel({ pendingByDraftId, serverId, agentId }),
@@ -727,11 +738,24 @@ function ChatAgentContent({
   }, [connectionStatus, panelToast]);
 
   useEffect(() => {
-    if (!isPaneFocused || !agentId || !isConnected || !hasSession) {
+    if (
+      !isPaneFocused ||
+      !agentId ||
+      !isConnected ||
+      !hasSession ||
+      shouldRecoverClosedExternalSession
+    ) {
       return;
     }
     ensureInitializedWithSyncErrorHandling("focus");
-  }, [agentId, ensureInitializedWithSyncErrorHandling, hasSession, isConnected, isPaneFocused]);
+  }, [
+    agentId,
+    ensureInitializedWithSyncErrorHandling,
+    hasSession,
+    isConnected,
+    isPaneFocused,
+    shouldRecoverClosedExternalSession,
+  ]);
 
   const isArchivingCurrentAgent = Boolean(agentId && isArchivingAgent({ serverId, agentId }));
 
@@ -801,6 +825,7 @@ function ChatAgentContent({
       isArchivingCurrentAgent,
       isHistorySyncing,
       needsAuthoritativeSync,
+      deferAuthoritativeSync: shouldRecoverClosedExternalSession,
       shouldUseOptimisticStream,
       hasHydratedHistoryBefore,
     },
@@ -839,6 +864,13 @@ function ChatAgentContent({
     streamViewRef.current?.scrollToBottom("message-sent");
   }, [agentId]);
 
+  const handleExternalSessionRecovered = useCallback(async () => {
+    if (!agentId) {
+      return;
+    }
+    await ensureAgentIsInitialized(agentId);
+  }, [agentId, ensureAgentIsInitialized]);
+
   useEffect(() => {
     if (!agentId) {
       return;
@@ -846,7 +878,8 @@ function ChatAgentContent({
     if (!isConnected || !hasSession) {
       return;
     }
-    const shouldSyncOnEntry = needsAuthoritativeSync || isNative;
+    const shouldSyncOnEntry =
+      (needsAuthoritativeSync || isNative) && !shouldRecoverClosedExternalSession;
     if (!shouldSyncOnEntry) {
       return;
     }
@@ -858,6 +891,7 @@ function ChatAgentContent({
     hasSession,
     isConnected,
     needsAuthoritativeSync,
+    shouldRecoverClosedExternalSession,
   ]);
 
   useEffect(() => {
@@ -973,6 +1007,7 @@ function ChatAgentContent({
           <AgentComposerSection
             agentId={agentId}
             serverId={serverId}
+            agentRecord={agentRecord}
             isPaneFocused={isPaneFocused}
             isArchivingCurrentAgent={isArchivingCurrentAgent}
             archivedAt={agentState.archivedAt}
@@ -983,6 +1018,7 @@ function ChatAgentContent({
             onAddImages={handleAddImagesCallback}
             onComposerHeightChange={handleComposerHeightChange}
             onMessageSent={handleMessageSent}
+            onExternalSessionRecovered={handleExternalSessionRecovered}
           />
 
           {viewState.tag === "ready" &&
@@ -1178,6 +1214,7 @@ function AgentStreamSection({
 function AgentComposerSection({
   agentId,
   serverId,
+  agentRecord,
   isPaneFocused,
   isArchivingCurrentAgent,
   archivedAt,
@@ -1188,9 +1225,11 @@ function AgentComposerSection({
   onAddImages,
   onComposerHeightChange,
   onMessageSent,
+  onExternalSessionRecovered,
 }: {
   agentId?: string;
   serverId: string;
+  agentRecord: Agent | null;
   isPaneFocused: boolean;
   isArchivingCurrentAgent: boolean;
   archivedAt: Date | null;
@@ -1201,7 +1240,15 @@ function AgentComposerSection({
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onExternalSessionRecovered?: () => Promise<void> | void;
 }) {
+  const externalRecoveryDescriptor = useMemo(
+    () => (agentRecord ? describeExternalSessionRecovery(agentRecord) : null),
+    [agentRecord],
+  );
+  const shouldRecoverClosedExternalSession =
+    externalRecoveryDescriptor?.canRecoverWhenClosed === true;
+
   if (!agentId) {
     return null;
   }
@@ -1210,6 +1257,16 @@ function AgentComposerSection({
   }
   if (isArchivingCurrentAgent) {
     return null;
+  }
+  if (shouldRecoverClosedExternalSession && agentRecord) {
+    return (
+      <ExternalSessionCallout
+        serverId={serverId}
+        agent={agentRecord}
+        autoRecover
+        onRecovered={onExternalSessionRecovered}
+      />
+    );
   }
 
   return (
