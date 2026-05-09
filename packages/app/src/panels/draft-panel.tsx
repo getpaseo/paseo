@@ -18,8 +18,15 @@ function useDraftPanelDescriptor() {
 }
 
 function DraftPanel() {
-  const { serverId, workspaceId, tabId, target, openFileInWorkspace, retargetCurrentTab } =
-    usePaneContext();
+  const {
+    serverId,
+    workspaceId,
+    tabId,
+    target,
+    openFileInWorkspace,
+    openImportSheet,
+    retargetCurrentTab,
+  } = usePaneContext();
   const { isInteractive } = usePaneFocus();
   invariant(target.kind === "draft", "DraftPanel requires draft target");
 
@@ -52,6 +59,7 @@ function DraftPanel() {
       isPaneFocused={isInteractive}
       onOpenWorkspaceFile={handleOpenWorkspaceFile}
       onCreated={handleCreated}
+      onOpenImportSheet={openImportSheet}
     />
   );
 }

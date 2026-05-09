@@ -2833,6 +2833,7 @@ function WorkspaceScreenContent({
           }
           handleOpenFileFromChat({ filePath });
         },
+        onOpenImportSheet: openImportSheet,
       }),
     [
       handleCloseTabById,
@@ -2841,6 +2842,7 @@ function WorkspaceScreenContent({
       navigateToTabId,
       normalizedServerId,
       normalizedWorkspaceId,
+      openImportSheet,
       openWorkspaceTabFocused,
       persistenceKey,
       convertWorkspaceDraftToAgent,
