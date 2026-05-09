@@ -59,13 +59,11 @@ import {
   parseDurationString,
   resolveRequiredProviderModel,
   sanitizePermissionRequest,
-  sendPromptToAgent,
-  setupFinishNotification,
   serializeSnapshotWithMetadata,
-  startAgentRun,
   toScheduleSummary,
   waitForAgentWithTimeout,
 } from "./mcp-shared.js";
+import { sendPromptToAgent, setupFinishNotification, startAgentRun } from "./agent-prompt.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";

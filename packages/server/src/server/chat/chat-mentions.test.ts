@@ -5,8 +5,7 @@ import type { ManagedAgent } from "../agent/agent-manager.js";
 import {
   buildChatMentionNotification,
   notifyChatMentions,
-  resolveChatMentionTargetAgentIds,
-  validateChatMentionFanout,
+  prepareChatMentionFanout,
 } from "./chat-mentions.js";
 
 function storedAgent(overrides: Partial<StoredAgentRecord> & { id: string }): StoredAgentRecord {
@@ -22,9 +21,31 @@ function liveAgent(overrides: Partial<ManagedAgent> & { id: string }): ManagedAg
   return { internal: false, lifecycle: "idle", ...overrides } as ManagedAgent;
 }
 
+async function prepare(input: {
+  authorAgentId: string;
+  mentionAgentIds: string[];
+  storedAgents?: StoredAgentRecord[];
+  liveAgents?: ManagedAgent[];
+  roomPosterAgentIds?: string[];
+  limit?: number;
+}) {
+  const result = await prepareChatMentionFanout({
+    authorAgentId: input.authorAgentId,
+    mentionAgentIds: input.mentionAgentIds,
+    storedAgents: input.storedAgents ?? [],
+    liveAgents: input.liveAgents ?? [],
+    listRoomPosterAgentIds: async () => input.roomPosterAgentIds ?? [],
+    limit: input.limit,
+  });
+  if (!result.ok) {
+    throw new Error(`expected ok prepare, got error: ${result.error}`);
+  }
+  return result.prepared;
+}
+
 describe("chat mentions", () => {
-  test("@everyone in an empty room resolves to no targets", () => {
-    const targets = resolveChatMentionTargetAgentIds({
+  test("@everyone in an empty room resolves to no targets", async () => {
+    const prepared = await prepare({
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone"],
       storedAgents: [storedAgent({ id: "unrelated-agent" })],
@@ -32,23 +53,22 @@ describe("chat mentions", () => {
       roomPosterAgentIds: [],
     });
 
-    expect(targets).toEqual([]);
+    expect(prepared.targetMentionAgentIds).toEqual([]);
   });
 
-  test("@everyone in a single-poster room excludes the author", () => {
-    const targets = resolveChatMentionTargetAgentIds({
+  test("@everyone in a single-poster room excludes the author", async () => {
+    const prepared = await prepare({
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone"],
       storedAgents: [storedAgent({ id: "author-agent" })],
-      liveAgents: [],
       roomPosterAgentIds: ["author-agent"],
     });
 
-    expect(targets).toEqual([]);
+    expect(prepared.targetMentionAgentIds).toEqual([]);
   });
 
-  test("@everyone only expands to active posters in the room", () => {
-    const targets = resolveChatMentionTargetAgentIds({
+  test("@everyone only expands to active posters in the room", async () => {
+    const prepared = await prepare({
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone"],
       storedAgents: [
@@ -60,11 +80,11 @@ describe("chat mentions", () => {
       roomPosterAgentIds: ["agent-a", "agent-b", "agent-c"],
     });
 
-    expect(targets.sort()).toEqual(["agent-a", "agent-b", "agent-c"]);
+    expect([...prepared.targetMentionAgentIds].sort()).toEqual(["agent-a", "agent-b", "agent-c"]);
   });
 
-  test("@everyone excludes archived and error-state agents", () => {
-    const targets = resolveChatMentionTargetAgentIds({
+  test("@everyone excludes archived and error-state agents", async () => {
+    const prepared = await prepare({
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone"],
       storedAgents: [
@@ -81,11 +101,11 @@ describe("chat mentions", () => {
       ],
     });
 
-    expect(targets).toEqual(["active-agent"]);
+    expect(prepared.targetMentionAgentIds).toEqual(["active-agent"]);
   });
 
-  test("@everyone deduplicates with explicit mentions and keeps explicit non-everyone mentions", () => {
-    const targets = resolveChatMentionTargetAgentIds({
+  test("@everyone deduplicates with explicit mentions and keeps explicit non-everyone mentions", async () => {
+    const prepared = await prepare({
       authorAgentId: "author-agent",
       mentionAgentIds: ["everyone", "agent-a", "custom-title"],
       storedAgents: [storedAgent({ id: "agent-a" })],
@@ -93,18 +113,38 @@ describe("chat mentions", () => {
       roomPosterAgentIds: ["agent-a", "agent-b"],
     });
 
-    expect(targets.sort()).toEqual(["agent-a", "agent-b", "custom-title"]);
+    expect([...prepared.targetMentionAgentIds].sort()).toEqual([
+      "agent-a",
+      "agent-b",
+      "custom-title",
+    ]);
   });
 
-  test("rejects @everyone fan-out above the hard cap", () => {
-    const resolvedMentionAgentIds = Array.from({ length: 26 }, (_, index) => `agent-${index}`);
+  test("does not list room posters when @everyone is not mentioned", async () => {
+    const listRoomPosterAgentIds = vi.fn(async () => []);
+    const result = await prepareChatMentionFanout({
+      authorAgentId: "author-agent",
+      mentionAgentIds: ["agent-a"],
+      storedAgents: [storedAgent({ id: "agent-a" })],
+      liveAgents: [],
+      listRoomPosterAgentIds,
+    });
 
-    expect(
-      validateChatMentionFanout({
-        mentionAgentIds: ["everyone"],
-        resolvedMentionAgentIds,
-      }),
-    ).toEqual({
+    expect(result.ok).toBe(true);
+    expect(listRoomPosterAgentIds).not.toHaveBeenCalled();
+  });
+
+  test("rejects @everyone fan-out above the hard cap", async () => {
+    const posters = Array.from({ length: 26 }, (_, index) => `agent-${index}`);
+    const result = await prepareChatMentionFanout({
+      authorAgentId: "author-agent",
+      mentionAgentIds: ["everyone"],
+      storedAgents: posters.map((id) => storedAgent({ id })),
+      liveAgents: [],
+      listRoomPosterAgentIds: async () => posters,
+    });
+
+    expect(result).toEqual({
       ok: false,
       error:
         "@everyone would notify 26 agents, which exceeds the limit of 25. Narrow the room or mention specific agents.",
@@ -132,15 +172,21 @@ describe("chat mentions", () => {
       warn: vi.fn(),
     } as unknown as pino.Logger;
 
+    const storedAgents = [storedAgent({ id: "agent-a" })];
+    const liveAgents = [liveAgent({ id: "agent-b" })];
+
     await notifyChatMentions({
       room: "coord-room",
       authorAgentId: "author-agent",
       body: "@everyone Check status",
       mentionAgentIds: ["everyone"],
       logger,
-      listStoredAgents: async () => [storedAgent({ id: "agent-a" })],
-      listLiveAgents: () => [liveAgent({ id: "agent-b" })],
-      listRoomPosterAgentIds: async () => ["agent-a", "agent-b"],
+      storedAgents,
+      liveAgents,
+      prepared: {
+        targetMentionAgentIds: ["agent-a", "agent-b"],
+        roomPosterAgentIds: ["agent-a", "agent-b"],
+      },
       resolveAgentIdentifier,
       sendAgentMessage,
     });

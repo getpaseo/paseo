@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { setupFinishNotification } from "./mcp-shared.js";
+import { setupFinishNotification } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 
 it("does not notify archived callers", async () => {

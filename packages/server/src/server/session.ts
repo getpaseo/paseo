@@ -64,7 +64,11 @@ import {
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded } from "./agent/agent-loading.js";
-import { sendPromptToAgent, unarchiveAgentState } from "./agent/mcp-shared.js";
+import {
+  formatSystemNotificationPrompt,
+  sendPromptToAgent,
+  unarchiveAgentState,
+} from "./agent/agent-prompt.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
@@ -192,11 +196,7 @@ import {
   FileBackedChatService,
   parseMentionAgentIds,
 } from "./chat/chat-service.js";
-import {
-  notifyChatMentions,
-  resolveChatMentionTargetAgentIds,
-  validateChatMentionFanout,
-} from "./chat/chat-mentions.js";
+import { notifyChatMentions, prepareChatMentionFanout } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { execCommand } from "../utils/spawn.js";
@@ -8313,25 +8313,18 @@ export class Session {
     try {
       const authorAgentId = request.authorAgentId?.trim() || this.clientId;
       const mentionAgentIds = parseMentionAgentIds(request.body);
-      let roomPosterAgentIds: string[] = [];
-      if (mentionAgentIds.includes("everyone")) {
-        roomPosterAgentIds = await this.chatService.listRoomPosterAgentIds({
-          room: request.room,
-        });
-        const resolvedMentionAgentIds = resolveChatMentionTargetAgentIds({
-          authorAgentId,
-          mentionAgentIds,
-          storedAgents: await this.agentStorage.list(),
-          liveAgents: this.agentManager.listAgents(),
-          roomPosterAgentIds,
-        });
-        const fanout = validateChatMentionFanout({
-          mentionAgentIds,
-          resolvedMentionAgentIds,
-        });
-        if (!fanout.ok) {
-          throw new ChatServiceError("chat_mention_fanout_limit_exceeded", fanout.error);
-        }
+      const storedAgents = await this.agentStorage.list();
+      const liveAgents = this.agentManager.listAgents();
+      const fanout = await prepareChatMentionFanout({
+        authorAgentId,
+        mentionAgentIds,
+        storedAgents,
+        liveAgents,
+        listRoomPosterAgentIds: () =>
+          this.chatService.listRoomPosterAgentIds({ room: request.room }),
+      });
+      if (!fanout.ok) {
+        throw new ChatServiceError("chat_mention_fanout_limit_exceeded", fanout.error);
       }
       const message = await this.chatService.dispatchMessage({
         room: request.room,
@@ -8353,12 +8346,20 @@ export class Session {
         body: request.body,
         mentionAgentIds: message.mentionAgentIds,
         logger: this.sessionLogger,
-        listStoredAgents: () => this.agentStorage.list(),
-        listLiveAgents: () => this.agentManager.listAgents(),
-        listRoomPosterAgentIds: async () => roomPosterAgentIds,
+        storedAgents,
+        liveAgents,
+        prepared: fanout.prepared,
         resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
         sendAgentMessage: async (agentId, text) => {
-          await this.handleSendAgentMessage(agentId, text);
+          await sendPromptToAgent({
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            agentId,
+            prompt: formatSystemNotificationPrompt(text),
+            unarchive: false,
+            recordUserMessage: false,
+            logger: this.sessionLogger,
+          });
         },
       });
     } catch (error) {
