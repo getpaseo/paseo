@@ -25,12 +25,12 @@ import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { toErrorMessage } from "@/utils/error-messages";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload } from "@/components/message-input";
 import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
 import { syncPickerPrAttachment } from "./new-workspace-picker-state";
 
@@ -270,30 +270,6 @@ interface CreateChatAgentInput {
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
   draftKey: string;
-}
-
-export function isEmptyWorkspaceSubmission(payload: MessagePayload): boolean {
-  return !payload.text.trim() && payload.attachments.length === 0;
-}
-
-interface CreateEmptyWorkspaceInput {
-  payload: MessagePayload;
-  ensureWorkspace: (input: {
-    cwd: string;
-    prompt: string;
-    attachments: AgentAttachment[];
-  }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
-  serverId: string;
-}
-
-export async function runCreateEmptyWorkspace(input: CreateEmptyWorkspaceInput): Promise<void> {
-  const { payload, ensureWorkspace, serverId } = input;
-  const ensuredWorkspace = await ensureWorkspace({
-    cwd: payload.cwd,
-    prompt: "",
-    attachments: [],
-  });
-  navigateToWorkspace(serverId, ensuredWorkspace.id);
 }
 
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
