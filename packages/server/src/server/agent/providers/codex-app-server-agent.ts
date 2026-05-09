@@ -8,6 +8,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   McpServerConfig,
+  AgentPersistenceHandle,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPermissionResult,
@@ -4899,6 +4900,22 @@ export class CodexAppServerAgentClient implements AgentClient {
           hasConfiguredDefaultModel,
         }),
       );
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const threadId = handle.nativeHandle ?? handle.sessionId;
+    if (!threadId) return;
+
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+      await client.request("thread/archive", { threadId });
     } finally {
       await client.dispose();
     }
