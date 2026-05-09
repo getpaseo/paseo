@@ -69,7 +69,7 @@
     "@sctg/sentencepiece-js": "^1.1.0",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
-    "ajv": "^8.17.1",
+    "ajv": "^8.20.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
     "express": "^4.18.2",
