@@ -8,6 +8,11 @@ interface SettingsSectionProps {
   trailing?: ReactNode;
   testID?: string;
   style?: StyleProp<ViewStyle>;
+  /**
+   * Drops the section's bottom margin. Use when the section is the last child
+   * of a SettingsGroup, so the group's own bottom margin owns the trailing gap.
+   */
+  flush?: boolean;
   children: ReactNode;
 }
 
@@ -21,9 +26,13 @@ export function SettingsSection({
   trailing,
   testID,
   style,
+  flush,
   children,
 }: SettingsSectionProps) {
-  const sectionStyle = useMemo(() => [settingsStyles.section, style], [style]);
+  const sectionStyle = useMemo(
+    () => [settingsStyles.section, flush ? styles.flush : null, style],
+    [flush, style],
+  );
   return (
     <View style={sectionStyle} testID={testID}>
       <View style={styles.header}>
@@ -46,5 +55,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     gap: theme.spacing[3],
+  },
+  flush: {
+    marginBottom: 0,
   },
 }));
