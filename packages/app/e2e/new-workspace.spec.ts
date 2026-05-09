@@ -306,6 +306,10 @@ test.describe("New workspace flow", () => {
         projectDisplayName: openedProject.projectDisplayName,
       });
 
+      const composer = page.getByRole("textbox", { name: "Message agent..." });
+      await expect(composer).toBeVisible({ timeout: 30_000 });
+      await composer.fill("Hello from e2e");
+
       const createButton = page
         .getByTestId("message-input-root")
         .getByRole("button", { name: "Create" });

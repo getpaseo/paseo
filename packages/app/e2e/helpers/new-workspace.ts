@@ -170,9 +170,12 @@ export async function openNewWorkspaceComposer(
 
 export async function clickNewWorkspaceButton(
   page: Page,
-  input: { projectKey: string; projectDisplayName: string },
+  input: { projectKey: string; projectDisplayName: string; prompt?: string },
 ): Promise<void> {
   await openNewWorkspaceComposer(page, input);
+  const composer = page.getByRole("textbox", { name: "Message agent..." });
+  await expect(composer).toBeVisible({ timeout: 30_000 });
+  await composer.fill(input.prompt ?? "Hello from e2e");
   const createButton = page
     .getByTestId("message-input-root")
     .getByRole("button", { name: "Create" });
