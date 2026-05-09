@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/components/composer";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
+import { FileDropZone } from "@/components/file-drop-zone";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -639,6 +640,9 @@ export function NewWorkspaceScreen({
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
     addImagesRef.current = addImages;
   }, []);
+  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
+    addImagesRef.current?.(files);
+  }, []);
 
   const renderPickerOption = useCallback(
     ({
@@ -713,82 +717,84 @@ export function NewWorkspaceScreen({
       : "No matching refs.";
 
   return (
-    <View style={styles.container}>
-      <ScreenHeader
-        left={
-          <>
-            <SidebarMenuToggle />
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                New workspace
-              </Text>
-              <Text style={styles.headerProjectTitle} numberOfLines={1}>
-                {workspaceTitle}
-              </Text>
-            </View>
-          </>
-        }
-        leftStyle={styles.headerLeft}
-        borderless
-      />
-      <View style={contentStyle}>
-        <TitlebarDragRegion />
-        <View style={styles.centered}>
-          <Composer
-            agentId={`new-workspace:${serverId}:${sourceDirectory}`}
-            serverId={serverId}
-            isPaneFocused={true}
-            onSubmitMessage={handleSubmitNewWorkspace}
-            allowEmptySubmit={true}
-            submitButtonAccessibilityLabel="Create"
-            submitIcon="return"
-            isSubmitLoading={pendingAction !== null}
-            submitBehavior="preserve-and-lock"
-            blurOnSubmit={true}
-            value={chatDraft.text}
-            onChangeText={chatDraft.setText}
-            attachments={chatDraft.attachments}
-            onChangeAttachments={chatDraft.setAttachments}
-            cwd={sourceDirectory}
-            clearDraft={handleClearDraft}
-            autoFocus
-            commandDraftConfig={composerState?.commandDraftConfig}
-            statusControls={statusControlsWithDisabled}
-            onAddImages={handleAddImagesCallback}
-          />
-          <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>
-            <View>
-              <RefPickerTrigger
-                pickerAnchorRef={pickerAnchorRef}
-                onPress={openPicker}
-                disabled={isPending}
-                badgePressableStyle={badgePressableStyle}
-                selectedItem={selectedItem}
-                triggerLabel={triggerLabel}
-                iconColor={theme.colors.foregroundMuted}
-                iconSize={theme.iconSize.sm}
-              />
-              <Combobox
-                options={options}
-                value={selectedOptionId}
-                onSelect={handleSelectOption}
-                searchable
-                searchPlaceholder="Search branches and PRs"
-                title="Start from"
-                open={pickerOpen}
-                onOpenChange={handlePickerOpenChange}
-                onSearchQueryChange={setPickerSearchQuery}
-                desktopPlacement="bottom-start"
-                anchorRef={pickerAnchorRef}
-                emptyText={pickerEmptyText}
-                renderOption={renderPickerOption}
-              />
-            </View>
-          </Animated.View>
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+    <FileDropZone onFilesDropped={handleFilesDropped}>
+      <View style={styles.container}>
+        <ScreenHeader
+          left={
+            <>
+              <SidebarMenuToggle />
+              <View style={styles.headerTitleContainer}>
+                <Text style={styles.headerTitle} numberOfLines={1}>
+                  New workspace
+                </Text>
+                <Text style={styles.headerProjectTitle} numberOfLines={1}>
+                  {workspaceTitle}
+                </Text>
+              </View>
+            </>
+          }
+          leftStyle={styles.headerLeft}
+          borderless
+        />
+        <View style={contentStyle}>
+          <TitlebarDragRegion />
+          <View style={styles.centered}>
+            <Composer
+              agentId={`new-workspace:${serverId}:${sourceDirectory}`}
+              serverId={serverId}
+              isPaneFocused={true}
+              onSubmitMessage={handleSubmitNewWorkspace}
+              allowEmptySubmit={true}
+              submitButtonAccessibilityLabel="Create"
+              submitIcon="return"
+              isSubmitLoading={pendingAction !== null}
+              submitBehavior="preserve-and-lock"
+              blurOnSubmit={true}
+              value={chatDraft.text}
+              onChangeText={chatDraft.setText}
+              attachments={chatDraft.attachments}
+              onChangeAttachments={chatDraft.setAttachments}
+              cwd={sourceDirectory}
+              clearDraft={handleClearDraft}
+              autoFocus
+              commandDraftConfig={composerState?.commandDraftConfig}
+              statusControls={statusControlsWithDisabled}
+              onAddImages={handleAddImagesCallback}
+            />
+            <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>
+              <View>
+                <RefPickerTrigger
+                  pickerAnchorRef={pickerAnchorRef}
+                  onPress={openPicker}
+                  disabled={isPending}
+                  badgePressableStyle={badgePressableStyle}
+                  selectedItem={selectedItem}
+                  triggerLabel={triggerLabel}
+                  iconColor={theme.colors.foregroundMuted}
+                  iconSize={theme.iconSize.sm}
+                />
+                <Combobox
+                  options={options}
+                  value={selectedOptionId}
+                  onSelect={handleSelectOption}
+                  searchable
+                  searchPlaceholder="Search branches and PRs"
+                  title="Start from"
+                  open={pickerOpen}
+                  onOpenChange={handlePickerOpenChange}
+                  onSearchQueryChange={setPickerSearchQuery}
+                  desktopPlacement="bottom-start"
+                  anchorRef={pickerAnchorRef}
+                  emptyText={pickerEmptyText}
+                  renderOption={renderPickerOption}
+                />
+              </View>
+            </Animated.View>
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          </View>
         </View>
       </View>
-    </View>
+    </FileDropZone>
   );
 }
 
