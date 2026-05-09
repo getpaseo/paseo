@@ -2274,9 +2274,10 @@ function WorkspaceScreenContent({
 
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+        const isSubagent = Boolean(agent?.parentAgentId);
         const isRunning = agent?.status === "running" || agent?.status === "initializing";
 
-        if (isRunning) {
+        if (isRunning && !isSubagent) {
           const confirmed = await confirmDialog({
             title: "Archive running agent?",
             message:
@@ -2297,6 +2298,10 @@ function WorkspaceScreenContent({
             tabId,
             target: { kind: "agent", agentId },
           });
+        }
+
+        if (isSubagent) {
+          return;
         }
 
         // Errors (e.g. timeout) are handled by the mutation's onSettled callback

@@ -21,25 +21,26 @@ This is an npm workspace monorepo:
 
 At the start of non-trivial work, list `docs/` and skim anything relevant to the task. When you learn something meta worth preserving — a gotcha, a convention, a workflow, a piece of system context that will outlive the current task — update an existing doc or propose a new one. Code-level facts belong in inline comments next to the code; system, process, and gotcha-level facts belong in `docs/`.
 
-| Doc                                                            | What's in it                                                                      |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [docs/product.md](docs/product.md)                             | What Paseo is, who it's for, where it's going                                     |
-| [docs/architecture.md](docs/architecture.md)                   | System design, package layering, WebSocket protocol, agent lifecycle, data flow   |
-| [docs/data-model.md](docs/data-model.md)                       | File-based JSON persistence, Zod schemas, atomic writes, no migrations            |
-| [docs/glossary.md](docs/glossary.md)                           | Authoritative terminology — UI label wins, no synonyms                            |
-| [docs/coding-standards.md](docs/coding-standards.md)           | Type hygiene, error handling, state design, React patterns, file organization     |
-| [docs/design.md](docs/design.md)                               | Theme tokens — colors, fonts, spacing, radii, icons                               |
-| [docs/unistyles.md](docs/unistyles.md)                         | Unistyles gotchas — `useUnistyles()` is forbidden, alternatives in order          |
-| [docs/file-icons.md](docs/file-icons.md)                       | Material icon theme integration for the file explorer                             |
-| [docs/providers.md](docs/providers.md)                         | Adding a new agent provider end-to-end                                            |
-| [docs/custom-providers.md](docs/custom-providers.md)           | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries |
-| [docs/development.md](docs/development.md)                     | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP        |
-| [docs/testing.md](docs/testing.md)                             | TDD workflow, determinism, real dependencies over mocks, test organization        |
-| [docs/mobile-testing.md](docs/mobile-testing.md)               | Maestro and mobile test workflows                                                 |
-| [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md) | Isolated in-process daemon test harness                                           |
-| [docs/android.md](docs/android.md)                             | App variants, local/cloud builds, EAS workflows                                   |
-| [docs/release.md](docs/release.md)                             | Release playbook, draft releases, completion checklist                            |
-| [SECURITY.md](SECURITY.md)                                     | Relay threat model, E2E encryption, DNS rebinding, agent auth                     |
+| Doc                                                            | What's in it                                                                                  |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [docs/product.md](docs/product.md)                             | What Paseo is, who it's for, where it's going                                                 |
+| [docs/architecture.md](docs/architecture.md)                   | System design, package layering, WebSocket protocol, agent lifecycle, data flow               |
+| [docs/agent-lifecycle.md](docs/agent-lifecycle.md)             | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track |
+| [docs/data-model.md](docs/data-model.md)                       | File-based JSON persistence, Zod schemas, atomic writes, no migrations                        |
+| [docs/glossary.md](docs/glossary.md)                           | Authoritative terminology — UI label wins, no synonyms                                        |
+| [docs/coding-standards.md](docs/coding-standards.md)           | Type hygiene, error handling, state design, React patterns, file organization                 |
+| [docs/design.md](docs/design.md)                               | Theme tokens — colors, fonts, spacing, radii, icons                                           |
+| [docs/unistyles.md](docs/unistyles.md)                         | Unistyles gotchas — `useUnistyles()` is forbidden, alternatives in order                      |
+| [docs/file-icons.md](docs/file-icons.md)                       | Material icon theme integration for the file explorer                                         |
+| [docs/providers.md](docs/providers.md)                         | Adding a new agent provider end-to-end                                                        |
+| [docs/custom-providers.md](docs/custom-providers.md)           | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries             |
+| [docs/development.md](docs/development.md)                     | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                    |
+| [docs/testing.md](docs/testing.md)                             | TDD workflow, determinism, real dependencies over mocks, test organization                    |
+| [docs/mobile-testing.md](docs/mobile-testing.md)               | Maestro and mobile test workflows                                                             |
+| [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md) | Isolated in-process daemon test harness                                                       |
+| [docs/android.md](docs/android.md)                             | App variants, local/cloud builds, EAS workflows                                               |
+| [docs/release.md](docs/release.md)                             | Release playbook, draft releases, completion checklist                                        |
+| [SECURITY.md](SECURITY.md)                                     | Relay threat model, E2E encryption, DNS rebinding, agent auth                                 |
 
 ## Quick start
 

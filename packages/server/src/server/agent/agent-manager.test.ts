@@ -3762,6 +3762,65 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
 });
 
+test("archiveAgent cascades to children that carry the parent-agent-id label", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-archive-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  let nextId = 0;
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => {
+      nextId += 1;
+      return `00000000-0000-4000-8000-00000000020${nextId}`;
+    },
+  });
+
+  const parent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Parent",
+  });
+  const child = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Child",
+    },
+    undefined,
+    { labels: { "paseo.parent-agent-id": parent.id } },
+  );
+  const grandchild = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Grandchild",
+    },
+    undefined,
+    { labels: { "paseo.parent-agent-id": child.id } },
+  );
+  const unrelated = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Unrelated",
+  });
+
+  await manager.archiveAgent(parent.id);
+
+  const storedParent = await storage.get(parent.id);
+  const storedChild = await storage.get(child.id);
+  const storedGrandchild = await storage.get(grandchild.id);
+  const storedUnrelated = await storage.get(unrelated.id);
+
+  expect(storedParent?.archivedAt).toBeTruthy();
+  expect(storedChild?.archivedAt).toBeTruthy();
+  expect(storedGrandchild?.archivedAt).toBeTruthy();
+  expect(storedUnrelated?.archivedAt).toBeFalsy();
+});
+
 test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-"));
   const storagePath = join(workdir, "agents");

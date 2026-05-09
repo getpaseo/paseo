@@ -45,7 +45,7 @@ vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
     create: (factory: unknown) => (typeof factory === "function" ? factory(theme) : factory),
   },
-  useUnistyles: () => ({ theme }),
+  useUnistyles: () => ({ theme, rt: { breakpoint: "lg" } }),
   withUnistyles: <T,>(component: T) => component,
 }));
 
@@ -163,9 +163,16 @@ describe("SubagentsSection", () => {
   function render(
     rows: SubagentRow[],
     onOpenSubagent: ReturnType<typeof vi.fn> = vi.fn(),
+    onArchiveSubagent: ReturnType<typeof vi.fn> = vi.fn(),
   ): ReturnType<typeof vi.fn> {
     act(() => {
-      root?.render(<SubagentsSection rows={rows} onOpenSubagent={onOpenSubagent} />);
+      root?.render(
+        <SubagentsSection
+          rows={rows}
+          onOpenSubagent={onOpenSubagent}
+          onArchiveSubagent={onArchiveSubagent}
+        />,
+      );
     });
     return onOpenSubagent;
   }

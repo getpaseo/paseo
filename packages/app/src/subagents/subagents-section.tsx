@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight, X } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import {
   WorkspaceTabIcon,
   type WorkspaceTabPresentation,
@@ -14,6 +15,7 @@ import type { SubagentRow } from "@/subagents/subagents";
 interface SubagentsSectionProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
+  onArchiveSubagent: (id: string) => void;
 }
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
@@ -77,6 +79,7 @@ function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
 export function SubagentsSection({
   rows,
   onOpenSubagent,
+  onArchiveSubagent,
 }: SubagentsSectionProps): ReactElement | null {
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
@@ -130,7 +133,12 @@ export function SubagentsSection({
               nestedScrollEnabled
             >
               {rows.map((row) => (
-                <SubagentsSectionRow key={row.id} row={row} onOpenSubagent={onOpenSubagent} />
+                <SubagentsSectionRow
+                  key={row.id}
+                  row={row}
+                  onOpenSubagent={onOpenSubagent}
+                  onArchiveSubagent={onArchiveSubagent}
+                />
               ))}
             </ScrollView>
           ) : null}
@@ -143,18 +151,25 @@ export function SubagentsSection({
 interface SubagentsSectionRowProps {
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
+  onArchiveSubagent: (id: string) => void;
 }
 
-function rowStyle({ hovered, pressed }: PressableStateCallbackType) {
-  return [styles.row, (hovered || pressed) && styles.rowActive];
-}
-
-function SubagentsSectionRow({ row, onOpenSubagent }: SubagentsSectionRowProps): ReactElement {
+function SubagentsSectionRow({
+  row,
+  onOpenSubagent,
+  onArchiveSubagent,
+}: SubagentsSectionRowProps): ReactElement {
+  const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
   const displayLabel = presentation.titleState === "loading" ? "Loading..." : presentation.label;
   const handlePress = useCallback(() => {
     onOpenSubagent(row.id);
   }, [onOpenSubagent, row.id]);
+  const handleArchivePress = useCallback(() => {
+    onArchiveSubagent(row.id);
+  }, [onArchiveSubagent, row.id]);
+  const showArchiveAlways = isNative || isCompact;
 
   return (
     <Pressable
@@ -162,14 +177,33 @@ function SubagentsSectionRow({ row, onOpenSubagent }: SubagentsSectionRowProps):
       accessibilityLabel={displayLabel}
       testID={`subagents-section-row-${row.id}`}
       onPress={handlePress}
-      style={rowStyle}
     >
-      <WorkspaceTabIcon presentation={presentation} />
-      <Text style={styles.rowLabel} numberOfLines={1}>
-        {displayLabel}
-      </Text>
+      {({ hovered, pressed }) => (
+        <View style={hovered || pressed ? styles.rowActive : styles.row}>
+          <WorkspaceTabIcon presentation={presentation} />
+          <Text style={styles.rowLabel} numberOfLines={1}>
+            {displayLabel}
+          </Text>
+          {showArchiveAlways || hovered ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Archive ${displayLabel}`}
+              testID={`subagents-section-archive-${row.id}`}
+              onPress={handleArchivePress}
+              style={archiveButtonStyle}
+              hitSlop={8}
+            >
+              <X size={14} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+      )}
     </Pressable>
   );
+}
+
+function archiveButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
+  return [styles.archiveButton, (hovered || pressed) && styles.archiveButtonActive];
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -233,6 +267,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   rowActive: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.surface2,
   },
   rowLabel: {
@@ -240,5 +279,14 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  archiveButton: {
+    padding: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  archiveButtonActive: {
+    backgroundColor: theme.colors.surface3,
   },
 }));

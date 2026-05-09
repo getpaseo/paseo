@@ -31,6 +31,7 @@ import {
   useAgentScreenStateMachine,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
@@ -1261,11 +1262,34 @@ function ActiveAgentComposer({
     serverId: paneContext.serverId,
     parentAgentId: agentId,
   });
+  const { archiveAgent } = useArchiveAgent();
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       paneContext.openTab({ kind: "agent", agentId: subagentId });
     },
     [paneContext],
+  );
+  const handleArchiveSubagent = useCallback(
+    async (subagentId: string) => {
+      const subagent =
+        useSessionStore.getState().sessions[paneContext.serverId]?.agents?.get(subagentId) ?? null;
+      const subagentLabel = resolveWorkspaceAgentTabLabel(subagent?.title) ?? "this subagent";
+      const isRunning = subagent?.status === "running" || subagent?.status === "initializing";
+      const confirmed = await confirmDialog({
+        title: isRunning ? "Archive running subagent?" : "Archive subagent?",
+        message: isRunning
+          ? `${subagentLabel} is still running. Archiving it will stop the subagent and remove it from the track.`
+          : `Remove ${subagentLabel} from the track. The subagent will be archived.`,
+        confirmLabel: "Archive",
+        cancelLabel: "Cancel",
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      void archiveAgent({ serverId: paneContext.serverId, agentId: subagentId }).catch(() => {});
+    },
+    [archiveAgent, paneContext.serverId],
   );
   const agentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
@@ -1311,7 +1335,11 @@ function ActiveAgentComposer({
 
   return (
     <View style={inputAreaStyle}>
-      <SubagentsSection rows={subagentRows} onOpenSubagent={handleOpenSubagent} />
+      <SubagentsSection
+        rows={subagentRows}
+        onOpenSubagent={handleOpenSubagent}
+        onArchiveSubagent={handleArchiveSubagent}
+      />
       <Composer
         agentId={agentId}
         serverId={serverId}

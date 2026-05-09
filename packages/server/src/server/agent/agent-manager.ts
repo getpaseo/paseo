@@ -978,7 +978,50 @@ export class AgentManager {
     this.notifyAgentState(agentId);
     await this.closeAgent(agentId);
 
+    await this.cascadeArchiveChildren(agentId);
+
     return { archivedAt };
+  }
+
+  // Children created via the MCP `create_agent` tool carry a
+  // `paseo.parent-agent-id` label pointing back at the caller. Archiving the
+  // parent cascades to those children so subagent fleets don't outlive their
+  // orchestrator. Handoff agents launched the same way are caught by this
+  // cascade — see docs/agent-lifecycle.md for the accepted limitation.
+  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+    const registry = this.registry;
+    if (!registry) {
+      return;
+    }
+    const records = await registry.list();
+    for (const record of records) {
+      if (record.archivedAt) {
+        continue;
+      }
+      if (record.labels?.["paseo.parent-agent-id"] !== parentAgentId) {
+        continue;
+      }
+      if (!this.agents.has(record.id)) {
+        await registry.upsert({
+          ...record,
+          archivedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          requiresAttention: false,
+          attentionReason: null,
+          attentionTimestamp: null,
+        });
+        await this.cascadeArchiveChildren(record.id);
+        continue;
+      }
+      try {
+        await this.archiveAgent(record.id);
+      } catch (error) {
+        this.logger.warn(
+          { parentAgentId, childAgentId: record.id, error },
+          "cascade archive failed for child agent",
+        );
+      }
+    }
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
