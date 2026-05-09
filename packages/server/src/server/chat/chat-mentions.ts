@@ -2,6 +2,8 @@ import type pino from "pino";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 import type { ManagedAgent } from "../agent/agent-manager.js";
 
+export const CHAT_MENTION_FANOUT_LIMIT = 25;
+
 export interface ChatMentionNotificationInput {
   room: string;
   authorAgentId: string;
@@ -13,6 +15,7 @@ export interface NotifyChatMentionsInput extends ChatMentionNotificationInput {
   logger: pino.Logger;
   listStoredAgents: () => Promise<StoredAgentRecord[]>;
   listLiveAgents: () => ManagedAgent[];
+  listRoomPosterAgentIds: () => Promise<string[]>;
   resolveAgentIdentifier: (
     identifier: string,
   ) => Promise<{ ok: true; agentId: string } | { ok: false; error: string }>;
@@ -20,11 +23,14 @@ export interface NotifyChatMentionsInput extends ChatMentionNotificationInput {
 }
 
 export async function notifyChatMentions(input: NotifyChatMentionsInput): Promise<void> {
+  const storedAgents = await input.listStoredAgents();
+  const liveAgents = input.listLiveAgents();
   const mentionAgentIds = await resolveChatMentionTargetAgentIds({
     authorAgentId: input.authorAgentId,
     mentionAgentIds: input.mentionAgentIds,
-    storedAgents: await input.listStoredAgents(),
-    liveAgents: input.listLiveAgents(),
+    storedAgents,
+    liveAgents,
+    roomPosterAgentIds: await input.listRoomPosterAgentIds(),
   });
   if (mentionAgentIds.length === 0) {
     return;
@@ -48,6 +54,17 @@ export async function notifyChatMentions(input: NotifyChatMentionsInput): Promis
         return;
       }
 
+      if (
+        !isChatMentionTargetEligible({
+          agentId: resolved.agentId,
+          authorAgentId: input.authorAgentId,
+          storedAgents,
+          liveAgents,
+        })
+      ) {
+        return;
+      }
+
       try {
         await input.sendAgentMessage(resolved.agentId, notification);
       } catch (error) {
@@ -65,6 +82,7 @@ export function resolveChatMentionTargetAgentIds(input: {
   mentionAgentIds: string[];
   storedAgents: StoredAgentRecord[];
   liveAgents: ManagedAgent[];
+  roomPosterAgentIds: string[];
 }): string[] {
   const targets = new Set<string>();
   const mentionsEveryone = input.mentionAgentIds.includes("everyone");
@@ -79,24 +97,94 @@ export function resolveChatMentionTargetAgentIds(input: {
   }
 
   if (!mentionsEveryone) {
-    return Array.from(targets);
+    return filterEligibleKnownMentionTargets({
+      authorAgentId: input.authorAgentId,
+      targetAgentIds: targets,
+      storedAgents: input.storedAgents,
+      liveAgents: input.liveAgents,
+    });
   }
 
-  for (const record of input.storedAgents) {
-    if (record.internal || record.archivedAt || record.id === input.authorAgentId) {
+  for (const posterAgentId of input.roomPosterAgentIds) {
+    if (posterAgentId === input.authorAgentId) {
       continue;
     }
-    targets.add(record.id);
+    targets.add(posterAgentId);
   }
 
-  for (const agent of input.liveAgents) {
-    if (agent.internal || agent.id === input.authorAgentId) {
-      continue;
+  return filterEligibleKnownMentionTargets({
+    authorAgentId: input.authorAgentId,
+    targetAgentIds: targets,
+    storedAgents: input.storedAgents,
+    liveAgents: input.liveAgents,
+  });
+}
+
+export function validateChatMentionFanout(input: {
+  mentionAgentIds: string[];
+  resolvedMentionAgentIds: string[];
+  limit?: number;
+}): { ok: true } | { ok: false; error: string } {
+  const limit = input.limit ?? CHAT_MENTION_FANOUT_LIMIT;
+  if (
+    !input.mentionAgentIds.includes("everyone") ||
+    input.resolvedMentionAgentIds.length <= limit
+  ) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: `@everyone would notify ${input.resolvedMentionAgentIds.length} agents, which exceeds the limit of ${limit}. Narrow the room or mention specific agents.`,
+  };
+}
+
+function filterEligibleKnownMentionTargets(input: {
+  authorAgentId: string;
+  targetAgentIds: Set<string>;
+  storedAgents: StoredAgentRecord[];
+  liveAgents: ManagedAgent[];
+}): string[] {
+  const targets: string[] = [];
+  for (const targetAgentId of input.targetAgentIds) {
+    if (
+      isChatMentionTargetEligible({
+        agentId: targetAgentId,
+        authorAgentId: input.authorAgentId,
+        storedAgents: input.storedAgents,
+        liveAgents: input.liveAgents,
+      })
+    ) {
+      targets.push(targetAgentId);
     }
-    targets.add(agent.id);
+  }
+  return targets;
+}
+
+function isChatMentionTargetEligible(input: {
+  agentId: string;
+  authorAgentId: string;
+  storedAgents: StoredAgentRecord[];
+  liveAgents: ManagedAgent[];
+}): boolean {
+  if (input.agentId === input.authorAgentId) {
+    return false;
   }
 
-  return Array.from(targets);
+  const stored = input.storedAgents.find((record) => record.id === input.agentId);
+  if (stored?.internal || stored?.archivedAt || stored?.lastStatus === "error") {
+    return false;
+  }
+
+  const live = input.liveAgents.find((agent) => agent.id === input.agentId);
+  if (live) {
+    return !live.internal && live.lifecycle !== "error";
+  }
+
+  if (stored) {
+    return true;
+  }
+
+  return true;
 }
 
 export function buildChatMentionNotification(input: ChatMentionNotificationInput): string {

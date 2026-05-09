@@ -94,6 +94,36 @@ describe("FileBackedChatService", () => {
     expect(detail.room.lastMessageAt).toBeTruthy();
   });
 
+  test("lists unique agents who have posted to a room", async () => {
+    const room = await service.createRoom({ name: "incident-room" });
+    const otherRoom = await service.createRoom({ name: "other-room" });
+    await sendChatMessage({
+      room: room.name,
+      authorAgentId: "agent-a",
+      body: "first",
+    });
+    await sendChatMessage({
+      room: room.name,
+      authorAgentId: "agent-b",
+      body: "second",
+    });
+    await sendChatMessage({
+      room: room.name,
+      authorAgentId: "agent-a",
+      body: "third",
+    });
+    await sendChatMessage({
+      room: otherRoom.name,
+      authorAgentId: "unrelated-agent",
+      body: "different room",
+    });
+
+    await expect(service.listRoomPosterAgentIds({ room: room.name })).resolves.toEqual([
+      "agent-a",
+      "agent-b",
+    ]);
+  });
+
   test("waits for new messages after a cursor and times out with an empty result", async () => {
     const room = await service.createRoom({ name: "loop-status" });
     const first = await sendChatMessage({

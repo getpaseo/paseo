@@ -187,8 +187,16 @@ import { toResolver, type Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "./speech/speech-runtime.js";
 import type pino from "pino";
 import { resolveClientMessageId } from "./client-message-id.js";
-import { ChatServiceError, FileBackedChatService } from "./chat/chat-service.js";
-import { notifyChatMentions } from "./chat/chat-mentions.js";
+import {
+  ChatServiceError,
+  FileBackedChatService,
+  parseMentionAgentIds,
+} from "./chat/chat-service.js";
+import {
+  notifyChatMentions,
+  resolveChatMentionTargetAgentIds,
+  validateChatMentionFanout,
+} from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { execCommand } from "../utils/spawn.js";
@@ -8304,6 +8312,27 @@ export class Session {
   ): Promise<void> {
     try {
       const authorAgentId = request.authorAgentId?.trim() || this.clientId;
+      const mentionAgentIds = parseMentionAgentIds(request.body);
+      let roomPosterAgentIds: string[] = [];
+      if (mentionAgentIds.includes("everyone")) {
+        roomPosterAgentIds = await this.chatService.listRoomPosterAgentIds({
+          room: request.room,
+        });
+        const resolvedMentionAgentIds = resolveChatMentionTargetAgentIds({
+          authorAgentId,
+          mentionAgentIds,
+          storedAgents: await this.agentStorage.list(),
+          liveAgents: this.agentManager.listAgents(),
+          roomPosterAgentIds,
+        });
+        const fanout = validateChatMentionFanout({
+          mentionAgentIds,
+          resolvedMentionAgentIds,
+        });
+        if (!fanout.ok) {
+          throw new ChatServiceError("chat_mention_fanout_limit_exceeded", fanout.error);
+        }
+      }
       const message = await this.chatService.dispatchMessage({
         room: request.room,
         authorAgentId,
@@ -8326,6 +8355,7 @@ export class Session {
         logger: this.sessionLogger,
         listStoredAgents: () => this.agentStorage.list(),
         listLiveAgents: () => this.agentManager.listAgents(),
+        listRoomPosterAgentIds: async () => roomPosterAgentIds,
         resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
         sendAgentMessage: async (agentId, text) => {
           await this.handleSendAgentMessage(agentId, text);
