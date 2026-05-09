@@ -81,6 +81,7 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import { getErrorMessage, getErrorMessageOr } from "../shared/error-utils.js";
+import { getAgentStatusPriority } from "../shared/agent-state-bucket.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 import { buildProviderRegistry } from "./agent/provider-registry.js";
@@ -5754,24 +5755,6 @@ export class Session {
     return this.isProviderVisibleToClient(payload.provider) ? payload : null;
   }
 
-  private getStatusPriority(agent: AgentSnapshotPayload): number {
-    const attentionReason = agent.attentionReason ?? null;
-    const hasPendingPermission = (agent.pendingPermissions?.length ?? 0) > 0;
-    if (hasPendingPermission || attentionReason === "permission") {
-      return 0;
-    }
-    if (agent.status === "error" || attentionReason === "error") {
-      return 1;
-    }
-    if (agent.status === "running") {
-      return 2;
-    }
-    if (agent.status === "initializing") {
-      return 3;
-    }
-    return 4;
-  }
-
   private async buildActiveProjectPlacementsByWorkspaceCwd(): Promise<
     Map<string, ProjectPlacementPayload>
   > {
@@ -5935,7 +5918,12 @@ export class Session {
     getSortValue: (agent, key): number | string => {
       switch (key) {
         case "status_priority":
-          return this.getStatusPriority(agent);
+          return getAgentStatusPriority({
+            status: agent.status,
+            pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+            requiresAttention: agent.requiresAttention,
+            attentionReason: agent.attentionReason ?? null,
+          });
         case "created_at":
           return Date.parse(agent.createdAt);
         case "updated_at":

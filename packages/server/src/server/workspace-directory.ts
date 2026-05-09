@@ -6,8 +6,11 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
-  WorkspaceStateBucket,
 } from "./messages.js";
+import {
+  deriveAgentStateBucket,
+  getWorkspaceStateBucketPriority,
+} from "../shared/agent-state-bucket.js";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
@@ -90,14 +93,6 @@ export function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspace
 export class WorkspaceDirectory {
   private readonly archivingByWorkspaceId = new Map<string, string>();
 
-  private readonly workspaceStatePriority: Record<WorkspaceStateBucket, number> = {
-    needs_input: 0,
-    failed: 1,
-    running: 2,
-    attention: 3,
-    done: 4,
-  };
-
   private readonly pager = new SortablePager<
     WorkspaceDescriptorPayload,
     FetchWorkspacesRequestSort["key"]
@@ -109,7 +104,7 @@ export class WorkspaceDirectory {
     getSortValue: (workspace, key) => {
       switch (key) {
         case "status_priority":
-          return this.workspaceStatePriority[workspace.status];
+          return getWorkspaceStateBucketPriority(workspace.status);
         case "activity_at":
           return workspace.activityAt ? Date.parse(workspace.activityAt) : null;
         case "name":
@@ -202,8 +197,15 @@ export class WorkspaceDirectory {
         continue;
       }
 
-      const bucket = this.deriveStateBucket(agent);
-      if (this.workspaceStatePriority[bucket] < this.workspaceStatePriority[existing.status]) {
+      const bucket = deriveAgentStateBucket({
+        status: agent.status,
+        pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+        requiresAttention: agent.requiresAttention,
+        attentionReason: agent.attentionReason ?? null,
+      });
+      if (
+        getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
+      ) {
         existing.status = bucket;
       }
     }
@@ -328,22 +330,5 @@ export class WorkspaceDirectory {
         hasMore,
       },
     };
-  }
-
-  private deriveStateBucket(agent: AgentSnapshotPayload): WorkspaceStateBucket {
-    const pendingPermissionCount = agent.pendingPermissions?.length ?? 0;
-    if (pendingPermissionCount > 0 || agent.attentionReason === "permission") {
-      return "needs_input";
-    }
-    if (agent.status === "error" || agent.attentionReason === "error") {
-      return "failed";
-    }
-    if (agent.status === "running") {
-      return "running";
-    }
-    if (agent.requiresAttention) {
-      return "attention";
-    }
-    return "done";
   }
 }
