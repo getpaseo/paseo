@@ -133,9 +133,6 @@ describe("workspace message schemas", () => {
       lastPromptPreview: "last prompt",
       lastActivityAt: "2026-04-30T12:34:56.000Z",
     });
-    expect(parsed).not.toHaveProperty("providerKind");
-    expect(parsed).not.toHaveProperty("sessionId");
-    expect(parsed).not.toHaveProperty("nativeHandle");
   });
 
   test("parses fetch_recent_provider_sessions request and response", () => {
@@ -168,11 +165,21 @@ describe("workspace message schemas", () => {
 
     expect(request.type).toBe("fetch_recent_provider_sessions_request");
     expect(request.providers).toEqual(["my-claude"]);
-    expect(response.type).toBe("fetch_recent_provider_sessions_response");
-    expect(response.payload.entries[0]).not.toHaveProperty("providerKind");
-    expect(response.payload.entries[0]).not.toHaveProperty("sessionId");
-    expect(response.payload.entries[0]).not.toHaveProperty("nativeHandle");
-    expect(response.payload).not.toHaveProperty("filteredAlreadyImportedCount");
+    expect(response.payload).toEqual({
+      requestId: "req-recent-provider-sessions",
+      entries: [
+        {
+          providerId: "my-claude",
+          providerLabel: "My Claude",
+          providerHandleId: "thread-1",
+          cwd: "/tmp/repo",
+          title: "Resume this",
+          firstPromptPreview: "first prompt",
+          lastPromptPreview: "last prompt",
+          lastActivityAt: "2026-04-30T12:34:56.000Z",
+        },
+      ],
+    });
   });
 
   test("parses fetch_recent_provider_sessions response with filteredAlreadyImportedCount", () => {
@@ -214,8 +221,6 @@ describe("workspace message schemas", () => {
       providerHandleId: "thread-1",
       cwd: "/tmp/repo",
     });
-    expect(newRequest).not.toHaveProperty("sessionId");
-    expect(newRequest).not.toHaveProperty("nativeHandle");
     expect(legacyRequest).toEqual({
       type: "import_agent_request",
       requestId: "req-import-legacy",

@@ -3,15 +3,15 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-nati
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import { IMPORTABLE_PROVIDERS } from "@server/shared/importable-providers";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 
-const IMPORTABLE_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
+const IMPORTABLE_PROVIDER_IDS: Set<string> = new Set(IMPORTABLE_PROVIDERS);
 const PER_PROVIDER_LIMIT = 15;
-const FALLBACK_LIMIT = 20;
 const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
 const DISABLED_ACCESSIBILITY_STATE = { disabled: true };
 
@@ -34,8 +34,6 @@ interface WorkspaceImportSheetProps {
   onImportedAgent: (agentId: string) => void;
 }
 
-type ProvidersToFetch = AgentProvider[] | "fallback" | "loading";
-
 type RecentSessionsResponse = Awaited<
   ReturnType<RecentProviderSessionsClient["fetchRecentProviderSessions"]>
 >;
@@ -56,9 +54,13 @@ interface SessionsQueryResult {
 function resolveProvidersToFetch(
   supportsSnapshot: boolean,
   snapshotEntries: ReadonlyArray<{ provider: string; enabled?: boolean }> | undefined,
-): ProvidersToFetch {
-  if (!supportsSnapshot) return "fallback";
-  if (!snapshotEntries) return "loading";
+): AgentProvider[] | null {
+  // COMPAT(providersSnapshot): the import-recent-sessions feature ships alongside
+  // providersSnapshot (v0.1.48, 2026-04-05). Daemons older than that lack both —
+  // we render an "update host" empty state instead of degrading. Drop this gate
+  // when the supported daemon floor is >= v0.1.48 (target: 2026-10-05).
+  if (!supportsSnapshot) return null;
+  if (!snapshotEntries) return null;
   return snapshotEntries
     .filter((entry) => IMPORTABLE_PROVIDER_IDS.has(entry.provider) && entry.enabled !== false)
     .map((entry) => entry.provider);
@@ -78,32 +80,15 @@ function buildProviderLabelMap(
 }
 
 function buildSessionsQueriesConfig(args: {
-  providersToFetch: ProvidersToFetch;
+  providersToFetch: AgentProvider[] | null;
   sessionsQueryRoot: ReadonlyArray<string | null>;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   workspaceDirectory: string | null;
 }): SessionsQueryConfig[] {
   const { providersToFetch, sessionsQueryRoot, visible, client, workspaceDirectory } = args;
+  if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client && workspaceDirectory);
-  if (providersToFetch === "loading") return [];
-  if (providersToFetch === "fallback") {
-    return [
-      {
-        queryKey: [...sessionsQueryRoot, "__all__"],
-        enabled,
-        queryFn: async () => {
-          if (!client || !workspaceDirectory) {
-            throw new Error("Host is not connected");
-          }
-          return await client.fetchRecentProviderSessions({
-            cwd: workspaceDirectory,
-            limit: FALLBACK_LIMIT,
-          });
-        },
-      },
-    ];
-  }
   return providersToFetch.map((provider) => ({
     queryKey: [...sessionsQueryRoot, provider],
     enabled,
@@ -149,11 +134,11 @@ function sumFilteredAlreadyImportedCount(queries: ReadonlyArray<SessionsQueryRes
 }
 
 function collectErroredProviderLabels(
-  providersToFetch: ProvidersToFetch,
+  providersToFetch: AgentProvider[] | null,
   queries: ReadonlyArray<SessionsQueryResult>,
   providerLabelById: ReadonlyMap<string, string>,
 ): string[] {
-  if (providersToFetch === "loading" || providersToFetch === "fallback") return [];
+  if (providersToFetch === null) return [];
   const labels: string[] = [];
   for (let index = 0; index < queries.length; index++) {
     if (queries[index]?.isError) {
@@ -182,6 +167,7 @@ function getPromptPreview(entry: FetchRecentProviderSessionEntry): string {
 
 interface SheetStatusMessagesProps {
   isClientReady: boolean;
+  isSnapshotUnsupported: boolean;
   hasNoImportableProviders: boolean;
   isLoadingSessions: boolean;
   allQueriesErrored: boolean;
@@ -193,6 +179,7 @@ interface SheetStatusMessagesProps {
 
 function SheetStatusMessages({
   isClientReady,
+  isSnapshotUnsupported,
   hasNoImportableProviders,
   isLoadingSessions,
   allQueriesErrored,
@@ -203,6 +190,9 @@ function SheetStatusMessages({
 }: SheetStatusMessagesProps) {
   if (!isClientReady) {
     return <Text style={styles.statusText}>Connect to a workspace to import agents.</Text>;
+  }
+  if (isSnapshotUnsupported) {
+    return <Text style={styles.statusText}>Update the host to import sessions.</Text>;
   }
   return (
     <>
@@ -400,10 +390,7 @@ export function WorkspaceImportSheet({
     [queries],
   );
 
-  const badgeProviders = useMemo(() => {
-    if (!Array.isArray(providersToFetch)) return [];
-    return [...providersToFetch].sort();
-  }, [providersToFetch]);
+  const badgeProviders = useMemo(() => [...(providersToFetch ?? [])].sort(), [providersToFetch]);
 
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
 
@@ -456,8 +443,9 @@ export function WorkspaceImportSheet({
     [queries, providersToFetch, providerLabelById],
   );
 
-  const isWaitingForSnapshot = providersToFetch === "loading";
-  const hasNoImportableProviders = Array.isArray(providersToFetch) && providersToFetch.length === 0;
+  const isSnapshotUnsupported = !supportsSnapshot;
+  const isWaitingForSnapshot = supportsSnapshot && snapshotEntries === undefined;
+  const hasNoImportableProviders = providersToFetch !== null && providersToFetch.length === 0;
   const isQueryingProviders = queries.length > 0;
   const isLoadingSessions =
     isWaitingForSnapshot ||
@@ -509,6 +497,7 @@ export function WorkspaceImportSheet({
       ) : null}
       <SheetStatusMessages
         isClientReady={Boolean(client && workspaceDirectory)}
+        isSnapshotUnsupported={isSnapshotUnsupported}
         hasNoImportableProviders={hasNoImportableProviders}
         isLoadingSessions={isLoadingSessions}
         allQueriesErrored={allQueriesErrored}

@@ -5272,62 +5272,52 @@ class RecordingPersistedAgentsClient implements AgentClient {
   }
 }
 
-test("listPersistedAgents skips disabled providers in fan-out", async () => {
-  const claudeClient = new RecordingPersistedAgentsClient("claude");
-  const codexClient = new RecordingPersistedAgentsClient("codex");
-  const manager = new AgentManager({
-    clients: { claude: claudeClient, codex: codexClient },
-    providerDefinitions: {
+test.each([
+  [
+    "disabled",
+    "claude",
+    "codex",
+    {
       claude: { enabled: true, derivedFromProviderId: null },
       codex: { enabled: false, derivedFromProviderId: null },
     },
-    logger,
-  });
-
-  const result = await manager.listPersistedAgents();
-
-  expect(claudeClient.calls).toBe(1);
-  expect(codexClient.calls).toBe(0);
-  expect(result.map((d) => d.provider)).toEqual(["claude"]);
-});
-
-test("listPersistedAgents skips derived providers in fan-out", async () => {
-  const claudeClient = new RecordingPersistedAgentsClient("claude");
-  const zaiClient = new RecordingPersistedAgentsClient("zai");
-  const manager = new AgentManager({
-    clients: { claude: claudeClient, zai: zaiClient },
-    providerDefinitions: {
+  ],
+  [
+    "derived",
+    "claude",
+    "zai",
+    {
       claude: { enabled: true, derivedFromProviderId: null },
       zai: { enabled: true, derivedFromProviderId: "claude" },
     },
-    logger,
-  });
-
-  const result = await manager.listPersistedAgents();
-
-  expect(claudeClient.calls).toBe(1);
-  expect(zaiClient.calls).toBe(0);
-  expect(result.map((d) => d.provider)).toEqual(["claude"]);
-});
-
-test("listPersistedAgents skips providers outside the importable allowlist", async () => {
-  const claudeClient = new RecordingPersistedAgentsClient("claude");
-  const geminiClient = new RecordingPersistedAgentsClient("gemini");
-  const manager = new AgentManager({
-    clients: { claude: claudeClient, gemini: geminiClient },
-    providerDefinitions: {
+  ],
+  [
+    "outside importable allowlist",
+    "claude",
+    "gemini",
+    {
       claude: { enabled: true, derivedFromProviderId: null },
       gemini: { enabled: true, derivedFromProviderId: null },
     },
-    logger,
-  });
+  ],
+])(
+  "listPersistedAgents skips %s providers in fan-out",
+  async (_reason, includedProvider, skippedProvider, providerDefinitions) => {
+    const includedClient = new RecordingPersistedAgentsClient(includedProvider);
+    const skippedClient = new RecordingPersistedAgentsClient(skippedProvider);
+    const manager = new AgentManager({
+      clients: { [includedProvider]: includedClient, [skippedProvider]: skippedClient },
+      providerDefinitions,
+      logger,
+    });
 
-  const result = await manager.listPersistedAgents();
+    const result = await manager.listPersistedAgents();
 
-  expect(claudeClient.calls).toBe(1);
-  expect(geminiClient.calls).toBe(0);
-  expect(result.map((d) => d.provider)).toEqual(["claude"]);
-});
+    expect(includedClient.calls).toBe(1);
+    expect(skippedClient.calls).toBe(0);
+    expect(result.map((d) => d.provider)).toEqual([includedProvider]);
+  },
+);
 
 test("listPersistedAgents narrows to the providerFilter when supplied", async () => {
   const claudeClient = new RecordingPersistedAgentsClient("claude");

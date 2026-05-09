@@ -912,7 +912,6 @@ function getOpenCodePartTimestamp(part: OpenCodeStoredPart): number {
 
 export const __openCodeInternals = {
   buildOpenCodePromptParts,
-  collectOpenCodePersistedAgentsFromStorage,
   buildOpenCodeModelContextWindowLookup,
   buildOpenCodeModelDefinition,
   buildOpenCodeModelLookupKey,
@@ -1215,10 +1214,12 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
+  private readonly storageRoot: string;
 
-  constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
+  constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings, storageRoot?: string) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
     this.runtimeSettings = runtimeSettings;
+    this.storageRoot = storageRoot ?? resolveOpenCodeStorageRoot();
     this.serverManager = OpenCodeServerManager.getInstance(this.logger, runtimeSettings);
   }
 
@@ -1406,7 +1407,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    return collectOpenCodePersistedAgentsFromStorage(resolveOpenCodeStorageRoot(), options);
+    return collectOpenCodePersistedAgentsFromStorage(this.storageRoot, options);
   }
 
   async isAvailable(): Promise<boolean> {

@@ -658,7 +658,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 });
 
 describe("OpenCode persisted sessions", () => {
-  test("lists stored sessions for the requested cwd with timeline previews", async () => {
+  test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
     const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
     const cwd = path.join(storageRoot, "repo");
     const otherCwd = path.join(storageRoot, "other");
@@ -710,10 +710,8 @@ describe("OpenCode persisted sessions", () => {
       time: { start: 2200 },
     });
 
-    const descriptors = await __openCodeInternals.collectOpenCodePersistedAgentsFromStorage(
-      storageRoot,
-      { cwd, limit: 1 },
-    );
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot);
+    const descriptors = await client.listPersistedAgents({ cwd, limit: 1 });
 
     expect(descriptors).toHaveLength(1);
     expect(descriptors[0]).toMatchObject({

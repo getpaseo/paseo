@@ -170,8 +170,18 @@ const CODEX_MODES: AgentMode[] = [
 
 const DEFAULT_CODEX_MODE_ID = "auto";
 
+interface CodexAppServerClientLike {
+  request(method: string, params?: unknown): Promise<unknown>;
+  notify(method: string, params?: unknown): void;
+  dispose(): Promise<void>;
+}
+
 interface CodexAppServerAgentDeps {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  _createCodexClient?: (
+    child: ChildProcessWithoutNullStreams,
+    logger: Logger,
+  ) => CodexAppServerClientLike;
 }
 
 const MODE_PRESETS: Record<
@@ -1745,7 +1755,7 @@ async function loadCodexThreadHistoryTimeline(params: {
   return timeline;
 }
 
-function readCodexThread(client: CodexAppServerClient, threadId: string): Promise<unknown> {
+function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
   return client.request("thread/read", {
     threadId,
     includeTurns: true,
@@ -4835,7 +4845,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
     const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    const client =
+      this.deps._createCodexClient?.(child, this.logger) ??
+      new CodexAppServerClient(child, this.logger);
 
     try {
       await client.request("initialize", buildCodexAppServerInitializeParams());
@@ -5102,7 +5114,6 @@ export const __codexAppServerInternals = {
   CodexAppServerClient,
   codexModelSupportsFastMode,
   CodexAppServerAgentSession,
-  filterCodexThreadsByCwd,
   formatCodexQuestionPrompts,
   mapCodexQuestionRequestToToolCall,
   mapCodexPatchNotificationToToolCall,

@@ -131,6 +131,7 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import { normalizeImportAgentRequest } from "./agent/import-agent-request.js";
 import {
   checkoutLiteFromGitSnapshot,
   normalizeWorkspaceId as normalizePersistedWorkspaceId,
@@ -3190,20 +3191,19 @@ export class Session {
   private async handleImportAgentRequest(
     msg: Extract<SessionInboundMessage, { type: "import_agent_request" }>,
   ): Promise<void> {
-    const provider = msg.providerId ?? msg.provider;
-    const providerHandleId = msg.providerHandleId ?? msg.sessionId;
-    const { cwd, labels, requestId } = msg;
-    if (!provider || !providerHandleId) {
+    const normalized = normalizeImportAgentRequest(msg);
+    if ("error" in normalized) {
       this.emit({
         type: "status",
         payload: {
           status: "agent_create_failed",
-          requestId,
-          error: "Import requires providerId and providerHandleId",
+          requestId: msg.requestId,
+          error: normalized.error,
         },
       });
       return;
     }
+    const { provider, providerHandleId, cwd, labels, requestId } = normalized;
     this.sessionLogger.info(
       { providerHandleId, provider },
       `Importing agent ${providerHandleId} (${provider})`,
