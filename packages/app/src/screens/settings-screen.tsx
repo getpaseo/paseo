@@ -76,6 +76,7 @@ import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
   buildHostOpenProjectRoute,
   buildProjectsSettingsRoute,
@@ -812,6 +813,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const isCompactLayout = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
   const insetBottomStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
+  const webScrollbarStyle = useWebScrollbarStyle();
+  const scrollViewStyle = useMemo(
+    () => [styles.scrollView, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
   const hosts = useHosts();
   const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const anyOnlineServerId = useAnyOnlineHostServerId(hostServerIds);
@@ -1079,7 +1085,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     return (
       <View style={styles.container}>
         <BackHeader title="Settings" onBack={handleBackToWorkspace} />
-        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
+        <ScrollView style={scrollViewStyle} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
             view={view}
             onSelectSection={handleSelectSection}
@@ -1108,7 +1114,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           titleAccessory={detailHeader?.titleAccessory}
           onBack={detailBackHandler}
         />
-        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
+        <ScrollView style={scrollViewStyle} contentContainerStyle={insetBottomStyle}>
           <View style={styles.content}>{content}</View>
         </ScrollView>
         {addHostModals}
@@ -1153,7 +1159,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             }
             leftStyle={desktopStyles.detailLeft}
           />
-          <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
+          <ScrollView style={scrollViewStyle} contentContainerStyle={insetBottomStyle}>
             <View style={styles.content}>{content}</View>
           </ScrollView>
         </View>

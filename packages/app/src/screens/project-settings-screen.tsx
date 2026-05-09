@@ -22,6 +22,7 @@ import { Alert } from "@/components/ui/alert";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
@@ -53,30 +54,37 @@ interface MetadataPromptField {
 
 const METADATA_PROMPT_FIELDS: Record<MetadataPromptKey, MetadataPromptField> = {
   agentTitle: {
-    title: "Agent title prompt",
-    placeholder: "Keep titles short and action-oriented.",
+    title: "Agent titles",
+    placeholder: "Keep titles imperative and under 40 characters.",
     sectionTestID: "metadata-prompt-agent-title-section",
     inputTestID: "metadata-prompt-agent-title-input",
   },
   branchName: {
-    title: "Branch name prompt",
-    placeholder: "Prefix branches with feat/ or fix/.",
+    title: "Branch names",
+    placeholder: "Prefix branches with feat/ or fix/. Use mb/ for personal branches.",
     sectionTestID: "metadata-prompt-branch-name-section",
     inputTestID: "metadata-prompt-branch-name-input",
   },
   commitMessage: {
-    title: "Commit message prompt",
-    placeholder: "Use Conventional Commits.",
+    title: "Commit messages",
+    placeholder: "Use Conventional Commits with a scope.",
     sectionTestID: "metadata-prompt-commit-message-section",
     inputTestID: "metadata-prompt-commit-message-input",
   },
   pullRequest: {
-    title: "Pull request prompt",
-    placeholder: "Include risk notes and a test plan.",
+    title: "Pull requests",
+    placeholder: "Lead with a one-paragraph summary. Include a Test plan section.",
     sectionTestID: "metadata-prompt-pull-request-section",
     inputTestID: "metadata-prompt-pull-request-input",
   },
 };
+
+const WORKTREE_GROUP_INFO =
+  "Commands that run when a worktree is created or torn down for this project.";
+const SCRIPTS_GROUP_INFO =
+  "Long-running services and one-off commands you can launch from any agent in this project.";
+const METADATA_GROUP_INFO =
+  "Project-specific instructions injected into the AI prompts Paseo uses to generate metadata. Use them to enforce your team's conventions — branch naming, commit style, PR format.";
 
 const NO_TARGET_MESSAGE = "We don't have an editable copy of this project on any connected host.";
 
@@ -580,37 +588,44 @@ function ProjectConfigForm({
 
   return (
     <View>
-      <SettingsSection title="Worktree setup" testID="worktree-setup-section">
-        <View style={settingsStyles.card}>
-          <TextInput
-            testID="worktree-setup-input"
-            accessibilityLabel="Worktree setup commands"
-            multiline
-            value={draft.setupText}
-            onChangeText={handleSetupChange}
-            placeholder="npm install"
-            placeholderTextColor={styles.placeholderColor.color}
-            style={styles.lifecycleInput}
-          />
-        </View>
-      </SettingsSection>
+      <SettingsGroup title="Worktree" info={WORKTREE_GROUP_INFO} testID="worktree-group">
+        <SettingsSection title="Setup" testID="worktree-setup-section">
+          <View style={settingsStyles.card}>
+            <TextInput
+              testID="worktree-setup-input"
+              accessibilityLabel="Worktree setup commands"
+              multiline
+              value={draft.setupText}
+              onChangeText={handleSetupChange}
+              placeholder="npm install"
+              placeholderTextColor={styles.placeholderColor.color}
+              style={styles.lifecycleInput}
+            />
+          </View>
+        </SettingsSection>
 
-      <SettingsSection title="Worktree teardown" testID="worktree-teardown-section">
-        <View style={settingsStyles.card}>
-          <TextInput
-            testID="worktree-teardown-input"
-            accessibilityLabel="Worktree teardown commands"
-            multiline
-            value={draft.teardownText}
-            onChangeText={handleTeardownChange}
-            placeholder="docker compose down"
-            placeholderTextColor={styles.placeholderColor.color}
-            style={styles.lifecycleInput}
-          />
-        </View>
-      </SettingsSection>
+        <SettingsSection title="Teardown" testID="worktree-teardown-section">
+          <View style={settingsStyles.card}>
+            <TextInput
+              testID="worktree-teardown-input"
+              accessibilityLabel="Worktree teardown commands"
+              multiline
+              value={draft.teardownText}
+              onChangeText={handleTeardownChange}
+              placeholder="docker compose down"
+              placeholderTextColor={styles.placeholderColor.color}
+              style={styles.lifecycleInput}
+            />
+          </View>
+        </SettingsSection>
+      </SettingsGroup>
 
-      <SettingsSection title="Scripts" testID="scripts-section" trailing={scriptsTrailing}>
+      <SettingsGroup
+        title="Scripts"
+        info={SCRIPTS_GROUP_INFO}
+        trailing={scriptsTrailing}
+        testID="scripts-group"
+      >
         <View style={settingsStyles.card} testID="scripts-list">
           {draft.scripts.length === 0 ? (
             <View style={settingsStyles.row}>
@@ -628,16 +643,18 @@ function ProjectConfigForm({
             ))
           )}
         </View>
-      </SettingsSection>
+      </SettingsGroup>
 
-      {METADATA_PROMPT_KEYS.map((key) => (
-        <MetadataPromptSection
-          key={key}
-          promptKey={key}
-          value={draft.metadataPrompts[key]}
-          onChange={handleMetadataPromptChange}
-        />
-      ))}
+      <SettingsGroup title="Metadata generation" info={METADATA_GROUP_INFO} testID="metadata-group">
+        {METADATA_PROMPT_KEYS.map((key) => (
+          <MetadataPromptSection
+            key={key}
+            promptKey={key}
+            value={draft.metadataPrompts[key]}
+            onChange={handleMetadataPromptChange}
+          />
+        ))}
+      </SettingsGroup>
 
       {isStale ? (
         <View style={styles.calloutWrap}>
