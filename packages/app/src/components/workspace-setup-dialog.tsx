@@ -17,6 +17,7 @@ import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachm
 import type { CreateAgentRequestOptions, DaemonClient } from "@server/client/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceExecutionAuthority } from "@/utils/workspace-execution";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ImageAttachment, MessagePayload } from "./message-input";
 
@@ -190,6 +191,14 @@ export function WorkspaceSetupDialog() {
       }
 
       clearWorkspaceSetup();
+      if (target.kind === "agent") {
+        navigateToAgent({
+          serverId: pendingWorkspaceSetup.serverId,
+          agentId: target.agentId,
+        });
+        return;
+      }
+
       navigateToPreparedWorkspaceTab({
         serverId: pendingWorkspaceSetup.serverId,
         workspaceId,

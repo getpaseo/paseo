@@ -59,7 +59,6 @@ import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
@@ -72,7 +71,6 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore } from "@/stores/panel-store";
-import { useSessionStore } from "@/stores/session-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { resolveActiveHost } from "@/utils/active-host";
@@ -85,13 +83,12 @@ import {
   parseWorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
   type WebNotificationClickDetail,
 } from "@/utils/os-notifications";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
-import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 polyfillCrypto();
 
@@ -118,25 +115,8 @@ function PushNotificationRouter() {
     const serverId = target.serverId;
     const agentId = target.agentId;
     if (serverId && agentId) {
-      const session = useSessionStore.getState().sessions[serverId];
-      const agent = session?.agents.get(agentId);
-      const workspaceId =
-        target.workspaceId ??
-        resolveWorkspaceIdByExecutionDirectory({
-          workspaces: session?.workspaces.values(),
-          workspaceDirectory: agent?.cwd,
-        });
-
-      if (workspaceId) {
-        prepareWorkspaceTab({
-          serverId,
-          workspaceId,
-          target: { kind: "agent", agentId },
-          pin: true,
-        });
-        navigateToWorkspace(serverId, workspaceId, { currentPathname: pathname });
-        return;
-      }
+      navigateToAgent({ serverId, agentId, currentPathname: pathname, pin: true });
+      return;
     }
 
     router.navigate(buildNotificationRoute(data));

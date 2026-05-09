@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { useSessionStore } from "@/stores/session-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
@@ -11,15 +10,14 @@ import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
-import { buildHostAgentDetailRoute, buildSettingsRoute } from "@/utils/host-routes";
+import { buildSettingsRoute } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { focusWithRetries } from "@/utils/web-focus";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
 
@@ -204,18 +202,9 @@ export function useCommandCenter() {
       // Don't restore focus back to the prior element after we navigate.
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
-      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-        workspaces: useSessionStore.getState().sessions[agent.serverId]?.workspaces?.values(),
-        workspaceDirectory: agent.cwd,
-      });
-      if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as Href);
-        return;
-      }
-      navigateToPreparedWorkspaceTab({
+      navigateToAgent({
         serverId: agent.serverId,
-        workspaceId,
-        target: { kind: "agent", agentId: agent.id },
+        agentId: agent.id,
         currentPathname: pathname,
       });
     },

@@ -58,6 +58,7 @@ import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 
 interface ChatAgentStateShape {
@@ -1258,14 +1259,14 @@ function ActiveAgentComposer({
   const paneContext = usePaneContext();
   const { workspaceId } = paneContext;
   const subagentRows = useSubagentsForParent({
-    serverId: paneContext.serverId,
+    serverId,
     parentAgentId: agentId,
   });
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
-      paneContext.openTab({ kind: "agent", agentId: subagentId });
+      navigateToAgent({ serverId, agentId: subagentId });
     },
-    [paneContext],
+    [serverId],
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const agentInputDraft = useAgentInputDraft({

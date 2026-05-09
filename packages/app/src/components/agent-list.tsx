@@ -10,7 +10,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { router, type Href } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
@@ -19,9 +18,7 @@ import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
-import { buildHostAgentDetailRoute } from "@/utils/host-routes";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import type { Agent } from "@/stores/session-store";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 
@@ -312,23 +309,13 @@ export function AgentList({
 
       const serverId = agent.serverId;
       const agentId = agent.id;
-      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-        workspaces: useSessionStore.getState().sessions[serverId]?.workspaces?.values(),
-        workspaceDirectory: agent.cwd,
-      });
 
       onAgentSelect?.();
 
-      if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(serverId, agentId) as Href);
-        return;
-      }
-
       rememberArchivedAgentDetail(agent);
-      navigateToPreparedWorkspaceTab({
+      navigateToAgent({
         serverId,
-        workspaceId,
-        target: { kind: "agent", agentId },
+        agentId,
         pin: Boolean(agent.archivedAt),
       });
     },
