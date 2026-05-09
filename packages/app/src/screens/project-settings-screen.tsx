@@ -31,7 +31,9 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
   configToDraft,
+  METADATA_PROMPT_KEYS,
   type LifecycleOriginalKind,
+  type MetadataPromptKey,
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
@@ -41,6 +43,40 @@ import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
 const SCRIPT_SERVICE_TYPE = "service";
 
 const ICON_SIZE = 14;
+
+interface MetadataPromptField {
+  title: string;
+  placeholder: string;
+  sectionTestID: string;
+  inputTestID: string;
+}
+
+const METADATA_PROMPT_FIELDS: Record<MetadataPromptKey, MetadataPromptField> = {
+  agentTitle: {
+    title: "Agent title prompt",
+    placeholder: "Keep titles short and action-oriented.",
+    sectionTestID: "metadata-prompt-agent-title-section",
+    inputTestID: "metadata-prompt-agent-title-input",
+  },
+  branchName: {
+    title: "Branch name prompt",
+    placeholder: "Prefix branches with feat/ or fix/.",
+    sectionTestID: "metadata-prompt-branch-name-section",
+    inputTestID: "metadata-prompt-branch-name-input",
+  },
+  commitMessage: {
+    title: "Commit message prompt",
+    placeholder: "Use Conventional Commits.",
+    sectionTestID: "metadata-prompt-commit-message-section",
+    inputTestID: "metadata-prompt-commit-message-input",
+  },
+  pullRequest: {
+    title: "Pull request prompt",
+    placeholder: "Include risk notes and a test plan.",
+    sectionTestID: "metadata-prompt-pull-request-section",
+    inputTestID: "metadata-prompt-pull-request-input",
+  },
+};
 
 const NO_TARGET_MESSAGE = "We don't have an editable copy of this project on any connected host.";
 
@@ -432,6 +468,15 @@ function ProjectConfigForm({
     [updateDraft],
   );
 
+  const handleMetadataPromptChange = useCallback(
+    (key: MetadataPromptKey, text: string) =>
+      updateDraft((d) => ({
+        ...d,
+        metadataPrompts: { ...d.metadataPrompts, [key]: text },
+      })),
+    [updateDraft],
+  );
+
   const handleRemoveScript = useCallback(
     async (script: ProjectScriptDraft) => {
       const ok = await confirmDialog({
@@ -584,6 +629,15 @@ function ProjectConfigForm({
           )}
         </View>
       </SettingsSection>
+
+      {METADATA_PROMPT_KEYS.map((key) => (
+        <MetadataPromptSection
+          key={key}
+          promptKey={key}
+          value={draft.metadataPrompts[key]}
+          onChange={handleMetadataPromptChange}
+        />
+      ))}
 
       {isStale ? (
         <View style={styles.calloutWrap}>
@@ -764,6 +818,36 @@ function HostPickerItem({ host, isSelected, onSelectHost }: HostPickerItemProps)
     >
       {host.serverName}
     </DropdownMenuItem>
+  );
+}
+
+interface MetadataPromptSectionProps {
+  promptKey: MetadataPromptKey;
+  value: string;
+  onChange: (key: MetadataPromptKey, text: string) => void;
+}
+
+function MetadataPromptSection({ promptKey, value, onChange }: MetadataPromptSectionProps) {
+  const meta = METADATA_PROMPT_FIELDS[promptKey];
+  const handleChange = useCallback(
+    (text: string) => onChange(promptKey, text),
+    [onChange, promptKey],
+  );
+  return (
+    <SettingsSection title={meta.title} testID={meta.sectionTestID}>
+      <View style={settingsStyles.card}>
+        <TextInput
+          testID={meta.inputTestID}
+          accessibilityLabel={meta.title}
+          multiline
+          value={value}
+          onChangeText={handleChange}
+          placeholder={meta.placeholder}
+          placeholderTextColor={styles.placeholderColor.color}
+          style={styles.lifecycleInput}
+        />
+      </View>
+    </SettingsSection>
   );
 }
 

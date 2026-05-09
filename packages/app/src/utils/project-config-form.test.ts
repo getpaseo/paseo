@@ -10,6 +10,13 @@ function emptyDraft(): ProjectConfigDraft {
     teardownText: "",
     teardownOriginalKind: "missing",
     scripts: [],
+    metadataPrompts: {
+      agentTitle: "",
+      branchName: "",
+      commitMessage: "",
+      pullRequest: "",
+    },
+    metadataGenerationBase: undefined,
   };
 }
 
@@ -208,6 +215,100 @@ describe("applyDraftToConfig", () => {
     const tunnel = (next.scripts ?? {}).tunnel as Record<string, unknown>;
     expect(dev.port).toBe(3000);
     expect(tunnel.port).toBe("auto");
+  });
+
+  it("reads metadata prompt instructions for all four keys", () => {
+    const draft = configToDraft({
+      metadataGeneration: {
+        agentTitle: { instructions: "Use mb/." },
+        branchName: { instructions: "feat/<slug>" },
+        commitMessage: { instructions: "Conventional commits." },
+        pullRequest: { instructions: "Include risk notes." },
+      },
+    });
+    expect(draft.metadataPrompts).toEqual({
+      agentTitle: "Use mb/.",
+      branchName: "feat/<slug>",
+      commitMessage: "Conventional commits.",
+      pullRequest: "Include risk notes.",
+    });
+  });
+
+  it("defaults metadata prompts to empty strings when not present", () => {
+    const draft = configToDraft({
+      metadataGeneration: { agentTitle: { instructions: "Use mb/." } },
+    });
+    expect(draft.metadataPrompts).toEqual({
+      agentTitle: "Use mb/.",
+      branchName: "",
+      commitMessage: "",
+      pullRequest: "",
+    });
+  });
+
+  it("writes only metadata prompt entries with non-empty text", () => {
+    const base: PaseoConfigRaw = {};
+    const draft = configToDraft(base);
+    draft.metadataPrompts.agentTitle = "Use mb/.";
+    draft.metadataPrompts.commitMessage = "Conventional commits.";
+    const next = applyDraftToConfig({ draft, base });
+    expect(next.metadataGeneration).toEqual({
+      agentTitle: { instructions: "Use mb/." },
+      commitMessage: { instructions: "Conventional commits." },
+    });
+  });
+
+  it("drops the metadataGeneration field when all prompts are empty", () => {
+    const base = PaseoConfigRawSchema.parse({
+      metadataGeneration: {
+        agentTitle: { instructions: "Use mb/." },
+      },
+    });
+    const draft = configToDraft(base);
+    draft.metadataPrompts.agentTitle = "";
+    const next = applyDraftToConfig({ draft, base });
+    expect(next.metadataGeneration).toBeUndefined();
+  });
+
+  it("preserves unknown sibling fields inside metadataGeneration on round-trip", () => {
+    const base = PaseoConfigRawSchema.parse({
+      metadataGeneration: {
+        agentTitle: { instructions: "Use mb/." },
+        futureField: 42,
+      },
+    });
+    const draft = configToDraft(base);
+    draft.metadataPrompts.agentTitle = "Use prefix mb/ on titles.";
+    const next = applyDraftToConfig({ draft, base });
+    const metadata = next.metadataGeneration as Record<string, unknown>;
+    expect(metadata.agentTitle).toEqual({ instructions: "Use prefix mb/ on titles." });
+    expect(metadata.futureField).toBe(42);
+  });
+
+  it("preserves unknown fields inside a metadata prompt entry on round-trip", () => {
+    const base = PaseoConfigRawSchema.parse({
+      metadataGeneration: {
+        agentTitle: { instructions: "Use mb/.", model: "haiku" },
+      },
+    });
+    const draft = configToDraft(base);
+    draft.metadataPrompts.agentTitle = "Updated.";
+    const next = applyDraftToConfig({ draft, base });
+    const metadata = next.metadataGeneration as Record<string, unknown>;
+    expect(metadata.agentTitle).toEqual({ instructions: "Updated.", model: "haiku" });
+  });
+
+  it("clears instructions but preserves unknown sibling fields when text becomes empty", () => {
+    const base = PaseoConfigRawSchema.parse({
+      metadataGeneration: {
+        agentTitle: { instructions: "Use mb/.", model: "haiku" },
+      },
+    });
+    const draft = configToDraft(base);
+    draft.metadataPrompts.agentTitle = "";
+    const next = applyDraftToConfig({ draft, base });
+    const metadata = next.metadataGeneration as Record<string, unknown>;
+    expect(metadata.agentTitle).toEqual({ model: "haiku" });
   });
 
   it("drops scripts with an empty name and removes scripts no longer present in the draft", () => {
