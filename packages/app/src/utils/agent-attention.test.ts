@@ -1,6 +1,41 @@
 import { describe, expect, it } from "vitest";
+import type { Agent } from "@/stores/session-store";
+import { pickAttentionAgent, shouldClearAgentAttention } from "@/utils/agent-attention";
 
-import { shouldClearAgentAttention } from "./agent-attention";
+function createAgent(input: Partial<Agent> & Pick<Agent, "id">): Agent {
+  const { id, ...rest } = input;
+  return {
+    serverId: "server-1",
+    id,
+    provider: "codex",
+    status: "idle",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    lastUserMessageAt: null,
+    lastActivityAt: new Date("2026-01-01T00:00:00.000Z"),
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    cwd: "/repo/worktree",
+    model: null,
+    parentAgentId: null,
+    labels: {},
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+    ...rest,
+  };
+}
 
 describe("shouldClearAgentAttention", () => {
   it("returns true only when the agent is connected and requires attention", () => {
@@ -104,5 +139,96 @@ describe("shouldClearAgentAttention", () => {
         hasDeferredFocusEntryClear: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("pickAttentionAgent", () => {
+  it("returns null for empty input", () => {
+    expect(pickAttentionAgent([])).toBeNull();
+  });
+
+  it("returns null when no agent requires attention", () => {
+    expect(
+      pickAttentionAgent([
+        createAgent({ id: "agent-1", requiresAttention: false, attentionReason: "permission" }),
+        createAgent({ id: "agent-2", requiresAttention: false, attentionReason: null }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns the single permission agent", () => {
+    expect(
+      pickAttentionAgent([
+        createAgent({
+          id: "agent-1",
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: new Date("2026-01-03T00:00:00.000Z"),
+        }),
+      ]),
+    ).toBe("agent-1");
+  });
+
+  it("prioritizes permission over error over finished", () => {
+    expect(
+      pickAttentionAgent([
+        createAgent({
+          id: "finished-agent",
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+        createAgent({
+          id: "error-agent",
+          requiresAttention: true,
+          attentionReason: "error",
+          attentionTimestamp: new Date("2026-01-02T00:00:00.000Z"),
+        }),
+        createAgent({
+          id: "permission-agent",
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: new Date("2026-01-03T00:00:00.000Z"),
+        }),
+      ]),
+    ).toBe("permission-agent");
+  });
+
+  it("breaks ties by oldest attention timestamp", () => {
+    expect(
+      pickAttentionAgent([
+        createAgent({
+          id: "newer-permission-agent",
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: new Date("2026-01-03T00:00:00.000Z"),
+        }),
+        createAgent({
+          id: "older-permission-agent",
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+      ]),
+    ).toBe("older-permission-agent");
+  });
+
+  it("ignores agents with requiresAttention true but null reason", () => {
+    expect(
+      pickAttentionAgent([
+        createAgent({
+          id: "ignored-agent",
+          requiresAttention: true,
+          attentionReason: null,
+          attentionTimestamp: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+        createAgent({
+          id: "error-agent",
+          requiresAttention: true,
+          attentionReason: "error",
+          attentionTimestamp: new Date("2026-01-02T00:00:00.000Z"),
+        }),
+      ]),
+    ).toBe("error-agent");
   });
 });
