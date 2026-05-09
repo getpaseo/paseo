@@ -8,9 +8,7 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
-import { readPaseoConfigJson } from "../utils/paseo-config-file.js";
-import { PaseoConfigSchema } from "../utils/paseo-config-schema.js";
-import { wrapWithUserInstructions } from "../utils/wrap-user-instructions.js";
+import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 interface BranchNameGeneratorLogger {
@@ -33,24 +31,6 @@ const BranchNameSchema = z.object({
   branch: z.string().min(1).max(100),
 });
 
-async function readBranchNameInstructions(options: {
-  cwd: string;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-}): Promise<string | undefined> {
-  if (!options.workspaceGitService) {
-    return undefined;
-  }
-
-  try {
-    const repoRoot = await options.workspaceGitService.resolveRepoRoot(options.cwd);
-    const json = readPaseoConfigJson(repoRoot);
-    const config = PaseoConfigSchema.parse(json);
-    return config.metadataGeneration?.branchName?.instructions;
-  } catch {
-    return undefined;
-  }
-}
-
 async function buildPrompt(
   seed: string,
   options: {
@@ -58,19 +38,18 @@ async function buildPrompt(
     workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   },
 ): Promise<string> {
-  const beforeBlock = [
-    "Generate a git branch name for a coding agent based on the user prompt and attachments.",
-    "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
-    "No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.",
-  ].join("\n");
-  const afterBlock = "Return JSON only with a single field 'branch'.";
-  const instructions = await readBranchNameInstructions(options);
-  const prompt =
-    typeof instructions === "string" && instructions.trim() !== ""
-      ? wrapWithUserInstructions(beforeBlock, instructions, afterBlock)
-      : [beforeBlock, afterBlock].join("\n");
-
-  return [prompt, "", "User context:", seed].join("\n");
+  return buildMetadataPrompt({
+    cwd: options.cwd,
+    workspaceGitService: options.workspaceGitService,
+    configKey: "branchName",
+    before: [
+      "Generate a git branch name for a coding agent based on the user prompt and attachments.",
+      "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
+      "No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.",
+    ].join("\n"),
+    after: "Return JSON only with a single field 'branch'.",
+    trailing: `User context:\n${seed}`,
+  });
 }
 
 export async function generateBranchNameFromFirstAgentContext(

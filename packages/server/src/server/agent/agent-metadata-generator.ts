@@ -9,9 +9,7 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
-import { readPaseoConfigJson } from "../../utils/paseo-config-file.js";
-import { PaseoConfigSchema } from "../../utils/paseo-config-schema.js";
-import { wrapWithUserInstructions } from "../../utils/wrap-user-instructions.js";
+import { buildMetadataPrompt } from "../../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 
 export interface AgentMetadataGeneratorDeps {
@@ -80,24 +78,6 @@ function buildMetadataSchema(
   return z.object(shape);
 }
 
-async function readAgentTitleInstructions(options: {
-  cwd: string;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-}): Promise<string | undefined> {
-  if (!options.workspaceGitService) {
-    return undefined;
-  }
-
-  try {
-    const repoRoot = await options.workspaceGitService.resolveRepoRoot(options.cwd);
-    const json = readPaseoConfigJson(repoRoot);
-    const config = PaseoConfigSchema.parse(json);
-    return config.metadataGeneration?.agentTitle?.instructions;
-  } catch {
-    return undefined;
-  }
-}
-
 async function buildPrompt(
   needs: AgentMetadataNeeds,
   options: {
@@ -105,19 +85,19 @@ async function buildPrompt(
     workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   },
 ): Promise<string> {
-  const beforeBlock: string[] = ["Generate metadata for a coding agent based on the user prompt."];
-
+  const beforeLines: string[] = ["Generate metadata for a coding agent based on the user prompt."];
   if (needs.needsTitle) {
-    beforeBlock.push(`Title: short descriptive label (<= ${MAX_AUTO_AGENT_TITLE_CHARS} chars).`);
+    beforeLines.push(`Title: short descriptive label (<= ${MAX_AUTO_AGENT_TITLE_CHARS} chars).`);
   }
-  const afterBlock = "Return JSON only with a single field 'title'.";
-  const instructions = await readAgentTitleInstructions(options);
-  const prompt =
-    typeof instructions === "string" && instructions.trim() !== ""
-      ? wrapWithUserInstructions(beforeBlock.join("\n"), instructions, afterBlock)
-      : [beforeBlock.join("\n"), afterBlock].join("\n");
 
-  return [prompt, "", "User prompt:", needs.prompt ?? ""].join("\n");
+  return buildMetadataPrompt({
+    cwd: options.cwd,
+    workspaceGitService: options.workspaceGitService,
+    configKey: "agentTitle",
+    before: beforeLines.join("\n"),
+    after: "Return JSON only with a single field 'title'.",
+    trailing: `User prompt:\n${needs.prompt ?? ""}`,
+  });
 }
 
 export async function generateAndApplyAgentMetadata(

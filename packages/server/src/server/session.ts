@@ -161,12 +161,10 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
   readPaseoConfigForEdit,
-  readPaseoConfigJson,
   writePaseoConfigForEdit,
   type ProjectConfigRpcError,
 } from "../utils/paseo-config-file.js";
-import { PaseoConfigSchema } from "../utils/paseo-config-schema.js";
-import { wrapWithUserInstructions } from "../utils/wrap-user-instructions.js";
+import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ScriptRouteStore } from "./script-proxy.js";
@@ -3854,20 +3852,6 @@ export class Session {
     return resolvedCandidate.startsWith(resolvedRoot + sep);
   }
 
-  private async readMetadataGenerationInstructions(
-    cwd: string,
-    generator: "commitMessage" | "pullRequest",
-  ): Promise<string | undefined> {
-    try {
-      const repoRoot = await this.workspaceGitService.resolveRepoRoot(cwd);
-      const json = readPaseoConfigJson(repoRoot);
-      const config = PaseoConfigSchema.parse(json);
-      return config.metadataGeneration?.[generator]?.instructions;
-    } catch {
-      return undefined;
-    }
-  }
-
   private async generateCommitMessage(cwd: string): Promise<string> {
     const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
       mode: "uncommitted",
@@ -3896,19 +3880,19 @@ export class Session {
       diff.diff.length > maxPatchChars
         ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
         : diff.diff;
-    const beforeBlock = "Write a concise git commit message for the changes below.";
-    const afterBlock = [
-      "Return JSON only with a single field 'message'.",
-      "",
-      fileList,
-      "",
-      patch.length > 0 ? patch : "(No diff available)",
-    ].join("\n");
-    const instructions = await this.readMetadataGenerationInstructions(cwd, "commitMessage");
-    const prompt =
-      typeof instructions === "string" && instructions.trim() !== ""
-        ? wrapWithUserInstructions(beforeBlock, instructions, afterBlock)
-        : [beforeBlock, afterBlock].join("\n");
+    const prompt = await buildMetadataPrompt({
+      cwd,
+      workspaceGitService: this.workspaceGitService,
+      configKey: "commitMessage",
+      before: "Write a concise git commit message for the changes below.",
+      after: [
+        "Return JSON only with a single field 'message'.",
+        "",
+        fileList,
+        "",
+        patch.length > 0 ? patch : "(No diff available)",
+      ].join("\n"),
+    });
     try {
       const result = await generateStructuredAgentResponseWithFallback({
         manager: this.agentManager,
@@ -3968,19 +3952,19 @@ export class Session {
       diff.diff.length > maxPatchChars
         ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
         : diff.diff;
-    const beforeBlock = "Write a pull request title and body for the changes below.";
-    const afterBlock = [
-      "Return JSON only with fields 'title' and 'body'.",
-      "",
-      fileList,
-      "",
-      patch.length > 0 ? patch : "(No diff available)",
-    ].join("\n");
-    const instructions = await this.readMetadataGenerationInstructions(cwd, "pullRequest");
-    const prompt =
-      typeof instructions === "string" && instructions.trim() !== ""
-        ? wrapWithUserInstructions(beforeBlock, instructions, afterBlock)
-        : [beforeBlock, afterBlock].join("\n");
+    const prompt = await buildMetadataPrompt({
+      cwd,
+      workspaceGitService: this.workspaceGitService,
+      configKey: "pullRequest",
+      before: "Write a pull request title and body for the changes below.",
+      after: [
+        "Return JSON only with fields 'title' and 'body'.",
+        "",
+        fileList,
+        "",
+        patch.length > 0 ? patch : "(No diff available)",
+      ].join("\n"),
+    });
     try {
       return await generateStructuredAgentResponseWithFallback({
         manager: this.agentManager,
