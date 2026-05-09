@@ -558,4 +558,9 @@ export interface AgentClient {
    */
   isAvailable(): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
+  /**
+   * Archive a persisted session in the native provider (best-effort).
+   * Called when Paseo archives an agent so the provider's own UI reflects the same state.
+   */
+  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
 }

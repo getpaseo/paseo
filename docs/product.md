@@ -67,10 +67,14 @@ Anyone who builds software:
 3. **The daemon as infrastructure.** Server/client architecture enables deployment anywhere.
 4. **Open source outlasts funding.** Open source communities are resilient. Contributors become advocates.
 
-## Current state (March 2026)
+## Current state (May 2026)
 
 - Desktop (Electron), mobile (iOS/Android), web, CLI
-- Providers: Claude Code (Agent SDK), Codex (app-server), OpenCode
-- Daily releases
-- Community contributions starting (packaging, bug fixes)
-- Key UX: split panes, keybinding customization, workspace model
+- Built-in providers: Claude Code (Agent SDK), Codex (app-server), GitHub Copilot (ACP), OpenCode, Pi
+- One-click ACP provider catalog: Cursor, Hermes, Qwen Coder, Kimi Code, and others — plus custom ACP providers
+- Voice mode: dictate prompts or talk through problems hands-free
+- MCP server exposes the daemon to other agents (create_agent, send_agent_prompt, schedules, terminals, worktrees)
+- Scheduled agents (cron-style triggers) via app, CLI, and MCP
+- Frequent releases (multiple per week)
+- Community contributions across packaging, providers, and bug fixes
+- Key UX: split panes, keybinding customization, workspace model, in-app browser

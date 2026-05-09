@@ -1049,6 +1049,8 @@ export class AgentManager {
 
     await registry.upsert(archivedRecord);
 
+    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+
     if (this.agents.has(record.id)) {
       this.notifyAgentState(record.id);
     } else if (!archivedRecord.internal) {
@@ -1233,6 +1235,9 @@ export class AgentManager {
       attentionTimestamp: null,
     };
     await registry.upsert(nextRecord);
+
+    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+
     return nextRecord;
   }
 
@@ -3249,6 +3254,23 @@ export class AgentManager {
       throw new Error(`No client registered for provider '${provider}'`);
     }
     return client;
+  }
+
+  async archiveNativeSessionBestEffort(
+    provider: AgentProvider,
+    persistence: AgentPersistenceHandle | null | undefined,
+  ): Promise<void> {
+    if (!persistence) return;
+    const client = this.clients.get(provider);
+    if (!client?.archiveNativeSession) return;
+    try {
+      await client.archiveNativeSession(persistence);
+    } catch (error) {
+      this.logger.warn(
+        { error, provider, sessionId: persistence.sessionId },
+        "Failed to archive native session (best-effort)",
+      );
+    }
   }
 
   private requireAgent(id: string): LiveManagedAgent {

@@ -143,7 +143,7 @@ Maestro `inputText` fires one character at a time. React Native's **controlled**
 
 For inputs that E2E flows type into (host endpoint, pairing URL, etc.), use an **uncontrolled ref-backed input**: `defaultValue` + `onChangeText` writes into a `useRef`, reads via the ref on submit. No per-keystroke re-render, no dropped characters.
 
-See `add-host-modal.tsx` and `pair-link-modal.tsx` for the pattern. Always pair the source change with a Maestro `assertVisible` on the input's `id + text` after `inputText`, so regressions are caught immediately.
+See `pair-link-modal.tsx` for the pattern (`useRef`-backed `onChangeText`, no `value=` prop). Always pair the source change with a Maestro `assertVisible` on the input's `id + text` after `inputText`, so regressions are caught immediately.
 
 ### Dropdowns that launch native presenters (iOS)
 

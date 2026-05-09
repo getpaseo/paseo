@@ -23,6 +23,7 @@ import {
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
+  buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
@@ -150,10 +151,7 @@ function showBrowserWebviewContextMenu(
   params: Electron.ContextMenuParams,
 ): void {
   const menu = Menu.buildFromTemplate([
-    { role: "copy", enabled: params.selectionText.length > 0 },
-    { role: "paste" },
-    { type: "separator" },
-    { role: "selectAll" },
+    ...buildStandardContextMenuItems(contents, params),
     ...(app.isPackaged
       ? []
       : [

@@ -83,6 +83,7 @@ Required fields for custom providers:
           "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
           "API_TIMEOUT_MS": "3000000"
         },
+        "disallowedTools": ["WebSearch"],
         "models": [
           { "id": "glm-4.5-air", "label": "GLM 4.5 Air" },
           { "id": "glm-5-turbo", "label": "GLM 5 Turbo", "isDefault": true },
@@ -136,6 +137,7 @@ Required fields for custom providers:
           "ANTHROPIC_AUTH_TOKEN": "sk-sp-<your-coding-plan-key>",
           "ANTHROPIC_BASE_URL": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic"
         },
+        "disallowedTools": ["WebSearch"],
         "models": [
           { "id": "qwen3.5-plus", "label": "Qwen 3.5 Plus", "isDefault": true },
           { "id": "qwen3-coder-next", "label": "Qwen 3 Coder Next" },
@@ -344,7 +346,7 @@ Required fields for ACP providers:
 
 [Gemini CLI](https://github.com/google-gemini/gemini-cli) supports ACP via the `--acp` flag.
 
-1. Install: `npm install -g @anthropic-ai/gemini-cli` or see [Gemini CLI docs](https://github.com/google-gemini/gemini-cli)
+1. Install: `npm install -g @google/gemini-cli` or see [Gemini CLI docs](https://github.com/google-gemini/gemini-cli)
 2. Authenticate with Google (Gemini CLI handles its own auth)
 3. Add to config.json:
 
@@ -550,6 +552,7 @@ A config.json with multiple custom providers:
           "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
           "API_TIMEOUT_MS": "3000000"
         },
+        "disallowedTools": ["WebSearch"],
         "models": [
           { "id": "glm-4.5-air", "label": "GLM 4.5 Air" },
           { "id": "glm-5-turbo", "label": "GLM 5 Turbo", "isDefault": true },
@@ -564,6 +567,7 @@ A config.json with multiple custom providers:
           "ANTHROPIC_AUTH_TOKEN": "sk-sp-<coding-plan-key>",
           "ANTHROPIC_BASE_URL": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic"
         },
+        "disallowedTools": ["WebSearch"],
         "models": [
           { "id": "qwen3.5-plus", "label": "Qwen 3.5 Plus", "isDefault": true },
           { "id": "qwen3-coder-next", "label": "Qwen 3 Coder Next" }

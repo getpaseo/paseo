@@ -636,16 +636,31 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     setupContinuation: AgentWorktreeSetupContinuation | undefined;
   }
 
-  const getAvailableModeIds = (provider: AgentProvider): string[] | undefined => {
+  const getProviderModes = (provider: AgentProvider) => {
     const fromRegistry = providerRegistry?.[provider];
     if (fromRegistry) {
-      return fromRegistry.modes.map((mode) => mode.id);
+      return fromRegistry.modes;
     }
     try {
-      return getAgentProviderDefinition(provider).modes.map((mode) => mode.id);
+      return getAgentProviderDefinition(provider).modes;
     } catch {
       return undefined;
     }
+  };
+
+  const getAvailableModeIds = (provider: AgentProvider): string[] | undefined => {
+    return getProviderModes(provider)?.map((mode) => mode.id);
+  };
+
+  const getUnattendedModeId = (provider: AgentProvider): string | undefined => {
+    return getProviderModes(provider)?.find((mode) => mode.isUnattended)?.id;
+  };
+
+  const isParentInUnattendedMode = (provider: AgentProvider, modeId: string | null): boolean => {
+    if (modeId === null) return false;
+    const modes = getProviderModes(provider);
+    if (!modes) return false;
+    return modes.some((mode) => mode.id === modeId && mode.isUnattended === true);
   };
 
   const resolveCallerCreateAgentArgs = (
@@ -668,8 +683,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     const resolvedMode = resolveAndValidateCreateAgentMode({
       requestedMode: callerArgs.mode,
       targetProvider: provider,
-      parent: { provider: parentAgent.provider, modeId: parentAgent.currentModeId },
+      parent: {
+        provider: parentAgent.provider,
+        modeId: parentAgent.currentModeId,
+        isUnattended: isParentInUnattendedMode(parentAgent.provider, parentAgent.currentModeId),
+      },
       availableModes: getAvailableModeIds(provider),
+      targetUnattendedMode: getUnattendedModeId(provider),
     });
     return {
       provider,
@@ -697,6 +717,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       targetProvider: resolvedProviderModel.provider,
       parent: null,
       availableModes: getAvailableModeIds(resolvedProviderModel.provider),
+      targetUnattendedMode: getUnattendedModeId(resolvedProviderModel.provider),
     });
     let resolvedCwd = expandUserPath(cwd);
     let setupContinuation: AgentWorktreeSetupContinuation | undefined;
