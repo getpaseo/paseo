@@ -15,7 +15,7 @@ import * as Haptics from "expo-haptics";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@server/utils/branch-slug";
 import { RenameModal } from "@/components/rename-modal";
-import { invalidateCheckoutGitQueriesForClient } from "@/stores/checkout-git-actions-store";
+import { invalidateCheckoutGitQueriesForClient } from "@/git/actions-store";
 import {
   useCallback,
   useMemo,
