@@ -153,14 +153,19 @@ function seedIssue(args: { spec: IssueSpec; basePath: string }): GhIssueFixture 
   return { number: issueNumber, title: spec.title, url: issueUrl };
 }
 
+// Single namespace for temporary GitHub repos created by Paseo tests.
+// Bulk cleanup relies on this prefix being unmistakable — never reuse `paseo-`
+// (collides with real repos like `paseo`, `paseo-website`).
+const TEMP_GITHUB_REPO_PREFIX = "paseotmp-";
+
 export async function createTempGithubRepo(options: {
-  prefix?: string;
+  category: string;
   prs?: PrSpec[];
   issues?: IssueSpec[];
 }): Promise<GhRepoFixture> {
-  const { prefix = "paseo-e2e-", prs = [], issues = [] } = options;
+  const { category, prs = [], issues = [] } = options;
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const repoName = `${prefix}${uniqueSuffix}`;
+  const repoName = `${TEMP_GITHUB_REPO_PREFIX}${category}-${uniqueSuffix}`;
 
   // Bootstrap local git repo
   const basePath = await mkdtemp(path.join("/tmp", `${repoName}-base-`));

@@ -5,7 +5,11 @@ import { tmpdir } from "os";
 import path from "path";
 import { z } from "zod";
 
-import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
+import {
+  createDaemonTestContext,
+  createTempGithubRepoName,
+  type DaemonTestContext,
+} from "../test-utils/index.js";
 import { createWorktree as createWorktreePrimitive } from "../../utils/worktree.js";
 import type { PullRequestMergeable } from "../../shared/messages.js";
 
@@ -70,11 +74,6 @@ function initGitRepo(repoDir: string): void {
     cwd: repoDir,
     stdio: "pipe",
   });
-}
-
-function createTempRepoName(): string {
-  const rand = Math.random().toString(16).slice(2, 8);
-  return `paseo-checkout-pr-merge-${Date.now()}-${rand}`;
 }
 
 function getGhLogin(): string {
@@ -194,7 +193,7 @@ describe("daemon checkout PR merge loop", () => {
         initGitRepo(repoDir);
 
         const owner = getGhLogin();
-        const repoName = createTempRepoName();
+        const repoName = createTempGithubRepoName("checkout-pr-merge");
         repoFullName = `${owner}/${repoName}`;
         createPrivateRepo(repoName);
 
