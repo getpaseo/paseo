@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
-import { ChevronDown, ChevronRight, X } from "lucide-react-native";
+import { Archive, ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -161,6 +161,7 @@ function SubagentsSectionRow({
 }: SubagentsSectionRowProps): ReactElement {
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
+  const [hovered, setHovered] = useState(false);
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
   const displayLabel = presentation.titleState === "loading" ? "Loading..." : presentation.label;
   const handlePress = useCallback(() => {
@@ -169,36 +170,45 @@ function SubagentsSectionRow({
   const handleArchivePress = useCallback(() => {
     onArchiveSubagent(row.id);
   }, [onArchiveSubagent, row.id]);
-  const showArchiveAlways = isNative || isCompact;
+  const handlePointerEnter = useCallback(() => setHovered(true), []);
+  const handlePointerLeave = useCallback(() => setHovered(false), []);
+  const archiveAlwaysVisible = isNative || isCompact;
+  const archiveVisible = archiveAlwaysVisible || hovered;
+  const archiveSlotStyle = archiveVisible ? styles.archiveSlotVisible : styles.archiveSlotHidden;
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={displayLabel}
-      testID={`subagents-section-row-${row.id}`}
-      onPress={handlePress}
-    >
-      {({ hovered, pressed }) => (
-        <View style={hovered || pressed ? styles.rowActive : styles.row}>
-          <WorkspaceTabIcon presentation={presentation} />
-          <Text style={styles.rowLabel} numberOfLines={1}>
-            {displayLabel}
-          </Text>
-          {showArchiveAlways || hovered ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Archive ${displayLabel}`}
-              testID={`subagents-section-archive-${row.id}`}
-              onPress={handleArchivePress}
-              style={archiveButtonStyle}
-              hitSlop={8}
-            >
-              <X size={14} color={theme.colors.foregroundMuted} />
-            </Pressable>
-          ) : null}
-        </View>
-      )}
-    </Pressable>
+    // Wrapper View handles hover so moving the pointer between the row and
+    // the archive button doesn't drop the hover state — the same pattern
+    // used by sidebar workspace rows.
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={displayLabel}
+        testID={`subagents-section-row-${row.id}`}
+        onPress={handlePress}
+      >
+        {({ pressed }) => (
+          <View style={hovered || pressed ? styles.rowActive : styles.row}>
+            <WorkspaceTabIcon presentation={presentation} />
+            <Text style={styles.rowLabel} numberOfLines={1}>
+              {displayLabel}
+            </Text>
+            <View style={archiveSlotStyle} pointerEvents={archiveVisible ? "auto" : "none"}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Archive ${displayLabel}`}
+                testID={`subagents-section-archive-${row.id}`}
+                onPress={handleArchivePress}
+                style={archiveButtonStyle}
+                hitSlop={8}
+              >
+                <Archive size={14} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            </View>
+          </View>
+        )}
+      </Pressable>
+    </View>
   );
 }
 
@@ -279,6 +289,12 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  archiveSlotVisible: {
+    opacity: 1,
+  },
+  archiveSlotHidden: {
+    opacity: 0,
   },
   archiveButton: {
     padding: theme.spacing[1],

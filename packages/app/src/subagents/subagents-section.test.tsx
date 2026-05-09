@@ -95,6 +95,7 @@ vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
   return {
+    Archive: createIcon("Archive"),
     Check: createIcon("Check"),
     ChevronDown: createIcon("ChevronDown"),
     ChevronRight: createIcon("ChevronRight"),
