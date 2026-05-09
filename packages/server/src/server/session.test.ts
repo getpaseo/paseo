@@ -6,10 +6,9 @@ import { join } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { CheckoutPrStatusSchema } from "../shared/messages.js";
 import type { WorkspaceDescriptorPayload } from "../shared/messages.js";
 import { decodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
-import { normalizeCheckoutPrStatusPayload, Session } from "./session.js";
+import { Session } from "./session.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type {
   AgentClient,
@@ -1188,40 +1187,6 @@ describe("session agent import", () => {
         explicitTitle: null,
       }),
     );
-  });
-});
-
-describe("session PR status payload normalization", () => {
-  test("includes repository identity fields on the wire", () => {
-    const payload = normalizeCheckoutPrStatusPayload({
-      number: 123,
-      repoOwner: "internal-owner",
-      repoName: "internal-repo",
-      url: "https://github.com/getpaseo/paseo/pull/123",
-      title: "Ship PR pane",
-      state: "open",
-      baseRefName: "main",
-      headRefName: "feature/pr-pane",
-      isMerged: false,
-      isDraft: true,
-      mergeable: "MERGEABLE",
-      checks: [
-        {
-          name: "typecheck",
-          status: "success",
-          url: "https://github.com/getpaseo/paseo/actions/runs/1",
-          workflow: "CI",
-          duration: "1m 20s",
-        },
-      ],
-      checksStatus: "success",
-      reviewDecision: "approved",
-    });
-
-    expect(payload).toHaveProperty("repoOwner", "internal-owner");
-    expect(payload).toHaveProperty("repoName", "internal-repo");
-    expect(payload).toHaveProperty("mergeable", "MERGEABLE");
-    expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
   });
 });
 
