@@ -65,7 +65,7 @@ interface SessionTestAccess {
   };
   agentManager: {
     listAgents(): unknown[];
-    listPersistedAgents(options?: unknown): Promise<PersistedAgentDescriptor[]>;
+    listImportablePersistedAgents(options?: unknown): Promise<PersistedAgentDescriptor[]>;
   };
   workspaceRegistry: {
     list(...args: unknown[]): Promise<unknown[]>;
@@ -1957,7 +1957,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
   ];
   // The real AgentManager filters by providerFilter at the fan-out level
   // (Phase 1). Mirror that here so the mock matches the contract.
-  session.agentManager.listPersistedAgents = async (options?: unknown) => {
+  session.agentManager.listImportablePersistedAgents = async (options?: unknown) => {
     const providerFilter = (options as { providerFilter?: Set<string> } | undefined)
       ?.providerFilter;
     if (!providerFilter) {
@@ -2033,7 +2033,7 @@ test("fetch_recent_provider_sessions_request forwards providerFilter to agent ma
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
   session.agentManager.listAgents = () => [];
   session.agentStorage.list = async () => [];
-  session.agentManager.listPersistedAgents = async (options?: unknown) => {
+  session.agentManager.listImportablePersistedAgents = async (options?: unknown) => {
     capturedOptions = options as { providerFilter?: Set<string>; limit?: number };
     return [];
   };
@@ -2074,7 +2074,7 @@ test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCoun
     },
   ];
   session.agentStorage.list = async () => [];
-  session.agentManager.listPersistedAgents = async () => [
+  session.agentManager.listImportablePersistedAgents = async () => [
     makePersistedProviderSession({
       provider: "codex",
       sessionId: "live-session",

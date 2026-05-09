@@ -99,7 +99,6 @@ import {
   resolveEffectiveThinkingOptionId,
   resolveStoredAgentPayloadUpdatedAt,
   toAgentPayload,
-  toRecentProviderSessionDescriptorPayload,
 } from "./agent/agent-projections.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent/agent-title-limits.js";
 import {
@@ -131,7 +130,11 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
-import { normalizeImportAgentRequest } from "./agent/import-agent-request.js";
+import {
+  ImportSessionsRequestError,
+  listImportableProviderSessions,
+  normalizeImportAgentRequest,
+} from "./agent/import-sessions.js";
 import {
   checkoutLiteFromGitSnapshot,
   normalizeWorkspaceId as normalizePersistedWorkspaceId,
@@ -511,25 +514,6 @@ class SessionRequestError extends Error {
   ) {
     super(message);
     this.name = "SessionRequestError";
-  }
-}
-
-function toProviderSessionHandleKey(provider: string, providerHandleId: string): string {
-  return `${provider}\0${providerHandleId}`;
-}
-
-function collectProviderSessionHandleKeys(
-  target: Set<string>,
-  provider: string,
-  persistence: AgentPersistenceHandle | null | undefined,
-): void {
-  if (!persistence) {
-    return;
-  }
-
-  target.add(toProviderSessionHandleKey(provider, persistence.sessionId));
-  if (persistence.nativeHandle) {
-    target.add(toProviderSessionHandleKey(provider, persistence.nativeHandle));
   }
 }
 
@@ -6682,7 +6666,12 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "fetch_recent_provider_sessions_request" }>,
   ): Promise<void> {
     try {
-      const result = await this.listRecentProviderSessionDescriptors(request);
+      const result = await listImportableProviderSessions({
+        request,
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        providerRegistry: this.getProviderRegistry(),
+      });
       this.emit({
         type: "fetch_recent_provider_sessions_response",
         payload: {
@@ -6695,7 +6684,9 @@ export class Session {
       });
     } catch (error) {
       const code =
-        error instanceof SessionRequestError ? error.code : "fetch_recent_provider_sessions_failed";
+        error instanceof ImportSessionsRequestError
+          ? error.code
+          : "fetch_recent_provider_sessions_failed";
       const message =
         error instanceof Error ? error.message : "Failed to fetch recent provider sessions";
       this.sessionLogger.error(
@@ -6712,73 +6703,6 @@ export class Session {
         },
       });
     }
-  }
-
-  private async listRecentProviderSessionDescriptors(
-    request: Extract<SessionInboundMessage, { type: "fetch_recent_provider_sessions_request" }>,
-  ) {
-    const limit = request.limit ?? 20;
-    const sinceTimestamp = this.parseRecentProviderSessionsSince(request.since);
-    const providerFilter = request.providers ? new Set(request.providers) : undefined;
-    const importedHandles = await this.collectImportedProviderSessionHandles();
-    const providerRegistry = this.getProviderRegistry();
-
-    const descriptors = await this.agentManager.listPersistedAgents({
-      limit: 200,
-      providerFilter,
-      cwd: request.cwd,
-    });
-    let filteredAlreadyImportedCount = 0;
-    const candidates: typeof descriptors = [];
-    for (const descriptor of descriptors) {
-      if (request.cwd && descriptor.cwd !== request.cwd) {
-        continue;
-      }
-      if (sinceTimestamp !== null && descriptor.lastActivityAt.getTime() < sinceTimestamp) {
-        continue;
-      }
-      const providerHandleId =
-        descriptor.persistence.nativeHandle ?? descriptor.persistence.sessionId;
-      if (importedHandles.has(toProviderSessionHandleKey(descriptor.provider, providerHandleId))) {
-        filteredAlreadyImportedCount += 1;
-        continue;
-      }
-      candidates.push(descriptor);
-    }
-    const entries = candidates
-      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
-      .slice(0, limit)
-      .map((descriptor) =>
-        toRecentProviderSessionDescriptorPayload(descriptor, {
-          providerLabel: providerRegistry[descriptor.provider]?.label ?? descriptor.provider,
-        }),
-      );
-    return { entries, filteredAlreadyImportedCount };
-  }
-
-  private parseRecentProviderSessionsSince(since: string | undefined): number | null {
-    if (!since) {
-      return null;
-    }
-    const timestamp = Date.parse(since);
-    if (Number.isNaN(timestamp)) {
-      throw new SessionRequestError("invalid_since", "Invalid recent provider sessions since");
-    }
-    return timestamp;
-  }
-
-  private async collectImportedProviderSessionHandles(): Promise<Set<string>> {
-    const handles = new Set<string>();
-
-    for (const agent of this.agentManager.listAgents()) {
-      collectProviderSessionHandleKeys(handles, agent.provider, agent.persistence);
-    }
-
-    for (const record of await this.agentStorage.list()) {
-      collectProviderSessionHandleKeys(handles, record.provider, record.persistence);
-    }
-
-    return handles;
   }
 
   private async handleFetchWorkspacesRequest(

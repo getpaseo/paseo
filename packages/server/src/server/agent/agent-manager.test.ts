@@ -5301,7 +5301,7 @@ test.each([
     },
   ],
 ])(
-  "listPersistedAgents skips %s providers in fan-out",
+  "listImportablePersistedAgents skips %s providers in fan-out",
   async (_reason, includedProvider, skippedProvider, providerDefinitions) => {
     const includedClient = new RecordingPersistedAgentsClient(includedProvider);
     const skippedClient = new RecordingPersistedAgentsClient(skippedProvider);
@@ -5311,7 +5311,7 @@ test.each([
       logger,
     });
 
-    const result = await manager.listPersistedAgents();
+    const result = await manager.listImportablePersistedAgents();
 
     expect(includedClient.calls).toBe(1);
     expect(skippedClient.calls).toBe(0);
@@ -5319,7 +5319,7 @@ test.each([
   },
 );
 
-test("listPersistedAgents narrows to the providerFilter when supplied", async () => {
+test("listImportablePersistedAgents narrows to the providerFilter when supplied", async () => {
   const claudeClient = new RecordingPersistedAgentsClient("claude");
   const codexClient = new RecordingPersistedAgentsClient("codex");
   const manager = new AgentManager({
@@ -5331,27 +5331,11 @@ test("listPersistedAgents narrows to the providerFilter when supplied", async ()
     logger,
   });
 
-  const result = await manager.listPersistedAgents({
+  const result = await manager.listImportablePersistedAgents({
     providerFilter: new Set(["claude"]),
   });
 
   expect(claudeClient.calls).toBe(1);
   expect(codexClient.calls).toBe(0);
   expect(result.map((d) => d.provider)).toEqual(["claude"]);
-});
-
-test("listPersistedAgents with explicit provider returns [] when provider is disabled", async () => {
-  const codexClient = new RecordingPersistedAgentsClient("codex");
-  const manager = new AgentManager({
-    clients: { codex: codexClient },
-    providerDefinitions: {
-      codex: { enabled: false, derivedFromProviderId: null },
-    },
-    logger,
-  });
-
-  const result = await manager.listPersistedAgents({ provider: "codex" });
-
-  expect(codexClient.calls).toBe(0);
-  expect(result).toEqual([]);
 });

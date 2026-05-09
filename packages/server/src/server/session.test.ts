@@ -971,7 +971,9 @@ describe("session agent import", () => {
           },
         } as ManagedAgent,
       ]),
-      listPersistedAgents: vi.fn().mockResolvedValue([importedDescriptor, visibleDescriptor]),
+      listImportablePersistedAgents: vi
+        .fn()
+        .mockResolvedValue([importedDescriptor, visibleDescriptor]),
       subscribe: vi.fn(() => () => {}),
     };
     const agentStorage = {
@@ -988,7 +990,7 @@ describe("session agent import", () => {
       limit: 15,
     });
 
-    expect(agentManager.listPersistedAgents).toHaveBeenCalledWith({
+    expect(agentManager.listImportablePersistedAgents).toHaveBeenCalledWith({
       limit: 200,
       providerFilter: new Set(["claude"]),
       cwd,

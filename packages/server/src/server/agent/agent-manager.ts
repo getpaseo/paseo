@@ -95,8 +95,7 @@ export interface SubscribeOptions {
   replayState?: boolean;
 }
 
-export type PersistedAgentQueryOptions = ListPersistedAgentsOptions & {
-  provider?: AgentProvider;
+export type ImportablePersistedAgentQueryOptions = ListPersistedAgentsOptions & {
   /**
    * When set, only providers in this set are scanned, in addition to the
    * built-in importable allowlist + enabled + non-derived rules.
@@ -566,20 +565,9 @@ export class AgentManager {
       .map((agent) => Object.assign({}, agent));
   }
 
-  async listPersistedAgents(
-    options?: PersistedAgentQueryOptions,
+  async listImportablePersistedAgents(
+    options?: ImportablePersistedAgentQueryOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    if (options?.provider) {
-      if (!this.isProviderImportable(options.provider, options.providerFilter)) {
-        return [];
-      }
-      const client = this.requireClient(options.provider);
-      if (!client.listPersistedAgents) {
-        return [];
-      }
-      return client.listPersistedAgents({ limit: options.limit, cwd: options.cwd });
-    }
-
     const providerEntries = Array.from(this.clients.entries()).filter(
       ([provider, client]) =>
         !!client.listPersistedAgents &&
