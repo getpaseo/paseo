@@ -5,8 +5,10 @@ describe("parseGitHubRepoFromRemote", () => {
   it.each([
     ["https://github.com/acme/repo.git", "acme/repo"],
     ["https://github.com/acme/repo", "acme/repo"],
+    ["http://github.com/acme/repo.git", "acme/repo"],
     ["git@github.com:acme/repo.git", "acme/repo"],
     ["ssh://git@github.com/acme/repo.git", "acme/repo"],
+    ["ssh://git@ssh.github.com/acme/repo.git", "acme/repo"],
     ["https://github.com/acme/repo/", "acme/repo"],
   ])("extracts the repo from %s", (remoteUrl, expected) => {
     expect(parseGitHubRepoFromRemote(remoteUrl)).toBe(expected);
