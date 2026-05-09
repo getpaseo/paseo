@@ -94,15 +94,18 @@ export function ProjectPickerModal() {
     retry: false,
   });
 
-  const options = useMemo(
-    () =>
-      buildWorkingDirectorySuggestions({
-        recommendedPaths,
-        serverPaths: directorySuggestionsQuery.data ?? [],
-        query,
-      }),
-    [query, directorySuggestionsQuery.data, recommendedPaths],
-  );
+  const options = useMemo(() => {
+    const suggestedPaths = buildWorkingDirectorySuggestions({
+      recommendedPaths,
+      serverPaths: directorySuggestionsQuery.data ?? [],
+      query,
+    });
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery || suggestedPaths.includes(trimmedQuery)) {
+      return suggestedPaths;
+    }
+    return [trimmedQuery, ...suggestedPaths];
+  }, [query, directorySuggestionsQuery.data, recommendedPaths]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -239,6 +242,8 @@ export function ProjectPickerModal() {
               autoCorrect={false}
               autoFocus
               editable={!isSubmitting}
+              returnKeyType="go"
+              onSubmitEditing={handleSubmitCustom}
             />
           </View>
 
