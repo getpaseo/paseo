@@ -81,7 +81,10 @@ export interface AgentMcpServerOptions {
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
   github?: GitHubService;
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  workspaceGitService?: Pick<
+    WorkspaceGitService,
+    "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
+  >;
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
@@ -849,6 +852,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         agentManager,
         agentId: snapshot.id,
         cwd: snapshot.cwd,
+        workspaceGitService: options.workspaceGitService,
         initialPrompt: trimmedPrompt,
         explicitTitle: snapshot.config.title,
         paseoHome: options.paseoHome,

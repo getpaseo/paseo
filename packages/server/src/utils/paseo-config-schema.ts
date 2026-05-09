@@ -30,10 +30,28 @@ export const PaseoWorktreeConfigRawSchema = z
   })
   .passthrough();
 
+export const PaseoMetadataGenerationEntrySchema = z
+  .object({
+    instructions: z.string().optional(),
+  })
+  .passthrough()
+  .catch({});
+
+export const PaseoMetadataGenerationSchema = z
+  .object({
+    agentTitle: PaseoMetadataGenerationEntrySchema.optional(),
+    branchName: PaseoMetadataGenerationEntrySchema.optional(),
+    commitMessage: PaseoMetadataGenerationEntrySchema.optional(),
+    pullRequest: PaseoMetadataGenerationEntrySchema.optional(),
+  })
+  .passthrough()
+  .catch({});
+
 export const PaseoConfigRawSchema = z
   .object({
     worktree: PaseoWorktreeConfigRawSchema.optional(),
     scripts: z.record(z.string(), PaseoScriptEntryRawSchema).optional(),
+    metadataGeneration: PaseoMetadataGenerationSchema.optional(),
   })
   .passthrough();
 
@@ -49,6 +67,7 @@ export const ScriptEntrySchema = PaseoScriptEntryRawSchema.catch({});
 export const PaseoConfigSchema = PaseoConfigRawSchema.extend({
   worktree: WorktreeConfigSchema.optional(),
   scripts: z.record(z.string(), ScriptEntrySchema).optional().catch({}),
+  metadataGeneration: PaseoMetadataGenerationSchema.optional(),
 })
   .passthrough()
   .catch({});
@@ -69,6 +88,8 @@ export const ProjectConfigRpcErrorSchema = z.discriminatedUnion("code", [
 ]);
 
 export type PaseoScriptEntryRaw = z.infer<typeof PaseoScriptEntryRawSchema>;
+export type PaseoMetadataGenerationEntry = z.infer<typeof PaseoMetadataGenerationEntrySchema>;
+export type PaseoMetadataGeneration = z.infer<typeof PaseoMetadataGenerationSchema>;
 export type PaseoConfigRaw = z.infer<typeof PaseoConfigRawSchema>;
 export type PaseoConfig = z.infer<typeof PaseoConfigSchema>;
 export type PaseoConfigRevision = z.infer<typeof PaseoConfigRevisionSchema>;

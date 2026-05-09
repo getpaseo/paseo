@@ -8,6 +8,10 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
+import { readPaseoConfigJson } from "../utils/paseo-config-file.js";
+import { PaseoConfigSchema } from "../utils/paseo-config-schema.js";
+import { wrapWithUserInstructions } from "../utils/wrap-user-instructions.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 interface BranchNameGeneratorLogger {
   warn: (obj: object, msg?: string) => void;
@@ -17,6 +21,7 @@ interface BranchNameGeneratorLogger {
 export interface GenerateBranchNameFromFirstAgentContextOptions {
   agentManager: AgentManager;
   cwd: string;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   firstAgentContext: FirstAgentContext | undefined;
   logger: BranchNameGeneratorLogger;
   deps?: {
@@ -28,16 +33,44 @@ const BranchNameSchema = z.object({
   branch: z.string().min(1).max(100),
 });
 
-function buildPrompt(seed: string): string {
-  return [
+async function readBranchNameInstructions(options: {
+  cwd: string;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+}): Promise<string | undefined> {
+  if (!options.workspaceGitService) {
+    return undefined;
+  }
+
+  try {
+    const repoRoot = await options.workspaceGitService.resolveRepoRoot(options.cwd);
+    const json = readPaseoConfigJson(repoRoot);
+    const config = PaseoConfigSchema.parse(json);
+    return config.metadataGeneration?.branchName?.instructions;
+  } catch {
+    return undefined;
+  }
+}
+
+async function buildPrompt(
+  seed: string,
+  options: {
+    cwd: string;
+    workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  },
+): Promise<string> {
+  const beforeBlock = [
     "Generate a git branch name for a coding agent based on the user prompt and attachments.",
     "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
     "No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.",
-    "Return JSON only with a single field 'branch'.",
-    "",
-    "User context:",
-    seed,
   ].join("\n");
+  const afterBlock = "Return JSON only with a single field 'branch'.";
+  const instructions = await readBranchNameInstructions(options);
+  const prompt =
+    typeof instructions === "string" && instructions.trim() !== ""
+      ? wrapWithUserInstructions(beforeBlock, instructions, afterBlock)
+      : [beforeBlock, afterBlock].join("\n");
+
+  return [prompt, "", "User context:", seed].join("\n");
 }
 
 export async function generateBranchNameFromFirstAgentContext(
@@ -56,7 +89,10 @@ export async function generateBranchNameFromFirstAgentContext(
     const result = await generator({
       manager: options.agentManager,
       cwd: options.cwd,
-      prompt: buildPrompt(seed),
+      prompt: await buildPrompt(seed, {
+        cwd: options.cwd,
+        workspaceGitService: options.workspaceGitService,
+      }),
       schema: BranchNameSchema,
       schemaName: "BranchName",
       maxRetries: 2,
