@@ -889,15 +889,20 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
   );
 }
 
+// PortalProvider must remain the innermost global provider here.
+// `@gorhom/portal` renders portaled children at the host's location in the
+// tree, so any context a portaled sheet might consume (QueryClient, theme,
+// auth, settings, …) must wrap PortalProvider — not be wrapped by it.
+// Adding a new global provider? Put it above PortalProvider.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <PortalProvider>
+    <QueryProvider>
       <SafeAreaProvider>
         <KeyboardProvider>
-          <QueryProvider>{children}</QueryProvider>
+          <PortalProvider>{children}</PortalProvider>
         </KeyboardProvider>
       </SafeAreaProvider>
-    </PortalProvider>
+    </QueryProvider>
   );
 }
 

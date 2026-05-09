@@ -13,6 +13,9 @@ on:
       - "packages/server/**"
       - "packages/relay/**"
       - "packages/cli/**"
+      - "scripts/update-nix.sh"
+      - "scripts/fix-lockfile.mjs"
+      - ".github/workflows/nix-build.yml"
   pull_request:
     branches: [main]
     paths:
@@ -25,6 +28,9 @@ on:
       - "packages/server/**"
       - "packages/relay/**"
       - "packages/cli/**"
+      - "scripts/update-nix.sh"
+      - "scripts/fix-lockfile.mjs"
+      - ".github/workflows/nix-build.yml"
 
 permissions:
   contents: read
@@ -32,28 +38,35 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    continue-on-error: false
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
 
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
 
+      - name: Update lockfile + Nix hash if stale
+        run: ./scripts/update-nix.sh
+
       - name: Build Nix package
         run: nix build .#default -o result
 
-      - name: Verify lockfile is complete
-        # npm silently omits resolved/integrity fields in workspace monorepos.
-        # Nix needs them for offline builds. See https://github.com/npm/cli/issues/4460
+      - name: Commit hash/lockfile updates (main push only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          node scripts/fix-lockfile.mjs package-lock.json
-          git diff --exit-code package-lock.json || {
-            echo "ERROR: package-lock.json has missing resolved/integrity fields."
-            echo "This is a known npm bug: https://github.com/npm/cli/issues/4460"
-            echo "Run 'node scripts/fix-lockfile.mjs' and commit the result."
-            exit 1
-          }
-
-      - name: Check npmDepsHash is up to date
-        run: ./scripts/update-nix.sh --check
+          git diff --quiet package-lock.json nix/package.nix && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json nix/package.nix
+          git commit -m "fix: update lockfile signatures and Nix hash"
+          git push
