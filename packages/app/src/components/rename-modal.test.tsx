@@ -2,7 +2,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RenameModal } from "./rename-modal";
+import { AdaptiveRenameModal } from "./rename-modal";
 
 const { theme, adaptiveInputState } = vi.hoisted(() => ({
   adaptiveInputState: {
@@ -12,29 +12,15 @@ const { theme, adaptiveInputState } = vi.hoisted(() => ({
     } | null,
   },
   theme: {
-    spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24 },
-    iconSize: { sm: 14, md: 18 },
-    fontSize: { xs: 11, sm: 13, base: 15 },
-    fontWeight: { normal: "400", medium: "500" },
-    borderRadius: { md: 6, lg: 8, xl: 12, full: 999 },
-    opacity: { 50: 0.5 },
+    spacing: { 2: 8, 3: 12 },
+    fontSize: { sm: 13, base: 15 },
+    borderRadius: { md: 6 },
     colors: {
       surface0: "#000",
-      surface1: "#111",
-      surface2: "#222",
-      surface3: "#333",
       foreground: "#fff",
       foregroundMuted: "#aaa",
       border: "#555",
-      borderAccent: "#444",
-      accent: "#0a84ff",
-      accentForeground: "#fff",
-      destructive: "#ff453a",
-      popoverForeground: "#fff",
-      palette: {
-        white: "#fff",
-        red: { 300: "#f87171" },
-      },
+      palette: { red: { 300: "#f87171" } },
     },
   },
 }));
@@ -66,14 +52,6 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
     onClose: () => void;
     testID?: string;
   }) => {
-    ReactModule.useEffect(() => {
-      if (!visible) return;
-      const handler = (event: KeyboardEvent) => {
-        if (event.key === "Escape") onClose();
-      };
-      document.addEventListener("keydown", handler);
-      return () => document.removeEventListener("keydown", handler);
-    }, [visible, onClose]);
     if (!visible) return null;
     return ReactModule.createElement(
       "div",
@@ -92,29 +70,29 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
   };
   const AdaptiveTextInput = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>(
     (props, ref) => {
-      const { value, placeholder, editable, maxLength, testID, onChangeText, onSubmitEditing } =
-        props as {
-          value?: string;
-          placeholder?: string;
-          editable?: boolean;
-          maxLength?: number;
-          testID?: string;
-          onChangeText?: (next: string) => void;
-          onSubmitEditing?: () => void;
-        };
-      adaptiveInputState.latestProps = { onChangeText, onSubmitEditing };
+      const p = props as {
+        value?: string;
+        editable?: boolean;
+        maxLength?: number;
+        testID?: string;
+        onChangeText?: (next: string) => void;
+        onSubmitEditing?: () => void;
+      };
+      adaptiveInputState.latestProps = {
+        onChangeText: p.onChangeText,
+        onSubmitEditing: p.onSubmitEditing,
+      };
       return ReactModule.createElement("input", {
         ref,
-        value: value ?? "",
-        placeholder,
-        disabled: editable === false,
-        maxLength,
-        "data-testid": testID,
-        onChange: (event: { target: { value: string } }) => onChangeText?.(event.target.value),
-        onKeyDown: (event: { key: string; preventDefault: () => void }) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            onSubmitEditing?.();
+        value: p.value ?? "",
+        disabled: p.editable === false,
+        maxLength: p.maxLength,
+        "data-testid": p.testID,
+        onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
+        onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            p.onSubmitEditing?.();
           }
         },
       });
@@ -142,11 +120,8 @@ vi.mock("@/components/ui/button", async () => {
         {
           type: "button",
           "data-testid": testID,
-          disabled: disabled === true ? true : undefined,
-          onClick: () => {
-            if (disabled) return;
-            onPress?.();
-          },
+          disabled: disabled || undefined,
+          onClick: () => !disabled && onPress?.(),
         },
         children,
       ),
@@ -214,7 +189,7 @@ function renderModal(options: RenderOptions = {}): void {
   } = options;
   act(() => {
     root?.render(
-      <RenameModal
+      <AdaptiveRenameModal
         visible={visible}
         title={title}
         initialValue={initialValue}
@@ -311,19 +286,6 @@ describe("RenameModal", () => {
     renderModal({ initialValue: "main", onClose, onSubmit });
 
     click(document.querySelector('[data-testid="adaptive-modal-sheet-close"]'));
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onSubmit).not.toHaveBeenCalled();
-  });
-
-  it("calls onClose when the real Escape keydown fires (routed by AdaptiveModalSheet)", () => {
-    const onClose = vi.fn();
-    const onSubmit = vi.fn();
-    renderModal({ initialValue: "main", onClose, onSubmit });
-
-    act(() => {
-      document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();

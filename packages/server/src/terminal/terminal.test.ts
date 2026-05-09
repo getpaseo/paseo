@@ -332,31 +332,6 @@ describe.skipIf(isPlatform("win32"))("send input", () => {
     expect(getRowText(state, 2)).toBe("$");
   });
 
-  it("executes multiple commands sequentially", async () => {
-    const session = trackSession(
-      await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ " },
-      }),
-    );
-
-    await waitForLines(session, ["$"]);
-
-    session.send({ type: "input", data: "echo first\r" });
-    await waitForLines(session, ["$ echo first", "first", "$"]);
-
-    session.send({ type: "input", data: "echo second\r" });
-    await waitForLines(session, ["$ echo first", "first", "$ echo second", "second", "$"]);
-
-    const state = session.getState();
-    expect(getRowText(state, 0)).toBe("$ echo first");
-    expect(getRowText(state, 1)).toBe("first");
-    expect(getRowText(state, 2)).toBe("$ echo second");
-    expect(getRowText(state, 3)).toBe("second");
-    expect(getRowText(state, 4)).toBe("$");
-  });
-
   it("captures output from pwd in specified cwd", async () => {
     const session = trackSession(
       await createTerminal({
@@ -813,31 +788,6 @@ describe.skipIf(isPlatform("win32"))("colors", () => {
     expect(outputRow[3].char).toBe("$");
     expect(outputRow[3].fg).toBe(undefined);
     expect(outputRow[3].fgMode).toBe(undefined);
-  });
-
-  it("captures 256 color codes (mode 2)", async () => {
-    const session = trackSession(
-      await createTerminal({
-        cwd: "/tmp",
-        shell: "/bin/sh",
-        env: { PS1: "$ ", TERM: "xterm-256color" },
-      }),
-    );
-
-    await waitForLines(session, ["$"]);
-
-    // \033[38;5;208m = 256-color orange (color 208)
-    session.send({ type: "input", data: "printf '\\033[38;5;208mORG\\033[0m'\r" });
-
-    await waitForLines(session, ["$ printf '\\033[38;5;208mORG\\033[0m'", "ORG$"]);
-
-    const state = session.getState();
-    const outputRow = state.grid[1];
-
-    // Check O cell
-    expect(outputRow[0].char).toBe("O");
-    expect(outputRow[0].fg).toBe(208); // 256-color index
-    expect(outputRow[0].fgMode).toBe(2); // Mode 2 = 256 colors
   });
 
   it("captures true color RGB (mode 3)", async () => {

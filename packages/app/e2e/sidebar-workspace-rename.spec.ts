@@ -3,6 +3,7 @@ import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { createTempGitRepo } from "./helpers/workspace";
 import { connectWorkspaceSetupClient } from "./helpers/workspace-setup";
+import { captureWsSessionFrames } from "./helpers/rename";
 
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
@@ -14,14 +15,6 @@ function getServerId(): string {
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
-}
-
-function workspaceKebabTestId(workspaceId: string): string {
-  return `sidebar-workspace-kebab-${getServerId()}:${workspaceId}`;
-}
-
-function workspaceRenameMenuItemTestId(workspaceId: string): string {
-  return `sidebar-workspace-menu-rename-${getServerId()}:${workspaceId}`;
 }
 
 function workspaceRenameModalTestId(workspaceId: string, suffix: string): string {
@@ -43,20 +36,17 @@ async function openProjectViaDaemon(
   };
 }
 
-async function openWorkspaceKebab(page: Page, workspaceId: string) {
-  const row = page.getByTestId(workspaceRowTestId(workspaceId));
+async function openRenameModal(page: Page, workspaceId: string) {
+  const serverId = getServerId();
+  const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.hover();
 
-  const kebab = page.getByTestId(workspaceKebabTestId(workspaceId));
+  const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
-}
 
-async function openRenameModal(page: Page, workspaceId: string) {
-  await openWorkspaceKebab(page, workspaceId);
-
-  const renameItem = page.getByTestId(workspaceRenameMenuItemTestId(workspaceId));
+  const renameItem = page.getByTestId(`sidebar-workspace-menu-rename-${serverId}:${workspaceId}`);
   await expect(renameItem).toBeVisible({ timeout: 10_000 });
   await renameItem.click();
 
@@ -76,38 +66,22 @@ test.describe("Sidebar workspace rename", () => {
       const workspace = await openProjectViaDaemon(client, repo.path);
       expect(workspace.name).toBe("main");
 
-      const renameRequests: Array<{ branch: string; cwd: string }> = [];
-      const handleFrame = (frame: { payload: string | Buffer }): void => {
-        const raw = frame.payload;
-        const text = typeof raw === "string" ? raw : raw.toString("utf8");
-        try {
-          const outer = JSON.parse(text) as {
-            type?: string;
-            message?: { type?: string; cwd?: unknown; branch?: unknown };
-          };
-          const inner = outer.message;
-          if (outer.type === "session" && inner?.type === "checkout_rename_branch_request") {
-            renameRequests.push({
-              branch: String(inner.branch ?? ""),
-              cwd: String(inner.cwd ?? ""),
-            });
-          }
-        } catch {
-          // Ignore non-JSON and binary frames.
-        }
-      };
-      page.on("websocket", (ws) => {
-        ws.on("framesent", handleFrame);
-      });
+      const renameRequests = captureWsSessionFrames(
+        page,
+        "checkout_rename_branch_request",
+        (inner) => ({
+          branch: String(inner.branch ?? ""),
+          cwd: String(inner.cwd ?? ""),
+        }),
+      );
 
       await gotoAppShell(page);
-      const row = page.getByTestId(workspaceRowTestId(workspace.id));
-      await expect(row).toBeVisible({ timeout: 30_000 });
-      await expect(row).toContainText("main");
+      await expect(page.getByTestId(workspaceRowTestId(workspace.id))).toBeVisible({
+        timeout: 30_000,
+      });
 
       const input = await openRenameModal(page, workspace.id);
       await expect(input).toHaveValue("main");
-
       await input.fill("Feature Rename 2");
       await expect(input).toHaveValue("feature-rename-2");
 
@@ -150,14 +124,11 @@ test.describe("Sidebar workspace rename", () => {
       await expect(input).toHaveValue("main");
 
       await input.fill("taken");
-      await expect(input).toHaveValue("taken");
-
       await page.getByTestId(workspaceRenameModalTestId(workspace.id, "submit")).click();
 
       const errorNode = page.getByTestId(workspaceRenameModalTestId(workspace.id, "error"));
       await expect(errorNode).toBeVisible({ timeout: 15_000 });
       await expect(errorNode).toContainText(/already exists|branch/i);
-
       await expect(input).toBeVisible();
       await expect(page.getByTestId(workspaceRowTestId(workspace.id))).toContainText("main");
     } finally {

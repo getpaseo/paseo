@@ -315,7 +315,6 @@ type GitMutationRefreshReason =
   | "switch-branch"
   | "rename-branch"
   | "create-branch"
-  | "rename-branch"
   | "stash-push"
   | "stash-pop"
   | "create-worktree";
@@ -2077,13 +2076,6 @@ export class Session {
         return this.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
         return this.handleGitHubSearchRequest(msg);
-      default:
-        return this.dispatchStashMessage(msg);
-    }
-  }
-
-  private dispatchStashMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    switch (msg.type) {
       case "stash_save_request":
         return this.handleStashSaveRequest(msg);
       case "stash_pop_request":

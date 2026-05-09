@@ -14,7 +14,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@server/utils/branch-slug";
-import { RenameModal } from "@/components/rename-modal";
+import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/actions-store";
 import {
   useCallback,
@@ -1709,7 +1709,7 @@ function WorkspaceRowWithMenu({
         onRename={canCopyBranchName ? handleOpenRename : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
-      <RenameModal
+      <AdaptiveRenameModal
         visible={isRenameOpen}
         title="Rename workspace"
         initialValue={workspace.name}

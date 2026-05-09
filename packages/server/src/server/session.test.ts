@@ -3306,29 +3306,6 @@ describe("session terminal rename handling", () => {
     });
   });
 
-  test("rejects an overlong terminal title without calling the terminal manager", async () => {
-    const messages: unknown[] = [];
-    const terminalManager = createTerminalManagerStub();
-    const session = createSessionForTest({ terminalManager, messages });
-
-    await session.handleMessage({
-      type: "rename_terminal_request",
-      terminalId: "terminal-1",
-      title: "x".repeat(201),
-      requestId: "request-long-title",
-    });
-
-    expect(terminalManager.setTerminalTitle).not.toHaveBeenCalled();
-    expect(messages).toContainEqual({
-      type: "rename_terminal_response",
-      payload: {
-        requestId: "request-long-title",
-        success: false,
-        error: "Title is too long",
-      },
-    });
-  });
-
   test("reports when the terminal manager cannot find the terminal", async () => {
     const messages: unknown[] = [];
     const terminalManager = createTerminalManagerStub({

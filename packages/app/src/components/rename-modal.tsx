@@ -5,7 +5,7 @@ import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-mod
 import { Button } from "@/components/ui/button";
 import { isWeb } from "@/constants/platform";
 
-export interface RenameModalProps {
+export interface AdaptiveRenameModalProps {
   visible: boolean;
   title: string;
   initialValue: string;
@@ -19,7 +19,7 @@ export interface RenameModalProps {
   testID?: string;
 }
 
-export function RenameModal({
+export function AdaptiveRenameModal({
   visible,
   title,
   initialValue,
@@ -31,7 +31,7 @@ export function RenameModal({
   transform,
   maxLength,
   testID,
-}: RenameModalProps) {
+}: AdaptiveRenameModalProps) {
   const { theme } = useUnistyles();
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);

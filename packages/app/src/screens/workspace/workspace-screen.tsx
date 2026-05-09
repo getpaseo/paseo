@@ -110,7 +110,10 @@ import {
   WorkspaceTabOptionRow,
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
-import { useWorkspaceTabRename } from "@/screens/workspace/use-workspace-tab-rename";
+import {
+  useWorkspaceTabRename,
+  WorkspaceTabRenameModal,
+} from "@/screens/workspace/use-workspace-tab-rename";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
@@ -2137,13 +2140,14 @@ function WorkspaceScreenContent({
 
   const [_hoveredTabKey, setHoveredTabKey] = useState<string | null>(null);
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
-  const { handleRenameTab, renameModal } = useWorkspaceTabRename({
-    client,
-    normalizedServerId,
-    queryClient,
-    terminalsData: terminalsQuery.data,
-    terminalsQueryKey,
-  });
+  const { handleRenameTab, renamingTab, handleRenameModalSubmit, handleRenameModalClose } =
+    useWorkspaceTabRename({
+      client,
+      normalizedServerId,
+      queryClient,
+      terminalsData: terminalsQuery.data,
+      terminalsQueryKey,
+    });
 
   const tabByKey = useMemo(() => {
     const map = new Map<string, WorkspaceTabDescriptor>();
@@ -3360,7 +3364,11 @@ function WorkspaceScreenContent({
             onClose={closeImportSheet}
             onImportedAgent={handleImportedAgent}
           />
-          {renameModal}
+          <WorkspaceTabRenameModal
+            renamingTab={renamingTab}
+            onSubmit={handleRenameModalSubmit}
+            onClose={handleRenameModalClose}
+          />
         </View>
       </WorkspaceFocusProvider>
     )

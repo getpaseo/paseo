@@ -246,9 +246,9 @@ export class AgentStorage {
       return null;
     }
 
-    await this.beforeGeneratedTitleIfUnsetWrite(agentId);
+    // Re-drain pending writes: a concurrent setTitle may have queued between the
+    // first drain and here. After waiting, re-read the cache before writing.
     await this.waitForPendingWrite(agentId);
-
     const latestRecord = this.cache.get(agentId) ?? null;
     if (!latestRecord) {
       throw new Error(`Agent ${agentId} not found`);
@@ -265,8 +265,6 @@ export class AgentStorage {
     await this.queueRecordWrite(nextRecord);
     return nextRecord;
   }
-
-  protected async beforeGeneratedTitleIfUnsetWrite(_agentId: string): Promise<void> {}
 
   async flush(): Promise<void> {
     await this.load().catch(() => undefined);

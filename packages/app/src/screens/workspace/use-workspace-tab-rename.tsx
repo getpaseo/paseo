@@ -1,8 +1,8 @@
-import { type ReactElement, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { type QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { ListTerminalsResponse } from "@server/shared/messages";
-import { RenameModal } from "@/components/rename-modal";
+import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -25,7 +25,6 @@ interface UseWorkspaceTabRenameResult {
   handleRenameTab: (tab: WorkspaceTabDescriptor) => void;
   handleRenameModalSubmit: (nextTitle: string) => Promise<void>;
   handleRenameModalClose: () => void;
-  renameModal: ReactElement;
 }
 
 export function useWorkspaceTabRename(
@@ -87,41 +86,32 @@ export function useWorkspaceTabRename(
     setRenamingTab(null);
   }, []);
 
-  const renameModal = (
-    <WorkspaceTabRenameModal
-      renamingTab={renamingTab}
-      onClose={handleRenameModalClose}
-      onSubmit={handleRenameModalSubmit}
-    />
-  );
-
   return {
     renamingTab,
     handleRenameTab,
     handleRenameModalSubmit,
     handleRenameModalClose,
-    renameModal,
   };
 }
 
-interface WorkspaceTabRenameModalProps {
+export interface WorkspaceTabRenameModalProps {
   renamingTab: RenamingTabState | null;
   onClose: () => void;
   onSubmit: (nextTitle: string) => Promise<void>;
 }
 
-function WorkspaceTabRenameModal({
+export function WorkspaceTabRenameModal({
   renamingTab,
   onClose,
   onSubmit,
-}: WorkspaceTabRenameModalProps): ReactElement {
+}: WorkspaceTabRenameModalProps) {
   const title = renamingTab?.kind === "terminal" ? "Rename terminal" : "Rename agent";
   const initialValue = renamingTab?.currentTitle ?? "";
   const testID = renamingTab
     ? `workspace-tab-rename-modal-${renamingTab.kind}-${renamingTab.id}`
     : undefined;
   return (
-    <RenameModal
+    <AdaptiveRenameModal
       visible={renamingTab !== null}
       title={title}
       initialValue={initialValue}
