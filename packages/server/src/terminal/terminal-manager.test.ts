@@ -388,7 +388,7 @@ it("emits empty snapshot when last terminal is removed", async () => {
 it("setTerminalTitle returns false for unknown terminal ids without changing existing terminals", async () => {
   manager = createTerminalManager();
   const session = await manager.createTerminal({
-    cwd: "/tmp",
+    cwd: realpathSync(tmpdir()),
     title: "Existing title",
   });
   const snapshots: Array<Array<{ id: string; title?: string }>> = [];
@@ -411,7 +411,7 @@ it("setTerminalTitle returns false for unknown terminal ids without changing exi
 
 it("setTerminalTitle returns true and updates the terminal title for existing terminals", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: "/tmp" });
+  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
 
   expect(manager.setTerminalTitle(session.id, "x")).toBe(true);
   expect(session.getTitle()).toBe("x");
