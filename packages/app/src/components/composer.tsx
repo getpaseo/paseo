@@ -1621,7 +1621,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     width: "100%",
     overflow: "visible",
-    padding: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
   inputAreaLocked: {
     opacity: 0.6,

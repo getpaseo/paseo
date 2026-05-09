@@ -81,19 +81,19 @@ export function SubagentsSection({
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
 
-  const surfaceStyle = useMemo(
-    () => [styles.surface, expanded ? styles.surfaceExpanded : styles.surfaceCollapsed],
-    [expanded],
-  );
-
   const toggleExpanded = useCallback(() => {
     setExpanded((current) => !current);
   }, []);
 
+  const surfaceStyle = useMemo(
+    () => [styles.surface, expanded && styles.surfaceExpanded],
+    [expanded],
+  );
+
   const headerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType) => [
       styles.header,
-      expanded && styles.headerDivider,
+      expanded ? styles.headerDivider : styles.headerCollapsed,
       (hovered || pressed) && styles.headerActive,
     ],
     [expanded],
@@ -181,8 +181,10 @@ const styles = StyleSheet.create((theme) => ({
   track: {
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
+    marginBottom: -theme.spacing[4],
   },
   surface: {
+    alignSelf: "stretch",
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
@@ -191,12 +193,8 @@ const styles = StyleSheet.create((theme) => ({
     borderTopRightRadius: theme.borderRadius["2xl"],
     overflow: "hidden",
   },
-  surfaceCollapsed: {
-    alignSelf: "flex-start",
-    maxWidth: "100%",
-  },
   surfaceExpanded: {
-    alignSelf: "stretch",
+    paddingBottom: theme.spacing[4],
   },
   header: {
     flexDirection: "row",
@@ -204,6 +202,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  headerCollapsed: {
+    paddingBottom: theme.spacing[6],
   },
   headerActive: {
     backgroundColor: theme.colors.surface2,
@@ -217,7 +218,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    fontWeight: theme.fontWeight.medium,
   },
   scroll: {
     maxHeight: SUBAGENTS_LIST_MAX_HEIGHT,
