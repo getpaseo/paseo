@@ -4,7 +4,7 @@ import path from "node:path";
 import pino from "pino";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
-import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
+import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";

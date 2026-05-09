@@ -1,9 +1,10 @@
-import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
-import type { AgentLaunchContext } from "../agent-sdk-types.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import type { AgentLaunchContext } from "../../agent-sdk-types.js";
+import { ClaudeAgentClient } from "./agent.js";
+import type { ClaudeQueryInput } from "./query.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -36,7 +37,7 @@ describe("Claude SDK env", () => {
         PASEO_TEST_FLAG: "launch-value",
       },
     };
-    const queryFactory = vi.fn(({ options }: Parameters<typeof query>[0]) => {
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
       capturedEnv = options.env;
       return createQueryMock([
         {
@@ -66,6 +67,7 @@ describe("Claude SDK env", () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
       queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
     });
     const session = await client.createSession(
       {
@@ -93,7 +95,7 @@ describe("Claude SDK env", () => {
         PASEO_TEST_FLAG: "resume-launch-value",
       },
     };
-    const queryFactory = vi.fn(({ options }: Parameters<typeof query>[0]) => {
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
       capturedEnv = options.env;
       return createQueryMock([
         {
@@ -123,6 +125,7 @@ describe("Claude SDK env", () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
       queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
     });
     const session = await client.resumeSession(
       {

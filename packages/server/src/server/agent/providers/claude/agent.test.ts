@@ -1,18 +1,23 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import * as executableUtils from "../../../../utils/executable.js";
 import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionUpdatedInput,
-} from "./claude-agent.js";
-import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../agent-sdk-types.js";
+} from "./agent.js";
+import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../../agent-sdk-types.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
   convertUsage(message: SDKMessage): AgentUsage | undefined;
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("convertClaudeHistoryEntry", () => {
   test("maps user tool results to timeline items", () => {
@@ -346,7 +351,7 @@ describe("ClaudeAgentClient.listModels", () => {
   const logger = createTestLogger();
 
   test("returns hardcoded claude models", async () => {
-    const client = new ClaudeAgentClient({ logger });
+    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
     const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
     expect(models.map((m) => m.id)).toEqual([
@@ -366,6 +371,59 @@ describe("ClaudeAgentClient.listModels", () => {
 
     const defaultModel = models.find((m) => m.isDefault);
     expect(defaultModel?.id).toBe("claude-opus-4-6");
+  });
+});
+
+describe("ClaudeAgentClient binary resolution", () => {
+  const logger = createTestLogger();
+
+  test("uses the replace-command override binary when claude is not on PATH", async () => {
+    const customClaudePath = "/path/to/custom-claude";
+    vi.spyOn(executableUtils, "findExecutable").mockImplementation(async (name: string) => {
+      if (name === "claude") {
+        return null;
+      }
+      if (name === customClaudePath) {
+        return customClaudePath;
+      }
+      return null;
+    });
+
+    const queryReturn = vi.fn();
+    queryReturn.mockResolvedValue(undefined);
+    const queryFactory = vi.fn(() => ({
+      close: vi.fn(),
+      return: queryReturn,
+    }));
+
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: [customClaudePath],
+        },
+      },
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    await expect(
+      (
+        session as unknown as {
+          ensureQuery(): Promise<unknown>;
+        }
+      ).ensureQuery(),
+    ).resolves.toBeDefined();
+
+    expect(queryFactory.mock.calls[0]?.[0].options.pathToClaudeCodeExecutable).toBe(
+      customClaudePath,
+    );
+
+    await session.close();
   });
 });
 
@@ -430,7 +488,10 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
   });
 
   test("respondToPermission preserves full question input when UI returns answers-only payload", async () => {
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
     const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),
@@ -505,7 +566,7 @@ describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 
   async function createSessionForTest(): Promise<TestClaudeSession> {
-    const client = new ClaudeAgentClient({ logger });
+    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
     const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),
@@ -605,6 +666,7 @@ describe("ClaudeAgentSession context window usage", () => {
     const nonPersistedClient = new ClaudeAgentClient({
       logger,
       queryFactory: nonPersistedQueryFactory,
+      resolveBinary: async () => "/test/claude/bin",
     });
     const nonPersistedSession = await nonPersistedClient.createSession(
       {
@@ -623,6 +685,7 @@ describe("ClaudeAgentSession context window usage", () => {
     const persistedClient = new ClaudeAgentClient({
       logger,
       queryFactory: persistedQueryFactory,
+      resolveBinary: async () => "/test/claude/bin",
     });
     const persistedSession = await persistedClient.createSession(
       {
@@ -980,7 +1043,11 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       ],
     ]);
-    const client = new ClaudeAgentClient({ logger, queryFactory });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
     const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),

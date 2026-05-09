@@ -32,13 +32,9 @@ afterEach(async () => {
     const terminalsByCwd = await Promise.all(
       manager.listDirectories().map((cwd) => manager.getTerminals(cwd)),
     );
-    await Promise.all(
-      terminalsByCwd
-        .flat()
-        .map((terminal) =>
-          manager.killTerminalAndWait(terminal.id, { gracefulTimeoutMs: 50, forceTimeoutMs: 50 }),
-        ),
-    );
+    for (const terminal of terminalsByCwd.flat()) {
+      await manager.killTerminalAndWait(terminal.id);
+    }
     manager.killAll();
   }
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -306,13 +302,12 @@ it("kills all terminals and clears state", async () => {
 it("emits cwd snapshots when terminals are created", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  const snapshots: Array<{ cwd: string; terminals: Array<{ name: string; title?: string }> }> = [];
+  const snapshots: Array<{ cwd: string; terminals: Array<{ name: string }> }> = [];
   const unsubscribe = manager.subscribeTerminalsChanged((input) => {
     snapshots.push({
       cwd: input.cwd,
       terminals: input.terminals.map((terminal) => ({
         name: terminal.name,
-        ...(terminal.title ? { title: terminal.title } : {}),
       })),
     });
   });

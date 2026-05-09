@@ -1,16 +1,16 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import {
-  query,
-  type Options,
-  type Query,
-  type SpawnOptions as ClaudeSpawnOptions,
+import type {
+  Options,
+  Query,
+  SpawnOptions as ClaudeSpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
-import * as spawnUtils from "../../../utils/spawn.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import * as spawnUtils from "../../../../utils/spawn.js";
+import { ClaudeAgentClient } from "./agent.js";
+import type { ClaudeQueryInput } from "./query.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -47,7 +47,7 @@ describe("Claude spawn override", () => {
 
   test("bypasses the shell when spawning Claude Code", async () => {
     let capturedOptions: Options | undefined;
-    const queryFactory = vi.fn(({ options }: Parameters<typeof query>[0]) => {
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
       capturedOptions = options;
       return createQueryMock([
         {
@@ -77,6 +77,7 @@ describe("Claude spawn override", () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
       queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
     });
     const session = await client.createSession({
       provider: "claude",

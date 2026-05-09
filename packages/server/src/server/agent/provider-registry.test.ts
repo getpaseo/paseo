@@ -40,7 +40,7 @@ vi.mock("../../utils/executable.js", () => ({
   isCommandAvailable: mockState.isCommandAvailable,
 }));
 
-vi.mock("./providers/claude-agent.js", () => ({
+vi.mock("./providers/claude/agent.js", () => ({
   ClaudeAgentClient: class ClaudeAgentClient {
     readonly capabilities = {
       supportsStreaming: true,

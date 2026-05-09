@@ -6,9 +6,7 @@
  *
  * All tests use REAL Claude SDK sessions — no mocks.
  *
- * CREDENTIALS: These tests require a running `claude` CLI and either
- * CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment.
- * They are skipped automatically when credentials are unavailable.
+ * These tests run when the shared Claude provider availability gate passes.
  */
 import { beforeAll, beforeEach, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,8 +15,8 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
-import { isCommandAvailable } from "../../../../utils/executable.js";
-import { ClaudeAgentClient } from "../claude-agent.js";
+import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
+import { ClaudeAgentClient } from "./agent.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,8 +24,6 @@ import { ClaudeAgentClient } from "../claude-agent.js";
 
 const logger = pino({ level: "silent" });
 const client = new ClaudeAgentClient({ logger });
-const hasClaudeCredentials =
-  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -74,7 +70,14 @@ async function createSession(params?: {
 
 async function cleanupSession(handle: { cwd: string; session: AgentSession }): Promise<void> {
   await handle.session.close().catch(() => undefined);
-  rmSync(handle.cwd, { recursive: true, force: true });
+  try {
+    rmSync(handle.cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "EPERM") {
+      throw error;
+    }
+  }
 }
 
 async function startTurnAndCollectEvents(
@@ -196,7 +199,7 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
 let canRun = false;
 
 beforeAll(async () => {
-  canRun = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  canRun = await isProviderAvailable("claude");
 });
 
 beforeEach((context) => {

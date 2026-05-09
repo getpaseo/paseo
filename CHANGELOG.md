@@ -1,11 +1,16 @@
 # Changelog
 
-## 0.1.70-beta.1 - 2026-05-07
+## 0.1.70 - 2026-05-08
+
+### Breaking
+
+- **Claude agents now require `claude` on your PATH.** Install Claude Code globally (`npm install -g @anthropic-ai/claude-code`) before running a Claude agent — Paseo no longer ships a bundled fallback binary. Same posture as Codex and OpenCode, and shrinks the desktop install by ~210 MB per platform.
 
 ### Added
 
 - **One-click ACP providers** — add Cursor, Hermes, Qwen Coder, Kimi Code, and other ACP agents from a built-in catalog instead of writing config by hand.
 - Codex `/goal` slash command — set or update the goal mid-turn while a Codex agent is running.
+- Claude's Sonnet 4.6 1M context model is now selectable in the model picker.
 - Detect GitHub issue and PR URLs pasted into the composer search.
 - `paseo worktree create` CLI command, with parity to the MCP `create_worktree` tool.
 - `paseo schedule update` to edit a schedule in place without recreating it.
@@ -26,6 +31,8 @@
 
 ### Fixed
 
+- **Claude agent: daemon no longer crashes mid-turn** when the underlying SDK fires a stray control message after the connection has been torn down.
+- **Windows:** Terminals start reliably and shut down cleanly without leaving stuck processes behind.
 - **Linux:** Workspace file watchers no longer storm with events on busy working trees, fixing CPU spikes on large repos. ([#794](https://github.com/getpaseo/paseo/pull/794) by [@312223105](https://github.com/312223105))
 - ACP-based agents launch terminal shell commands reliably. ([#793](https://github.com/getpaseo/paseo/pull/793) by [@ebg1223](https://github.com/ebg1223))
 - Checkout shortstat now counts untracked files. ([#608](https://github.com/getpaseo/paseo/issues/608), [#762](https://github.com/getpaseo/paseo/pull/762) by [@somus](https://github.com/somus))

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { extractUserMessageText } from "./claude-agent.js";
+import { extractUserMessageText } from "./agent.js";
 
 describe("extractUserMessageText", () => {
   test("returns trimmed string content", () => {

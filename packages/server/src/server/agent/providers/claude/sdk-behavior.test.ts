@@ -1,12 +1,14 @@
 /**
- * Direct SDK behavior tests - uses same setup as claude-agent.ts
+ * Direct SDK behavior tests - uses same setup as the Claude provider
  */
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
+import { findExecutable } from "../../../../utils/executable.js";
+import { claudeQuery } from "./query.js";
 
 class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
@@ -53,6 +55,17 @@ function tmpCwd(): string {
   }
 }
 
+function rmCwd(cwd: string): void {
+  try {
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "EPERM") {
+      throw error;
+    }
+  }
+}
+
 function extractTextFromEvents(events: SDKMessage[]): string {
   let responseText = "";
   for (const event of events) {
@@ -72,21 +85,15 @@ function extractTextFromEvents(events: SDKMessage[]): string {
   return responseText;
 }
 
-const hasClaudeCredentials =
-  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-
 describe("Claude SDK direct behavior", () => {
-  let canRunClaudeIntegration = false;
+  let canRun = false;
 
   beforeAll(async () => {
-    canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
-    if (canRunClaudeIntegration) {
-      expect(await isCommandAvailable("claude")).toBe(true);
-    }
+    canRun = await isProviderAvailable("claude");
   });
 
   beforeEach((context) => {
-    if (!canRunClaudeIntegration) {
+    if (!canRun) {
       context.skip();
     }
   });
@@ -96,8 +103,8 @@ describe("Claude SDK direct behavior", () => {
     const input = new Pushable<SDKUserMessage>();
     const claudeBinary = await findExecutable("claude");
 
-    // Use same options as claude-agent.ts
-    const q = query({
+    // Use same options as the Claude provider
+    const q = claudeQuery({
       prompt: input,
       options: {
         cwd,
@@ -160,7 +167,7 @@ describe("Claude SDK direct behavior", () => {
       expect(sawResult || responseText.length === 0).toBe(true);
     } finally {
       input.end();
-      rmSync(cwd, { recursive: true, force: true });
+      rmCwd(cwd);
     }
   }, 120000);
 });

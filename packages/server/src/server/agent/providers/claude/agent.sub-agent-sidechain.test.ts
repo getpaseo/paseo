@@ -1,19 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import type { AgentTimelineRow } from "../agent-manager.js";
-import { projectTimelineRows } from "../timeline-projection.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
-import { streamSession } from "./test-utils/session-stream-adapter.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentTimelineRow } from "../../agent-manager.js";
+import { projectTimelineRows } from "../../timeline-projection.js";
+import { ClaudeAgentClient } from "./agent.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
 
-const sdkMocks = vi.hoisted(() => ({
-  query: vi.fn(),
-}));
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: sdkMocks.query,
-}));
+const queryFactory = vi.fn();
 
 interface QueryMock {
   next: ReturnType<typeof vi.fn>;
@@ -150,7 +144,7 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
 
   beforeEach(() => {
     const largeOldText = "VERY_LARGE_OLD_STRING".repeat(50);
-    sdkMocks.query.mockImplementation(() =>
+    queryFactory.mockImplementation(() =>
       buildQueryMock([
         {
           type: "system",
@@ -247,11 +241,15 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
   });
 
   afterEach(() => {
-    sdkMocks.query.mockReset();
+    queryFactory.mockReset();
   });
 
   test("accumulates lightweight sub_agent detail and preserves callId lifecycle collapse", async () => {
-    const session = await new ClaudeAgentClient({ logger }).createSession({
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({
       provider: "claude",
       cwd: process.cwd(),
     });
@@ -298,9 +296,13 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
   });
 
   test("tails sub-agent actions instead of dropping latest entries at cap", async () => {
-    sdkMocks.query.mockImplementation(() => buildQueryMock(buildTailScenarioEvents(205)));
+    queryFactory.mockImplementation(() => buildQueryMock(buildTailScenarioEvents(205)));
 
-    const session = await new ClaudeAgentClient({ logger }).createSession({
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({
       provider: "claude",
       cwd: process.cwd(),
     });

@@ -8,7 +8,7 @@ import type { AgentProvider } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 
-import { ClaudeAgentClient } from "./claude-agent.js";
+import { ClaudeAgentClient } from "./claude/agent.js";
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
@@ -48,12 +48,12 @@ describe("default provider availability", () => {
     await expect(client.isAvailable()).resolves.toBe(false);
   });
 
-  test("Claude reports available without a PATH binary because the SDK bundles its own cli.js", async () => {
+  test("Claude reports unavailable when the default command cannot be resolved", async () => {
     const binDir = makeTempDir("provider-availability-claude-");
     isolatePathTo(binDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    await expect(client.isAvailable()).resolves.toBe(true);
+    await expect(client.isAvailable()).resolves.toBe(false);
   });
 
   test("OpenCode reports unavailable when the default command cannot be resolved", async () => {

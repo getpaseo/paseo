@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Logger } from "pino";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { asInternals } from "../../test-utils/class-mocks.js";
-import { ClaudeAgentClient, readEventIdentifiers } from "./claude-agent.js";
-import { streamSession } from "./test-utils/session-stream-adapter.js";
-import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import { asInternals } from "../../../test-utils/class-mocks.js";
+import { ClaudeAgentClient, readEventIdentifiers } from "./agent.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
+import type { AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 
 interface QueryMock {
   next: ReturnType<typeof vi.fn>;
@@ -66,6 +66,7 @@ async function createSession() {
   const client = new ClaudeAgentClient({
     logger: createTestLogger(),
     queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
   });
   return client.createSession({
     provider: "claude",
@@ -77,6 +78,7 @@ function createSessionWithLogger(logger: Logger) {
   const client = new ClaudeAgentClient({
     logger,
     queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
   });
   return client.createSession({
     provider: "claude",
@@ -223,6 +225,7 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
         PASEO_RUNTIME_SENTINEL_SECRET: runtimeSecret,
       },
     },
+    resolveBinary: async () => "/test/claude/bin",
   });
   const session = await client.createSession({
     provider: "claude",
@@ -657,7 +660,7 @@ test("Grep tool_result string content flows to a search detail with content", as
       grepEntry,
     );
 
-    const { mapClaudeCompletedToolCall } = await import("./claude/tool-call-mapper.js");
+    const { mapClaudeCompletedToolCall } = await import("./tool-call-mapper.js");
     const item = mapClaudeCompletedToolCall({
       callId: "tool-grep-1",
       name: "Grep",
@@ -797,6 +800,7 @@ test("captures Claude stderr in the turn failure diagnostic when stderr arrives 
   const client = new ClaudeAgentClient({
     logger: loggerSpy.logger,
     queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
   });
   const session = await client.createSession({
     provider: "claude",

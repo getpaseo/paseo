@@ -114,7 +114,7 @@ const temporaryDirs: string[] = [];
 
 afterEach(async () => {
   for (const session of sessions) {
-    session.kill();
+    await session.killAndWait();
   }
   sessions.length = 0;
   while (temporaryDirs.length > 0) {

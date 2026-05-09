@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.1.70-beta.1",
+  "version": "0.1.70",
   "private": true,
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
   "keywords": [

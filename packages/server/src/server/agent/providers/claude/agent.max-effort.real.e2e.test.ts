@@ -1,13 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
-import type { AgentStreamEvent, AgentSession } from "../agent-sdk-types.js";
-import { isCommandAvailable } from "../../../utils/executable.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
-import { streamSession } from "./test-utils/session-stream-adapter.js";
-
-const hasClaudeCredentials =
-  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+import type { AgentStreamEvent, AgentSession } from "../../agent-sdk-types.js";
+import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
+import { ClaudeAgentClient } from "./agent.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
 
 function isTerminalEvent(event: AgentStreamEvent): boolean {
   return (
@@ -32,7 +29,7 @@ describe("Claude max effort availability (real)", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+    canRun = await isProviderAvailable("claude");
   });
 
   beforeEach((context) => {

@@ -1,9 +1,9 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
-import { streamSession } from "./test-utils/session-stream-adapter.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import { ClaudeAgentClient } from "./agent.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
+import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 
 interface QueryMock {
   next: ReturnType<typeof vi.fn>;
@@ -41,13 +41,7 @@ type PromptHandler = (input: {
   query: ScriptedQuery;
 }) => void | Promise<void>;
 
-const sdkMocks = vi.hoisted(() => ({
-  query: vi.fn(),
-}));
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: sdkMocks.query,
-}));
+const queryFactory = vi.fn();
 
 function createAsyncQueue<T>(): AsyncQueue<T> {
   const items: T[] = [];
@@ -245,14 +239,14 @@ async function waitFor(
 }
 
 afterEach(() => {
-  sdkMocks.query.mockReset();
+  queryFactory.mockReset();
 });
 
 test("interrupt only calls query.interrupt and leaves the query open", async () => {
   const logger = createTestLogger();
   const queries: ScriptedQuery[] = [];
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     const scriptedQuery = createScriptedQuery({
       prompt,
       sessionId: "interrupt-keep-query-session",
@@ -261,7 +255,11 @@ test("interrupt only calls query.interrupt and leaves the query open", async () 
     return scriptedQuery;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -274,7 +272,7 @@ test("interrupt only calls query.interrupt and leaves the query open", async () 
   await session.interrupt();
   await waitFor(() => queries[0]?.interrupt.mock.calls.length === 1);
 
-  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queryFactory).toHaveBeenCalledTimes(1);
   expect(queries[0]?.return).not.toHaveBeenCalled();
 
   const firstTurnEvents = await collectUntilTerminal(firstTurn);
@@ -291,7 +289,7 @@ test("reuses the existing query after interrupt before starting the next prompt"
   const logger = createTestLogger();
   const queries: ScriptedQuery[] = [];
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     const scriptedQuery = createScriptedQuery({
       prompt,
       sessionId: "interrupt-reuse-query-session",
@@ -311,7 +309,11 @@ test("reuses the existing query after interrupt before starting the next prompt"
     return scriptedQuery;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -326,7 +328,7 @@ test("reuses the existing query after interrupt before starting the next prompt"
 
   const secondTurnEvents = await collectUntilTerminal(streamSession(session, "second prompt"));
 
-  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queryFactory).toHaveBeenCalledTimes(1);
   expect(queries[0]?.prompts.map((prompt) => prompt.text)).toEqual([
     "first prompt",
     "second prompt",
@@ -342,7 +344,7 @@ test("emits an assistant system notice when Claude changes session id mid-turn",
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     queryRef = createScriptedQuery({
       prompt,
       sessionId: "claude-original-session",
@@ -361,7 +363,11 @@ test("emits an assistant system notice when Claude changes session id mid-turn",
     return queryRef;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -390,7 +396,7 @@ test("recovers when the query pump sees a single interrupt abort before the next
   const prompts: PromptRecord[] = [];
   let throwAbortOnNext = false;
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     const scriptedQuery = {
       next: vi.fn(async () => {
         if (throwAbortOnNext) {
@@ -455,7 +461,11 @@ test("recovers when the query pump sees a single interrupt abort before the next
     return scriptedQuery;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -468,7 +478,7 @@ test("recovers when the query pump sees a single interrupt abort before the next
 
   const secondTurnEvents = await collectUntilTerminal(streamSession(session, "second prompt"));
 
-  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queryFactory).toHaveBeenCalledTimes(1);
   expect(prompts.map((prompt) => prompt.text)).toEqual(["first prompt", "second prompt"]);
   expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
   expect(secondTurnEvents.some((event) => event.type === "turn_completed")).toBe(true);
@@ -480,7 +490,7 @@ test("stale abort result after replacement start does not poison the new foregro
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     queryRef = createScriptedQuery({
       prompt,
       sessionId: "interrupt-stale-result-session",
@@ -488,7 +498,11 @@ test("stale abort result after replacement start does not poison the new foregro
     return queryRef;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -545,7 +559,7 @@ test("creates an autonomous live turn when assistant output arrives without a fo
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     queryRef = createScriptedQuery({
       prompt,
       sessionId: "autonomous-live-session",
@@ -564,7 +578,11 @@ test("creates an autonomous live turn when assistant output arrives without a fo
     return queryRef;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -606,7 +624,7 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
 
-  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
     queryRef = createScriptedQuery({
       prompt,
       sessionId: "autonomous-handoff-session",
@@ -634,7 +652,11 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
     return queryRef;
   });
 
-  const client = new ClaudeAgentClient({ logger });
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
   const session = await client.createSession({
     provider: "claude",
     cwd: process.cwd(),
@@ -677,7 +699,7 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
       (event) => event?.type === "turn_canceled",
     ),
   ).toBe(false);
-  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queryFactory).toHaveBeenCalledTimes(1);
   expect(queryRef?.prompts.map((prompt) => prompt.text)).toEqual([
     "seed prompt",
     "foreground prompt",

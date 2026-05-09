@@ -25,17 +25,20 @@ platform :ios do
     app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
     UI.user_error!("Could not find app #{APP_IDENTIFIER} on App Store Connect") if app.nil?
 
+    valid_build = nil
     deadline = Time.now + (30 * 60)
     loop do
       builds = Spaceship::ConnectAPI::Build.all(
         app_id: app.id,
-        filter: { "version" => build_number.to_s },
-        includes: "preReleaseVersion",
+        build_number: build_number.to_s,
       )
       build = builds.find { |b| b.pre_release_version&.platform == "IOS" }
       state = build&.processing_state
       UI.message("Build #{build_number} processing state: #{state || 'unknown'}")
-      break if state == "VALID"
+      if state == "VALID"
+        valid_build = build
+        break
+      end
       if state == "INVALID" || state == "FAILED"
         UI.user_error!("Build #{build_number} failed App Store processing (state: #{state}).")
       end
@@ -45,9 +48,30 @@ platform :ios do
       sleep(30)
     end
 
+    app_version = valid_build.pre_release_version.version
+    UI.message("Submitting build #{build_number} as App Store version #{app_version} for review")
+
+    # Ensure an editable App Store version exists for this marketing version.
+    # deliver requires a "Prepare for Submission" version on App Store Connect
+    # and won't auto-create one when skip_metadata + skip_screenshots are set.
+    app.ensure_version!(app_version, platform: Spaceship::ConnectAPI::Platform::IOS)
+
+    # Apple requires a non-empty "What's New" on every new App Store version
+    # before it can be submitted for review. With skip_metadata: true, deliver
+    # never sets this, so we populate it directly per-locale.
+    edit_version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    release_notes = "Bug fixes and improvements."
+    edit_version.get_app_store_version_localizations.each do |localization|
+      if localization.whats_new.to_s.strip.empty?
+        UI.message("Setting whatsNew on #{localization.locale}")
+        localization.update(attributes: { whatsNew: release_notes })
+      end
+    end
+
     deliver(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,
+      app_version: app_version,
       build_number: build_number.to_s,
       submit_for_review: true,
       automatic_release: true,

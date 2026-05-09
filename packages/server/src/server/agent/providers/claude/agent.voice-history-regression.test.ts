@@ -3,19 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
-import { streamSession } from "./test-utils/session-stream-adapter.js";
-import type { AgentPersistenceHandle, AgentStreamEvent } from "../agent-sdk-types.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import { ClaudeAgentClient } from "./agent.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
+import type { AgentPersistenceHandle, AgentStreamEvent } from "../../agent-sdk-types.js";
 
-const sdkMocks = vi.hoisted(() => ({
-  query: vi.fn(),
-  lastQuery: null as ReturnType<typeof buildSdkQueryMock> | null,
-}));
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: sdkMocks.query,
-}));
+const queryFactory = vi.fn();
+let lastQuery: ReturnType<typeof buildSdkQueryMock> | null = null;
 
 const LIVE_REPLY_MARKER = "LIVE_ONLY_REPLY_MARKER";
 const HISTORY_USER_MARKER = "HISTORY_ONLY_USER_MARKER";
@@ -99,9 +93,9 @@ describe("ClaudeAgentSession history replay regression", () => {
   let previousClaudeConfigDir: string | undefined;
 
   beforeEach(() => {
-    sdkMocks.query.mockImplementation(() => {
+    queryFactory.mockImplementation(() => {
       const mock = buildSdkQueryMock();
-      sdkMocks.lastQuery = mock;
+      lastQuery = mock;
       return mock;
     });
 
@@ -145,8 +139,8 @@ describe("ClaudeAgentSession history replay regression", () => {
   });
 
   afterEach(() => {
-    sdkMocks.query.mockReset();
-    sdkMocks.lastQuery = null;
+    queryFactory.mockReset();
+    lastQuery = null;
     if (previousClaudeConfigDir === undefined) {
       delete process.env.CLAUDE_CONFIG_DIR;
     } else {
@@ -157,7 +151,11 @@ describe("ClaudeAgentSession history replay regression", () => {
 
   test("does not replay persisted history during the first live stream turn", async () => {
     const logger = createTestLogger();
-    const client = new ClaudeAgentClient({ logger });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
     const handle: AgentPersistenceHandle = {
       provider: "claude",
       sessionId: "history-session",
@@ -194,7 +192,11 @@ describe("ClaudeAgentSession history replay regression", () => {
 
   test("still exposes persisted history through streamHistory", async () => {
     const logger = createTestLogger();
-    const client = new ClaudeAgentClient({ logger });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
     const handle: AgentPersistenceHandle = {
       provider: "claude",
       sessionId: "history-session",
@@ -223,7 +225,11 @@ describe("ClaudeAgentSession history replay regression", () => {
 
   test("listCommands includes rewind command", async () => {
     const logger = createTestLogger();
-    const client = new ClaudeAgentClient({ logger });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
     const handle: AgentPersistenceHandle = {
       provider: "claude",
       sessionId: "history-session",
@@ -245,7 +251,11 @@ describe("ClaudeAgentSession history replay regression", () => {
 
   test("slash /rewind uses latest user message id from persisted history", async () => {
     const logger = createTestLogger();
-    const client = new ClaudeAgentClient({ logger });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
     const handle: AgentPersistenceHandle = {
       provider: "claude",
       sessionId: "history-session",
@@ -276,9 +286,9 @@ describe("ClaudeAgentSession history replay regression", () => {
 
     expect(events.some((event) => event.type === "turn_started")).toBe(true);
     expect(events.some((event) => event.type === "turn_completed")).toBe(true);
-    expect(sdkMocks.lastQuery).toBeTruthy();
-    expect(sdkMocks.lastQuery?.rewindFiles).toHaveBeenCalledTimes(1);
-    expect(sdkMocks.lastQuery?.rewindFiles).toHaveBeenCalledWith("history-user-uuid", {
+    expect(lastQuery).toBeTruthy();
+    expect(lastQuery?.rewindFiles).toHaveBeenCalledTimes(1);
+    expect(lastQuery?.rewindFiles).toHaveBeenCalledWith("history-user-uuid", {
       dryRun: false,
     });
   });

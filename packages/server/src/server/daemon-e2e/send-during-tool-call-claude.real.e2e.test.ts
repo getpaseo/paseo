@@ -6,7 +6,7 @@ import pino from "pino";
 
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
+import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
 import { createMessageCollector } from "../test-utils/message-collector.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";

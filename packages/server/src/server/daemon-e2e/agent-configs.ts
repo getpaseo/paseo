@@ -110,10 +110,9 @@ export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
   const availability = (async (): Promise<boolean> => {
     switch (provider) {
       case "claude":
-        return (
-          (await isCommandAvailable("claude")) &&
-          (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
-        );
+        const hasClaudeEnvCredentials =
+          Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY);
+        return (await isCommandAvailable("claude")) && (!process.env.CI || hasClaudeEnvCredentials);
       case "codex":
         return (
           (await isCommandAvailable("codex")) &&

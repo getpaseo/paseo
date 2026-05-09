@@ -53,10 +53,22 @@ function pruneOnnxRuntime(nodeModules, platform, arch) {
 function pruneClaudeAgentSdk(nodeModules, platform, arch) {
   const vendorRoot = path.join(nodeModules, "@anthropic-ai", "claude-agent-sdk", "vendor");
   const keepName = RIPGREP_PLATFORM_DIR[platform]?.[arch];
-  if (!keepName) return;
+  if (keepName) {
+    pruneChildrenExcept(path.join(vendorRoot, "ripgrep"), new Set(["COPYING", keepName]));
+    pruneChildrenExcept(path.join(vendorRoot, "tree-sitter-bash"), new Set([keepName]));
+  }
 
-  pruneChildrenExcept(path.join(vendorRoot, "ripgrep"), new Set(["COPYING", keepName]));
-  pruneChildrenExcept(path.join(vendorRoot, "tree-sitter-bash"), new Set([keepName]));
+  // SDK ≥0.2.113 ships per-platform Claude Code binaries via optionalDependencies
+  // (~210 MB each). Paseo requires user-installed `claude` on PATH, matching how
+  // Codex/OpenCode are integrated, so drop every bundled copy.
+  const anthropicDir = path.join(nodeModules, "@anthropic-ai");
+  if (fs.existsSync(anthropicDir)) {
+    for (const entry of fs.readdirSync(anthropicDir)) {
+      if (entry.startsWith("claude-agent-sdk-")) {
+        rmSafe(path.join(anthropicDir, entry));
+      }
+    }
+  }
 }
 
 function pruneNodePty(nodeModules, platform, arch) {

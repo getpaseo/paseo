@@ -102,6 +102,10 @@ interface EnsureNodePtySpawnHelperExecutableOptions {
   force?: boolean;
 }
 
+interface WindowsPtyProcessReadiness {
+  _agent?: { innerPid?: number };
+}
+
 function resolveNodePtyPackageRoot(): string | null {
   try {
     const packageJsonPath = require.resolve("node-pty/package.json");
@@ -754,6 +758,22 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     disposeResources();
   });
 
+  async function waitForPtyProcessStart(): Promise<void> {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const started = (): boolean => {
+      const windowsPtyProcess = ptyProcess as unknown as WindowsPtyProcessReadiness;
+      return ptyProcess.pid > 0 || (windowsPtyProcess._agent?.innerPid ?? 0) > 0 || processExited;
+    };
+
+    const deadline = Date.now() + 5000;
+    while (!started() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   function getState(): TerminalState {
     return {
       rows: terminal.rows,
@@ -829,16 +849,36 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
 
   function subscribe(listener: (msg: ServerMessage) => void): () => void {
-    listeners.add(listener);
+    let active = true;
+    let snapshotDelivered = false;
+    const queuedMessages: ServerMessage[] = [];
+    const subscriptionListener = (msg: ServerMessage): void => {
+      if (!active) {
+        return;
+      }
+      if (!snapshotDelivered) {
+        queuedMessages.push(msg);
+        return;
+      }
+      listener(msg);
+    };
+
+    listeners.add(subscriptionListener);
 
     terminal.write("", () => {
-      if (!disposed && listeners.has(listener)) {
+      if (!disposed && active && listeners.has(subscriptionListener)) {
+        snapshotDelivered = true;
         listener({ type: "snapshot", ...getStateSnapshot() });
+        for (const message of queuedMessages.splice(0)) {
+          listener(message);
+        }
       }
     });
 
     return () => {
-      listeners.delete(listener);
+      active = false;
+      queuedMessages.length = 0;
+      listeners.delete(subscriptionListener);
     };
   }
 
@@ -897,10 +937,24 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   function kill(): void {
     if (!killed) {
       killed = true;
-      ptyProcess.kill();
+      if (!processExited) {
+        killPtyProcess();
+      }
       emitExit(buildExitInfo());
     }
-    disposeResources();
+    if (processExited) {
+      disposeResources();
+      return;
+    }
+    void waitForProcessExit(1000).finally(disposeResources);
+  }
+
+  function killPtyProcess(signal?: NodeJS.Signals): void {
+    if (process.platform === "win32") {
+      ptyProcess.kill();
+      return;
+    }
+    ptyProcess.kill(signal);
   }
 
   function waitForProcessExit(timeoutMs: number): Promise<boolean> {
@@ -940,7 +994,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
 
     try {
-      ptyProcess.kill();
+      killPtyProcess();
     } catch {
       // process may already be gone
     }
@@ -948,7 +1002,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
     if (!exitedGracefully) {
       try {
-        ptyProcess.kill("SIGKILL");
+        killPtyProcess("SIGKILL");
       } catch {
         // process may already be gone
       }
@@ -958,6 +1012,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     // Finalize bookkeeping (idempotent if ptyProcess.onExit already fired).
     kill();
   }
+
+  await waitForPtyProcessStart();
 
   // Small delay to let shell initialize
   await new Promise((resolve) => setTimeout(resolve, 50));

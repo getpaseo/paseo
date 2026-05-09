@@ -1,0 +1,21 @@
+name: Resubmit iOS for App Store review
+
+# Standalone re-trigger for the App Store review submission step. The iOS
+# binary is already uploaded to TestFlight via the main release-mobile flow;
+# this workflow just runs the fastlane submit_review lane against the latest
+# TestFlight build, without rebuilding or re-uploading.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  submit_ios_for_review:
+    name: Submit iOS for App Store review
+    environment: production
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        run: bundle install
+      - name: Submit for review
+        run: bundle exec fastlane ios submit_review

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude-models.js";
+import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 describe("getClaudeModels", () => {
   it("returns all claude models", () => {

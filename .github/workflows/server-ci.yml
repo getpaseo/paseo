@@ -36,6 +36,9 @@ jobs:
       - name: Install server dependencies
         run: npm install --workspace=@getpaseo/server --include-workspace-root
 
+      - name: Install Claude Code CLI for provider tests
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
 

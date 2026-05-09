@@ -1,20 +1,16 @@
-import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  query,
   type AgentDefinition,
   type CanUseTool,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
-  type Options,
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
-  type SpawnOptions,
   type SDKMessage,
   type SDKPartialAssistantMessage,
   type SDKTaskProgressMessage,
@@ -28,22 +24,23 @@ import {
   mapClaudeCompletedToolCall,
   mapClaudeFailedToolCall,
   mapClaudeRunningToolCall,
-} from "./claude/tool-call-mapper.js";
+} from "./tool-call-mapper.js";
 import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
-} from "./claude/task-notification-tool-call.js";
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude/claude-models.js";
-import { parsePartialJsonObject } from "./claude/partial-json.js";
-import { ClaudeSidechainTracker } from "./claude/sidechain-tracker.js";
+} from "./task-notification-tool-call.js";
+import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import { parsePartialJsonObject } from "./partial-json.js";
+import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   toDiagnosticErrorMessage,
-} from "./diagnostic-utils.js";
-import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
-import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+} from "../diagnostic-utils.js";
+import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
+import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 
 import type {
   AgentPermissionAction,
@@ -73,20 +70,19 @@ import type {
   ListPersistedAgentsOptions,
   McpServerConfig,
   PersistedAgentDescriptor,
-} from "../agent-sdk-types.js";
+} from "../../agent-sdk-types.js";
 import {
   createProviderEnv,
   createProviderEnvSpec,
   type ProviderRuntimeSettings,
-} from "../provider-launch-config.js";
-import { buildSelfNodeCommand } from "../../paseo-env.js";
-import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { withTimeout } from "../../../utils/promise-timeout.js";
-import { execCommand, spawnProcess } from "../../../utils/spawn.js";
-import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
+} from "../../provider-launch-config.js";
+import { findExecutable, isCommandAvailable } from "../../../../utils/executable.js";
+import { withTimeout } from "../../../../utils/promise-timeout.js";
+import { execCommand } from "../../../../utils/spawn.js";
+import { getOrchestratorModeInstructions } from "../../orchestrator-instructions.js";
 
 const fsPromises = promises;
-const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
+const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = ["user", "project"];
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
@@ -153,10 +149,6 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
 
 function isUnknownArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
-}
-
-function isChildProcessWithStreams(child: ChildProcess): child is ChildProcessWithoutNullStreams {
-  return child.stdin !== null && child.stdout !== null && child.stderr !== null;
 }
 
 function isImageMimeType(
@@ -239,7 +231,6 @@ interface SlashCommandInvocation {
   rawInput: string;
 }
 
-// Orchestrator instructions moved to shared module.
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export interface ClaudeContentChunk {
@@ -247,13 +238,12 @@ export interface ClaudeContentChunk {
   [key: string]: unknown;
 }
 
-type ClaudeOptions = Options;
-
 interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
-  queryFactory?: typeof query;
+  queryFactory?: ClaudeQueryFactory;
+  resolveBinary?: () => Promise<string>;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -263,7 +253,8 @@ interface ClaudeAgentSessionOptions {
   launchEnv?: Record<string, string>;
   persistSession?: boolean;
   logger: Logger;
-  queryFactory?: typeof query;
+  queryFactory?: ClaudeQueryFactory;
+  resolveBinary: () => Promise<string>;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -301,86 +292,6 @@ function extractSessionIdRaw(msg: {
   if (typeof msg.sessionId === "string") return msg.sessionId;
   if (typeof msg.session?.id === "string") return msg.session.id;
   return "";
-}
-
-function resolveClaudeSpawnCommand(
-  spawnOptions: SpawnOptions,
-  runtimeSettings?: ProviderRuntimeSettings,
-): { command: string; args: string[] } {
-  const commandConfig = runtimeSettings?.command;
-  if (!commandConfig || commandConfig.mode === "default") {
-    return {
-      command: spawnOptions.command,
-      args: [...spawnOptions.args],
-    };
-  }
-
-  if (commandConfig.mode === "append") {
-    return {
-      command: spawnOptions.command,
-      args: [...spawnOptions.args, ...(commandConfig.args ?? [])],
-    };
-  }
-
-  return {
-    command: commandConfig.argv[0],
-    args: [...commandConfig.argv.slice(1), ...spawnOptions.args],
-  };
-}
-
-function applyRuntimeSettingsToClaudeOptions(
-  options: ClaudeOptions,
-  runtimeSettings?: ProviderRuntimeSettings,
-  launchEnv?: Record<string, string>,
-): ClaudeOptions {
-  return {
-    ...options,
-    spawnClaudeCodeProcess: (spawnOptions) => {
-      const resolved = resolveClaudeSpawnCommand(spawnOptions, runtimeSettings);
-      // When the SDK passes a default JS runtime ("node"/"bun"), replace it with
-      // process.execPath — the actual node binary running the daemon. This avoids
-      // PATH lookup failures in the managed runtime bundle.
-      // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
-      // or the user overrides the command via runtime settings, use that directly.
-      const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
-      const providerEnvSpec = createProviderEnvSpec({
-        baseEnv: spawnOptions.env,
-        runtimeSettings,
-        overlays: [launchEnv],
-      });
-      const providerEnv = createProviderEnv({
-        baseEnv: spawnOptions.env,
-        runtimeSettings,
-        overlays: [launchEnv],
-      });
-      const selfNodeCommand = isDefaultRuntime
-        ? buildSelfNodeCommand(resolved.args, providerEnv)
-        : null;
-      const command = selfNodeCommand?.command ?? resolved.command;
-      const args = selfNodeCommand?.args ?? resolved.args;
-      const child = spawnProcess(command, args, {
-        cwd: spawnOptions.cwd,
-        ...(selfNodeCommand
-          ? { env: selfNodeCommand.env, envMode: "internal" as const }
-          : providerEnvSpec),
-        signal: spawnOptions.signal,
-        stdio: ["pipe", "pipe", "pipe"],
-        // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
-        // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
-        // The command is always a resolved binary path, so shell routing is unnecessary.
-        shell: false,
-      });
-      if (typeof options.stderr === "function") {
-        child.stderr?.on("data", (chunk: Buffer | string) => {
-          options.stderr?.(chunk.toString());
-        });
-      }
-      if (!isChildProcessWithStreams(child)) {
-        throw new Error("Claude process was spawned without stdio streams");
-      }
-      return child;
-    },
-  };
 }
 
 function isClaudeThinkingEffort(value: string | null | undefined): value is ClaudeThinkingEffort {
@@ -1250,13 +1161,15 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly queryFactory: typeof query;
+  private readonly queryFactory?: ClaudeQueryFactory;
+  private readonly resolveBinary: () => Promise<string>;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
     this.runtimeSettings = options.runtimeSettings;
-    this.queryFactory = options.queryFactory ?? query;
+    this.queryFactory = options.queryFactory;
+    this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
   }
 
   async createSession(
@@ -1272,6 +1185,7 @@ export class ClaudeAgentClient implements AgentClient {
       persistSession: options?.persistSession,
       logger: this.logger,
       queryFactory: this.queryFactory,
+      resolveBinary: this.resolveBinary,
     });
   }
 
@@ -1298,6 +1212,7 @@ export class ClaudeAgentClient implements AgentClient {
       launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
+      resolveBinary: this.resolveBinary,
     });
   }
 
@@ -1329,9 +1244,7 @@ export class ClaudeAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    // Default mode uses @anthropic-ai/claude-agent-sdk's bundled cli.js run
-    // via process.execPath. No external `claude` binary is required.
-    return true;
+    return await isCommandAvailable("claude");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
@@ -1381,6 +1294,24 @@ export class ClaudeAgentClient implements AgentClient {
     }
     return { ...config, provider: "claude" } as ClaudeAgentConfig;
   }
+}
+
+async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
+  const command = runtimeSettings?.command;
+  if (command?.mode === "replace") {
+    const foundOverride = await findExecutable(command.argv[0]);
+    if (foundOverride) {
+      return foundOverride;
+    }
+  }
+
+  const found = await findExecutable("claude");
+  if (found) {
+    return found;
+  }
+  throw new Error(
+    "Claude binary not found. Install Claude Code (https://github.com/anthropics/claude-code) and ensure it is available in your shell PATH.",
+  );
 }
 
 async function resolveClaudeVersion(
@@ -1550,7 +1481,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly persistSession?: boolean;
   private readonly logger: Logger;
-  private readonly queryFactory: typeof query;
+  private readonly queryFactory?: ClaudeQueryFactory;
+  private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
@@ -1598,7 +1530,8 @@ class ClaudeAgentSession implements AgentSession {
     this.runtimeSettings = options.runtimeSettings;
     this.persistSession = options.persistSession;
     this.logger = options.logger;
-    this.queryFactory = options.queryFactory ?? query;
+    this.queryFactory = options.queryFactory;
+    this.resolveBinary = options.resolveBinary;
     const handle = options.handle;
 
     if (handle) {
@@ -2218,7 +2151,14 @@ class ClaudeAgentSession implements AgentSession {
     const options = await this.buildOptions();
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
-    this.query = this.queryFactory({ prompt: input.iterable, options });
+    this.query = claudeQuery(
+      { prompt: input.iterable, options },
+      {
+        runtimeSettings: this.runtimeSettings,
+        launchEnv: this.launchEnv,
+        queryFactory: this.queryFactory,
+      },
+    );
     // Do not kick off background control-plane queries here. Methods like
     // supportedCommands()/setPermissionMode() may execute immediately after
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
@@ -2256,11 +2196,6 @@ class ClaudeAgentSession implements AgentSession {
         ? this.config.thinkingOptionId
         : undefined;
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      if (thinkingOptionId === "xhigh") {
-        // "xhigh" is accepted by Claude Opus 4.7 but not yet in the SDK type definitions
-        // @ts-expect-error -- SDK 0.2.71 effort type doesn't include "xhigh" yet
-        return { thinking: { type: "adaptive" }, effort: thinkingOptionId };
-      }
       return { thinking: { type: "adaptive" }, effort: thinkingOptionId };
     }
     return { thinking: undefined, effort: undefined };
@@ -2290,7 +2225,7 @@ class ClaudeAgentSession implements AgentSession {
       ],
     });
 
-    const claudeBinary = await findExecutable("claude");
+    const claudeBinary = await this.resolveBinary();
     this.logger.debug(
       {
         claudeBinary,
@@ -2311,7 +2246,7 @@ class ClaudeAgentSession implements AgentSession {
       allowDangerouslySkipPermissions: true,
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
-      ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
+      pathToClaudeCodeExecutable: claudeBinary,
       // Use Claude Code preset system prompt and load CLAUDE.md files
       // Append provider-agnostic system prompt and orchestrator instructions for agents.
       systemPrompt: {
@@ -2353,11 +2288,7 @@ class ClaudeAgentSession implements AgentSession {
         ...this.runtimeSettings.disallowedTools,
       ];
     }
-    return this.applyRuntimeSettings(base);
-  }
-
-  private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    return applyRuntimeSettingsToClaudeOptions(options, this.runtimeSettings, this.launchEnv);
+    return base;
   }
 
   private normalizeMcpServers(
