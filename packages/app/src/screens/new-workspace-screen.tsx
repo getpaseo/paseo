@@ -25,6 +25,7 @@ import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { toErrorMessage } from "@/utils/error-messages";
+import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload } from "@/components/message-input";
@@ -271,6 +272,30 @@ interface CreateChatAgentInput {
   draftKey: string;
 }
 
+export function isEmptyWorkspaceSubmission(payload: MessagePayload): boolean {
+  return !payload.text.trim() && payload.attachments.length === 0;
+}
+
+interface CreateEmptyWorkspaceInput {
+  payload: MessagePayload;
+  ensureWorkspace: (input: {
+    cwd: string;
+    prompt: string;
+    attachments: AgentAttachment[];
+  }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
+  serverId: string;
+}
+
+export async function runCreateEmptyWorkspace(input: CreateEmptyWorkspaceInput): Promise<void> {
+  const { payload, ensureWorkspace, serverId } = input;
+  const ensuredWorkspace = await ensureWorkspace({
+    cwd: payload.cwd,
+    prompt: "",
+    attachments: [],
+  });
+  navigateToWorkspace(serverId, ensuredWorkspace.id);
+}
+
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
   const { text, attachments, cwd } = payload;
@@ -398,7 +423,7 @@ export function NewWorkspaceScreen({
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
-  const [pendingAction, setPendingAction] = useState<"chat" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"chat" | "empty" | null>(null);
   const [pickerSelection, setPickerSelection] = useState<PickerSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
@@ -602,11 +627,21 @@ export function NewWorkspaceScreen({
     [buildCreateWorktreeInput, createdWorkspace, mergeWorkspaces, serverId, withConnectedClient],
   );
 
-  const handleCreateChatAgent = useCallback(
+  const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
-        setPendingAction("chat");
         setErrorMessage(null);
+        if (isEmptyWorkspaceSubmission(payload)) {
+          setPendingAction("empty");
+          await runCreateEmptyWorkspace({
+            payload,
+            ensureWorkspace,
+            serverId,
+          });
+          return;
+        }
+
+        setPendingAction("chat");
         await runCreateChatAgent({
           payload,
           composerState,
@@ -729,11 +764,11 @@ export function NewWorkspaceScreen({
             agentId={`new-workspace:${serverId}:${sourceDirectory}`}
             serverId={serverId}
             isPaneFocused={true}
-            onSubmitMessage={handleCreateChatAgent}
+            onSubmitMessage={handleSubmitNewWorkspace}
             allowEmptySubmit={true}
             submitButtonAccessibilityLabel="Create"
             submitIcon="return"
-            isSubmitLoading={pendingAction === "chat"}
+            isSubmitLoading={pendingAction !== null}
             submitBehavior="preserve-and-lock"
             blurOnSubmit={true}
             value={chatDraft.text}
