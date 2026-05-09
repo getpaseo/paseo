@@ -1,14 +1,16 @@
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
+import { router, type Href } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type CheckoutGitActionStatus, useCheckoutGitActionsStore } from "@/git/actions-store";
 import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-status-query";
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { buildGitActions, narrowPullRequestState, type GitActions } from "@/git/policy";
 import type { CheckoutPrMergeMethod } from "@server/shared/messages";
-import { resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { useSessionStore } from "@/stores/session-store";
+import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -393,15 +395,22 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       toast.error("Worktree path unavailable");
       return;
     }
-    const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
-    void runArchiveWorktree({ serverId, cwd, worktreePath })
-      .then(() => {
-        navigateToWorkspace(serverId, targetWorkingDir);
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to archive worktree");
-      });
+    const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
+    const archivedWorkspaceId =
+      resolveWorkspaceIdByExecutionDirectory({
+        workspaces: workspaces?.values(),
+        workspaceDirectory: worktreePath,
+      }) ?? worktreePath;
+    router.replace(
+      buildWorkspaceArchiveRedirectRoute({
+        serverId,
+        archivedWorkspaceId,
+        workspaces: workspaces?.values() ?? [],
+      }) as Href,
+    );
+    void runArchiveWorktree({ serverId, cwd, worktreePath }).catch((err) => {
+      toastActionError(err, "Failed to archive worktree");
+    });
   }, [cwd, runArchiveWorktree, serverId, status, toast, toastActionError]);
 
   const baseRefLabel = useMemo(() => formatBaseRefLabel(baseRef), [baseRef]);
