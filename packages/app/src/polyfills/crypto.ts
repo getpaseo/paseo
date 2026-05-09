@@ -13,8 +13,26 @@ interface MutableGlobal {
   crypto?: Crypto;
 }
 
+type RandomUUID = `${string}-${string}-${string}-${string}-${string}`;
+type FillRandomValues = <T extends ArrayBufferView | null>(array: T) => T;
+
+function createUuidV4(fillRandomValues: FillRandomValues): RandomUUID {
+  const bytes = fillRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex
+    .slice(6, 8)
+    .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}` as RandomUUID;
+}
+
 export function polyfillCrypto(): void {
   const g = globalThis as unknown as MutableGlobal;
+  const nativeGetRandomValues =
+    typeof g.crypto?.getRandomValues === "function"
+      ? g.crypto.getRandomValues.bind(g.crypto)
+      : null;
 
   // Ensure TextEncoder/TextDecoder exist for shared E2EE code (tweetnacl + relay transport).
   // Hermes may not provide them in all configurations.
@@ -47,17 +65,21 @@ export function polyfillCrypto(): void {
     g.crypto = {} as Crypto;
   }
 
+  const fillRandomValues: FillRandomValues = <T extends ArrayBufferView | null>(array: T): T => {
+    if (array === null) return array;
+    if (nativeGetRandomValues) {
+      return nativeGetRandomValues(array as unknown as ArrayBufferView<ArrayBuffer>) as T;
+    }
+    return ExpoCrypto.getRandomValues(
+      array as unknown as Parameters<typeof ExpoCrypto.getRandomValues>[0],
+    ) as unknown as T;
+  };
+
   if (typeof g.crypto.randomUUID !== "function") {
-    g.crypto.randomUUID = () =>
-      ExpoCrypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`;
+    g.crypto.randomUUID = () => createUuidV4(fillRandomValues);
   }
 
   if (typeof g.crypto.getRandomValues !== "function") {
-    g.crypto.getRandomValues = <T extends ArrayBufferView | null>(array: T): T => {
-      if (array === null) return array;
-      return ExpoCrypto.getRandomValues(
-        array as unknown as Parameters<typeof ExpoCrypto.getRandomValues>[0],
-      ) as unknown as T;
-    };
+    g.crypto.getRandomValues = fillRandomValues;
   }
 }
