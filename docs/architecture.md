@@ -103,7 +103,7 @@ Communicates with the daemon via the same WebSocket protocol as the app.
 
 Enables remote access when the daemon is behind a firewall.
 
-- ECDH key exchange + AES-256-GCM encryption
+- Curve25519 ECDH key exchange + XSalsa20-Poly1305 (NaCl `box`) encryption
 - Relay server is zero-knowledge — it routes encrypted bytes, cannot read content
 - Client and daemon channels with identical API (`createClientChannel`, `createDaemonChannel`)
 - Pairing via QR code transfers the daemon's public key to the client
