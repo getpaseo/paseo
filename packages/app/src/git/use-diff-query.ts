@@ -3,16 +3,7 @@ import { useEffect, useId, useMemo } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
-
-function checkoutDiffQueryKey(
-  serverId: string,
-  cwd: string,
-  mode: "uncommitted" | "base",
-  baseRef?: string,
-  ignoreWhitespace?: boolean,
-) {
-  return ["checkoutDiff", serverId, cwd, mode, baseRef ?? "", ignoreWhitespace === true] as const;
-}
+import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutDiffQueryOptions {
   serverId: string;

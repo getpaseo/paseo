@@ -9,7 +9,8 @@ import {
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutStatusResponse } from "@server/shared/messages";
-import { checkoutStatusQueryKey, useCheckoutStatusQuery } from "./use-status-query";
+import { checkoutStatusQueryKey } from "@/git/query-keys";
+import { useCheckoutStatusQuery } from "./use-status-query";
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 

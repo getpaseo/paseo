@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { queryClient as appQueryClient } from "@/query/query-client";
 import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   __resetCheckoutGitActionsStoreForTests,
-  invalidateCheckoutGitQueriesForClient,
   isLocalWorktreeArchivePending,
   useCheckoutGitActionsStore,
 } from "@/git/actions-store";
@@ -170,32 +168,6 @@ describe("checkout-git-actions-store", () => {
     expect(
       useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "pull-and-push" }),
     ).toBe("idle");
-  });
-
-  it("invalidates checkout PR status and every PR pane timeline for a checkout", async () => {
-    const queryClient = new QueryClient();
-
-    queryClient.setQueryData(["checkoutPrStatus", serverId, cwd], { status: { number: 12 } });
-    queryClient.setQueryData(["prPaneTimeline", serverId, cwd, 12], { items: [] });
-    queryClient.setQueryData(["prPaneTimeline", serverId, cwd, 13], { items: [] });
-    queryClient.setQueryData(["prPaneTimeline", serverId, "/tmp/other", 12], { items: [] });
-
-    await invalidateCheckoutGitQueriesForClient(queryClient, { serverId, cwd });
-
-    expect(queryClient.getQueryState(["checkoutPrStatus", serverId, cwd])?.isInvalidated).toBe(
-      true,
-    );
-    expect(queryClient.getQueryState(["prPaneTimeline", serverId, cwd, 12])?.isInvalidated).toBe(
-      true,
-    );
-    expect(queryClient.getQueryState(["prPaneTimeline", serverId, cwd, 13])?.isInvalidated).toBe(
-      true,
-    );
-    expect(
-      queryClient.getQueryState(["prPaneTimeline", serverId, "/tmp/other", 12])?.isInvalidated,
-    ).toBe(false);
-
-    queryClient.clear();
   });
 
   it("hides an archived worktree optimistically while the archive RPC is in flight", async () => {

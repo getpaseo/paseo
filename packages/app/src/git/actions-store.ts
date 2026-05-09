@@ -1,4 +1,4 @@
-import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 import type { CheckoutPrMergeMethod } from "@server/shared/messages";
 import { create } from "zustand";
 import { queryClient as appQueryClient } from "@/query/query-client";
@@ -17,6 +17,7 @@ import {
   resolveWorkspaceIdByExecutionDirectory,
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-execution";
+import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 
 const SUCCESS_DISPLAY_MS = 1000;
 
@@ -72,44 +73,6 @@ function setStatus(
       },
     };
   });
-}
-
-export async function invalidateCheckoutGitQueriesForClient(
-  queryClient: QueryClient,
-  { serverId, cwd }: { serverId: string; cwd: string },
-) {
-  await Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: ["checkoutStatus", serverId, cwd],
-    }),
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        return (
-          Array.isArray(key) && key[0] === "checkoutDiff" && key[1] === serverId && key[2] === cwd
-        );
-      },
-    }),
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        return (
-          Array.isArray(key) &&
-          key[0] === "checkoutPrStatus" &&
-          key[1] === serverId &&
-          key[2] === cwd
-        );
-      },
-    }),
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        return (
-          Array.isArray(key) && key[0] === "prPaneTimeline" && key[1] === serverId && key[2] === cwd
-        );
-      },
-    }),
-  ]);
 }
 
 function invalidateCheckoutGitQueries(serverId: string, cwd: string) {

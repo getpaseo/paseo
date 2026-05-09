@@ -2,10 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { CheckoutPrStatusResponse } from "@server/shared/messages";
-
-export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
-  return ["checkoutPrStatus", serverId, cwd] as const;
-}
+import { checkoutPrStatusQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutPrStatusQueryOptions {
   serverId: string;
