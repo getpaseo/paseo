@@ -13,7 +13,7 @@ interface NavigateToAgentInput {
 
 export function navigateToAgent(input: NavigateToAgentInput): string {
   const session = useSessionStore.getState().sessions[input.serverId];
-  const agent = session?.agents.get(input.agentId);
+  const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
   const workspaceId = resolveWorkspaceIdByExecutionDirectory({
     workspaces: session?.workspaces.values(),
     workspaceDirectory: agent?.cwd,
