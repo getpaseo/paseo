@@ -3,7 +3,6 @@ import {
   Archive,
   ArrowDownUp,
   Download,
-  GitBranch,
   GitCommitHorizontal,
   GitMerge,
   RefreshCcw,
@@ -26,7 +25,6 @@ const ThemedUpload = withUnistyles(Upload);
 const ThemedArrowDownUp = withUnistyles(ArrowDownUp);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedGitMerge = withUnistyles(GitMerge);
-const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
 
@@ -41,9 +39,9 @@ const ICONS = {
   pullAndPush: <ThemedArrowDownUp size={16} uniProps={mutedColorMapping} />,
   viewPr: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
   createPr: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
-  mergePrSquash: <ThemedGitCommitHorizontal size={16} uniProps={mutedColorMapping} />,
-  mergePrMerge: <ThemedGitMerge size={16} uniProps={mutedColorMapping} />,
-  mergePrRebase: <ThemedGitBranch size={16} uniProps={mutedColorMapping} />,
+  mergePrSquash: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+  mergePrMerge: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+  mergePrRebase: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
   merge: <ThemedGitMerge size={16} uniProps={mutedColorMapping} />,
   mergeFromBase: <ThemedRefreshCcw size={16} uniProps={mutedColorMapping} />,
   archive: <ThemedArchive size={16} uniProps={mutedColorMapping} />,
