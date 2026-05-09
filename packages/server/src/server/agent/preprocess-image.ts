@@ -16,16 +16,19 @@ interface ImageAttachment {
   mimeType: string;
 }
 
-type SharpModule = typeof import("sharp");
+// sharp is an optional runtime dependency (hoisted from the Agent SDK).
+// We avoid static type references so typecheck passes without it installed.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- optional dep without types
+let sharpModule: any | null | undefined;
 
-let sharpModule: SharpModule | null | undefined;
-
-async function getSharp(): Promise<SharpModule | null> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- optional dep without types
+async function getSharp(): Promise<any | null> {
   if (sharpModule !== undefined) {
     return sharpModule;
   }
   try {
-    sharpModule = (await import("sharp")).default;
+    const moduleName = "sharp";
+    sharpModule = (await import(moduleName)).default;
   } catch {
     sharpModule = null;
   }
