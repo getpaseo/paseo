@@ -1,5 +1,5 @@
 // Pure-data entry point for callers that don't want React Native deps in
-// their dependency graph (e.g. workspace-agent-visibility.ts is plain JS
+// their dependency graph (e.g. workspace-tabs/agent-visibility.ts is plain
 // data derivation and its tests run without an RN environment).
 //
 // The full module entry `@/subagents` re-exports these too, alongside the

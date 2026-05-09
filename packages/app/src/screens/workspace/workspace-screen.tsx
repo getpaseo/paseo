@@ -133,9 +133,10 @@ import {
 } from "@/screens/workspace/workspace-route-state";
 import { renderWorkspaceRouteGate } from "@/screens/workspace/workspace-route-state-views";
 import {
+  buildWorkspaceTabSnapshot,
   deriveWorkspaceAgentVisibility,
   workspaceAgentVisibilityEqual,
-} from "@/screens/workspace/workspace-agent-visibility";
+} from "@/workspace-tabs/agent-visibility";
 import { deriveWorkspacePaneState } from "@/screens/workspace/workspace-pane-state";
 import {
   buildWorkspacePaneContentModel,
@@ -1919,16 +1920,17 @@ function WorkspaceScreenContent({
       return pending?.serverId === normalizedServerId && pending.lifecycle === "active";
     });
 
-    reconcileWorkspaceTabs(persistenceKey, {
-      agentsHydrated: hasHydratedAgents,
-      terminalsHydrated: terminalsQuery.isSuccess,
-      activeAgentIds: Array.from(workspaceAgentVisibility.activeAgentIds),
-      autoOpenAgentIds: Array.from(workspaceAgentVisibility.autoOpenAgentIds),
-      knownAgentIds: Array.from(workspaceAgentVisibility.knownAgentIds),
-      knownTerminalIds,
-      standaloneTerminalIds,
-      hasActivePendingDraftCreate: hasActivePendingDraftCreateInWorkspace,
-    });
+    reconcileWorkspaceTabs(
+      persistenceKey,
+      buildWorkspaceTabSnapshot({
+        agentVisibility: workspaceAgentVisibility,
+        agentsHydrated: hasHydratedAgents,
+        terminalsHydrated: terminalsQuery.isSuccess,
+        knownTerminalIds,
+        standaloneTerminalIds,
+        hasActivePendingDraftCreate: hasActivePendingDraftCreateInWorkspace,
+      }),
+    );
   }, [
     hasHydratedAgents,
     hasHydratedWorkspaceLayoutStore,

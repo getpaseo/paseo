@@ -1,9 +1,10 @@
 import type { DaemonClient } from "@server/client/daemon-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildWorkspaceTabSnapshot,
   deriveWorkspaceAgentVisibility,
   type WorkspaceAgentVisibility,
-} from "@/screens/workspace/workspace-agent-visibility";
+} from "@/workspace-tabs/agent-visibility";
 import { selectSubagentsForParent } from "@/subagents";
 import { buildWorkspaceTabPersistenceKey, useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
@@ -151,15 +152,17 @@ function deriveVisibilityFromSession(): WorkspaceAgentVisibility {
 }
 
 function reconcileWorkspaceTabs(workspaceKey: string, visibility: WorkspaceAgentVisibility): void {
-  useWorkspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
-    agentsHydrated: true,
-    terminalsHydrated: true,
-    activeAgentIds: visibility.activeAgentIds,
-    autoOpenAgentIds: visibility.autoOpenAgentIds,
-    knownAgentIds: visibility.knownAgentIds,
-    standaloneTerminalIds: [],
-    hasActivePendingDraftCreate: false,
-  });
+  useWorkspaceLayoutStore.getState().reconcileTabs(
+    workspaceKey,
+    buildWorkspaceTabSnapshot({
+      agentVisibility: visibility,
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    }),
+  );
 }
 
 function getWorkspaceTabIds(workspaceKey: string): string[] {

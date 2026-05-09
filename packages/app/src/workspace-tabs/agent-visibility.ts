@@ -1,4 +1,5 @@
 import type { Agent } from "@/stores/session-store";
+import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
 import { shouldAutoOpenAgentTab } from "@/subagents/policies";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
@@ -50,6 +51,26 @@ export function deriveWorkspaceAgentVisibility(input: {
   }
 
   return { activeAgentIds, autoOpenAgentIds, knownAgentIds };
+}
+
+export function buildWorkspaceTabSnapshot(input: {
+  agentVisibility: WorkspaceAgentVisibility;
+  agentsHydrated: boolean;
+  terminalsHydrated: boolean;
+  knownTerminalIds: Iterable<string>;
+  standaloneTerminalIds: Iterable<string>;
+  hasActivePendingDraftCreate: boolean;
+}): WorkspaceTabSnapshot {
+  return {
+    agentsHydrated: input.agentsHydrated,
+    terminalsHydrated: input.terminalsHydrated,
+    activeAgentIds: input.agentVisibility.activeAgentIds,
+    autoOpenAgentIds: input.agentVisibility.autoOpenAgentIds,
+    knownAgentIds: input.agentVisibility.knownAgentIds,
+    knownTerminalIds: input.knownTerminalIds,
+    standaloneTerminalIds: input.standaloneTerminalIds,
+    hasActivePendingDraftCreate: input.hasActivePendingDraftCreate,
+  };
 }
 
 export function workspaceAgentVisibilityEqual(

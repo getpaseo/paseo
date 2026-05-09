@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import {
+  buildWorkspaceTabSnapshot,
   deriveWorkspaceAgentVisibility,
   shouldPruneWorkspaceAgentTab,
   workspaceAgentVisibilityEqual,
-} from "@/screens/workspace/workspace-agent-visibility";
+} from "@/workspace-tabs/agent-visibility";
 
 function makeAgent(input: {
   id: string;
@@ -263,6 +264,34 @@ describe("workspace agent visibility", () => {
     expect(result.activeAgentIds).toEqual(new Set(["recent-agent"]));
     expect(result.autoOpenAgentIds).toEqual(new Set(["recent-agent"]));
     expect(result.knownAgentIds).toEqual(new Set(["recent-agent"]));
+  });
+
+  it("builds the tab reconciliation snapshot without callers unpacking agent visibility", () => {
+    const agentVisibility = {
+      activeAgentIds: new Set(["active-agent"]),
+      autoOpenAgentIds: new Set(["root-agent"]),
+      knownAgentIds: new Set(["active-agent", "archived-agent"]),
+    };
+
+    expect(
+      buildWorkspaceTabSnapshot({
+        agentVisibility,
+        agentsHydrated: true,
+        terminalsHydrated: true,
+        knownTerminalIds: ["terminal-1", "script-terminal"],
+        standaloneTerminalIds: ["terminal-1"],
+        hasActivePendingDraftCreate: false,
+      }),
+    ).toEqual({
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: agentVisibility.activeAgentIds,
+      autoOpenAgentIds: agentVisibility.autoOpenAgentIds,
+      knownAgentIds: agentVisibility.knownAgentIds,
+      knownTerminalIds: ["terminal-1", "script-terminal"],
+      standaloneTerminalIds: ["terminal-1"],
+      hasActivePendingDraftCreate: false,
+    });
   });
 
   describe("workspaceAgentVisibilityEqual", () => {
