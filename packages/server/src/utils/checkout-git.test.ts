@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import {
   existsSync,
   mkdtempSync,
