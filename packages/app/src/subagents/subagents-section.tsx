@@ -1,16 +1,25 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { Archive, ChevronDown, ChevronRight } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import {
   WorkspaceTabIcon,
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
+import type { Theme } from "@/styles/theme";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "@/subagents/subagents";
+
+const ThemedArchive = withUnistyles(Archive);
+
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 interface SubagentsSectionProps {
   rows: SubagentRow[];
@@ -159,7 +168,6 @@ function SubagentsSectionRow({
   onOpenSubagent,
   onArchiveSubagent,
 }: SubagentsSectionRowProps): ReactElement {
-  const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const [hovered, setHovered] = useState(false);
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
@@ -174,7 +182,6 @@ function SubagentsSectionRow({
   const handlePointerLeave = useCallback(() => setHovered(false), []);
   const archiveAlwaysVisible = isNative || isCompact;
   const archiveVisible = archiveAlwaysVisible || hovered;
-  const archiveSlotStyle = archiveVisible ? styles.archiveSlotVisible : styles.archiveSlotHidden;
 
   return (
     // Wrapper View handles hover so moving the pointer between the row and
@@ -193,18 +200,12 @@ function SubagentsSectionRow({
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>
-            <View style={archiveSlotStyle} pointerEvents={archiveVisible ? "auto" : "none"}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Archive ${displayLabel}`}
-                testID={`subagents-section-archive-${row.id}`}
-                onPress={handleArchivePress}
-                style={archiveButtonStyle}
-                hitSlop={8}
-              >
-                <Archive size={14} color={theme.colors.foregroundMuted} />
-              </Pressable>
-            </View>
+            <SubagentArchiveButton
+              rowId={row.id}
+              displayLabel={displayLabel}
+              visible={archiveVisible}
+              onPress={handleArchivePress}
+            />
           </View>
         )}
       </Pressable>
@@ -212,8 +213,46 @@ function SubagentsSectionRow({
   );
 }
 
-function archiveButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
-  return [styles.archiveButton, (hovered || pressed) && styles.archiveButtonActive];
+function SubagentArchiveButton({
+  rowId,
+  displayLabel,
+  visible,
+  onPress,
+}: {
+  rowId: string;
+  displayLabel: string;
+  visible: boolean;
+  onPress: () => void;
+}): ReactElement {
+  return (
+    <View
+      style={visible ? styles.archiveSlotVisible : styles.archiveSlotHidden}
+      pointerEvents={visible ? "auto" : "none"}
+    >
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild disabled={!visible}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Archive ${displayLabel}`}
+            testID={`subagents-section-archive-${rowId}`}
+            onPress={onPress}
+            style={styles.archiveButton}
+            hitSlop={8}
+          >
+            {({ hovered, pressed }) => (
+              <ThemedArchive
+                size={14}
+                uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
+              />
+            )}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="center" offset={8}>
+          <Text style={styles.tooltipText}>Archive subagent</Text>
+        </TooltipContent>
+      </Tooltip>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -298,11 +337,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   archiveButton: {
     padding: theme.spacing[1],
-    borderRadius: theme.borderRadius.base,
     alignItems: "center",
     justifyContent: "center",
   },
-  archiveButtonActive: {
-    backgroundColor: theme.colors.surface3,
+  tooltipText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foreground,
   },
 }));

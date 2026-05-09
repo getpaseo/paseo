@@ -53,6 +53,12 @@ vi.mock("@/panels/register-panels", () => ({
   ensurePanelsRegistered: () => {},
 }));
 
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => children,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => children,
+  TooltipContent: () => null,
+}));
+
 vi.mock("react-native-reanimated", () => ({
   default: {
     View: "div",
