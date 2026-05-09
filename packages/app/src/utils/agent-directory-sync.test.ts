@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@server/client/daemon-client";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
+import { PARENT_AGENT_ID_LABEL } from "@server/shared/agent-labels";
 import { useSessionStore } from "@/stores/session-store";
 import { replaceFetchedAgentDirectory } from "./agent-directory-sync";
 
@@ -67,7 +68,7 @@ describe("replaceFetchedAgentDirectory", () => {
         createEntry(
           createAgentPayload({
             id: "child-1",
-            labels: { "paseo.parent-agent-id": "parent-a" },
+            labels: { [PARENT_AGENT_ID_LABEL]: "parent-a" },
           }),
         ),
       ],
@@ -79,7 +80,7 @@ describe("replaceFetchedAgentDirectory", () => {
         createEntry(
           createAgentPayload({
             id: "child-1",
-            labels: { "paseo.parent-agent-id": "parent-b" },
+            labels: { [PARENT_AGENT_ID_LABEL]: "parent-b" },
           }),
         ),
       ],

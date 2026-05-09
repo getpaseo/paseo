@@ -1,4 +1,5 @@
 import type { Agent } from "@/stores/session-store";
+import { shouldAutoOpenAgentTab } from "@/subagents/policies";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 function normalizeWorkspaceId(value: string | null | undefined): string {
@@ -36,7 +37,7 @@ export function deriveWorkspaceAgentVisibility(input: {
     knownAgentIds.add(agent.id);
     if (!agent.archivedAt) {
       activeAgentIds.add(agent.id);
-      if (!agent.parentAgentId) {
+      if (shouldAutoOpenAgentTab(agent)) {
         autoOpenAgentIds.add(agent.id);
       }
     }

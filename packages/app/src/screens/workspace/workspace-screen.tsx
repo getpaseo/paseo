@@ -150,6 +150,7 @@ import {
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
 } from "@/screens/workspace/workspace-bulk-close";
+import { resolveCloseAgentTabPolicy } from "@/subagents";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { isAbsolutePath } from "@/utils/path";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
@@ -2274,10 +2275,10 @@ function WorkspaceScreenContent({
 
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-        const isSubagent = Boolean(agent?.parentAgentId);
+        const closePolicy = resolveCloseAgentTabPolicy(agent);
         const isRunning = agent?.status === "running" || agent?.status === "initializing";
 
-        if (isRunning && !isSubagent) {
+        if (isRunning && closePolicy.kind === "archive-on-close") {
           const confirmed = await confirmDialog({
             title: "Archive running agent?",
             message:
@@ -2300,7 +2301,7 @@ function WorkspaceScreenContent({
           });
         }
 
-        if (isSubagent) {
+        if (closePolicy.kind === "layout-only") {
           return;
         }
 

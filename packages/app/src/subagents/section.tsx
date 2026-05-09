@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { Archive, ChevronDown, ChevronRight } from "lucide-react-native";
-import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -12,16 +12,18 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
-import type { SubagentRow } from "@/subagents/subagents";
+import type { SubagentRow } from "./select";
 
 const ThemedArchive = withUnistyles(Archive);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
-interface SubagentsSectionProps {
+export interface SubagentsSectionProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
   onArchiveSubagent: (id: string) => void;
@@ -90,7 +92,6 @@ export function SubagentsSection({
   onOpenSubagent,
   onArchiveSubagent,
 }: SubagentsSectionProps): ReactElement | null {
-  const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
 
   const toggleExpanded = useCallback(() => {
@@ -116,7 +117,6 @@ export function SubagentsSection({
   }
 
   const headerLabel = formatHeaderLabel(rows);
-  const ChevronIcon = expanded ? ChevronDown : ChevronRight;
 
   return (
     <View style={styles.outer} testID="subagents-section">
@@ -129,7 +129,11 @@ export function SubagentsSection({
             onPress={toggleExpanded}
             style={headerStyle}
           >
-            <ChevronIcon size={12} color={theme.colors.foregroundMuted} />
+            {expanded ? (
+              <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+            ) : (
+              <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
+            )}
             <Text style={styles.headerLabel} numberOfLines={1}>
               {headerLabel}
             </Text>

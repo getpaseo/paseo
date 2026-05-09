@@ -5,8 +5,8 @@ import React from "react";
 import { act } from "@testing-library/react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SubagentsSection } from "./subagents-section";
-import type { SubagentRow } from "./subagents";
+import { SubagentsSection } from "./section";
+import type { SubagentRow } from "./select";
 
 const { theme } = vi.hoisted(() => ({
   theme: {

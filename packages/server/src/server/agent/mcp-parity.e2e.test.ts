@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { AGENT_WAIT_TIMEOUT_MS } from "./mcp-shared.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
 
 interface StructuredContent {
   [key: string]: unknown;
@@ -261,13 +262,13 @@ describe("Suite A: Core Fixes", () => {
     expect(AGENT_WAIT_TIMEOUT_MS).toBe(30_000);
   });
 
-  test("create_agent with callerAgentId sets paseo.parent-agent-id label", async () => {
+  test("create_agent with callerAgentId sets the parent agent label", async () => {
     let agentId: string | null = null;
     try {
       agentId = await createChildAgent();
       const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(snapshot?.labels).toMatchObject({
-        "paseo.parent-agent-id": parentAgentId,
+        [PARENT_AGENT_ID_LABEL]: parentAgentId,
       });
     } finally {
       await archiveAgentIfPresent(agentId);

@@ -32,6 +32,7 @@ export {
   parseConnectionUri,
   shouldUseTlsForDefaultHostedRelay,
 } from "../shared/daemon-endpoints.js";
+export { PARENT_AGENT_ID_LABEL } from "../shared/agent-labels.js";
 export {
   DirectTcpHostConnectionSchema,
   type DirectTcpHostConnection,

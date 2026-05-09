@@ -5,6 +5,7 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
+import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -54,8 +55,17 @@ import { getAgentProviderDefinition } from "./provider-manifest.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: false,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: true,
+};
 
 type TimeoutResult = "completed" | "timed_out";
+type ArchivedStoredAgentRecord = StoredAgentRecord & { archivedAt: string };
 
 interface TimeoutOptions {
   operation: Promise<void>;
@@ -65,6 +75,31 @@ interface TimeoutOptions {
 
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
+}
+
+function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
+  const config: AgentSessionConfig = {
+    provider: record.provider,
+    cwd: record.cwd,
+  };
+  if (!record.config) {
+    return config;
+  }
+  if (record.config.title != null) config.title = record.config.title;
+  if (record.config.modeId != null) config.modeId = record.config.modeId;
+  if (record.config.model != null) config.model = record.config.model;
+  if (record.config.thinkingOptionId != null) {
+    config.thinkingOptionId = record.config.thinkingOptionId;
+  }
+  if (record.config.featureValues != null) {
+    config.featureValues = record.config.featureValues;
+  }
+  if (record.config.extra != null) config.extra = record.config.extra;
+  if (record.config.systemPrompt != null) {
+    config.systemPrompt = record.config.systemPrompt;
+  }
+  if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
+  return config;
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -960,22 +995,7 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
-    const archivedAt = new Date().toISOString();
-    const normalizedStatus =
-      stored.lastStatus === "running" || stored.lastStatus === "initializing"
-        ? "idle"
-        : stored.lastStatus;
-
-    await this.registry.upsert({
-      ...stored,
-      archivedAt,
-      updatedAt: archivedAt,
-      lastStatus: normalizedStatus,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-    });
-    this.notifyAgentState(agentId);
+    const { archivedAt } = await this.markRecordArchived(stored);
     await this.closeAgent(agentId);
 
     await this.cascadeArchiveChildren(agentId);
@@ -983,11 +1003,11 @@ export class AgentManager {
     return { archivedAt };
   }
 
-  // Children created via the MCP `create_agent` tool carry a
-  // `paseo.parent-agent-id` label pointing back at the caller. Archiving the
-  // parent cascades to those children so subagent fleets don't outlive their
-  // orchestrator. Handoff agents launched the same way are caught by this
-  // cascade — see docs/agent-lifecycle.md for the accepted limitation.
+  // Children created via the MCP `create_agent` tool carry the parent-agent-id
+  // label pointing back at the caller. Archiving the parent cascades to those
+  // children so subagent fleets don't outlive their orchestrator. Handoff agents
+  // launched the same way are caught by this cascade — see docs/agent-lifecycle.md
+  // for the accepted limitation.
   private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
     const registry = this.registry;
     if (!registry) {
@@ -998,30 +1018,82 @@ export class AgentManager {
       if (record.archivedAt) {
         continue;
       }
-      if (record.labels?.["paseo.parent-agent-id"] !== parentAgentId) {
+      if (record.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
         continue;
       }
-      if (!this.agents.has(record.id)) {
-        await registry.upsert({
-          ...record,
-          archivedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          requiresAttention: false,
-          attentionReason: null,
-          attentionTimestamp: null,
-        });
-        await this.cascadeArchiveChildren(record.id);
-        continue;
-      }
-      try {
+      if (this.agents.has(record.id)) {
         await this.archiveAgent(record.id);
-      } catch (error) {
-        this.logger.warn(
-          { parentAgentId, childAgentId: record.id, error },
-          "cascade archive failed for child agent",
-        );
+      } else {
+        await this.markRecordArchived(record);
+        await this.cascadeArchiveChildren(record.id);
       }
     }
+  }
+
+  private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
+    const registry = this.requireRegistry();
+    const archivedAt = new Date().toISOString();
+    const normalizedStatus =
+      record.lastStatus === "running" || record.lastStatus === "initializing"
+        ? "idle"
+        : record.lastStatus;
+    const archivedRecord: ArchivedStoredAgentRecord = {
+      ...record,
+      archivedAt,
+      updatedAt: archivedAt,
+      lastStatus: normalizedStatus,
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    };
+
+    await registry.upsert(archivedRecord);
+
+    if (this.agents.has(record.id)) {
+      this.notifyAgentState(record.id);
+    } else if (!archivedRecord.internal) {
+      this.dispatchArchivedStoredAgent(archivedRecord);
+    }
+
+    return archivedRecord;
+  }
+
+  private dispatchArchivedStoredAgent(record: StoredAgentRecord): void {
+    const updatedAt = new Date(record.updatedAt);
+    this.dispatch({
+      type: "agent_state",
+      agent: {
+        id: record.id,
+        provider: record.provider,
+        cwd: record.cwd,
+        session: null,
+        capabilities: STORED_AGENT_CAPABILITIES,
+        config: buildStoredAgentConfig(record),
+        runtimeInfo: undefined,
+        lifecycle: "closed",
+        createdAt: new Date(record.createdAt),
+        updatedAt,
+        availableModes: [],
+        features: record.features,
+        currentModeId: record.lastModeId ?? null,
+        pendingPermissions: new Map(),
+        bufferedPermissionResolutions: new Map(),
+        inFlightPermissionResponses: new Set(),
+        pendingReplacement: false,
+        activeForegroundTurnId: null,
+        foregroundTurnWaiters: new Set(),
+        finalizedForegroundTurnIds: new Set(),
+        unsubscribeSession: null,
+        persistence: record.persistence ?? null,
+        historyPrimed: true,
+        lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
+        lastUsage: undefined,
+        lastError: record.lastError ?? undefined,
+        attention: { requiresAttention: false },
+        internal: record.internal,
+        labels: record.labels,
+      },
+    });
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
