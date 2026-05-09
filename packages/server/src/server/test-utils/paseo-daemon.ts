@@ -18,6 +18,7 @@ interface TestPaseoDaemonOptions {
   corsAllowedOrigins?: string[];
   listen?: string;
   logger?: Parameters<typeof createPaseoDaemon>[1];
+  mcpDebug?: boolean;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
@@ -152,7 +153,7 @@ async function prepareTestDaemonConfig(
     hostnames: true,
     mcpEnabled: true,
     staticDir,
-    mcpDebug: false,
+    mcpDebug: options.mcpDebug ?? false,
     agentClients: options.agentClients ?? createTestAgentClients(),
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,

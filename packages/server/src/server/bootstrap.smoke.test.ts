@@ -41,6 +41,52 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("redacts Agent MCP debug request credentials and bodies", async () => {
+    const logLines: string[] = [];
+    const logger = pino(
+      { level: "debug" },
+      {
+        write: (line: string) => {
+          logLines.push(line);
+        },
+      },
+    );
+    const daemonHandle = await createTestPaseoDaemon({
+      logger,
+      mcpDebug: true,
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/mcp/agents`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret-debug-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            apiKey: "secret-body-token",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const logs = logLines.join("\n");
+      expect(logs).toContain("Agent MCP request");
+      expect(logs).toContain("[redacted]");
+      expect(logs).toContain('"method":"tools/call"');
+      expect(logs).toContain('"hasParams":true');
+      expect(logs).not.toContain("secret-debug-token");
+      expect(logs).not.toContain("secret-body-token");
+      expect(logs).not.toContain("apiKey");
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
   test("fails fast when OpenAI speech provider is configured without credentials", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-openai-config-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
