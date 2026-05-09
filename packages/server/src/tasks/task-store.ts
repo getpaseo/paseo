@@ -2,7 +2,12 @@ import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Task, TaskStore, CreateTaskOptions, TaskStatus } from "./types.js";
-import { loadScopedTaskGraph, sortByPriorityThenCreated } from "./task-graph.js";
+import {
+  isBlockedTask,
+  isReadyTask,
+  loadScopedTaskGraph,
+  sortByPriorityThenCreated,
+} from "./task-graph.js";
 
 function generateId(): string {
   return randomBytes(4).toString("hex");
@@ -253,34 +258,14 @@ export class FileTaskStore implements TaskStore {
 
   async getReady(scopeId?: string): Promise<Task[]> {
     const graph = await loadScopedTaskGraph(this, scopeId);
-
-    const isReady = (task: Task): boolean => {
-      if (task.status !== "open") return false;
-      const depsReady = task.deps.every((depId) => {
-        const dep = graph.taskMap.get(depId);
-        return dep?.status === "done";
-      });
-      if (!depsReady) return false;
-      const children = graph.childrenMap.get(task.id) ?? [];
-      return children.every((c) => c.status === "done");
-    };
-
-    return graph.candidates.filter(isReady).sort(sortByPriorityThenCreated);
+    return graph.candidates
+      .filter((task) => isReadyTask(graph, task))
+      .sort(sortByPriorityThenCreated);
   }
 
   async getBlocked(scopeId?: string): Promise<Task[]> {
     const graph = await loadScopedTaskGraph(this, scopeId);
-
-    const isBlocked = (task: Task): boolean => {
-      if (task.status === "draft" || task.status === "done") return false;
-      if (task.deps.length === 0) return false;
-      return task.deps.some((depId) => {
-        const dep = graph.taskMap.get(depId);
-        return dep?.status !== "done";
-      });
-    };
-
-    return graph.candidates.filter(isBlocked);
+    return graph.candidates.filter((task) => isBlockedTask(graph, task));
   }
 
   async getClosed(scopeId?: string): Promise<Task[]> {

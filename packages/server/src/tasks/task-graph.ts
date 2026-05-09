@@ -6,6 +6,7 @@ export interface TaskGraph {
   taskMap: Map<string, Task>;
   childrenMap: Map<string, Task[]>;
   candidateIds: Set<string>;
+  doneTaskIds: Set<string>;
 }
 
 type TaskGraphStore = Pick<TaskStore, "list" | "get" | "getDescendants">;
@@ -35,6 +36,47 @@ export function buildChildrenMap(tasks: Task[]): Map<string, Task[]> {
   return childrenMap;
 }
 
+export function isReadyTask(graph: TaskGraph, task: Task): boolean {
+  return (
+    task.status === "open" &&
+    areTaskDepsDone(graph, task, graph.doneTaskIds) &&
+    areTaskChildrenDone(graph, task.id, graph.doneTaskIds)
+  );
+}
+
+export function isBlockedTask(graph: TaskGraph, task: Task): boolean {
+  return (
+    task.status !== "draft" &&
+    task.status !== "done" &&
+    task.deps.length > 0 &&
+    !areTaskDepsDone(graph, task, graph.doneTaskIds)
+  );
+}
+
+export function isTaskExecutableInOrder(
+  graph: TaskGraph,
+  taskId: string,
+  completedTaskIds: Set<string>,
+): boolean {
+  const task = graph.taskMap.get(taskId);
+  return (
+    task !== undefined &&
+    areTaskDepsDone(graph, task, completedTaskIds) &&
+    areTaskChildrenDone(graph, task.id, completedTaskIds, { scoped: true })
+  );
+}
+
+export function getTasksById(graph: TaskGraph, taskIds: Iterable<string>): Task[] {
+  const tasks: Task[] = [];
+  for (const taskId of taskIds) {
+    const task = graph.taskMap.get(taskId);
+    if (task) {
+      tasks.push(task);
+    }
+  }
+  return tasks;
+}
+
 export async function loadScopedTaskGraph(
   store: TaskGraphStore,
   scopeId?: string,
@@ -48,7 +90,30 @@ export async function loadScopedTaskGraph(
     taskMap: buildTaskMap(allTasks),
     childrenMap: buildChildrenMap(allTasks),
     candidateIds: new Set(candidates.map((task) => task.id)),
+    doneTaskIds: new Set(allTasks.filter((task) => task.status === "done").map((task) => task.id)),
   };
+}
+
+function areTaskDepsDone(graph: TaskGraph, task: Task, completedTaskIds: Set<string>): boolean {
+  return task.deps.every((depId) => {
+    const dep = graph.taskMap.get(depId);
+    return dep !== undefined && completedTaskIds.has(depId);
+  });
+}
+
+function areTaskChildrenDone(
+  graph: TaskGraph,
+  taskId: string,
+  completedTaskIds: Set<string>,
+  options?: { scoped: boolean },
+): boolean {
+  const children = graph.childrenMap.get(taskId) ?? [];
+  return children.every((child) => {
+    if (options?.scoped === true && !graph.candidateIds.has(child.id)) {
+      return true;
+    }
+    return completedTaskIds.has(child.id);
+  });
 }
 
 async function loadScopedCandidates(

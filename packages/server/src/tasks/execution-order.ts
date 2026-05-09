@@ -1,5 +1,11 @@
 import type { Task, TaskStore } from "./types.js";
-import { buildChildrenMap, loadScopedTaskGraph, sortByPriorityThenCreated } from "./task-graph.js";
+import {
+  buildChildrenMap,
+  getTasksById,
+  isTaskExecutableInOrder,
+  loadScopedTaskGraph,
+  sortByPriorityThenCreated,
+} from "./task-graph.js";
 
 export interface ExecutionOrderResult {
   /** Tasks in execution order (done first, then pending) */
@@ -24,23 +30,12 @@ export async function computeExecutionOrder(
 ): Promise<ExecutionOrderResult> {
   const graph = await loadScopedTaskGraph(store, scopeId);
 
-  const simDone = new Set(graph.allTasks.filter((t) => t.status === "done").map((t) => t.id));
+  const simDone = new Set(graph.doneTaskIds);
   const remaining = new Set(
     graph.candidates
       .filter((t) => t.status === "open" || t.status === "in_progress")
       .map((t) => t.id),
   );
-
-  const isReady = (taskId: string): boolean => {
-    const task = graph.taskMap.get(taskId);
-    if (!task) return false;
-    const depsOk = task.deps.every((depId) => simDone.has(depId));
-    const children = (graph.childrenMap.get(taskId) ?? []).filter((c) =>
-      graph.candidateIds.has(c.id),
-    );
-    const childrenOk = children.every((c) => simDone.has(c.id));
-    return depsOk && childrenOk;
-  };
 
   const timeline: Task[] = [];
   const orderMap = new Map<string, number>();
@@ -56,9 +51,8 @@ export async function computeExecutionOrder(
 
   // Then pending tasks in execution order
   while (remaining.size > 0) {
-    const readyNow = [...remaining]
-      .filter(isReady)
-      .map((tid) => graph.taskMap.get(tid)!)
+    const readyNow = getTasksById(graph, remaining)
+      .filter((task) => isTaskExecutableInOrder(graph, task.id, simDone))
       .sort(sortByPriorityThenCreated);
 
     if (readyNow.length === 0) break;
