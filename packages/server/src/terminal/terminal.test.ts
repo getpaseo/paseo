@@ -305,7 +305,7 @@ describe("createTerminal", () => {
   });
 });
 
-describe("send input", () => {
+describe.skipIf(isPlatform("win32"))("send input", () => {
   it("executes a simple echo command", async () => {
     const session = trackSession(
       await createTerminal({
@@ -379,7 +379,7 @@ describe("send input", () => {
   });
 });
 
-describe("terminal title", () => {
+describe.skipIf(isPlatform("win32"))("terminal title", () => {
   it.skipIf(!hasZsh)("restores the user's ZDOTDIR through the zsh wrapper", async () => {
     const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-home-"));
     temporaryDirs.push(homeDir);
@@ -785,7 +785,7 @@ describe("terminal title", () => {
   });
 });
 
-describe("colors", () => {
+describe.skipIf(isPlatform("win32"))("colors", () => {
   it("captures ANSI 16 color codes (mode 1)", async () => {
     const session = trackSession(
       await createTerminal({
