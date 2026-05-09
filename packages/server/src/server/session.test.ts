@@ -121,6 +121,10 @@ const agentResponseMocks = vi.hoisted(() => ({
   generateStructuredAgentResponseWithFallback: vi.fn(),
 }));
 
+const agentMetadataMocks = vi.hoisted(() => ({
+  scheduleAgentMetadataGeneration: vi.fn(),
+}));
+
 const spawnMocks = vi.hoisted(() => ({
   execCommand: vi.fn(),
   spawnWorkspaceScript: vi.fn(),
@@ -228,6 +232,14 @@ vi.mock("./agent/agent-response-loop.js", async (importOriginal) => {
     ...actual,
     generateStructuredAgentResponseWithFallback:
       agentResponseMocks.generateStructuredAgentResponseWithFallback,
+  };
+});
+
+vi.mock("./agent/agent-metadata-generator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./agent/agent-metadata-generator.js")>();
+  return {
+    ...actual,
+    scheduleAgentMetadataGeneration: agentMetadataMocks.scheduleAgentMetadataGeneration,
   };
 });
 
