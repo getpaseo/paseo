@@ -1,10 +1,10 @@
 appId: sh.paseo
 ---
-# Ensure sidebar is closed: if sidebar-sessions is visible, close it via swipe left
+# Ensure sidebar is closed: if sidebar-history is visible, close it via swipe left
 - runFlow:
     when:
       visible:
-        id: "sidebar-sessions"
+        id: "sidebar-history"
     commands:
       - swipe:
           direction: LEFT
@@ -21,7 +21,7 @@ appId: sh.paseo
 
 # Verify sidebar opened
 - assertVisible:
-    id: "sidebar-sessions"
+    id: "sidebar-history"
 - takeScreenshot: 01-sidebar-opened
 
 # Close sidebar via swipe left

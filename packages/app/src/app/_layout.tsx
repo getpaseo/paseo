@@ -5,6 +5,7 @@ import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import {
+  default as React,
   createContext,
   type ReactNode,
   useCallback,
@@ -65,7 +66,6 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
-  hasConfiguredLocalDaemonOverride,
   useHostMutations,
   useHostRuntimeClient,
   useHosts,
@@ -312,7 +312,7 @@ async function shouldStartBuiltInDaemon(): Promise<boolean> {
   return settings.daemon.manageBuiltInDaemon;
 }
 
-function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
+export function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const store = getHostRuntimeStore();
     const daemonStartService = getDaemonStartService({ store });
@@ -327,16 +327,12 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const daemonStartError = useDaemonStartLastError();
   const daemonStartIsRunning = useDaemonStartIsRunning();
-  const waitForConfiguredLocalDaemon =
-    hasConfiguredLocalDaemonOverride() && !shouldUseDesktopDaemon();
-
   const [hasGivenUpWaitingForHost, setHasGivenUpWaitingForHost] = useState(false);
   useEffect(() => {
     if (
       anyOnlineHostServerId ||
       daemonStartError ||
       daemonStartIsRunning ||
-      waitForConfiguredLocalDaemon ||
       hasGivenUpWaitingForHost
     ) {
       return;
@@ -347,13 +343,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [
-    anyOnlineHostServerId,
-    daemonStartError,
-    daemonStartIsRunning,
-    waitForConfiguredLocalDaemon,
-    hasGivenUpWaitingForHost,
-  ]);
+  }, [anyOnlineHostServerId, daemonStartError, daemonStartIsRunning, hasGivenUpWaitingForHost]);
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });

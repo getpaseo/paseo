@@ -3,9 +3,14 @@ import type { SidebarShortcutWorkspaceTarget } from "@/utils/sidebar-shortcuts";
 
 const SHORTCUT_BADGE_DELAY_MS = 150;
 
+export type ProjectPickerIntent =
+  | { kind: "open-project" }
+  | { kind: "new-workspace"; headerTitle: string };
+
 interface KeyboardShortcutsState {
   commandCenterOpen: boolean;
   projectPickerOpen: boolean;
+  projectPickerIntent: ProjectPickerIntent;
   shortcutsDialogOpen: boolean;
   capturingShortcut: boolean;
   altDown: boolean;
@@ -15,7 +20,7 @@ interface KeyboardShortcutsState {
   sidebarShortcutWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
 
   setCommandCenterOpen: (open: boolean) => void;
-  setProjectPickerOpen: (open: boolean) => void;
+  setProjectPickerOpen: (open: boolean, intent?: ProjectPickerIntent) => void;
   setShortcutsDialogOpen: (open: boolean) => void;
   setCapturingShortcut: (capturing: boolean) => void;
   setAltDown: (down: boolean) => void;
@@ -50,6 +55,7 @@ function updateBadgeTimer(
 export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, get) => ({
   commandCenterOpen: false,
   projectPickerOpen: false,
+  projectPickerIntent: { kind: "open-project" },
   shortcutsDialogOpen: false,
   capturingShortcut: false,
   altDown: false,
@@ -58,7 +64,11 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   sidebarShortcutWorkspaceTargets: [],
 
   setCommandCenterOpen: (open) => set({ commandCenterOpen: open }),
-  setProjectPickerOpen: (open) => set({ projectPickerOpen: open }),
+  setProjectPickerOpen: (open, intent) =>
+    set({
+      projectPickerOpen: open,
+      projectPickerIntent: open ? (intent ?? { kind: "open-project" }) : { kind: "open-project" },
+    }),
   setShortcutsDialogOpen: (open) => set({ shortcutsDialogOpen: open }),
   setCapturingShortcut: (capturing) => set({ capturingShortcut: capturing }),
   setAltDown: (down) => {

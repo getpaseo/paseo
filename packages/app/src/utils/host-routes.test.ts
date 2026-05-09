@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHostAgentDetailRoute,
+  buildHostNewWorkspaceRoute,
   buildHostRootRoute,
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
@@ -158,5 +159,16 @@ describe("projects settings routes", () => {
     const route = buildProjectSettingsRoute(projectKey);
     const segment = route.slice("/settings/projects/".length);
     expect(decodeURIComponent(segment)).toBe(projectKey);
+  });
+});
+
+describe("new workspace route", () => {
+  it("can carry a header title separately from the project display name", () => {
+    expect(
+      buildHostNewWorkspaceRoute("server-1", "/repo", {
+        displayName: "Project",
+        headerTitle: "New session",
+      }),
+    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project&title=New+session");
   });
 });

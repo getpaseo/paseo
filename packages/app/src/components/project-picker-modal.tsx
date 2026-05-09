@@ -9,6 +9,7 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { Folder } from "lucide-react-native";
+import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -19,6 +20,7 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
 import { isNative } from "@/constants/platform";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
+import { buildHostNewWorkspaceRoute } from "@/utils/host-routes";
 
 interface PathRowProps {
   path: string;
@@ -63,6 +65,7 @@ export function ProjectPickerModal() {
   const serverId = useActiveServerId();
 
   const open = useKeyboardShortcutsStore((s) => s.projectPickerOpen);
+  const intent = useKeyboardShortcutsStore((s) => s.projectPickerIntent);
   const setOpen = useKeyboardShortcutsStore((s) => s.setProjectPickerOpen);
 
   const client = useHostRuntimeClient(serverId ?? "");
@@ -115,6 +118,16 @@ export function ProjectPickerModal() {
 
       setIsSubmitting(true);
       try {
+        if (intent.kind === "new-workspace") {
+          router.navigate(
+            buildHostNewWorkspaceRoute(serverId, trimmed, {
+              headerTitle: intent.headerTitle,
+            }) as never,
+          );
+          setOpen(false);
+          return;
+        }
+
         const didOpenProject = await openProject(trimmed);
         if (didOpenProject) {
           setOpen(false);
@@ -123,7 +136,7 @@ export function ProjectPickerModal() {
         setIsSubmitting(false);
       }
     },
-    [client, openProject, serverId, setOpen],
+    [client, intent, openProject, serverId, setOpen],
   );
 
   const handleSubmitCustom = useCallback(() => {

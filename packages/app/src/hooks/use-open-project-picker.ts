@@ -1,10 +1,20 @@
 import { useCallback } from "react";
+import { router } from "expo-router";
 import { pickDirectory } from "@/desktop/pick-directory";
-import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import {
+  useKeyboardShortcutsStore,
+  type ProjectPickerIntent,
+} from "@/stores/keyboard-shortcuts-store";
+import { buildHostNewWorkspaceRoute } from "@/utils/host-routes";
 import { useIsLocalDaemon } from "./use-is-local-daemon";
 import { useOpenProject } from "./use-open-project";
 
-export function useOpenProjectPicker(serverId: string | null): () => Promise<void> {
+const OPEN_PROJECT_INTENT: ProjectPickerIntent = { kind: "open-project" };
+
+export function useOpenProjectPicker(
+  serverId: string | null,
+  intent: ProjectPickerIntent = OPEN_PROJECT_INTENT,
+): () => Promise<void> {
   const normalizedServerId = serverId?.trim() ?? "";
   const isLocalDaemon = useIsLocalDaemon(normalizedServerId);
   const setProjectPickerOpen = useKeyboardShortcutsStore((state) => state.setProjectPickerOpen);
@@ -16,7 +26,7 @@ export function useOpenProjectPicker(serverId: string | null): () => Promise<voi
     }
 
     if (!isLocalDaemon) {
-      setProjectPickerOpen(true);
+      setProjectPickerOpen(true, intent);
       return;
     }
 
@@ -25,6 +35,15 @@ export function useOpenProjectPicker(serverId: string | null): () => Promise<voi
       return;
     }
 
+    if (intent.kind === "new-workspace") {
+      router.navigate(
+        buildHostNewWorkspaceRoute(normalizedServerId, path, {
+          headerTitle: intent.headerTitle,
+        }) as never,
+      );
+      return;
+    }
+
     await openProject(path);
-  }, [isLocalDaemon, normalizedServerId, openProject, setProjectPickerOpen]);
+  }, [intent, isLocalDaemon, normalizedServerId, openProject, setProjectPickerOpen]);
 }

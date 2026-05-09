@@ -31,9 +31,9 @@ export async function closeMobileAgentSidebar(page: Page): Promise<void> {
 
 // The mobile sidebar panel animates via translateX; toBeInViewport reflects the rendered position.
 export async function expectMobileAgentSidebarVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("sidebar-sessions")).toBeInViewport({ timeout: 5_000 });
+  await expect(page.getByTestId("sidebar-history")).toBeInViewport({ timeout: 5_000 });
 }
 
 export async function expectMobileAgentSidebarHidden(page: Page): Promise<void> {
-  await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport({ timeout: 5_000 });
+  await expect(page.getByTestId("sidebar-history")).not.toBeInViewport({ timeout: 5_000 });
 }

@@ -37,6 +37,7 @@ interface NewWorkspaceScreenProps {
   serverId: string;
   sourceDirectory: string;
   displayName?: string;
+  headerTitle?: string;
 }
 
 interface PickerOptionData {
@@ -329,6 +330,11 @@ function computeWorkspaceTitle(
   );
 }
 
+function resolveNewWorkspaceHeaderTitle(headerTitle: string | undefined): string {
+  const trimmed = headerTitle?.trim();
+  return trimmed ? trimmed : "New workspace";
+}
+
 function submitWorkspaceDraft(input: SubmitDraftInput): void {
   const {
     serverId,
@@ -385,6 +391,7 @@ export function NewWorkspaceScreen({
   serverId,
   sourceDirectory,
   displayName: displayNameProp,
+  headerTitle: headerTitleProp,
 }: NewWorkspaceScreenProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -412,6 +419,7 @@ export function NewWorkspaceScreen({
   }, [pickerSearchQuery]);
 
   const displayName = displayNameProp?.trim() ?? "";
+  const headerTitle = resolveNewWorkspaceHeaderTitle(headerTitleProp);
   const workspace = createdWorkspace;
   const selectedItem = pickerSelection?.item ?? null;
   const isPending = pendingAction !== null;
@@ -711,7 +719,7 @@ export function NewWorkspaceScreen({
             <SidebarMenuToggle />
             <View style={styles.headerTitleContainer}>
               <Text style={styles.headerTitle} numberOfLines={1}>
-                New workspace
+                {headerTitle}
               </Text>
               <Text style={styles.headerProjectTitle} numberOfLines={1}>
                 {workspaceTitle}

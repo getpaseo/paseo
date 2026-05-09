@@ -108,7 +108,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
   },
   buttonHovered: {

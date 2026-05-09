@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { __private__ } from "./use-all-agents-list";
 import type { Agent } from "@/stores/session-store";
+
+vi.mock("@/runtime/host-runtime", () => ({
+  getHostRuntimeStore: () => ({
+    refreshAgentDirectory: vi.fn(),
+  }),
+  useHostRuntimeConnectionStatus: () => "online",
+  useHostRuntimeIsDirectoryLoading: () => false,
+  useHosts: () => [{ serverId: "server-1", label: "Local" }],
+}));
 
 const AGENT_TIMESTAMP = new Date("2026-03-08T10:00:00.000Z");
 
