@@ -2,25 +2,10 @@ import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Task, TaskStore, CreateTaskOptions, TaskStatus } from "./types.js";
+import { loadScopedTaskGraph, sortByPriorityThenCreated } from "./task-graph.js";
 
 function generateId(): string {
   return randomBytes(4).toString("hex");
-}
-
-function sortByPriorityThenCreated(a: Task, b: Task): number {
-  // Tasks with priority come before tasks without
-  if (a.priority !== undefined && b.priority === undefined) return -1;
-  if (a.priority === undefined && b.priority !== undefined) return 1;
-
-  // If both have priority, lower number = higher priority
-  if (a.priority !== undefined && b.priority !== undefined) {
-    if (a.priority !== b.priority) {
-      return a.priority - b.priority;
-    }
-  }
-
-  // Fall back to created date (oldest first)
-  return a.created.localeCompare(b.created);
 }
 
 function serializeTask(task: Task): string {
@@ -267,82 +252,40 @@ export class FileTaskStore implements TaskStore {
   }
 
   async getReady(scopeId?: string): Promise<Task[]> {
-    const allTasks = await this.list();
-    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
-
-    let candidates: Task[];
-    if (scopeId) {
-      // Include the scoped task itself and all its descendants (children tree)
-      const scopeTask = await this.get(scopeId);
-      const descendants = await this.getDescendants(scopeId);
-      candidates = scopeTask ? [scopeTask, ...descendants] : descendants;
-    } else {
-      candidates = allTasks;
-    }
-
-    // Build children map for quick lookup
-    const childrenMap = new Map<string, Task[]>();
-    for (const t of allTasks) {
-      if (t.parentId) {
-        const siblings = childrenMap.get(t.parentId) ?? [];
-        siblings.push(t);
-        childrenMap.set(t.parentId, siblings);
-      }
-    }
+    const graph = await loadScopedTaskGraph(this, scopeId);
 
     const isReady = (task: Task): boolean => {
       if (task.status !== "open") return false;
-      // All deps must be done
       const depsReady = task.deps.every((depId) => {
-        const dep = taskMap.get(depId);
+        const dep = graph.taskMap.get(depId);
         return dep?.status === "done";
       });
       if (!depsReady) return false;
-      // All children must be done (if any exist)
-      const children = childrenMap.get(task.id) ?? [];
+      const children = graph.childrenMap.get(task.id) ?? [];
       return children.every((c) => c.status === "done");
     };
 
-    // Sort by priority first (lower = higher priority), then created date
-    return candidates.filter(isReady).sort(sortByPriorityThenCreated);
+    return graph.candidates.filter(isReady).sort(sortByPriorityThenCreated);
   }
 
   async getBlocked(scopeId?: string): Promise<Task[]> {
-    const allTasks = await this.list();
-    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
-
-    let candidates: Task[];
-    if (scopeId) {
-      const scopeTask = await this.get(scopeId);
-      const descendants = await this.getDescendants(scopeId);
-      candidates = scopeTask ? [scopeTask, ...descendants] : descendants;
-    } else {
-      candidates = allTasks;
-    }
+    const graph = await loadScopedTaskGraph(this, scopeId);
 
     const isBlocked = (task: Task): boolean => {
       if (task.status === "draft" || task.status === "done") return false;
       if (task.deps.length === 0) return false;
       return task.deps.some((depId) => {
-        const dep = taskMap.get(depId);
+        const dep = graph.taskMap.get(depId);
         return dep?.status !== "done";
       });
     };
 
-    return candidates.filter(isBlocked);
+    return graph.candidates.filter(isBlocked);
   }
 
   async getClosed(scopeId?: string): Promise<Task[]> {
-    let candidates: Task[];
-    if (scopeId) {
-      const scopeTask = await this.get(scopeId);
-      const descendants = await this.getDescendants(scopeId);
-      candidates = scopeTask ? [scopeTask, ...descendants] : descendants;
-    } else {
-      candidates = await this.list();
-    }
+    const { candidates } = await loadScopedTaskGraph(this, scopeId);
 
-    // Sort by created date (most recent first) for consistent ordering
     return candidates
       .filter((t) => t.status === "done")
       .sort((a, b) => b.created.localeCompare(a.created));
