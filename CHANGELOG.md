@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.72 - 2026-05-10
+
+### Fixed
+
+- **Codex approval prompts no longer hang.** Fixes a regression introduced in 0.1.70 where Codex agents would wait forever on command and file approvals — the prompt never reached the app and the agent stayed stuck in "running". ([#866](https://github.com/getpaseo/paseo/pull/866), [#869](https://github.com/getpaseo/paseo/pull/869))
+- **Windows: daemon no longer crashes when Codex emits non-JSON output.** Localized stdout lines from the Codex CLI are now ignored instead of taking down the daemon worker. ([#866](https://github.com/getpaseo/paseo/pull/866))
+- Drag-and-drop images onto the new workspace screen now works. ([#850](https://github.com/getpaseo/paseo/pull/850))
+- Archiving a worktree from the toolbar redirects you immediately instead of leaving you on the dead screen for a beat. ([#852](https://github.com/getpaseo/paseo/pull/852))
+- Pi-backed sessions now shut down cleanly when you close them, releasing extension resources on the Pi side. ([#863](https://github.com/getpaseo/paseo/pull/863))
+
 ## 0.1.71 - 2026-05-09
 
 ### Added
