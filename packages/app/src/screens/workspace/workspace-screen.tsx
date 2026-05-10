@@ -11,7 +11,7 @@ import {
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
 import { ActivityIndicator, BackHandler, Keyboard, Pressable, Text, View } from "react-native";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { DiffStat } from "@/components/diff-stat";
@@ -94,8 +94,6 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
-import type { ListTerminalsResponse } from "@server/shared/messages";
-import { upsertTerminalListEntry } from "@/utils/terminal-list";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -158,10 +156,12 @@ import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/l
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import { canCreateWorkspaceTerminal } from "@/screens/workspace/terminals/state";
+import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 
-const TERMINALS_QUERY_STALE_TIME = 5_000;
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
+const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
 
@@ -1028,8 +1028,6 @@ function WorkspaceHeaderTitleBar({
   );
 }
 
-type ListTerminalsPayload = ListTerminalsResponse["payload"];
-
 type PaneDirection = "left" | "right" | "up" | "down";
 
 function parsePaneDirection(actionId: string): PaneDirection | null {
@@ -1180,39 +1178,6 @@ function resolveWorkspaceAuthorityState(
   };
 }
 
-function reconcilePendingScriptTerminals(liveTerminalIds: string[], dataUpdatedAt: number) {
-  return function update(pendingTerminalIds: Map<string, number>): Map<string, number> {
-    if (pendingTerminalIds.size === 0) {
-      return pendingTerminalIds;
-    }
-    const liveIds = new Set(liveTerminalIds);
-    let changed = false;
-    const nextTerminalIds = new Map<string, number>();
-    for (const [terminalId, listedAt] of pendingTerminalIds) {
-      if (liveIds.has(terminalId) || dataUpdatedAt > listedAt) {
-        changed = true;
-        continue;
-      }
-      nextTerminalIds.set(terminalId, listedAt);
-    }
-    return changed ? nextTerminalIds : pendingTerminalIds;
-  };
-}
-
-function removeTerminalFromPayload(terminalId: string) {
-  return function updatePayload(
-    current: ListTerminalsPayload | undefined,
-  ): ListTerminalsPayload | undefined {
-    if (!current) {
-      return current;
-    }
-    return {
-      ...current,
-      terminals: current.terminals.filter((terminal) => terminal.id !== terminalId),
-    };
-  };
-}
-
 function getHostDisplayName(host: { label?: string | null } | null, fallback: string): string {
   const trimmed = host?.label?.trim();
   return trimmed ? trimmed : fallback;
@@ -1359,22 +1324,113 @@ function shouldShowWorkspaceExplorerSidebar(input: {
   return input.isRouteFocused && shouldShowWorkspaceScreenHeader(input);
 }
 
-function canCreateWorkspaceTerminal(input: {
-  isRouteFocused: boolean;
-  client: unknown;
-  isConnected: boolean;
-  workspaceDirectory: string | null;
-}): boolean {
-  return Boolean(
-    input.isRouteFocused && input.client && input.isConnected && input.workspaceDirectory,
-  );
-}
-
 function buildWorkspaceTerminalScopeKey(serverId: string, workspaceId: string): string | null {
   if (!serverId || !workspaceId) {
     return null;
   }
   return `${serverId}:${workspaceId}`;
+}
+
+interface WorkspaceTerminalTabActionsInput {
+  persistenceKey: string | null;
+  focusWorkspacePane: (workspaceKey: string, paneId: string) => void;
+  openWorkspaceTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  toast: {
+    error: (message: string) => void;
+    show: (message: string) => void;
+  };
+}
+
+interface WorkspaceTerminalTabActions {
+  handleTerminalCreated: (input: { terminalId: string; paneId?: string }) => void;
+  handleScriptTerminalSelected: (terminalId: string) => void;
+  handleWorkspacePathUnavailable: () => void;
+  handleTerminalCreateQueued: () => void;
+}
+
+function useWorkspaceTerminalTabActions({
+  persistenceKey,
+  focusWorkspacePane,
+  openWorkspaceTabFocused,
+  toast,
+}: WorkspaceTerminalTabActionsInput): WorkspaceTerminalTabActions {
+  const handleTerminalCreated = useCallback(
+    ({ terminalId, paneId }: { terminalId: string; paneId?: string }) => {
+      if (!persistenceKey) {
+        return;
+      }
+      if (paneId) {
+        focusWorkspacePane(persistenceKey, paneId);
+      }
+      openWorkspaceTabFocused(persistenceKey, { kind: "terminal", terminalId });
+    },
+    [focusWorkspacePane, openWorkspaceTabFocused, persistenceKey],
+  );
+  const handleScriptTerminalSelected = useCallback(
+    (terminalId: string) => {
+      if (!persistenceKey) {
+        return;
+      }
+      openWorkspaceTabFocused(persistenceKey, { kind: "terminal", terminalId });
+    },
+    [openWorkspaceTabFocused, persistenceKey],
+  );
+  const handleWorkspacePathUnavailable = useCallback(() => {
+    toast.error("Workspace path is not available yet");
+  }, [toast]);
+  const handleTerminalCreateQueued = useCallback(() => {
+    toast.show("Preparing workspace, opening terminal when ready...");
+  }, [toast]);
+
+  return {
+    handleTerminalCreated,
+    handleScriptTerminalSelected,
+    handleWorkspacePathUnavailable,
+    handleTerminalCreateQueued,
+  };
+}
+
+function useWorkspaceCheckoutStatus(input: {
+  client: ReturnType<typeof useHostRuntimeClient>;
+  isConnected: boolean;
+  isRouteFocused: boolean;
+  normalizedServerId: string;
+  normalizedWorkspaceId: string;
+  workspaceDirectory: string | null;
+}) {
+  const isCheckoutQueryEnabled = useMemo(
+    () =>
+      canCreateWorkspaceTerminal({
+        isRouteFocused: input.isRouteFocused,
+        client: input.client,
+        isConnected: input.isConnected,
+        workspaceDirectory: input.workspaceDirectory,
+      }),
+    [input.isRouteFocused, input.client, input.isConnected, input.workspaceDirectory],
+  );
+  const checkoutQuery = useQuery({
+    queryKey: checkoutStatusQueryKey(
+      input.normalizedServerId,
+      input.workspaceDirectory ?? `missing-workspace-directory:${input.normalizedWorkspaceId}`,
+    ),
+    enabled: isCheckoutQueryEnabled,
+    queryFn: async () => {
+      if (!input.client || !input.workspaceDirectory) {
+        throw new Error("Host is not connected");
+      }
+      return await input.client.getCheckoutStatus(input.workspaceDirectory);
+    },
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  });
+  const isCheckoutStatusLoading = useMemo(
+    () => isCheckoutQueryEnabled && checkoutQuery.data === undefined && !checkoutQuery.isError,
+    [isCheckoutQueryEnabled, checkoutQuery.data, checkoutQuery.isError],
+  );
+
+  return { checkoutQuery, isCheckoutStatusLoading };
 }
 
 function WorkspaceScreenContent({
@@ -1405,7 +1461,6 @@ function WorkspaceScreenContent({
     scopeKey: workspaceTerminalScopeKey,
   });
 
-  const queryClient = useQueryClient();
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const workspaceAuthority = useMemo(
@@ -1430,12 +1485,19 @@ function WorkspaceScreenContent({
   useProvidersSnapshot(normalizedServerId, {
     enabled: isRouteFocused,
   });
-  const [pendingTerminalCreateInput, setPendingTerminalCreateInput] = useState<{
-    paneId?: string;
-  } | null>(null);
-  const canCreateTerminalNow = useMemo(
-    () => canCreateWorkspaceTerminal({ isRouteFocused, client, isConnected, workspaceDirectory }),
-    [isRouteFocused, client, isConnected, workspaceDirectory],
+
+  const persistenceKey = useMemo(
+    () =>
+      buildWorkspaceTabPersistenceKey({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+      }),
+    [normalizedServerId, normalizedWorkspaceId],
+  );
+  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
+  const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
+  const hasHydratedWorkspaces = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
   );
 
   const workspaceAgentVisibility = useStoreWithEqualityFn(
@@ -1449,167 +1511,56 @@ function WorkspaceScreenContent({
     workspaceAgentVisibilityEqual,
   );
 
-  const terminalsQueryKey = useMemo(
-    () => ["terminals", normalizedServerId, workspaceDirectory] as const,
-    [normalizedServerId, workspaceDirectory],
-  );
-  const terminalsQuery = useQuery({
-    queryKey: terminalsQueryKey,
-    enabled: canCreateTerminalNow,
-    queryFn: async () => {
-      if (!client || !workspaceDirectory) {
-        throw new Error("Host is not connected");
-      }
-      return await client.listTerminals(workspaceDirectory);
-    },
-    staleTime: TERMINALS_QUERY_STALE_TIME,
+  const {
+    handleTerminalCreated,
+    handleScriptTerminalSelected,
+    handleWorkspacePathUnavailable,
+    handleTerminalCreateQueued,
+  } = useWorkspaceTerminalTabActions({
+    persistenceKey,
+    focusWorkspacePane,
+    openWorkspaceTabFocused,
+    toast,
   });
-  const terminals = useMemo(() => terminalsQuery.data?.terminals ?? [], [terminalsQuery.data]);
-  const liveTerminalIds = useMemo(() => terminals.map((terminal) => terminal.id), [terminals]);
-  const [pendingScriptTerminalIds, setPendingScriptTerminalIds] = useState<Map<string, number>>(
-    () => new Map(),
-  );
-  useEffect(() => {
-    setPendingScriptTerminalIds(new Map());
-  }, [normalizedServerId, normalizedWorkspaceId]);
-  const terminalsDataUpdatedAt = terminalsQuery.dataUpdatedAt;
-  useEffect(() => {
-    setPendingScriptTerminalIds(
-      reconcilePendingScriptTerminals(liveTerminalIds, terminalsDataUpdatedAt),
-    );
-  }, [liveTerminalIds, terminalsDataUpdatedAt]);
-  const knownTerminalIds = useMemo(() => {
-    const terminalIds = new Set(liveTerminalIds);
-    for (const terminalId of pendingScriptTerminalIds.keys()) {
-      terminalIds.add(terminalId);
-    }
-    return Array.from(terminalIds);
-  }, [liveTerminalIds, pendingScriptTerminalIds]);
-  const scriptTerminalIds = useMemo(() => {
-    const terminalIds = new Set(pendingScriptTerminalIds.keys());
-    for (const script of workspaceDescriptor?.scripts ?? []) {
-      if (script.terminalId) {
-        terminalIds.add(script.terminalId);
-      }
-    }
-    return terminalIds;
-  }, [pendingScriptTerminalIds, workspaceDescriptor?.scripts]);
-  const standaloneTerminalIds = useMemo(
-    () =>
-      terminals
-        .filter((terminal) => !scriptTerminalIds.has(terminal.id))
-        .map((terminal) => terminal.id),
-    [scriptTerminalIds, terminals],
-  );
-  const createTerminalMutation = useMutation({
-    mutationFn: async (_input?: { paneId?: string }) => {
-      if (!client || !workspaceDirectory) {
-        throw new Error("Host is not connected");
-      }
-      return await client.createTerminal(workspaceDirectory);
-    },
-    onSuccess: (payload, input) => {
-      const createdTerminal = payload.terminal;
-      if (createdTerminal) {
-        queryClient.setQueryData<ListTerminalsPayload>(terminalsQueryKey, (current) => {
-          const nextTerminals = upsertTerminalListEntry({
-            terminals: current?.terminals ?? [],
-            terminal: createdTerminal,
-          });
-          const cwd = current?.cwd ?? workspaceDirectory;
-          return {
-            ...(cwd ? { cwd } : {}),
-            terminals: nextTerminals,
-            requestId: current?.requestId ?? `terminal-create-${createdTerminal.id}`,
-          };
-        });
-      }
-
-      void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
-      if (createdTerminal) {
-        const workspaceKey = buildWorkspaceTabPersistenceKey({
-          serverId: normalizedServerId,
-          workspaceId: normalizedWorkspaceId,
-        });
-        if (!workspaceKey) {
-          return;
-        }
-        if (input?.paneId) {
-          focusWorkspacePane(workspaceKey, input.paneId);
-        }
-        useWorkspaceLayoutStore
-          .getState()
-          .openTabFocused(workspaceKey, { kind: "terminal", terminalId: createdTerminal.id });
-      }
-    },
-  });
-  const killTerminalMutation = useMutation({
-    mutationFn: async (terminalId: string) => {
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      const payload = await client.killTerminal(terminalId);
-      if (!payload.success) {
-        throw new Error("Unable to close terminal");
-      }
-      return payload;
-    },
+  const {
+    createMutation: createTerminalMutation,
+    createTerminal,
+    handleScriptTerminalStarted,
+    handleViewScriptTerminal,
+    invalidateTerminals,
+    killMutation: killTerminalMutation,
+    knownTerminalIds,
+    liveTerminalIds,
+    pendingCreateInput: pendingTerminalCreateInput,
+    query: terminalsQuery,
+    removeTerminalFromCache,
+    standaloneTerminalIds,
+    terminals,
+  } = useWorkspaceTerminals({
+    client,
+    isConnected,
+    isRouteFocused,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    workspaceDirectory,
+    workspaceScripts: workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS,
+    hasHydratedWorkspaces,
+    isMissingWorkspaceExecutionAuthority,
+    onTerminalCreated: handleTerminalCreated,
+    onScriptTerminalSelected: handleScriptTerminalSelected,
+    onWorkspacePathUnavailable: handleWorkspacePathUnavailable,
+    onTerminalCreateQueued: handleTerminalCreateQueued,
   });
   const { archiveAgent } = useArchiveAgent();
 
-  useEffect(() => {
-    if (!isRouteFocused || !client || !isConnected || !workspaceDirectory) {
-      return;
-    }
-
-    const unsubscribeChanged = client.on("terminals_changed", (message) => {
-      if (message.payload.cwd !== workspaceDirectory) {
-        return;
-      }
-
-      queryClient.setQueryData<ListTerminalsPayload>(terminalsQueryKey, (current) => ({
-        cwd: message.payload.cwd,
-        terminals: message.payload.terminals,
-        requestId: current?.requestId ?? `terminals-changed-${Date.now()}`,
-      }));
-    });
-
-    client.subscribeTerminals({ cwd: workspaceDirectory });
-
-    return () => {
-      unsubscribeChanged();
-      client.unsubscribeTerminals({ cwd: workspaceDirectory });
-    };
-  }, [client, isConnected, isRouteFocused, queryClient, terminalsQueryKey, workspaceDirectory]);
-
-  const isCheckoutQueryEnabled = useMemo(
-    () => canCreateWorkspaceTerminal({ isRouteFocused, client, isConnected, workspaceDirectory }),
-    [isRouteFocused, client, isConnected, workspaceDirectory],
-  );
-  const checkoutQuery = useQuery({
-    queryKey: checkoutStatusQueryKey(
-      normalizedServerId,
-      workspaceDirectory ?? `missing-workspace-directory:${normalizedWorkspaceId}`,
-    ),
-    enabled: isCheckoutQueryEnabled,
-    queryFn: async () => {
-      if (!client || !workspaceDirectory) {
-        throw new Error("Host is not connected");
-      }
-      return await client.getCheckoutStatus(workspaceDirectory);
-    },
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+  const { checkoutQuery, isCheckoutStatusLoading } = useWorkspaceCheckoutStatus({
+    client,
+    isConnected,
+    isRouteFocused,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    workspaceDirectory,
   });
-  const isCheckoutStatusLoading = useMemo(
-    () => isCheckoutQueryEnabled && checkoutQuery.data === undefined && !checkoutQuery.isError,
-    [isCheckoutQueryEnabled, checkoutQuery.data, checkoutQuery.isError],
-  );
-  const hasHydratedWorkspaces = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
-  );
   const hasHydratedAgents = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedAgents ?? false,
   );
@@ -1618,30 +1569,6 @@ function WorkspaceScreenContent({
     workspace: workspaceDescriptor,
     hasHydratedWorkspaces,
   });
-  useEffect(() => {
-    if (!pendingTerminalCreateInput) {
-      return;
-    }
-
-    if (canCreateTerminalNow && !createTerminalMutation.isPending) {
-      const pendingInput = pendingTerminalCreateInput;
-      setPendingTerminalCreateInput(null);
-      createTerminalMutation.mutate(pendingInput);
-      return;
-    }
-
-    if (hasHydratedWorkspaces && isMissingWorkspaceExecutionAuthority) {
-      setPendingTerminalCreateInput(null);
-      toast.error("Workspace path is not available yet");
-    }
-  }, [
-    canCreateTerminalNow,
-    createTerminalMutation,
-    hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
-    pendingTerminalCreateInput,
-    toast,
-  ]);
   const workspaceHeaderCheckoutState = buildWorkspaceHeaderCheckoutState({
     isCheckoutStatusLoading,
     isError: checkoutQuery.isError,
@@ -1738,15 +1665,6 @@ function WorkspaceScreenContent({
     return () => handler.remove();
   }, [isExplorerOpen, isRouteFocused, showMobileAgent]);
 
-  const persistenceKey = useMemo(
-    () =>
-      buildWorkspaceTabPersistenceKey({
-        serverId: normalizedServerId,
-        workspaceId: normalizedWorkspaceId,
-      }),
-    [normalizedServerId, normalizedWorkspaceId],
-  );
-
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
   );
@@ -1761,7 +1679,6 @@ function WorkspaceScreenContent({
     [workspaceLayout],
   );
   useSyncWorkspaceActiveBrowser({ workspaceLayout, isRouteFocused });
-  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
   const openWorkspaceTabInBackground = useWorkspaceLayoutStore(
     (state) => state.openTabInBackground,
   );
@@ -1777,39 +1694,6 @@ function WorkspaceScreenContent({
   const splitWorkspacePane = useWorkspaceLayoutStore((state) => state.splitPane);
   const splitWorkspacePaneEmpty = useWorkspaceLayoutStore((state) => state.splitPaneEmpty);
   const moveWorkspaceTabToPane = useWorkspaceLayoutStore((state) => state.moveTabToPane);
-  const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
-  const handleScriptTerminalStarted = useCallback(
-    (terminalId: string) => {
-      setPendingScriptTerminalIds((pendingTerminalIds) => {
-        if (pendingTerminalIds.get(terminalId) === terminalsQuery.dataUpdatedAt) {
-          return pendingTerminalIds;
-        }
-        const nextTerminalIds = new Map(pendingTerminalIds);
-        nextTerminalIds.set(terminalId, terminalsQuery.dataUpdatedAt);
-        return nextTerminalIds;
-      });
-      if (persistenceKey) {
-        openWorkspaceTabFocused(persistenceKey, { kind: "terminal", terminalId });
-      }
-      void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
-    },
-    [
-      openWorkspaceTabFocused,
-      persistenceKey,
-      queryClient,
-      terminalsQuery.dataUpdatedAt,
-      terminalsQueryKey,
-    ],
-  );
-  const handleViewScriptTerminal = useCallback(
-    (terminalId: string) => {
-      if (!persistenceKey) {
-        return;
-      }
-      openWorkspaceTabFocused(persistenceKey, { kind: "terminal", terminalId });
-    },
-    [openWorkspaceTabFocused, persistenceKey],
-  );
   const paneFocusSuppressedRef = useRef(false);
   const resizeWorkspaceSplit = useWorkspaceLayoutStore((state) => state.resizeSplit);
   const reorderWorkspaceTabsInPane = useWorkspaceLayoutStore((state) => state.reorderTabsInPane);
@@ -2200,24 +2084,7 @@ function WorkspaceScreenContent({
     [focusWorkspacePane, openWorkspaceDraftTab, persistenceKey],
   );
 
-  const handleCreateTerminal = useStableEvent((input?: { paneId?: string }) => {
-    if (createTerminalMutation.isPending || pendingTerminalCreateInput) {
-      return;
-    }
-
-    if (canCreateTerminalNow) {
-      createTerminalMutation.mutate(input);
-      return;
-    }
-
-    if (hasHydratedWorkspaces && isMissingWorkspaceExecutionAuthority) {
-      toast.error("Workspace path is not available yet");
-      return;
-    }
-
-    setPendingTerminalCreateInput(input ?? {});
-    toast.show("Preparing workspace, opening terminal when ready...");
-  });
+  const handleCreateTerminal = useStableEvent(createTerminal);
 
   const handleCreateBrowserTab = useCallback(
     (input?: { paneId?: string }) => {
@@ -2284,10 +2151,7 @@ function WorkspaceScreenContent({
           return;
         }
 
-        queryClient.setQueryData<ListTerminalsPayload>(
-          terminalsQueryKey,
-          removeTerminalFromPayload(terminalId),
-        );
+        removeTerminalFromCache(terminalId);
         setHoveredTabKey((current) => (current === tabId ? null : current));
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
         if (persistenceKey) {
@@ -2297,18 +2161,16 @@ function WorkspaceScreenContent({
           });
         }
 
-        void killTerminalAsync(terminalId).catch(() => {
-          void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
-        });
+        void killTerminalAsync(terminalId).catch(invalidateTerminals);
       });
     },
     [
       closeTab,
       closeWorkspaceTabWithCleanup,
+      invalidateTerminals,
       killTerminalAsync,
       persistenceKey,
-      queryClient,
-      terminalsQueryKey,
+      removeTerminalFromCache,
     ],
   );
 
