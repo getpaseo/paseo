@@ -40,7 +40,7 @@ import { buildProviderRegistry, createClientsFromRegistry } from "./agent/provid
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
-import { PushService } from "./push/push-service.js";
+import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ScriptRouteStore } from "./script-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -358,7 +358,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly paseoHome: string;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
-  private readonly pushService: PushService;
+  private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -453,6 +453,7 @@ export class VoiceAssistantWebSocketServer {
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
     workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
+    pushNotificationSender?: PushNotificationSender,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -529,7 +530,8 @@ export class VoiceAssistantWebSocketServer {
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
-    this.pushService = new PushService(pushLogger, this.pushTokenStore);
+    this.pushNotificationSender =
+      pushNotificationSender ?? createPushNotificationSender(pushLogger, this.pushTokenStore);
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -1819,11 +1821,9 @@ export class VoiceAssistantWebSocketServer {
     });
 
     if (plan.shouldPush) {
-      const tokens = this.pushTokenStore.getAllTokens();
-      this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
-      if (tokens.length > 0) {
-        void this.pushService.sendPush(tokens, notification);
-      }
+      void this.pushNotificationSender.send(notification).catch((err) => {
+        this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
+      });
     }
 
     for (const [clientIndex, { ws }] of clientEntries.entries()) {

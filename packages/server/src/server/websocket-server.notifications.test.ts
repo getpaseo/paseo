@@ -10,6 +10,7 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
+import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
 
 const wsModuleMock = vi.hoisted(() => {
   class MockWebSocketServer {
@@ -28,11 +29,6 @@ const wsModuleMock = vi.hoisted(() => {
   return { MockWebSocketServer };
 });
 
-const pushMocks = vi.hoisted(() => ({
-  getAllTokens: vi.fn(() => ["ExponentPushToken[token-1]"]),
-  sendPush: vi.fn(async () => {}),
-}));
-
 vi.mock("ws", () => ({
   WebSocketServer: wsModuleMock.MockWebSocketServer,
 }));
@@ -40,19 +36,6 @@ vi.mock("ws", () => ({
 vi.mock("./session.js", () => ({
   Session: function Session() {
     return {};
-  },
-}));
-
-vi.mock("./push/token-store.js", () => ({
-  PushTokenStore: class {
-    getAllTokens = pushMocks.getAllTokens;
-    removeToken = vi.fn();
-  },
-}));
-
-vi.mock("./push/push-service.js", () => ({
-  PushService: class {
-    sendPush = pushMocks.sendPush;
   },
 }));
 
@@ -81,7 +64,16 @@ function createLogger() {
   return logger;
 }
 
+class RecordingPushNotificationSender implements PushNotificationSender {
+  readonly sent: PushPayload[] = [];
+
+  async send(payload: PushPayload): Promise<void> {
+    this.sent.push(payload);
+  }
+}
+
 function createServer(agentManagerOverrides?: Record<string, unknown>) {
+  const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
     getAgent: vi.fn(() => null),
@@ -137,9 +129,18 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
       })),
       dispose: vi.fn(),
     }),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    pushNotifications,
   );
 
-  return { server, agentManager };
+  return { server, agentManager, pushNotifications };
 }
 
 function createOpenSocket() {
@@ -208,7 +209,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const getLastAssistantMessage = vi.fn(
       async () => "**Done**. Updated `README.md` and [link](https://example.com).",
     );
-    const { server } = createServer({
+    const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
         config: { title: null },
         cwd: "/tmp/worktree",
@@ -223,21 +224,23 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       reason: "finished",
     });
 
-    expect(pushMocks.sendPush).toHaveBeenCalledWith(["ExponentPushToken[token-1]"], {
-      title: "Agent finished",
-      body: "Done. Updated README.md and link.",
-      data: {
-        serverId: "srv-test",
-        agentId: "agent-1",
-        reason: "finished",
+    expect(pushNotifications.sent).toEqual([
+      {
+        title: "Agent finished",
+        body: "Done. Updated README.md and link.",
+        data: {
+          serverId: "srv-test",
+          agentId: "agent-1",
+          reason: "finished",
+        },
       },
-    });
+    ]);
     expect(getLastAssistantMessage).toHaveBeenCalledWith("agent-1");
   });
 
   it("sends push notifications regardless of UI label presence", async () => {
     const getLastAssistantMessage = vi.fn(async () => "Done.");
-    const { server } = createServer({
+    const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
         config: { title: null },
         cwd: "/tmp/worktree",
@@ -253,12 +256,12 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       reason: "finished",
     });
 
-    expect(pushMocks.sendPush).toHaveBeenCalledTimes(1);
+    expect(pushNotifications.sent).toHaveLength(1);
     expect(getLastAssistantMessage).toHaveBeenCalledWith("agent-2");
   });
 
   it("routes a hidden stale focused browser tab's notification to the present Electron web client", async () => {
-    const { server } = createServer();
+    const { server, pushNotifications } = createServer();
     const nowMs = Date.now();
     const electronWs = connectClient(server, {
       deviceType: "web",
@@ -281,11 +284,11 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
 
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
     expect(readAttentionRequiredMessage(firefoxWs).shouldNotify).toBe(false);
-    expect(pushMocks.sendPush).not.toHaveBeenCalled();
+    expect(pushNotifications.sent).toEqual([]);
   });
 
   it("pushes non-error attention when the only connected client has never sent a heartbeat", async () => {
-    const { server } = createServer();
+    const { server, pushNotifications } = createServer();
     const ws = connectClient(server, null);
 
     await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
@@ -295,11 +298,11 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
-    expect(pushMocks.sendPush).toHaveBeenCalledTimes(1);
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 
   it("does not push error attention when the only connected client has never sent a heartbeat", async () => {
-    const { server } = createServer();
+    const { server, pushNotifications } = createServer();
     const ws = connectClient(server, null);
 
     await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
@@ -309,6 +312,6 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
-    expect(pushMocks.sendPush).not.toHaveBeenCalled();
+    expect(pushNotifications.sent).toEqual([]);
   });
 });
