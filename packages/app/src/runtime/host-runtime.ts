@@ -104,6 +104,38 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function extractOfferPayloadFromUrlOrFragment(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fragmentMarker = "#offer=";
+  const fragmentIndex = trimmed.indexOf(fragmentMarker);
+  if (fragmentIndex !== -1) {
+    const encoded = trimmed.slice(fragmentIndex + fragmentMarker.length).trim();
+    return encoded.length > 0 ? encoded : null;
+  }
+
+  const queryMatch = trimmed.match(/[?&]offer=([^&#]+)/);
+  if (!queryMatch) {
+    return null;
+  }
+
+  const rawValue = queryMatch[1] ?? "";
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const decoded = decodeURIComponent(rawValue).trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    const fallback = rawValue.trim();
+    return fallback.length > 0 ? fallback : null;
+  }
+}
+
 function hashForLog(value: string): string {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -1519,14 +1551,9 @@ export class HostRuntimeStore {
     offerUrlOrFragment: string,
     label?: string,
   ): Promise<HostProfile> {
-    const marker = "#offer=";
-    const idx = offerUrlOrFragment.indexOf(marker);
-    if (idx === -1) {
-      throw new Error("Missing #offer= fragment");
-    }
-    const encoded = offerUrlOrFragment.slice(idx + marker.length).trim();
+    const encoded = extractOfferPayloadFromUrlOrFragment(offerUrlOrFragment);
     if (!encoded) {
-      throw new Error("Offer payload is empty");
+      throw new Error("Missing offer payload (#offer=... or ?offer=...)");
     }
     const payload = decodeOfferFragmentPayload(encoded);
     const offer = ConnectionOfferSchema.parse(payload);

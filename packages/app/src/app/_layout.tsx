@@ -654,9 +654,11 @@ function OfferLinkListener({
 
   useEffect(() => {
     let cancelled = false;
+    const isOfferUrl = (url: string) => url.includes("#offer=") || /(?:\?|&)offer=/.test(url);
+
     const handleUrl = (url: string | null) => {
       if (!url) return;
-      if (!url.includes("#offer=")) return;
+      if (!isOfferUrl(url)) return;
       void upsertDaemonFromOfferUrl(url)
         .then((profile) => {
           if (cancelled) return;
