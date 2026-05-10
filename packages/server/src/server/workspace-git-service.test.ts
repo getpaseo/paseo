@@ -13,11 +13,6 @@ import { isPlatform } from "../test-utils/platform.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
 
-interface ServiceInternals {
-  workingTreeWatchTargets: Map<string, { fallbackRefreshInterval: unknown; repoWatchPath: string }>;
-  scheduleWorkspaceRefresh(cwd: string, options: { force: boolean; reason: string }): void;
-}
-
 function createLogger() {
   const logger = {
     child: () => logger,
@@ -740,9 +735,8 @@ describe("WorkspaceGitServiceImpl", () => {
 
     const service = createService({ watch });
     const subscription = await service.requestWorkingTreeWatch(REPO_CWD, vi.fn());
-    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(REPO_CWD);
 
-    expect(target?.fallbackRefreshInterval).not.toBeNull();
+    expect(vi.getTimerCount()).toBe(1);
 
     subscription.unsubscribe();
     service.dispose();
@@ -762,7 +756,6 @@ describe("WorkspaceGitServiceImpl", () => {
 
     const plainCwd = path.join(os.tmpdir(), "plain");
     const subscription = await service.requestWorkingTreeWatch(plainCwd, vi.fn());
-    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(plainCwd);
 
     expect(subscription.repoRoot).toBeNull();
     const expectedRecursive = process.platform !== "linux";
@@ -771,14 +764,13 @@ describe("WorkspaceGitServiceImpl", () => {
       { recursive: expectedRecursive },
       expect.any(Function),
     );
-    expect(target?.repoWatchPath).toBe(plainCwd);
-    expect(target?.fallbackRefreshInterval).not.toBeNull();
+    expect(vi.getTimerCount()).toBe(1);
 
     subscription.unsubscribe();
     service.dispose();
   });
 
-  test("working tree changes notify listeners and schedule workspace refresh", async () => {
+  test("working tree changes notify watch listeners immediately", async () => {
     const watchCallbacks: Array<() => void> = [];
     const watch = vi.fn(
       (_watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
@@ -787,7 +779,6 @@ describe("WorkspaceGitServiceImpl", () => {
       },
     );
     const service = createService({ watch });
-    const refreshSpy = vi.spyOn(service as unknown as ServiceInternals, "scheduleWorkspaceRefresh");
     const listener = vi.fn();
 
     const subscription = await service.requestWorkingTreeWatch(REPO_CWD, listener);
@@ -796,10 +787,6 @@ describe("WorkspaceGitServiceImpl", () => {
     watchCallbacks[0]?.();
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(refreshSpy).toHaveBeenCalledWith(REPO_CWD, {
-      force: true,
-      reason: "working-tree-watch",
-    });
 
     subscription.unsubscribe();
     service.dispose();
