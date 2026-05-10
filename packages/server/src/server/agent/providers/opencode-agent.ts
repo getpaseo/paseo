@@ -2766,10 +2766,28 @@ class OpenCodeAgentSession implements AgentSession {
     const [questionsResponse, permissionsResponse] = await Promise.all([
       Promise.resolve()
         .then(() => this.client.question.list({ directory: this.config.cwd }))
-        .catch(() => null),
+        .catch((error) => {
+          traceOpenCode("recovery.question-list.throw", {
+            turnId,
+            error:
+              error instanceof Error
+                ? { name: error.name, message: error.message, stack: error.stack }
+                : String(error),
+          });
+          return null;
+        }),
       Promise.resolve()
         .then(() => this.client.permission.list({ directory: this.config.cwd }))
-        .catch(() => null),
+        .catch((error) => {
+          traceOpenCode("recovery.permission-list.throw", {
+            turnId,
+            error:
+              error instanceof Error
+                ? { name: error.name, message: error.message, stack: error.stack }
+                : String(error),
+          });
+          return null;
+        }),
     ]);
 
     if (this.activeForegroundTurnId !== turnId) return 0;
@@ -2821,10 +2839,25 @@ class OpenCodeAgentSession implements AgentSession {
     | { kind: "in-progress"; messageId: string; parts: readonly OpenCodePart[] }
     | null
   > {
-    const response = await this.client.session.messages({
-      sessionID: this.sessionId,
-      directory: this.config.cwd,
-    });
+    const response = await Promise.resolve()
+      .then(() =>
+        this.client.session.messages({
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+        }),
+      )
+      .catch((error) => {
+        traceOpenCode("recovery.messages.throw", {
+          error:
+            error instanceof Error
+              ? { name: error.name, message: error.message, stack: error.stack }
+              : String(error),
+        });
+        return null;
+      });
+    if (response === null) {
+      return null;
+    }
     if (response.error || !response.data) {
       return null;
     }

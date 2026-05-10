@@ -664,6 +664,94 @@ describe("OpenCode adapter startTurn error handling", () => {
     rmSync(storageRoot, { recursive: true, force: true });
   });
 
+  test("continues SSE EOF recovery when one messages API poll rejects", async () => {
+    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
+    const cwd = "/tmp/test";
+    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
+
+    let releaseStream!: () => void;
+    const streamMayEnd = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    let messagesCallCount = 0;
+    const completedMessagesResponse = {
+      data: [
+        {
+          info: buildAssistantMessageInfo({
+            id: "msg_assistant",
+            createdAt: 2100,
+            completedAt: 2500,
+            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
+          }),
+          parts: [buildTextPart("msg_assistant", "prt_text", "Recovered after retry")],
+        },
+      ],
+      error: undefined,
+    };
+
+    const fakeClient = {
+      event: {
+        subscribe: vi.fn().mockResolvedValue({
+          stream: {
+            [Symbol.asyncIterator]: () => ({
+              next: async () => {
+                await streamMayEnd;
+                return { done: true, value: undefined };
+              },
+            }),
+          },
+        }),
+      },
+      provider: {
+        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
+      },
+      session: {
+        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
+        messages: vi.fn().mockImplementation(async () => {
+          messagesCallCount += 1;
+          if (messagesCallCount === 1) {
+            throw new Error("transient messages failure");
+          }
+          return completedMessagesResponse;
+        }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          releaseStream();
+          return { data: {}, error: undefined };
+        }),
+        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+      },
+    } as never;
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
+      runtime: {
+        acquireServer: vi.fn().mockResolvedValue({
+          server: { port: 0, url: "http://localhost" },
+          release: () => {},
+        }),
+        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
+        createClient: vi.fn().mockReturnValue(fakeClient),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      },
+      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
+    });
+
+    const session = await client.createSession({ provider: "opencode", cwd });
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.turnFailed).toBe(false);
+    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe(
+      "Recovered after retry",
+    );
+    expect(messagesCallCount).toBe(2);
+
+    dateNowSpy.mockRestore();
+    rmSync(storageRoot, { recursive: true, force: true });
+  });
+
   test("keeps SSE EOF as turn_failed when messages API never returns a completion before the cap", async () => {
     const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
     const cwd = "/tmp/test";
