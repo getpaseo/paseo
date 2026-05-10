@@ -3786,10 +3786,7 @@ class CodexAppServerAgentSession implements AgentSession {
       this.pendingCommandOutputDeltas.delete(itemId);
       this.pendingFileChangeOutputDeltas.delete(itemId);
     }
-    this.emitSubAgentActivityUpdate(
-      callId,
-      timelineItem.type === "tool_call" && timelineItem.status === "failed" ? "failed" : "running",
-    );
+    this.emitSubAgentActivityUpdate(callId, "running");
   }
 
   private shouldSkipCompletedThreadItem(

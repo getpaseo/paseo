@@ -903,6 +903,52 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps the parent sub-agent running when a child command fails during the child turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-child-command-failure",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Fix the regression test-first.",
+        receiverThreadIds: ["child-thread-1"],
+        agentsStates: {
+          "child-thread-1": { status: "running", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-1",
+      item: {
+        type: "commandExecution",
+        id: "child-failing-command",
+        status: "failed",
+        command: "npx vitest run packages/server/src/server/agent/providers/opencode-agent.test.ts",
+        aggregatedOutput: "expected false to be true",
+        exitCode: 1,
+        error: { message: "Command failed" },
+      },
+    });
+
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      callId: "call-sub-agent-child-command-failure",
+      name: "Sub-agent",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Fix the regression test-first.",
+      },
+    });
+  });
+
   test("loads Codex persisted history from the app-server thread", async () => {
     const session = createSession();
     const requests: Array<{ method: string; params: unknown }> = [];
