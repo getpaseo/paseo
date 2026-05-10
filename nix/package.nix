@@ -42,7 +42,7 @@ buildNpmPackage rec {
 
   # To update: run `nix build` with lib.fakeHash, copy the `got:` hash.
   # CI auto-updates this when package-lock.json changes (see .github/workflows/).
-  npmDepsHash = "sha256-qXCfTM7Q1PyXL53C+AFgFA5b99uznKaKomwmX2UcZHo=";
+  npmDepsHash = "sha256-BFVCFpTb4CYnRHdOMCoysyONV0+xFcSoL0y/sk4xt1c=";
 
   # Prevent onnxruntime-node's install script from running during automatic
   # npm rebuild (it tries to download from api.nuget.org, which fails in the sandbox).
