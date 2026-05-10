@@ -19,10 +19,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Check formatting
         run: npx oxfmt --check .
@@ -38,10 +35,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Lint lockfile
         run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
@@ -63,10 +57,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
@@ -101,10 +92,7 @@ jobs:
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Install Claude Code CLI for provider tests
         run: npm install -g @anthropic-ai/claude-code
@@ -136,10 +124,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
@@ -164,10 +149,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -189,10 +171,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -235,10 +214,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Build relay
         run: npm run build --workspace=@getpaseo/relay
@@ -262,10 +238,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Apply patches
-        run: npm run postinstall
+        run: npm ci
 
       - name: Install agent CLIs for provider tests
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai

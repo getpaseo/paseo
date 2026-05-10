@@ -71,12 +71,9 @@ jobs:
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Apply patches
-        run: npm run postinstall
 
       - name: Setup Expo and EAS
         uses: expo/expo-github-action@v8
