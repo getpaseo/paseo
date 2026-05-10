@@ -1,48 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import type { PaseoConfigRaw } from "@server/shared/messages";
 import { useRouter } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { buildProjectSettingsRoute } from "@/utils/host-routes";
-
-interface ActiveGitWorkspaceProject {
-  serverId: string;
-  projectKey: string;
-  repoRoot: string;
-}
-
-function selectActiveGitWorkspaceProject(
-  serverId: string,
-  workspace: WorkspaceDescriptor,
-): ActiveGitWorkspaceProject | null {
-  if (workspace.projectKind !== "git") {
-    return null;
-  }
-
-  const projectKey = workspace.projectId.trim();
-  const repoRoot = (workspace.project?.checkout.mainRepoRoot ?? workspace.projectRootPath).trim();
-  if (!projectKey || !repoRoot) {
-    return null;
-  }
-
-  return { serverId, projectKey, repoRoot };
-}
-
-function hasSetupCommands(config: PaseoConfigRaw): boolean {
-  const setup = config.worktree?.setup;
-  if (typeof setup === "string") {
-    return setup.trim().length > 0;
-  }
-  if (Array.isArray(setup)) {
-    return setup.some((command) => typeof command === "string" && command.trim().length > 0);
-  }
-  return false;
-}
+import {
+  buildWorktreeSetupCalloutPolicy,
+  selectActiveGitWorkspaceProject,
+  shouldShowWorktreeSetupCallout,
+} from "./worktree-setup-callout-policy";
 
 export function WorktreeSetupCalloutSource() {
   const selection = useActiveWorkspaceSelection();
@@ -58,7 +26,7 @@ export function WorktreeSetupCalloutSource() {
     if (!activeProject) {
       return;
     }
-    router.navigate(buildProjectSettingsRoute(activeProject.projectKey));
+    router.navigate(buildWorktreeSetupCalloutPolicy(activeProject).projectSettingsRoute);
   });
 
   const readQuery = useQuery({
@@ -73,29 +41,31 @@ export function WorktreeSetupCalloutSource() {
     retry: false,
   });
 
-  const shouldShow =
-    activeProject !== null &&
-    readQuery.data?.ok === true &&
-    !hasSetupCommands(readQuery.data.config ?? {});
+  const calloutPolicy = useMemo(
+    () =>
+      activeProject && shouldShowWorktreeSetupCallout(readQuery.data)
+        ? buildWorktreeSetupCalloutPolicy(activeProject)
+        : null,
+    [activeProject, readQuery.data],
+  );
 
   useEffect(() => {
-    if (!shouldShow || !activeProject) {
+    if (!calloutPolicy) {
       return;
     }
 
     return callouts.show({
-      id: `worktree-setup-missing:${activeProject.projectKey}`,
-      dismissalKey: `worktree-setup-missing:${activeProject.projectKey}`,
-      priority: 100,
-      title: "Set up worktree scripts",
-      description:
-        "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
+      id: calloutPolicy.id,
+      dismissalKey: calloutPolicy.dismissalKey,
+      priority: calloutPolicy.priority,
+      title: calloutPolicy.title,
+      description: calloutPolicy.description,
       actions: [
-        { label: "Open project settings", onPress: openProjectSettings, variant: "primary" },
+        { label: calloutPolicy.actionLabel, onPress: openProjectSettings, variant: "primary" },
       ],
-      testID: `worktree-setup-callout-${activeProject.projectKey}`,
+      testID: calloutPolicy.testID,
     });
-  }, [activeProject, callouts, openProjectSettings, shouldShow]);
+  }, [calloutPolicy, callouts, openProjectSettings]);
 
   return null;
 }
