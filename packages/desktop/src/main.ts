@@ -191,6 +191,7 @@ if (forcedUserDataDir) {
     const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
       timeout: 3000,
+      windowsHide: true,
     }).trim();
     devWorktreeName = path.basename(topLevel);
     // Main checkout (e.g. "paseo") gets default userData — only worktrees diverge.
@@ -200,6 +201,7 @@ if (forcedUserDataDir) {
         cwd: topLevel,
         encoding: "utf-8",
         timeout: 3000,
+        windowsHide: true,
       }).trim(),
     );
     const isWorktree = path.resolve(topLevel, ".git") !== commonDir;

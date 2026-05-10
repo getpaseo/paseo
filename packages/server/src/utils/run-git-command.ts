@@ -54,6 +54,7 @@ export function runGitCommand(
         const child = spawnProcess("git", args, {
           cwd: options.cwd,
           envOverlay: mergeEnvOverlays(options.env, options.envOverlay),
+          shell: false,
           stdio: ["ignore", "pipe", "pipe"],
         });
 

@@ -230,6 +230,7 @@ export function findExecutable(name: string): string | null {
     const result = execFileSync(cmd, [trimmed], {
       encoding: "utf8",
       env: createProviderEnv({ baseEnv: process.env }),
+      windowsHide: true,
     }).trim();
     const lines = result.split(/\r?\n/).filter((l: string) => l.trim());
     const candidate = lines.at(-1)?.trim() ?? null;

@@ -62,6 +62,7 @@ function resolveShellEnv(): Record<string, string> | undefined {
   const result = spawnSync(shell, [...shellArgs, command], {
     encoding: "utf8",
     timeout: RESOLVE_TIMEOUT_MS,
+    windowsHide: true,
     env: {
       ...shellEnv,
       ELECTRON_RUN_AS_NODE: "1",
