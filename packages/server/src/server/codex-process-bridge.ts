@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { v5 as uuidv5 } from "uuid";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
+import xterm from "@xterm/headless";
 
 import type { AgentPersistenceHandle, AgentSessionConfig } from "./agent/agent-sdk-types.js";
 
@@ -13,6 +14,12 @@ const execFileAsync = promisify(execFile);
 const CODEX_PROCESS_AGENT_NAMESPACE = "5310b8dd-2603-47c7-97ef-a59e51b59871";
 const CODEX_PROCESS_SOURCE = "codex_process";
 const MAX_CAPTURE_BYTES = "262144";
+const CAPTURE_RENDER_ROWS = 120;
+const CAPTURE_RENDER_COLS = 240;
+const CAPTURE_RENDER_SCROLLBACK = 4000;
+const CAPTURE_LINE_LIMIT = 120;
+const TRUNCATED_SGR_FRAGMENT_PATTERN = /^(?:\d+;){1,}\d*m$/;
+const { Terminal } = xterm;
 
 export interface UnixProcessWithTty {
   pid: number;
@@ -199,8 +206,71 @@ export function createCodexProcessRunner(): CodexProcessRunner {
   };
 }
 
-export function sanitizeCodexProcessCapture(text: string): string {
-  return stripAnsi(text).replace(/\r\n/g, "\n");
+function normalizeCaptureLines(lines: string[]): string {
+  const cleaned = lines
+    .map((line) => line.trimEnd().replace(/^\s{8,}/, ""))
+    .filter((line) => !TRUNCATED_SGR_FRAGMENT_PATTERN.test(line.trim()));
+  while (cleaned[0]?.trim().length === 0) {
+    cleaned.shift();
+  }
+  while (cleaned[cleaned.length - 1]?.trim().length === 0) {
+    cleaned.pop();
+  }
+  return cleaned.slice(-CAPTURE_LINE_LIMIT).join("\n");
+}
+
+function sanitizeCodexProcessCaptureFallback(text: string): string {
+  const stripControlCharacters = (input: string): string =>
+    Array.from(input)
+      .filter((char) => {
+        const code = char.charCodeAt(0);
+        return code === 0x09 || code === 0x0a || (code >= 0x20 && code !== 0x7f);
+      })
+      .join("");
+
+  return stripControlCharacters(stripAnsi(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n"));
+}
+
+export async function sanitizeCodexProcessCapture(text: string): Promise<string> {
+  if (!text) {
+    return "";
+  }
+
+  const terminal = new Terminal({
+    rows: CAPTURE_RENDER_ROWS,
+    cols: CAPTURE_RENDER_COLS,
+    scrollback: CAPTURE_RENDER_SCROLLBACK,
+    allowProposedApi: true,
+  });
+  try {
+    await new Promise<void>((resolve) => {
+      terminal.write(text, () => resolve());
+    });
+    const buffer = terminal.buffer.active;
+    const renderedLines: string[] = [];
+    for (let row = 0; row < buffer.length; row += 1) {
+      const line = buffer.getLine(row);
+      if (!line) {
+        continue;
+      }
+      const rendered = line.translateToString(true);
+      const isWrapped = (line as { isWrapped?: boolean }).isWrapped === true;
+      if (isWrapped && renderedLines.length > 0) {
+        renderedLines[renderedLines.length - 1] += rendered;
+        continue;
+      }
+      renderedLines.push(rendered);
+    }
+    const normalized = normalizeCaptureLines(renderedLines);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    return sanitizeCodexProcessCaptureFallback(text);
+  } catch {
+    return sanitizeCodexProcessCaptureFallback(text);
+  } finally {
+    terminal.dispose();
+  }
 }
 
 export class CodexProcessBridge {
@@ -230,7 +300,7 @@ export class CodexProcessBridge {
       return "";
     }
     try {
-      return sanitizeCodexProcessCapture(
+      return await sanitizeCodexProcessCapture(
         await this.runner.execFile("tail", ["-c", MAX_CAPTURE_BYTES, logPath]),
       );
     } catch {

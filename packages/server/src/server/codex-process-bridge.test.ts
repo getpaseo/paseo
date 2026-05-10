@@ -142,8 +142,22 @@ describe("codex process bridge discovery", () => {
     });
   });
 
-  it("strips ansi escapes from captured codex output", () => {
+  it("strips ansi escapes from captured codex output", async () => {
     const raw = "\u001b[19;27H\u001b[0mhello\r\n\u001b[31mworld\u001b[0m";
-    expect(sanitizeCodexProcessCapture(raw)).toBe("hello\nworld");
+    await expect(sanitizeCodexProcessCapture(raw)).resolves.toBe("hello\nworld");
+  });
+
+  it("renders full-screen codex capture into readable lines", async () => {
+    const raw = [
+      "\u001b[24;1H\u001b[1mWorking\u001b[0m",
+      "\u001b[0 q",
+      "\u001b]0;spinner /\u0007",
+      "\u001b[24;10H\u001b[2m8\u001b[0m",
+    ].join("");
+
+    const sanitized = await sanitizeCodexProcessCapture(raw);
+    expect(sanitized).toContain("Working");
+    expect(sanitized).not.toContain("\u001b");
+    expect(sanitized).not.toContain(" q ");
   });
 });
