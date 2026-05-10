@@ -1071,6 +1071,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     archivedAt: null,
   };
   const killTerminal = vi.fn();
+  const cancelAgentRun = vi.fn(async () => true);
   const session = asTestSession(
     new Session({
       clientId: "test-client",
@@ -1083,6 +1084,8 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         subscribe: () => () => {},
         listAgents: () => [],
         getAgent: (agentId: string) => (agentId === "agent-1" ? { id: agentId } : null),
+        hasInFlightRun: (agentId: string) => agentId === "agent-1",
+        cancelAgentRun,
         archiveAgent: async () => ({ archivedAt }),
         clearAgentAttention: async () => {},
         notifyAgentState: () => {},
@@ -1175,8 +1178,6 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     isBootstrapping: false,
     pendingUpdatesByAgentId: new Map(),
   };
-  const interruptAgentIfRunning = vi.fn();
-  session.interruptAgentIfRunning = interruptAgentIfRunning;
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1185,7 +1186,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     requestId: "req-close-items",
   });
 
-  expect(interruptAgentIfRunning).toHaveBeenCalledWith("agent-1");
+  expect(cancelAgentRun).toHaveBeenCalledWith("agent-1");
   expect(killTerminal).toHaveBeenCalledWith("term-1");
   expect(emitted.find((message) => message.type === "close_items_response")?.payload).toEqual({
     agents: [{ agentId: "agent-1", archivedAt }],
@@ -1254,6 +1255,7 @@ test("close_items_request archives stored agents that are not currently loaded",
         subscribe: () => () => {},
         listAgents: () => [],
         getAgent: (agentId: string) => (agentId === "agent-live" ? { id: agentId } : null),
+        hasInFlightRun: () => false,
         archiveAgent: async (agentId: string) => {
           if (agentId !== "agent-live") {
             throw new Error(`Unexpected live archive: ${agentId}`);
@@ -1361,7 +1363,6 @@ test("close_items_request archives stored agents that are not currently loaded",
     isBootstrapping: false,
     pendingUpdatesByAgentId: new Map(),
   };
-  session.interruptAgentIfRunning = vi.fn();
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1416,6 +1417,7 @@ test("close_items_request continues after an archive failure", async () => {
         listAgents: () => [],
         getAgent: (agentId: string) =>
           agentId === "agent-bad" || agentId === "agent-good" ? { id: agentId } : null,
+        hasInFlightRun: () => false,
         archiveAgent: async (agentId: string) => {
           if (agentId === "agent-bad") {
             throw new Error("archive failed");
@@ -1513,8 +1515,6 @@ test("close_items_request continues after an archive failure", async () => {
     isBootstrapping: false,
     pendingUpdatesByAgentId: new Map(),
   };
-  const interruptAgentIfRunningBestEffort = vi.fn();
-  session.interruptAgentIfRunning = interruptAgentIfRunningBestEffort;
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1523,8 +1523,6 @@ test("close_items_request continues after an archive failure", async () => {
     requestId: "req-close-best-effort",
   });
 
-  expect(interruptAgentIfRunningBestEffort).toHaveBeenCalledWith("agent-bad");
-  expect(interruptAgentIfRunningBestEffort).toHaveBeenCalledWith("agent-good");
   expect(killTerminalBestEffort).toHaveBeenCalledWith("term-1");
   expect(emitted.find((message) => message.type === "close_items_response")?.payload).toEqual({
     agents: [{ agentId: "agent-good", archivedAt }],
