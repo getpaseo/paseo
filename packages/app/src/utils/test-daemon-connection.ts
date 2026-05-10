@@ -13,6 +13,34 @@ import {
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 
+export interface DaemonProbeClient {
+  readonly lastError: string | null;
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  getLastServerInfoMessage(): { serverId: string; hostname: string | null } | null;
+}
+
+interface LocalTransportUrlInput {
+  transportType: "socket" | "pipe";
+  transportPath: string;
+}
+
+export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient> {
+  getClientId(): Promise<string>;
+  resolveAppVersion(): string | null;
+  createLocalTransportFactory(): DaemonClientConfig["transportFactory"] | null;
+  buildLocalTransportUrl(input: LocalTransportUrlInput): string;
+  createClient(config: DaemonClientConfig): TClient;
+}
+
+const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonClient> = {
+  getClientId: getOrCreateClientId,
+  resolveAppVersion,
+  createLocalTransportFactory: createDesktopLocalDaemonTransportFactory,
+  buildLocalTransportUrl: buildLocalDaemonTransportUrl,
+  createClient: (config) => new DaemonClient(config),
+};
+
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -69,13 +97,17 @@ export class DaemonConnectionTestError extends Error {
 export async function buildClientConfig(
   connection: HostConnection,
   serverId?: string,
+  deps: Pick<
+    DaemonConnectionDependencies<DaemonProbeClient>,
+    "getClientId" | "resolveAppVersion" | "createLocalTransportFactory" | "buildLocalTransportUrl"
+  > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
-  const clientId = await getOrCreateClientId();
-  const localTransportFactory = createDesktopLocalDaemonTransportFactory();
+  const clientId = await deps.getClientId();
+  const localTransportFactory = deps.createLocalTransportFactory();
   const base = {
     clientId,
     clientType: "mobile" as const,
-    appVersion: resolveAppVersion() ?? undefined,
+    appVersion: deps.resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
     reconnect: { enabled: false },
     ...((connection.type === "directSocket" || connection.type === "directPipe") &&
@@ -87,7 +119,7 @@ export async function buildClientConfig(
   if (connection.type === "directSocket" || connection.type === "directPipe") {
     return {
       ...base,
-      url: buildLocalDaemonTransportUrl({
+      url: deps.buildLocalTransportUrl({
         transportType: connection.type === "directSocket" ? "socket" : "pipe",
         transportPath: connection.path,
       }),
@@ -120,10 +152,23 @@ export async function buildClientConfig(
 export function connectAndProbe(
   config: DaemonClientConfig,
   timeoutMs: number,
-): Promise<{ client: DaemonClient; serverId: string; hostname: string | null }> {
-  const client = new DaemonClient(config);
+): Promise<{ client: DaemonClient; serverId: string; hostname: string | null }>;
+export function connectAndProbe<TClient extends DaemonProbeClient>(
+  config: DaemonClientConfig,
+  timeoutMs: number,
+  deps: Pick<DaemonConnectionDependencies<TClient>, "createClient">,
+): Promise<{ client: TClient; serverId: string; hostname: string | null }>;
+export function connectAndProbe(
+  config: DaemonClientConfig,
+  timeoutMs: number,
+  deps: Pick<
+    DaemonConnectionDependencies<DaemonProbeClient>,
+    "createClient"
+  > = defaultDaemonConnectionDependencies,
+): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
+  const client = deps.createClient(config);
 
-  return new Promise<{ client: DaemonClient; serverId: string; hostname: string | null }>(
+  return new Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }>(
     (resolve, reject) => {
       const timer = setTimeout(() => {
         void client.close().catch(() => undefined);
@@ -183,10 +228,20 @@ function resolveTimeout(connection: HostConnection, options?: ProbeOptions): num
   return connection.type === "relay" ? 10_000 : 6_000;
 }
 
+export function connectToDaemon(
+  connection: HostConnection,
+  options?: ProbeOptions,
+): Promise<{ client: DaemonClient; serverId: string; hostname: string | null }>;
+export function connectToDaemon<TClient extends DaemonProbeClient>(
+  connection: HostConnection,
+  options: ProbeOptions | undefined,
+  deps: DaemonConnectionDependencies<TClient>,
+): Promise<{ client: TClient; serverId: string; hostname: string | null }>;
 export async function connectToDaemon(
   connection: HostConnection,
   options?: ProbeOptions,
-): Promise<{ client: DaemonClient; serverId: string; hostname: string | null }> {
-  const config = await buildClientConfig(connection, options?.serverId);
-  return connectAndProbe(config, resolveTimeout(connection, options));
+  deps: DaemonConnectionDependencies<DaemonProbeClient> = defaultDaemonConnectionDependencies,
+): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
+  const config = await buildClientConfig(connection, options?.serverId, deps);
+  return connectAndProbe(config, resolveTimeout(connection, options), deps);
 }
