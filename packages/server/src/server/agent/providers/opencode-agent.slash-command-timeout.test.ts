@@ -8,7 +8,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
-import type { OpenCodeServerManagerLike } from "./opencode/server-manager.js";
+import { createTestOpenCodeServerManager } from "./opencode/test-server-manager.js";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -22,16 +22,6 @@ function createDeferred<T>(): {
     reject = rej;
   });
   return { promise, resolve, reject };
-}
-
-function createFakeServerManager(): OpenCodeServerManagerLike {
-  return {
-    ensureRunning: vi.fn().mockResolvedValue({ port: 1234, url: "http://127.0.0.1:1234" }),
-    acquire: vi.fn().mockResolvedValue({
-      server: { port: 1234, url: "http://127.0.0.1:1234" },
-      release: vi.fn(),
-    }),
-  };
 }
 
 describe("OpenCodeAgentSession slash command timeout handling", () => {
@@ -61,7 +51,7 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     } as never);
 
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager: createFakeServerManager(),
+      serverManager: createTestOpenCodeServerManager(),
     });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
@@ -114,7 +104,7 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     } as never);
 
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager: createFakeServerManager(),
+      serverManager: createTestOpenCodeServerManager(),
     });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
@@ -166,7 +156,7 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     } as never);
 
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager: createFakeServerManager(),
+      serverManager: createTestOpenCodeServerManager(),
     });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 

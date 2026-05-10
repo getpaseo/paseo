@@ -8,52 +8,39 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
-import type { OpenCodeServerManagerLike } from "./opencode/server-manager.js";
+import { createTestOpenCodeServerManager } from "./opencode/test-server-manager.js";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-function createFakeServerManager(
-  acquire = vi.fn().mockResolvedValue({
-    server: { port: 1234, url: "http://127.0.0.1:1234" },
-    release: vi.fn(),
-  }),
-): OpenCodeServerManagerLike {
-  return {
-    ensureRunning: vi.fn().mockResolvedValue({ port: 1234, url: "http://127.0.0.1:1234" }),
-    acquire,
-  };
-}
-
 test("allows a slow provider.list call to succeed instead of failing after 10 seconds", async () => {
   vi.useFakeTimers();
 
-  const providerList = vi.fn(
-    () =>
-      new Promise((resolve) => {
-        setTimeout(() => {
-          resolve({
-            data: {
-              connected: ["zai"],
-              all: [
-                {
-                  id: "zai",
-                  name: "Z.AI",
-                  models: {
-                    "glm-5.1": {
-                      name: "GLM 5.1",
-                      limit: { context: 128_000 },
-                    },
+  async function providerList(): Promise<unknown> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({
+          data: {
+            connected: ["zai"],
+            all: [
+              {
+                id: "zai",
+                name: "Z.AI",
+                models: {
+                  "glm-5.1": {
+                    name: "GLM 5.1",
+                    limit: { context: 128_000 },
                   },
                 },
-              ],
-            },
-          });
-        }, 15_000);
-      }),
-  );
+              },
+            ],
+          },
+        });
+      }, 15_000);
+    });
+  }
 
   vi.mocked(createOpencodeClient).mockReturnValue({
     provider: {
@@ -61,8 +48,9 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
     },
   } as never);
 
+  const serverManager = createTestOpenCodeServerManager();
   const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-    serverManager: createFakeServerManager(),
+    serverManager,
   });
   const modelsPromise = client.listModels({ cwd: "/tmp/opencode-models", force: false });
 
@@ -80,7 +68,7 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
 test("passes explicit refresh force through server acquisition", async () => {
   vi.mocked(createOpencodeClient).mockReturnValue({
     provider: {
-      list: vi.fn().mockResolvedValue({
+      list: async () => ({
         data: {
           connected: ["openai"],
           all: [{ id: "openai", name: "OpenAI", models: {} }],
@@ -88,16 +76,13 @@ test("passes explicit refresh force through server acquisition", async () => {
       }),
     },
   } as never);
-  const acquire = vi.fn().mockResolvedValue({
-    server: { port: 1234, url: "http://127.0.0.1:1234" },
-    release: vi.fn(),
-  });
+  const serverManager = createTestOpenCodeServerManager();
 
   const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-    serverManager: createFakeServerManager(acquire),
+    serverManager,
   });
 
   await client.listModels({ cwd: "/tmp/opencode-models", force: true });
 
-  expect(acquire).toHaveBeenCalledWith({ force: true });
+  expect(serverManager.acquisitions).toEqual([{ force: true, released: true }]);
 });
