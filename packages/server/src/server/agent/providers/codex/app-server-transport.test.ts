@@ -32,19 +32,27 @@ describe("Codex app-server transport", () => {
     child.stdin.end();
   });
 
-  test("answers server-initiated requests through registered handlers", async () => {
+  test.each([
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/tool/requestUserInput",
+    "tool/requestUserInput",
+  ])("answers server-initiated %s requests through registered handlers", async (method) => {
     const child = createChildProcessStub();
     const client = new CodexAppServerClient(child, createTestLogger());
-    client.setRequestHandler("tool/requestUserInput", async (params) => ({ echoed: params }));
+    const handlerCalls: unknown[] = [];
+    client.setRequestHandler(method, async (params) => {
+      handlerCalls.push(params);
+      return { ok: true };
+    });
 
     const response = new Promise<string>((resolve) => {
       child.stdin.once("data", (chunk) => resolve(chunk.toString()));
     });
-    child.stdout.write(
-      '{"id":7,"method":"tool/requestUserInput","params":{"prompt":"Continue?"}}\n',
-    );
+    child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 7, method, params: {} })}\n`);
 
-    await expect(response).resolves.toBe('{"id":7,"result":{"echoed":{"prompt":"Continue?"}}}\n');
+    await expect(response).resolves.toBe('{"id":7,"result":{"ok":true}}\n');
+    expect(handlerCalls).toEqual([{}]);
     child.stdout.end();
     child.stderr.end();
     child.stdin.end();
