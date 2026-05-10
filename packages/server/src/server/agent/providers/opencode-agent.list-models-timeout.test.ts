@@ -7,12 +7,25 @@ vi.mock("@opencode-ai/sdk/v2/client", () => ({
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { OpenCodeAgentClient, OpenCodeServerManager } from "./opencode-agent.js";
+import { OpenCodeAgentClient } from "./opencode-agent.js";
+import type { OpenCodeServerManagerLike } from "./opencode/server-manager.js";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+function createFakeServerManager(
+  acquire = vi.fn().mockResolvedValue({
+    server: { port: 1234, url: "http://127.0.0.1:1234" },
+    release: vi.fn(),
+  }),
+): OpenCodeServerManagerLike {
+  return {
+    ensureRunning: vi.fn().mockResolvedValue({ port: 1234, url: "http://127.0.0.1:1234" }),
+    acquire,
+  };
+}
 
 test("allows a slow provider.list call to succeed instead of failing after 10 seconds", async () => {
   vi.useFakeTimers();
@@ -48,14 +61,9 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
     },
   } as never);
 
-  vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({
-    acquire: vi.fn().mockResolvedValue({
-      server: { port: 1234, url: "http://127.0.0.1:1234" },
-      release: vi.fn(),
-    }),
-  } as never);
-
-  const client = new OpenCodeAgentClient(createTestLogger());
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
+    serverManager: createFakeServerManager(),
+  });
   const modelsPromise = client.listModels({ cwd: "/tmp/opencode-models", force: false });
 
   await vi.advanceTimersByTimeAsync(15_000);
@@ -84,9 +92,10 @@ test("passes explicit refresh force through server acquisition", async () => {
     server: { port: 1234, url: "http://127.0.0.1:1234" },
     release: vi.fn(),
   });
-  vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({ acquire } as never);
 
-  const client = new OpenCodeAgentClient(createTestLogger());
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
+    serverManager: createFakeServerManager(acquire),
+  });
 
   await client.listModels({ cwd: "/tmp/opencode-models", force: true });
 

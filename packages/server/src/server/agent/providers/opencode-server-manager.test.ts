@@ -2,20 +2,14 @@ import { EventEmitter } from "node:events";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { OpenCodeServerManager } from "./opencode-agent.js";
+import { OpenCodeServerManager, type OpenCodeServerGeneration } from "./opencode/server-manager.js";
 
 type FakeServerProcess = EventEmitter & {
   killed: boolean;
   kill: ReturnType<typeof vi.fn>;
 };
 
-interface FakeGeneration {
-  process: FakeServerProcess;
-  port: number;
-  url: string;
-  refCount: number;
-  retired: boolean;
-}
+type FakeGeneration = OpenCodeServerGeneration & { process: FakeServerProcess };
 
 describe("OpenCodeServerManager generations", () => {
   test("rotation creates a new current server without killing a referenced old server", async () => {

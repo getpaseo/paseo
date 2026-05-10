@@ -226,6 +226,9 @@ vi.mock("./providers/opencode-agent.js", () => ({
       return true;
     }
   },
+}));
+
+vi.mock("./providers/opencode/server-manager.js", () => ({
   OpenCodeServerManager: {
     getInstance: vi.fn(() => ({
       shutdown: vi.fn(),

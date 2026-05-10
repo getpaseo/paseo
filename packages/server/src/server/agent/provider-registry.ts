@@ -25,7 +25,8 @@ import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
-import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
+import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import {
