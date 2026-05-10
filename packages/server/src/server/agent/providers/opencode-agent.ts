@@ -2235,8 +2235,8 @@ class OpenCodeAgentSession implements AgentSession {
   private foregroundKnownMessageIds = new Set<string>();
   private foregroundEmittedQuestionIds = new Set<string>();
   private foregroundEmittedPermissionIds = new Set<string>();
-  private foregroundEmittedReasoningPartIds = new Set<string>();
-  private foregroundEmittedToolCallStatusByCallId = new Map<string, string>();
+  private foregroundEmittedReasoningTextLengthByPartId = new Map<string, number>();
+  private foregroundEmittedToolCallSignatureByCallId = new Map<string, string>();
   private foregroundTurnStartedAt: number | null = null;
   private readonly recovery: OpenCodeRecoveryOptions;
   constructor(
@@ -2362,8 +2362,8 @@ class OpenCodeAgentSession implements AgentSession {
     this.foregroundUsageUpdated = false;
     this.foregroundEmittedQuestionIds.clear();
     this.foregroundEmittedPermissionIds.clear();
-    this.foregroundEmittedReasoningPartIds.clear();
-    this.foregroundEmittedToolCallStatusByCallId.clear();
+    this.foregroundEmittedReasoningTextLengthByPartId.clear();
+    this.foregroundEmittedToolCallSignatureByCallId.clear();
     this.foregroundKnownMessageIds = await this.readPersistedSessionMessageIds();
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
@@ -2882,12 +2882,15 @@ class OpenCodeAgentSession implements AgentSession {
         return { kind: "in-progress", messageId: info.id, parts: item.parts };
       }
 
-      const text = item.parts
+      let text = item.parts
         .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
         .map((part) => (part.text ?? "").trim())
         .filter((part) => part.length > 0)
         .join("\n\n");
 
+      if (!text) {
+        text = stringifyStructuredAssistantMessage(info.structured) ?? "";
+      }
       if (!text) continue;
 
       const usage: AgentUsage = {};
@@ -2901,13 +2904,16 @@ class OpenCodeAgentSession implements AgentSession {
   private emitIncrementalAssistantParts(parts: readonly OpenCodePart[], turnId: string): void {
     for (const part of parts) {
       if (part.type === "reasoning" && part.text) {
-        if (this.foregroundEmittedReasoningPartIds.has(part.id)) continue;
-        this.foregroundEmittedReasoningPartIds.add(part.id);
+        const emittedTextLength =
+          this.foregroundEmittedReasoningTextLengthByPartId.get(part.id) ?? 0;
+        if (part.text.length <= emittedTextLength) continue;
+        const text = part.text.slice(emittedTextLength);
+        this.foregroundEmittedReasoningTextLengthByPartId.set(part.id, part.text.length);
         this.notifySubscribers(
           {
             type: "timeline",
             provider: "opencode",
-            item: { type: "reasoning", text: part.text },
+            item: { type: "reasoning", text },
           },
           turnId,
         );
@@ -2917,10 +2923,10 @@ class OpenCodeAgentSession implements AgentSession {
       const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
       if (!parsedToolPart.success || !parsedToolPart.data) continue;
       const callId = parsedToolPart.data.callId;
-      const status = parsedToolPart.data.status;
-      const lastStatus = this.foregroundEmittedToolCallStatusByCallId.get(callId);
-      if (lastStatus === status) continue;
-      this.foregroundEmittedToolCallStatusByCallId.set(callId, status);
+      const signature = this.createRecoveredToolCallSignature(part, parsedToolPart.data);
+      const lastSignature = this.foregroundEmittedToolCallSignatureByCallId.get(callId);
+      if (lastSignature === signature) continue;
+      this.foregroundEmittedToolCallSignatureByCallId.set(callId, signature);
       this.trackToolCall(parsedToolPart.data);
       this.notifySubscribers(
         {
@@ -2931,6 +2937,21 @@ class OpenCodeAgentSession implements AgentSession {
         turnId,
       );
     }
+  }
+
+  private createRecoveredToolCallSignature(
+    part: Extract<OpenCodePart, { type: "tool" }>,
+    item: ToolCallTimelineItem,
+  ): string {
+    const state = (part as { state?: { input?: unknown; output?: unknown; error?: unknown } })
+      .state;
+    return JSON.stringify([
+      item.callId,
+      item.status,
+      state?.input ?? null,
+      state?.output ?? null,
+      state?.error ?? null,
+    ]);
   }
 
   private applyRecoveredAssistantCompletion(
