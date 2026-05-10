@@ -1,7 +1,7 @@
 import type { PushTokenStore } from "./token-store.js";
 import type pino from "pino";
 
-interface PushPayload {
+export interface PushPayload {
   title: string;
   body: string;
   data?: Record<string, unknown>;
