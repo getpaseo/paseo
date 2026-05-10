@@ -69,6 +69,13 @@ import {
 } from "./mcp-shared.js";
 import { sendPromptToAgent, setupFinishNotification } from "./agent-prompt.js";
 import { respondToAgentPermission } from "./permission-response.js";
+import {
+  archiveAgentCommand,
+  cancelAgentRunCommand,
+  closeAgentCommand,
+  setAgentModeCommand,
+  updateAgentCommand,
+} from "./lifecycle-command.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";
@@ -1326,13 +1333,16 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId }) => {
-      const success = await agentManager.cancelAgentRun(agentId);
-      if (success) {
+      const { cancelled } = await cancelAgentRunCommand(
+        { agentManager, logger: childLogger },
+        agentId,
+      );
+      if (cancelled) {
         waitTracker.cancel(agentId, "Agent run cancelled");
       }
       return {
         content: [],
-        structuredContent: ensureValidJson({ success }),
+        structuredContent: ensureValidJson({ success: cancelled }),
       };
     },
   );
@@ -1351,7 +1361,14 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId }) => {
-      await agentManager.archiveAgent(agentId);
+      await archiveAgentCommand(
+        {
+          agentManager,
+          agentStorage,
+          logger: childLogger,
+        },
+        agentId,
+      );
       waitTracker.cancel(agentId, "Agent archived");
       return {
         content: [],
@@ -1373,7 +1390,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId }) => {
-      await agentManager.closeAgent(agentId);
+      await closeAgentCommand({ agentManager }, agentId);
       waitTracker.cancel(agentId, "Agent terminated");
       return {
         content: [],
@@ -1400,30 +1417,36 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, name, labels, settings }) => {
+      let appliedSettings = false;
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
+        appliedSettings = true;
       }
       if (settings?.model !== undefined) {
         await agentManager.setAgentModel(agentId, settings.model);
+        appliedSettings = true;
       }
       if (settings?.thinkingOptionId !== undefined) {
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
+        appliedSettings = true;
       }
       if (settings?.features) {
         for (const [featureId, value] of Object.entries(settings.features)) {
           await agentManager.setAgentFeature(agentId, featureId, value);
         }
+        appliedSettings = true;
       }
 
-      const trimmedName = name?.trim();
-      await agentManager.updateAgentMetadata(agentId, {
-        ...(trimmedName ? { title: trimmedName } : {}),
-        ...(labels ? { labels } : {}),
-      });
+      const metadataResult = await updateAgentCommand(
+        { agentManager },
+        { agentId, name, labels },
+      );
 
       return {
         content: [],
-        structuredContent: ensureValidJson({ success: true }),
+        structuredContent: ensureValidJson({
+          success: metadataResult.accepted || appliedSettings,
+        }),
       };
     },
   );
@@ -2301,10 +2324,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, modeId }) => {
-      await agentManager.setAgentMode(agentId, modeId);
+      const result = await setAgentModeCommand({ agentManager }, { agentId, modeId });
       return {
         content: [],
-        structuredContent: ensureValidJson({ success: true, newMode: modeId }),
+        structuredContent: ensureValidJson({ success: true, newMode: result.modeId }),
       };
     },
   );

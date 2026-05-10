@@ -109,6 +109,13 @@ import type {
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
 import {
+  archiveAgentCommand,
+  cancelAgentRunCommand,
+  closeAgentCommand,
+  setAgentModeCommand,
+  updateAgentCommand,
+} from "./agent/lifecycle-command.js";
+import {
   buildStoredAgentPayload,
   resolveEffectiveThinkingOptionId,
   resolveStoredAgentPayloadUpdatedAt,
@@ -2309,7 +2316,7 @@ export class Session {
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
 
     try {
-      await this.agentManager.closeAgent(agentId);
+      await closeAgentCommand({ agentManager: this.agentManager }, agentId);
     } catch (error) {
       this.sessionLogger.warn(
         { err: error, agentId },
@@ -2363,43 +2370,17 @@ export class Session {
     });
   }
 
-  private async archiveStoredAgentForClose(
-    agentId: string,
-  ): Promise<{ agentId: string; archivedAt: string }> {
-    const existing = await this.agentStorage.get(agentId);
-    if (!existing) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    if (existing.archivedAt) {
-      return {
-        agentId,
-        archivedAt: existing.archivedAt,
-      };
-    }
-
-    const archivedAt = new Date().toISOString();
-    await this.agentManager.archiveSnapshot(agentId, archivedAt);
-
-    return { agentId, archivedAt };
-  }
-
   private async archiveAgentForClose(
     agentId: string,
   ): Promise<{ agentId: string; archivedAt: string }> {
-    const liveAgent = this.agentManager.getAgent(agentId);
-    if (liveAgent) {
-      await this.interruptAgentIfRunning(agentId);
-      await this.agentManager.clearAgentAttention(agentId).catch(() => undefined);
-      await this.agentManager.archiveAgent(agentId);
-    } else {
-      await this.archiveStoredAgentForClose(agentId);
-    }
-
-    const archivedRecord = await this.agentStorage.get(agentId);
-    if (!archivedRecord) {
-      throw new Error(`Agent not found in storage after archive: ${agentId}`);
-    }
+    const { archivedAt, record: archivedRecord } = await archiveAgentCommand(
+      {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      },
+      agentId,
+    );
 
     if (this.agentUpdatesSubscription) {
       const payload = this.buildStoredAgentPayload(archivedRecord);
@@ -2432,11 +2413,7 @@ export class Session {
       await this.emitWorkspaceUpdateForCwd(payload.cwd);
     }
 
-    if (!archivedRecord.archivedAt) {
-      throw new Error(`Agent missing archivedAt after archive: ${agentId}`);
-    }
-
-    return { agentId, archivedAt: archivedRecord.archivedAt };
+    return { agentId, archivedAt };
   }
 
   private async handleCloseItemsRequest(msg: CloseItemsRequest): Promise<void> {
@@ -2511,27 +2488,24 @@ export class Session {
       "session: update_agent_request",
     );
 
-    const normalizedName = name?.trim();
-    const normalizedLabels = labels && Object.keys(labels).length > 0 ? labels : undefined;
-
-    if (!normalizedName && !normalizedLabels) {
-      this.emit({
-        type: "update_agent_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: "Nothing to update (provide name and/or labels)",
-        },
-      });
-      return;
-    }
-
     try {
-      await this.agentManager.updateAgentMetadata(agentId, {
-        ...(normalizedName ? { title: normalizedName } : {}),
-        ...(normalizedLabels ? { labels: normalizedLabels } : {}),
-      });
+      const result = await updateAgentCommand(
+        { agentManager: this.agentManager },
+        { agentId, name, labels },
+      );
+
+      if (!result.accepted) {
+        this.emit({
+          type: "update_agent_response",
+          payload: {
+            requestId,
+            agentId,
+            accepted: false,
+            error: result.error,
+          },
+        });
+        return;
+      }
 
       this.emit({
         type: "update_agent_response",
@@ -3463,7 +3437,10 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Cancel request received for agent ${agentId}`);
 
     try {
-      await this.interruptAgentIfRunning(agentId);
+      await cancelAgentRunCommand(
+        { agentManager: this.agentManager, logger: this.sessionLogger },
+        agentId,
+      );
       if (requestId) {
         const agent = this.agentManager.getAgent(agentId);
         const payload = agent ? await this.buildAgentPayload(agent) : null;
@@ -4333,7 +4310,7 @@ export class Session {
     this.sessionLogger.info({ agentId, modeId, requestId }, "session: set_agent_mode_request");
 
     try {
-      await this.agentManager.setAgentMode(agentId, modeId);
+      await setAgentModeCommand({ agentManager: this.agentManager }, { agentId, modeId });
       this.sessionLogger.info(
         { agentId, modeId, requestId },
         "session: set_agent_mode_request success",
