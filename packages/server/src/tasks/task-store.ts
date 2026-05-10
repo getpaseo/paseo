@@ -1,142 +1,17 @@
-import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
+import { readdir, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { Task, TaskStore, CreateTaskOptions, TaskStatus } from "./types.js";
+import type { Task, TaskStore, CreateTaskOptions } from "./types.js";
 import {
   isBlockedTask,
   isReadyTask,
   loadScopedTaskGraph,
   sortByPriorityThenCreated,
 } from "./task-graph.js";
+import { readTaskDocument, writeTaskDocument } from "./task-document.js";
 
 function generateId(): string {
   return randomBytes(4).toString("hex");
-}
-
-function serializeTask(task: Task): string {
-  const frontmatterLines = [
-    "---",
-    `id: ${task.id}`,
-    `title: ${task.title}`,
-    `status: ${task.status}`,
-    `deps: [${task.deps.join(", ")}]`,
-    `created: ${task.created}`,
-  ];
-
-  if (task.parentId) {
-    frontmatterLines.push(`parentId: ${task.parentId}`);
-  }
-
-  if (task.assignee) {
-    frontmatterLines.push(`assignee: ${task.assignee}`);
-  }
-
-  if (task.priority !== undefined) {
-    frontmatterLines.push(`priority: ${task.priority}`);
-  }
-
-  frontmatterLines.push("---");
-
-  const frontmatter = frontmatterLines.join("\n");
-
-  let content = "";
-  if (task.body) {
-    content += task.body + "\n";
-  }
-
-  if (task.acceptanceCriteria.length > 0) {
-    content += "\n## Acceptance Criteria\n\n";
-    for (const criterion of task.acceptanceCriteria) {
-      content += `- [ ] ${criterion}\n`;
-    }
-  }
-
-  if (task.notes.length > 0) {
-    content += "\n## Notes\n";
-    for (const note of task.notes) {
-      content += `\n**${note.timestamp}**\n\n${note.content}\n`;
-    }
-  }
-
-  return frontmatter + "\n\n" + content;
-}
-
-function parseTask(content: string): Task {
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
-  if (!frontmatterMatch) {
-    throw new Error("Invalid task file: missing frontmatter");
-  }
-
-  const frontmatter = frontmatterMatch[1];
-  const fileBody = content.slice(frontmatterMatch[0].length);
-
-  const getValue = (key: string): string => {
-    const match = frontmatter.match(new RegExp(`^${key}: (.*)$`, "m"));
-    return match ? match[1] : "";
-  };
-
-  const depsStr = getValue("deps");
-  const depsMatch = depsStr.match(/\[(.*)\]/);
-  const deps =
-    depsMatch && depsMatch[1].trim()
-      ? depsMatch[1]
-          .split(",")
-          .map((d) => d.trim())
-          .filter(Boolean)
-      : [];
-
-  // Parse notes from body
-  const notes: Task["notes"] = [];
-  const notesSection = fileBody.match(/## Notes\n([\s\S]*?)$/);
-  if (notesSection) {
-    const noteMatches = notesSection[1].matchAll(
-      /\*\*(\d{4}-\d{2}-\d{2}T[\d:.Z]+)\*\*\n\n([\s\S]*?)(?=\n\*\*\d{4}|$)/g,
-    );
-    for (const match of noteMatches) {
-      notes.push({
-        timestamp: match[1],
-        content: match[2].trim(),
-      });
-    }
-  }
-
-  // Parse acceptance criteria
-  const acceptanceCriteria: string[] = [];
-  const criteriaSection = fileBody.match(/## Acceptance Criteria\n\n([\s\S]*?)(?=\n## Notes|$)/);
-  if (criteriaSection) {
-    const criteriaMatches = criteriaSection[1].matchAll(/- \[[ x]\] (.+)$/gm);
-    for (const match of criteriaMatches) {
-      acceptanceCriteria.push(match[1].trim());
-    }
-  }
-
-  // Body is everything before ## Acceptance Criteria or ## Notes
-  let taskBody = fileBody;
-  const firstSection = fileBody.match(/\n## (Acceptance Criteria|Notes)\n/);
-  if (firstSection) {
-    taskBody = fileBody.slice(0, firstSection.index).trim();
-  }
-  taskBody = taskBody.trim();
-
-  const assignee = getValue("assignee");
-  const parentId = getValue("parentId");
-  const priorityStr = getValue("priority");
-  const priority = priorityStr ? parseInt(priorityStr, 10) : undefined;
-
-  return {
-    id: getValue("id"),
-    title: getValue("title"),
-    status: getValue("status") as TaskStatus,
-    deps,
-    parentId: parentId || undefined,
-    body: taskBody,
-    acceptanceCriteria,
-    notes,
-    created: getValue("created") || new Date().toISOString(),
-    assignee: assignee || undefined,
-    priority,
-    raw: content,
-  };
 }
 
 export class FileTaskStore implements TaskStore {
@@ -152,8 +27,7 @@ export class FileTaskStore implements TaskStore {
 
   private async readTask(id: string): Promise<Task | null> {
     try {
-      const content = await readFile(this.taskPath(id), "utf-8");
-      return parseTask(content);
+      return await readTaskDocument(this.taskPath(id));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return null;
@@ -164,7 +38,7 @@ export class FileTaskStore implements TaskStore {
 
   private async writeTask(task: Task): Promise<void> {
     await this.ensureDir();
-    await writeFile(this.taskPath(task.id), serializeTask(task), "utf-8");
+    await writeTaskDocument(this.taskPath(task.id), task);
   }
 
   async list(): Promise<Task[]> {
