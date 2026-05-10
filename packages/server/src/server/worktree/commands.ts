@@ -5,7 +5,84 @@ import {
   archivePaseoWorktree,
   type ArchivePaseoWorktreeDependencies,
 } from "../paseo-worktree-archive-service.js";
-import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type {
+  CreatePaseoWorktreeInput,
+  CreatePaseoWorktreeResult,
+} from "../paseo-worktree-service.js";
+import { toWorktreeWireError, type WorktreeWireError } from "../worktree-errors.js";
+import type { WorkspaceGitService, WorkspaceGitWorktreeInfo } from "../workspace-git-service.js";
+
+export interface ListPaseoWorktreesCommandDependencies {
+  workspaceGitService: Pick<WorkspaceGitService, "listWorktrees">;
+}
+
+export interface ListPaseoWorktreesCommandInput {
+  cwd: string;
+  reason?: string;
+}
+
+export async function listPaseoWorktreesCommand(
+  dependencies: ListPaseoWorktreesCommandDependencies,
+  input: ListPaseoWorktreesCommandInput,
+): Promise<WorkspaceGitWorktreeInfo[]> {
+  if (input.reason) {
+    return dependencies.workspaceGitService.listWorktrees(input.cwd, { reason: input.reason });
+  }
+  return dependencies.workspaceGitService.listWorktrees(input.cwd);
+}
+
+type CreatePaseoWorktreeWorkflow<Result extends CreatePaseoWorktreeResult> = (
+  input: CreatePaseoWorktreeInput,
+) => Promise<Result>;
+
+export interface CreatePaseoWorktreeCommandDependencies<
+  Result extends CreatePaseoWorktreeResult = CreatePaseoWorktreeResult,
+> {
+  paseoHome?: string;
+  createPaseoWorktreeWorkflow?: CreatePaseoWorktreeWorkflow<Result>;
+}
+
+export type CreatePaseoWorktreeCommandInput = Omit<
+  CreatePaseoWorktreeInput,
+  "paseoHome" | "runSetup"
+> & {
+  paseoHome?: string;
+};
+
+export type CreatePaseoWorktreeCommandResult<Result extends CreatePaseoWorktreeResult> =
+  | {
+      ok: true;
+      createdWorktree: Result;
+    }
+  | {
+      ok: false;
+      error: WorktreeWireError;
+      cause: unknown;
+    };
+
+export async function createPaseoWorktreeCommand<Result extends CreatePaseoWorktreeResult>(
+  dependencies: CreatePaseoWorktreeCommandDependencies<Result>,
+  input: CreatePaseoWorktreeCommandInput,
+): Promise<CreatePaseoWorktreeCommandResult<Result>> {
+  try {
+    if (!dependencies.createPaseoWorktreeWorkflow) {
+      throw new Error("Paseo worktree service is not configured");
+    }
+
+    const createdWorktree = await dependencies.createPaseoWorktreeWorkflow({
+      ...input,
+      runSetup: false,
+      paseoHome: input.paseoHome ?? dependencies.paseoHome,
+    });
+    return { ok: true, createdWorktree };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toWorktreeWireError(error),
+      cause: error,
+    };
+  }
+}
 
 export interface ArchivePaseoWorktreeCommandDependencies extends Omit<
   ArchivePaseoWorktreeDependencies,

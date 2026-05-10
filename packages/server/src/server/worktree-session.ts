@@ -42,7 +42,11 @@ import type {
 } from "./paseo-worktree-service.js";
 import type { ArchivePaseoWorktreeDependencies } from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
-import { archivePaseoWorktreeCommand } from "./worktree/commands.js";
+import {
+  archivePaseoWorktreeCommand,
+  createPaseoWorktreeCommand,
+  listPaseoWorktreesCommand,
+} from "./worktree/commands.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -392,7 +396,10 @@ export async function handlePaseoWorktreeListRequest(
   }
 
   try {
-    const worktrees = await dependencies.workspaceGitService.listWorktrees(cwd);
+    const worktrees = await listPaseoWorktreesCommand(
+      { workspaceGitService: dependencies.workspaceGitService },
+      { cwd },
+    );
     dependencies.emit({
       type: "paseo_worktree_list_response",
       payload: {
@@ -481,18 +488,41 @@ export async function handleCreatePaseoWorktreeRequest(
   request: Extract<SessionInboundMessage, { type: "create_paseo_worktree_request" }>,
 ): Promise<void> {
   try {
-    const createdWorktree = await dependencies.createPaseoWorktreeWorkflow({
-      cwd: request.cwd,
-      projectId: request.projectId,
-      worktreeSlug: request.worktreeSlug,
-      firstAgentContext: normalizeFirstAgentContext(request),
-      refName: request.refName,
-      action: request.action,
-      githubPrNumber: request.githubPrNumber,
-      runSetup: false,
-      paseoHome: dependencies.paseoHome,
-    });
+    const commandResult = await createPaseoWorktreeCommand(
+      {
+        paseoHome: dependencies.paseoHome,
+        createPaseoWorktreeWorkflow: dependencies.createPaseoWorktreeWorkflow,
+      },
+      {
+        cwd: request.cwd,
+        projectId: request.projectId,
+        worktreeSlug: request.worktreeSlug,
+        firstAgentContext: normalizeFirstAgentContext(request),
+        refName: request.refName,
+        action: request.action,
+        githubPrNumber: request.githubPrNumber,
+      },
+    );
 
+    if (!commandResult.ok) {
+      dependencies.sessionLogger.error(
+        { err: commandResult.cause, cwd: request.cwd, worktreeSlug: request.worktreeSlug },
+        "Failed to create worktree",
+      );
+      dependencies.emit({
+        type: "create_paseo_worktree_response",
+        payload: {
+          workspace: null,
+          error: commandResult.error.message,
+          errorCode: commandResult.error.code,
+          setupTerminalId: null,
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
+
+    const createdWorktree = commandResult.createdWorktree;
     const descriptor = await dependencies.describeWorkspaceRecord(createdWorktree);
     dependencies.emit({
       type: "create_paseo_worktree_response",

@@ -38,11 +38,7 @@ import { createAgentCommand } from "./create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../path-utils.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
-import type {
-  CreatePaseoWorktreeSetupContinuationInput,
-  CreatePaseoWorktreeWorkflowFn,
-  CreatePaseoWorktreeWorkflowResult,
-} from "../worktree-session.js";
+import type { CreatePaseoWorktreeWorkflowFn } from "../worktree-session.js";
 import type { ScheduleService } from "../schedule/service.js";
 import {
   ScheduleRunSchema,
@@ -76,11 +72,13 @@ import {
 } from "./lifecycle-command.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
-import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";
-import { toWorktreeRequestError } from "../worktree-errors.js";
+import { WorktreeRequestError } from "../worktree-errors.js";
 import {
   archivePaseoWorktreeCommand,
   type ArchivePaseoWorktreeCommandDependencies,
+  createPaseoWorktreeCommand,
+  type CreatePaseoWorktreeCommandInput,
+  listPaseoWorktreesCommand,
 } from "../worktree/commands.js";
 
 export interface AgentMcpServerOptions {
@@ -2085,9 +2083,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!options.workspaceGitService) {
         throw new Error("WorkspaceGitService is required to list worktrees");
       }
-      const worktrees = await options.workspaceGitService.listWorktrees(resolvedCwd, {
-        reason: "mcp:list-worktrees",
-      });
+      const worktrees = await listPaseoWorktreesCommand(
+        { workspaceGitService: options.workspaceGitService },
+        {
+          cwd: resolvedCwd,
+          reason: "mcp:list-worktrees",
+        },
+      );
 
       return {
         content: [],
@@ -2139,13 +2141,17 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ cwd, target }) => {
       const repoRoot = resolveScopedCwd(cwd, { required: true });
-      const mcpInput = mcpCreateWorktreeInput(repoRoot, target, options.paseoHome);
-      const createdWorktree = await createMcpWorktree({
-        input: mcpInput.input,
-        createPaseoWorktree: options.createPaseoWorktree,
-        resolveDefaultBranch: mcpInput.resolveDefaultBranch,
-      });
-      const { worktree } = createdWorktree;
+      const commandResult = await createPaseoWorktreeCommand(
+        {
+          paseoHome: options.paseoHome,
+          createPaseoWorktreeWorkflow: options.createPaseoWorktree,
+        },
+        createMcpWorktreeCommandInput(repoRoot, target),
+      );
+      if (!commandResult.ok) {
+        throw new WorktreeRequestError(commandResult.error);
+      }
+      const { worktree } = commandResult.createdWorktree;
       await options.workspaceGitService?.listWorktrees?.(repoRoot, {
         force: true,
         reason: "mcp:create-worktree",
@@ -2428,57 +2434,24 @@ function archiveWorktreeDependencies(
   };
 }
 
-function mcpCreateWorktreeInput(
+function createMcpWorktreeCommandInput(
   repoRoot: string,
   target: McpCreateWorktreeTarget,
-  paseoHome: string | undefined,
-): { input: CreatePaseoWorktreeInput; resolveDefaultBranch?: (root: string) => Promise<string> } {
-  const base = { cwd: repoRoot, runSetup: false, paseoHome } as const;
+): CreatePaseoWorktreeCommandInput {
+  const base = { cwd: repoRoot } as const;
   switch (target.mode) {
     case "branch-off":
       return {
-        input: {
-          ...base,
-          worktreeSlug: target.newBranch,
-          action: "branch-off",
-          ...(target.base ? { refName: target.base } : {}),
-        },
+        ...base,
+        worktreeSlug: target.newBranch,
+        action: "branch-off",
+        ...(target.base ? { refName: target.base } : {}),
       };
     case "checkout-branch":
-      return {
-        input: { ...base, action: "checkout", refName: target.branch },
-      };
+      return { ...base, action: "checkout", refName: target.branch };
     case "checkout-pr":
-      return {
-        input: { ...base, action: "checkout", githubPrNumber: target.prNumber },
-      };
+      return { ...base, action: "checkout", githubPrNumber: target.prNumber };
     default:
       throw new Error("unreachable");
-  }
-}
-
-interface CreateMcpWorktreeOptions {
-  input: CreatePaseoWorktreeInput;
-  createPaseoWorktree: CreatePaseoWorktreeWorkflowFn | undefined;
-  resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
-  setupContinuation?: CreatePaseoWorktreeSetupContinuationInput;
-}
-
-async function createMcpWorktree(
-  options: CreateMcpWorktreeOptions,
-): Promise<CreatePaseoWorktreeWorkflowResult> {
-  try {
-    if (!options.createPaseoWorktree) {
-      throw new Error("Paseo worktree service is not configured");
-    }
-    const result = await options.createPaseoWorktree(options.input, {
-      ...(options.resolveDefaultBranch
-        ? { resolveDefaultBranch: options.resolveDefaultBranch }
-        : {}),
-      ...(options.setupContinuation ? { setupContinuation: options.setupContinuation } : {}),
-    });
-    return result;
-  } catch (error) {
-    throw toWorktreeRequestError(error);
   }
 }
