@@ -27,17 +27,17 @@ import {
   type CodexProcessRunner,
 } from "./codex-process-bridge.js";
 import { createTmuxCodexSession, type TmuxCodexSession } from "./tmux-codex-session.js";
-import { loadCodexPersistedTimeline } from "./agent/providers/codex-rollout-timeline.js";
 
-type TrackedCodexProcessSession = {
+interface TrackedCodexProcessSession {
   agentId: string;
   leaderPid: number;
   session: TmuxCodexSession;
   missingScans: number;
-};
+}
 
 const DEFAULT_SCAN_INTERVAL_MS = 2500;
 const DEFAULT_MISSING_SCAN_GRACE = 2;
+const CODEX_PROCESS_POLL_INTERVAL_MS = 5000;
 
 function normalizePersistedCodexSessionId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -235,15 +235,16 @@ export class CodexProcessBridgeService {
       title: descriptor.title,
       persistenceHandle: descriptor.persistenceHandle,
       externalSessionSource: "codex_process",
+      pollIntervalMs: CODEX_PROCESS_POLL_INTERVAL_MS,
       runtimeExtra: {
         tty: descriptor.tty,
         title: descriptor.title,
         leaderPid: descriptor.leaderPid,
         sessionId: descriptor.sessionId,
       },
-      loadTimeline: descriptor.sessionId
-        ? async () => loadCodexPersistedTimeline(descriptor.sessionId!, undefined, this.logger)
-        : undefined,
+      // For codex-process bridging, rely on lightweight log tailing instead of
+      // replaying full persisted timelines on every poll cycle.
+      loadTimeline: undefined,
       capturePane: async () => this.bridge.capture(descriptor.logPath),
       sendKeys: async (_target, keys) => this.sendKeys(descriptor.tty, keys),
       isProcessAlive: async () => this.bridge.isAlive(descriptor.leaderPid),
@@ -320,7 +321,12 @@ export class CodexProcessBridgeService {
 
   private async sendKeys(tty: string, keys: string[]): Promise<void> {
     for (const key of keys) {
-      const data = key === "Enter" ? "\n" : key === "C-c" ? "\u0003" : key;
+      let data = key;
+      if (key === "Enter") {
+        data = "\n";
+      } else if (key === "C-c") {
+        data = "\u0003";
+      }
       await this.bridge.sendInput(tty, data);
     }
   }

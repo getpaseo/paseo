@@ -46,7 +46,7 @@ describe("codex process bridge discovery", () => {
     expect(logPath).toBe("/tmp/codex-429-retry.cS8GBi.log");
   });
 
-  it("skips pseudo-tty codex children that belong to a wrapper on another tty", async () => {
+  it("keeps pseudo-tty codex children even when the wrapper tty differs", async () => {
     const processes = parseUnixProcessTableWithTty(
       [
         "282241 1007934 pts/15 bash /usr/local/bin/codex-root-wrapper",
@@ -61,7 +61,12 @@ describe("codex process bridge discovery", () => {
       resolveCwd: async () => "/workspace/project",
     });
 
-    expect(descriptors).toHaveLength(0);
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      tty: "/dev/pts/23",
+      logPath: "/tmp/codex-429-retry.glX6HS.log",
+      cwd: "/workspace/project",
+    });
   });
 
   it("discovers codex sessions by tty", async () => {

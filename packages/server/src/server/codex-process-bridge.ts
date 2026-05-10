@@ -142,9 +142,6 @@ export async function discoverCodexProcessDescriptors(input: {
       continue;
     }
     const scriptAncestor = findCodexScriptAncestor({ process, processByPid });
-    if (scriptAncestor?.process.tty && scriptAncestor.process.tty !== tty) {
-      continue;
-    }
     const logPath = scriptAncestor?.logPath ?? null;
     const title = `${basename(cwd)} [${tty.replace("/dev/", "")}]`;
     const metadata = {
