@@ -16,7 +16,6 @@ import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-sto
 import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
-  type SessionOutboundMessage,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
@@ -58,6 +57,10 @@ import {
   isBearerTokenValid,
   type DaemonAuthConfig,
 } from "./auth.js";
+import {
+  WebSocketRuntimeMetricsWindow,
+  type WebSocketRuntimeCounters,
+} from "./websocket/runtime-metrics.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -270,24 +273,6 @@ interface SessionConnection {
   externalDisconnectCleanupTimeout: ReturnType<typeof setTimeout> | null;
 }
 
-interface WebSocketRuntimeCounters {
-  connectedAwaitingHello: number;
-  helloResumed: number;
-  helloNew: number;
-  pendingDisconnected: number;
-  sessionDisconnectedWaitingReconnect: number;
-  sessionSocketDisconnectedAttached: number;
-  sessionCleanup: number;
-  validationFailed: number;
-  binaryBeforeHelloRejected: number;
-  pendingMessageRejectedBeforeHello: number;
-  missingConnectionForMessage: number;
-  unexpectedHelloOnActiveConnection: number;
-  relayExternalSocketAttached: number;
-  originRejected: number;
-  hostRejected: number;
-}
-
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -382,33 +367,7 @@ export class VoiceAssistantWebSocketServer {
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
     | null;
   private serverCapabilities: ServerCapabilities | undefined;
-  private runtimeWindowStartedAt = Date.now();
-  private readonly runtimeCounters: WebSocketRuntimeCounters = {
-    connectedAwaitingHello: 0,
-    helloResumed: 0,
-    helloNew: 0,
-    pendingDisconnected: 0,
-    sessionDisconnectedWaitingReconnect: 0,
-    sessionSocketDisconnectedAttached: 0,
-    sessionCleanup: 0,
-    validationFailed: 0,
-    binaryBeforeHelloRejected: 0,
-    pendingMessageRejectedBeforeHello: 0,
-    missingConnectionForMessage: 0,
-    unexpectedHelloOnActiveConnection: 0,
-    relayExternalSocketAttached: 0,
-    originRejected: 0,
-    hostRejected: 0,
-  };
-  private readonly inboundMessageCounts = new Map<string, number>();
-  private readonly inboundSessionRequestCounts = new Map<string, number>();
-  private readonly outboundMessageCounts = new Map<string, number>();
-  private readonly outboundSessionMessageCounts = new Map<string, number>();
-  private readonly outboundAgentStreamCounts = new Map<string, number>();
-  private readonly outboundAgentStreamByAgentCounts = new Map<string, number>();
-  private readonly outboundBinaryFrameCounts = new Map<string, number>();
-  private readonly bufferedAmountSamples: number[] = [];
-  private readonly requestLatencies = new Map<string, number[]>();
+  private readonly runtimeMetrics = new WebSocketRuntimeMetricsWindow();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
@@ -666,7 +625,7 @@ export class VoiceAssistantWebSocketServer {
       // WebSocket.OPEN = 1
       if (ws.readyState === 1) {
         ws.send(payload);
-        this.recordOutboundMessage(message, ws);
+        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
       }
     }
   }
@@ -783,7 +742,7 @@ export class VoiceAssistantWebSocketServer {
     }
     try {
       ws.send(JSON.stringify(message));
-      this.recordOutboundMessage(message, ws);
+      this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
     }
@@ -795,7 +754,7 @@ export class VoiceAssistantWebSocketServer {
     }
     try {
       ws.send(frame);
-      this.recordOutboundBinaryFrame(ws);
+      this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_binary_failed");
     }
@@ -1567,116 +1526,19 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private incrementRuntimeCounter(counter: keyof WebSocketRuntimeCounters): void {
-    this.runtimeCounters[counter] += 1;
-  }
-
-  private incrementCount(map: Map<string, number>, key: string): void {
-    map.set(key, (map.get(key) ?? 0) + 1);
+    this.runtimeMetrics.incrementCounter(counter);
   }
 
   private recordInboundMessageType(type: string): void {
-    this.incrementCount(this.inboundMessageCounts, type);
+    this.runtimeMetrics.recordInboundMessage(type);
   }
 
   private recordInboundSessionRequestType(type: string): void {
-    this.incrementCount(this.inboundSessionRequestCounts, type);
-  }
-
-  private recordOutboundMessage(message: WSOutboundMessage, ws: WebSocketLike): void {
-    if (message.type !== "session") {
-      this.incrementCount(this.outboundMessageCounts, message.type);
-      this.recordBufferedAmount(ws);
-      return;
-    }
-
-    this.incrementCount(this.outboundMessageCounts, "session_message");
-    this.incrementCount(this.outboundSessionMessageCounts, message.message.type);
-
-    if (message.message.type === "agent_stream") {
-      this.recordOutboundAgentStreamMessage(message.message.payload);
-    }
-
-    this.recordBufferedAmount(ws);
-  }
-
-  private recordOutboundAgentStreamMessage(
-    payload: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"],
-  ): void {
-    const { agentId, event } = payload;
-    const eventType = event.type === "timeline" ? `timeline:${event.item.type}` : event.type;
-    this.incrementCount(this.outboundAgentStreamCounts, eventType);
-    this.incrementCount(this.outboundAgentStreamByAgentCounts, agentId);
-  }
-
-  private recordOutboundBinaryFrame(ws: WebSocketLike): void {
-    this.incrementCount(this.outboundBinaryFrameCounts, "binary");
-    this.recordBufferedAmount(ws);
-  }
-
-  private recordBufferedAmount(ws: WebSocketLike): void {
-    if (typeof ws.bufferedAmount !== "number") {
-      return;
-    }
-    this.bufferedAmountSamples.push(ws.bufferedAmount);
+    this.runtimeMetrics.recordInboundSessionRequest(type);
   }
 
   private recordRequestLatency(type: string, durationMs: number): void {
-    let latencies = this.requestLatencies.get(type);
-    if (!latencies) {
-      latencies = [];
-      this.requestLatencies.set(type, latencies);
-    }
-    latencies.push(durationMs);
-  }
-
-  private getTopCounts(map: Map<string, number>, limit: number): Array<[string, number]> {
-    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
-  }
-
-  private computeLatencyStats(): Array<{
-    type: string;
-    count: number;
-    minMs: number;
-    maxMs: number;
-    p50Ms: number;
-    totalMs: number;
-  }> {
-    const stats: Array<{
-      type: string;
-      count: number;
-      minMs: number;
-      maxMs: number;
-      p50Ms: number;
-      totalMs: number;
-    }> = [];
-    for (const [type, latencies] of this.requestLatencies) {
-      if (latencies.length === 0) continue;
-      latencies.sort((a, b) => a - b);
-      const count = latencies.length;
-      const minMs = Math.round(latencies[0]);
-      const maxMs = Math.round(latencies[count - 1]);
-      const p50Ms = Math.round(latencies[Math.floor(count / 2)]);
-      const totalMs = Math.round(latencies.reduce((sum, v) => sum + v, 0));
-      stats.push({ type, count, minMs, maxMs, p50Ms, totalMs });
-    }
-    stats.sort((a, b) => b.totalMs - a.totalMs);
-    return stats.slice(0, 15);
-  }
-
-  private computeBufferedAmountStats(): {
-    p95: number;
-    max: number;
-  } {
-    if (this.bufferedAmountSamples.length === 0) {
-      return { p95: 0, max: 0 };
-    }
-
-    const samples = [...this.bufferedAmountSamples].sort((a, b) => a - b);
-    const p95Index = Math.ceil(samples.length * 0.95) - 1;
-    return {
-      p95: samples[p95Index] ?? 0,
-      max: samples[samples.length - 1] ?? 0,
-    };
+    this.runtimeMetrics.recordRequestLatency(type, durationMs);
   }
 
   private collectSessionRuntimeMetrics(): WebSocketRuntimeMetrics {
@@ -1705,8 +1567,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private flushRuntimeMetrics(options?: { final?: boolean }): void {
-    const now = Date.now();
-    const windowMs = Math.max(0, now - this.runtimeWindowStartedAt);
+    const runtimeMetrics = this.runtimeMetrics.snapshotAndReset();
     const activeConnections = new Set<SessionConnection>(this.sessions.values()).size;
     const activeSockets = this.sessions.size;
     const pendingConnections = this.pendingConnections.size;
@@ -1715,13 +1576,11 @@ export class VoiceAssistantWebSocketServer {
         connection.sockets.size === 0 && connection.externalDisconnectCleanupTimeout !== null,
     ).length;
     const sessionMetrics = this.collectSessionRuntimeMetrics();
-    const latencyStats = this.computeLatencyStats();
-    const bufferedAmountStats = this.computeBufferedAmountStats();
     const agentSnapshot = this.agentManager.getMetricsSnapshot();
 
     this.logger.info(
       {
-        windowMs,
+        windowMs: runtimeMetrics.windowMs,
         final: Boolean(options?.final),
         sessions: {
           activeConnections,
@@ -1732,37 +1591,21 @@ export class VoiceAssistantWebSocketServer {
           activeSockets,
           pendingConnections,
         },
-        counters: { ...this.runtimeCounters },
-        inboundMessageTypesTop: this.getTopCounts(this.inboundMessageCounts, 12),
-        inboundSessionRequestTypesTop: this.getTopCounts(this.inboundSessionRequestCounts, 20),
-        outboundMessageTypesTop: this.getTopCounts(this.outboundMessageCounts, 12),
-        outboundSessionMessageTypesTop: this.getTopCounts(this.outboundSessionMessageCounts, 20),
-        outboundAgentStreamTypesTop: this.getTopCounts(this.outboundAgentStreamCounts, 20),
-        outboundAgentStreamAgentsTop: this.getTopCounts(this.outboundAgentStreamByAgentCounts, 20),
-        outboundBinaryFrameTypesTop: this.getTopCounts(this.outboundBinaryFrameCounts, 12),
-        bufferedAmount: bufferedAmountStats,
+        counters: runtimeMetrics.counters,
+        inboundMessageTypesTop: runtimeMetrics.inboundMessageTypesTop,
+        inboundSessionRequestTypesTop: runtimeMetrics.inboundSessionRequestTypesTop,
+        outboundMessageTypesTop: runtimeMetrics.outboundMessageTypesTop,
+        outboundSessionMessageTypesTop: runtimeMetrics.outboundSessionMessageTypesTop,
+        outboundAgentStreamTypesTop: runtimeMetrics.outboundAgentStreamTypesTop,
+        outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
+        outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
+        bufferedAmount: runtimeMetrics.bufferedAmount,
         runtime: sessionMetrics,
-        latency: latencyStats,
+        latency: runtimeMetrics.latency,
         agents: agentSnapshot,
       },
       "ws_runtime_metrics",
     );
-
-    for (const counter of Object.keys(this.runtimeCounters) as Array<
-      keyof WebSocketRuntimeCounters
-    >) {
-      this.runtimeCounters[counter] = 0;
-    }
-    this.inboundMessageCounts.clear();
-    this.inboundSessionRequestCounts.clear();
-    this.outboundMessageCounts.clear();
-    this.outboundSessionMessageCounts.clear();
-    this.outboundAgentStreamCounts.clear();
-    this.outboundAgentStreamByAgentCounts.clear();
-    this.outboundBinaryFrameCounts.clear();
-    this.bufferedAmountSamples.length = 0;
-    this.requestLatencies.clear();
-    this.runtimeWindowStartedAt = now;
   }
 
   private getClientActivityState(session: Session): ClientPresenceState {
