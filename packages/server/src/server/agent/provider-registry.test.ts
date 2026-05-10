@@ -13,7 +13,6 @@ const mockState = vi.hoisted(() => {
       claude: [] as ConstructorEntry[],
       codex: [] as ConstructorEntry[],
       copilot: [] as ConstructorEntry[],
-      opencode: [] as ConstructorEntry[],
       pi: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
         command: string[];
@@ -26,7 +25,6 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.claude = [];
       this.constructorArgs.codex = [];
       this.constructorArgs.copilot = [];
-      this.constructorArgs.opencode = [];
       this.constructorArgs.pi = [];
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
@@ -185,54 +183,6 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
       }
       return true;
     }
-  },
-}));
-
-vi.mock("./providers/opencode-agent.js", () => ({
-  OpenCodeAgentClient: class OpenCodeAgentClient {
-    readonly capabilities = {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    };
-    readonly provider = "opencode";
-    readonly runtimeSettings?: unknown;
-
-    constructor(_logger: unknown, runtimeSettings?: unknown) {
-      this.runtimeSettings = runtimeSettings;
-      mockState.constructorArgs.opencode.push({ runtimeSettings });
-    }
-
-    async createSession(): Promise<never> {
-      throw new Error("not implemented");
-    }
-
-    async resumeSession(): Promise<never> {
-      throw new Error("not implemented");
-    }
-
-    async listModels(): Promise<AgentModelDefinition[]> {
-      return mockState.runtimeModels.get(this.provider) ?? [];
-    }
-
-    async listModes(): Promise<[]> {
-      return [];
-    }
-
-    async isAvailable(): Promise<boolean> {
-      return true;
-    }
-  },
-}));
-
-vi.mock("./providers/opencode/server-manager.js", () => ({
-  OpenCodeServerManager: {
-    getInstance: vi.fn(() => ({
-      shutdown: vi.fn(),
-    })),
   },
 }));
 

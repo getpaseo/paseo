@@ -1,73 +1,28 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
-
-vi.mock("@opencode-ai/sdk/v2/client", () => ({
-  createOpencodeClient: vi.fn(),
-}));
-
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
-import { createTestOpenCodeServerManager } from "./opencode/test-server-manager.js";
+import {
+  createEventStream,
+  idleEvent,
+  TestOpenCodeClient,
+  TestOpenCodeRuntime,
+} from "./opencode/test-utils/test-opencode-runtime.js";
 
 interface MockOpenCodeClientOptions {
   agents?: unknown[];
   events?: unknown[];
 }
 
-function createEventStream(events: unknown[]): AsyncGenerator<never> {
-  return (async function* () {
-    for (const event of events) {
-      yield event as never;
-    }
-  })();
-}
-
 function mockOpenCodeClient(options: MockOpenCodeClientOptions = {}) {
-  const promptAsync = vi.fn().mockResolvedValue({});
-  const permissionReply = vi.fn().mockResolvedValue({});
-  const questionReply = vi.fn().mockResolvedValue({});
-  const questionReject = vi.fn().mockResolvedValue({});
-  const appAgents = vi.fn().mockResolvedValue({ data: options.agents ?? [] });
-  const events = options.events ?? [idleEvent()];
+  const runtime = new TestOpenCodeRuntime();
+  const openCodeClient = new TestOpenCodeClient();
+  openCodeClient.appAgentsResponse = { data: options.agents ?? [] };
+  openCodeClient.eventStream = createEventStream(options.events ?? [idleEvent()]);
+  runtime.enqueueClient(openCodeClient);
 
-  vi.mocked(createOpencodeClient).mockReturnValue({
-    session: {
-      create: vi.fn().mockResolvedValue({ data: { id: "session-1" } }),
-      promptAsync,
-      abort: vi.fn().mockResolvedValue({}),
-      update: vi.fn().mockResolvedValue({}),
-    },
-    provider: {
-      list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] } }),
-    },
-    event: {
-      subscribe: vi.fn().mockResolvedValue({ stream: createEventStream(events) }),
-    },
-    command: {
-      list: vi.fn().mockResolvedValue({ data: [] }),
-    },
-    app: {
-      agents: appAgents,
-    },
-    permission: {
-      reply: permissionReply,
-    },
-    question: {
-      reply: questionReply,
-      reject: questionReject,
-    },
-  } as never);
-
-  return { appAgents, permissionReply, promptAsync, questionReject, questionReply };
-}
-
-function idleEvent(): unknown {
-  return {
-    type: "session.idle",
-    properties: { sessionID: "session-1" },
-  };
+  return { openCodeClient, runtime };
 }
 
 function toolPermissionEvent(): unknown {
@@ -108,22 +63,15 @@ function questionEvent(): unknown {
 }
 
 describe("OpenCode full-access mode", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   test("includes virtual full-access mode with dynamic OpenCode agents", async () => {
-    const serverManager = createTestOpenCodeServerManager();
-    mockOpenCodeClient({
+    const { runtime } = mockOpenCodeClient({
       agents: [
         { name: "build", mode: "primary", hidden: false, description: "Build agent" },
         { name: "paseo-custom", mode: "primary", hidden: false, description: "Custom agent" },
       ],
     });
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager,
-    });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
     const modes = await client.listModes({ cwd: "/tmp/project", force: false });
 
     expect(modes.map((mode) => mode.id)).toEqual(["build", "plan", "full-access", "paseo-custom"]);
@@ -134,12 +82,9 @@ describe("OpenCode full-access mode", () => {
   });
 
   test("reports full-access but sends prompts through OpenCode build agent", async () => {
-    const serverManager = createTestOpenCodeServerManager();
-    const { promptAsync } = mockOpenCodeClient();
+    const { openCodeClient, runtime } = mockOpenCodeClient();
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager,
-    });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -150,22 +95,21 @@ describe("OpenCode full-access mode", () => {
 
     await session.run("Implement the change");
 
-    expect(promptAsync).toHaveBeenCalledTimes(1);
-    expect(promptAsync).toHaveBeenCalledWith(expect.objectContaining({ agent: "build" }));
+    expect(openCodeClient.calls.sessionPromptAsync).toHaveLength(1);
+    expect(openCodeClient.calls.sessionPromptAsync[0]).toEqual(
+      expect.objectContaining({ agent: "build" }),
+    );
 
     await session.close();
   });
 
   test("auto-approves tool permissions in full-access without surfacing them", async () => {
-    const serverManager = createTestOpenCodeServerManager();
-    const { permissionReply } = mockOpenCodeClient({
+    const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [toolPermissionEvent(), idleEvent()],
     });
     const receivedEvents: AgentStreamEvent[] = [];
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager,
-    });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -175,8 +119,8 @@ describe("OpenCode full-access mode", () => {
 
     await session.run("Run verification");
 
-    expect(permissionReply).toHaveBeenCalledTimes(1);
-    expect(permissionReply).toHaveBeenCalledWith({
+    expect(openCodeClient.calls.permissionReply).toHaveLength(1);
+    expect(openCodeClient.calls.permissionReply[0]).toEqual({
       requestID: "permission-1",
       directory: "/tmp/project",
       reply: "once",
@@ -188,15 +132,12 @@ describe("OpenCode full-access mode", () => {
   });
 
   test("keeps questions separate from full-access tool auto-approval", async () => {
-    const serverManager = createTestOpenCodeServerManager();
-    const { permissionReply, questionReply } = mockOpenCodeClient({
+    const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [questionEvent(), idleEvent()],
     });
     const receivedEvents: AgentStreamEvent[] = [];
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, {
-      serverManager,
-    });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -221,13 +162,13 @@ describe("OpenCode full-access mode", () => {
       updatedInput: { answers: { Decision: "Proceed" } },
     });
 
-    expect(questionReply).toHaveBeenCalledTimes(1);
-    expect(questionReply).toHaveBeenCalledWith({
+    expect(openCodeClient.calls.questionReply).toHaveLength(1);
+    expect(openCodeClient.calls.questionReply[0]).toEqual({
       requestID: "question-1",
       directory: "/tmp/project",
       answers: [["Proceed"]],
     });
-    expect(permissionReply).not.toHaveBeenCalled();
+    expect(openCodeClient.calls.permissionReply).toEqual([]);
     expect(session.getPendingPermissions()).toEqual([]);
 
     await session.close();

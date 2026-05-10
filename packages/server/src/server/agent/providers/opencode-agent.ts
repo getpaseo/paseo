@@ -2,7 +2,6 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import {
-  createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
@@ -47,10 +46,7 @@ import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
-import {
-  OpenCodeServerManager,
-  type OpenCodeServerManagerLike,
-} from "./opencode/server-manager.js";
+import { OpenCodeServerManager } from "./opencode/server-manager.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -60,6 +56,11 @@ import {
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import {
+  createSdkOpenCodeClient,
+  type OpenCodeRuntime,
+  type OpenCodeServerAcquisition,
+} from "./opencode/runtime.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -898,14 +899,34 @@ export const __openCodeInternals = {
 };
 
 interface OpenCodeAgentClientDeps {
-  serverManager?: OpenCodeServerManagerLike;
+  runtime?: OpenCodeRuntime;
+}
+
+class ProductionOpenCodeRuntime implements OpenCodeRuntime {
+  constructor(private readonly serverManager: OpenCodeServerManager) {}
+
+  async acquireServer(options: { force: boolean }): Promise<OpenCodeServerAcquisition> {
+    return this.serverManager.acquire(options);
+  }
+
+  async ensureServerRunning(): Promise<{ port: number; url: string }> {
+    return this.serverManager.ensureRunning();
+  }
+
+  createClient(options: { baseUrl: string; directory: string }): OpencodeClient {
+    return createSdkOpenCodeClient(options);
+  }
+
+  async shutdown(): Promise<void> {
+    await this.serverManager.shutdown();
+  }
 }
 
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
 
-  private readonly serverManager: OpenCodeServerManagerLike;
+  private readonly runtime: OpenCodeRuntime;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
@@ -920,8 +941,11 @@ export class OpenCodeAgentClient implements AgentClient {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
     this.runtimeSettings = runtimeSettings;
     this.storageRoot = storageRoot ?? resolveOpenCodeStorageRoot();
-    this.serverManager =
-      deps.serverManager ?? OpenCodeServerManager.getInstance(this.logger, runtimeSettings);
+    this.runtime =
+      deps.runtime ??
+      new ProductionOpenCodeRuntime(
+        OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+      );
   }
 
   async createSession(
@@ -930,9 +954,9 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.serverManager.acquire({ force: false });
+    const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
-    const client = createOpencodeClient({
+    const client = this.runtime.createClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
@@ -986,9 +1010,9 @@ export class OpenCodeAgentClient implements AgentClient {
       ...overrides,
     };
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.serverManager.acquire({ force: false });
+    const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
-    const client = createOpencodeClient({
+    const client = this.runtime.createClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
@@ -1011,9 +1035,9 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const acquisition = await this.serverManager.acquire({ force: options.force });
+    const acquisition = await this.runtime.acquireServer({ force: options.force });
     const { url } = acquisition.server;
-    const client = createOpencodeClient({
+    const client = this.runtime.createClient({
       baseUrl: url,
       directory: options.cwd,
     });
@@ -1074,10 +1098,10 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listModes(options: ListModesOptions): Promise<AgentMode[]> {
-    const acquisition = await this.serverManager.acquire({ force: options.force });
+    const acquisition = await this.runtime.acquireServer({ force: options.force });
     const { url } = acquisition.server;
     const directory = options.cwd;
-    const client = createOpencodeClient({ baseUrl: url, directory });
+    const client = this.runtime.createClient({ baseUrl: url, directory });
 
     try {
       const response = await withTimeout(
@@ -1128,7 +1152,7 @@ export class OpenCodeAgentClient implements AgentClient {
       let status = formatDiagnosticStatus(available);
 
       try {
-        const { url } = await this.serverManager.ensureRunning();
+        const { url } = await this.runtime.ensureServerRunning();
         serverStatus = `Running (${url})`;
       } catch (error) {
         serverStatus = `Unavailable (${toDiagnosticErrorMessage(error)})`;
