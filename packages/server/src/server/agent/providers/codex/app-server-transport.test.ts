@@ -1,25 +1,12 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import { createCodexAppServerChildProcess } from "./test-utils/fake-app-server.js";
 import { CodexAppServerClient } from "./app-server-transport.js";
-
-function createChildProcessStub(): ChildProcessWithoutNullStreams {
-  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
-  child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
-  child.stdout = new PassThrough() as ChildProcessWithoutNullStreams["stdout"];
-  child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
-  child.exitCode = null;
-  child.signalCode = null;
-  child.kill = (() => true) as ChildProcessWithoutNullStreams["kill"];
-  return child;
-}
 
 describe("Codex app-server transport", () => {
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
-    const child = createChildProcessStub();
+    const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
 
     const request = client.request("model/list", {});
@@ -38,7 +25,7 @@ describe("Codex app-server transport", () => {
     "item/tool/requestUserInput",
     "tool/requestUserInput",
   ])("answers server-initiated %s requests through registered handlers", async (method) => {
-    const child = createChildProcessStub();
+    const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
     const handlerCalls: unknown[] = [];
     client.setRequestHandler(method, async (params) => {
