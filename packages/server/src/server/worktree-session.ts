@@ -27,7 +27,6 @@ import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
-  isPaseoOwnedWorktreeCwd,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -41,11 +40,9 @@ import type {
   CreatePaseoWorktreeInput,
   CreatePaseoWorktreeResult,
 } from "./paseo-worktree-service.js";
-import {
-  archivePaseoWorktree,
-  type ArchivePaseoWorktreeDependencies,
-} from "./paseo-worktree-archive-service.js";
+import type { ArchivePaseoWorktreeDependencies } from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
+import { archivePaseoWorktreeCommand } from "./worktree/commands.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -433,37 +430,23 @@ export async function handlePaseoWorktreeArchiveRequest(
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
 ): Promise<void> {
   const { requestId } = msg;
-  let targetPath = msg.worktreePath;
-  let repoRoot = msg.repoRoot ?? null;
 
   try {
-    if (!targetPath) {
-      if (!repoRoot || !msg.branchName) {
-        throw new Error("worktreePath or repoRoot+branchName is required");
-      }
-      const worktrees = await dependencies.workspaceGitService.listWorktrees(repoRoot);
-      const match = worktrees.find((entry) => entry.branchName === msg.branchName);
-      if (!match) {
-        throw new Error(`Paseo worktree not found for branch ${msg.branchName}`);
-      }
-      targetPath = match.path;
-    }
-    if (!targetPath) {
-      throw new Error("worktreePath could not be resolved");
-    }
-
-    const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
-      paseoHome: dependencies.paseoHome,
+    const result = await archivePaseoWorktreeCommand(dependencies, {
+      requestId,
+      worktreePath: msg.worktreePath,
+      repoRoot: msg.repoRoot,
+      branchName: msg.branchName,
     });
-    if (!ownership.allowed) {
+    if (!result.ok) {
       dependencies.emit({
         type: "paseo_worktree_archive_response",
         payload: {
           success: false,
-          removedAgents: [],
+          removedAgents: result.removedAgents,
           error: {
-            code: "NOT_ALLOWED",
-            message: "Worktree is not a Paseo-owned worktree",
+            code: result.code,
+            message: result.message,
           },
           requestId,
         },
@@ -471,23 +454,11 @@ export async function handlePaseoWorktreeArchiveRequest(
       return;
     }
 
-    // repoRoot is best-effort: if git has forgotten about the worktree we
-    // still proceed using the path-derived worktreesRoot, since the ownership
-    // check already proved the path lives under $PASEO_HOME/worktrees.
-    repoRoot = ownership.repoRoot ?? repoRoot ?? null;
-
-    const removedAgents = await archivePaseoWorktree(dependencies, {
-      targetPath,
-      repoRoot,
-      worktreesRoot: ownership.worktreeRoot,
-      requestId,
-    });
-
     dependencies.emit({
       type: "paseo_worktree_archive_response",
       payload: {
         success: true,
-        removedAgents,
+        removedAgents: result.removedAgents,
         error: null,
         requestId,
       },
