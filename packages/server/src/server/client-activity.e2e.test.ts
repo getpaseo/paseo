@@ -1,11 +1,18 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import type { AgentStreamEventPayload } from "../shared/messages.js";
 import type { AgentSnapshotPayload } from "./messages.js";
-import { PushService } from "./push/push-service.js";
-import { PushTokenStore } from "./push/token-store.js";
+import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
 import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";
+
+class RecordingPushNotificationSender implements PushNotificationSender {
+  readonly sent: PushPayload[] = [];
+
+  async send(payload: PushPayload): Promise<void> {
+    this.sent.push(payload);
+  }
+}
 
 /**
  * Tests for client activity tracking and smart notifications.
@@ -31,23 +38,17 @@ describe("client activity tracking", () => {
   let daemon: TestPaseoDaemon;
   let client1: DaemonClient;
   let client2: DaemonClient;
-  let sendPushSpy: ReturnType<typeof vi.spyOn>;
-  let getAllTokensSpy: ReturnType<typeof vi.spyOn>;
+  let pushNotifications: RecordingPushNotificationSender;
 
   beforeEach(async () => {
-    sendPushSpy = vi.spyOn(PushService.prototype, "sendPush").mockResolvedValue(undefined);
-    getAllTokensSpy = vi
-      .spyOn(PushTokenStore.prototype, "getAllTokens")
-      .mockReturnValue(["ExponentPushToken[activity-test]"]);
-    daemon = await createTestPaseoDaemon();
+    pushNotifications = new RecordingPushNotificationSender();
+    daemon = await createTestPaseoDaemon({ pushNotificationSender: pushNotifications });
   });
 
   afterEach(async () => {
     if (client1) await client1.close().catch(() => {});
     if (client2) await client2.close().catch(() => {});
     await daemon.close();
-    sendPushSpy.mockRestore();
-    getAllTokensSpy.mockRestore();
   }, 30000);
 
   async function createClient(): Promise<DaemonClient> {
@@ -205,7 +206,7 @@ describe("client activity tracking", () => {
 
       expect(attention.reason).toBe("finished");
       expect(attention.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
     test("notification when no heartbeat received (legacy/new client)", async () => {
@@ -225,7 +226,7 @@ describe("client activity tracking", () => {
 
       expect(attention.reason).toBe("finished");
       expect(attention.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
   });
 
@@ -309,7 +310,7 @@ describe("client activity tracking", () => {
       // No stale client is selected for in-app; push handles the fallback.
       expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
     test("notifies only the present Electron-style web client when Firefox is stale", async () => {
@@ -345,7 +346,7 @@ describe("client activity tracking", () => {
 
       expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(true);
-      expect(sendPushSpy).not.toHaveBeenCalled();
+      expect(pushNotifications.sent).toEqual([]);
     }, 120000);
   });
 
@@ -465,7 +466,7 @@ describe("client activity tracking", () => {
 
       expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(true);
-      expect(sendPushSpy).not.toHaveBeenCalled();
+      expect(pushNotifications.sent).toEqual([]);
     }, 120000);
 
     test("notify web when user active on web but looking at different agent", async () => {
@@ -543,7 +544,7 @@ describe("client activity tracking", () => {
 
       expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
   });
 
@@ -581,7 +582,7 @@ describe("client activity tracking", () => {
 
       expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
     test("notification when app not visible but activity is recent", async () => {
@@ -647,7 +648,7 @@ describe("client activity tracking", () => {
 
       expect(attention1.shouldNotify).toBe(true);
       expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).not.toHaveBeenCalled();
+      expect(pushNotifications.sent).toEqual([]);
     }, 120000);
   });
 });

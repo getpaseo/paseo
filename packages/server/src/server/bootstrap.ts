@@ -119,6 +119,7 @@ import { createConfiguredTerminalManager } from "../terminal/terminal-manager-fa
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
@@ -205,6 +206,7 @@ export interface PaseoDaemonConfig {
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
+  pushNotificationSender?: PushNotificationSender;
 }
 
 export interface PaseoDaemon {
@@ -842,6 +844,7 @@ export async function createPaseoDaemon(
             (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
             workspaceGitService,
             github,
+            config.pushNotificationSender,
           );
 
           if (relayEnabled) {
