@@ -127,9 +127,12 @@ jobs:
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply patches
+        run: npm run postinstall
 
       - name: Set desktop package version from tag
         shell: bash
@@ -219,9 +222,12 @@ jobs:
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply patches
+        run: npm run postinstall
 
       - name: Set desktop package version from tag
         shell: bash
@@ -309,9 +315,12 @@ jobs:
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply patches
+        run: npm run postinstall
 
       - name: Set desktop package version from tag
         shell: bash
@@ -401,9 +410,12 @@ jobs:
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply patches
+        run: npm run postinstall
 
       - name: Download mac manifest artifacts
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-macos.result == 'success'

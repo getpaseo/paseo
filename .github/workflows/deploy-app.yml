@@ -24,9 +24,12 @@ jobs:
           scope: "@boudra"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply patches
+        run: npm run postinstall
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
