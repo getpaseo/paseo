@@ -18,6 +18,7 @@ interface RelayTransportOptions {
   relayUseTls: boolean;
   serverId: string;
   daemonKeyPair?: KeyPair;
+  createWebSocket?: RelayWebSocketFactory;
 }
 
 export interface RelayTransportController {
@@ -32,6 +33,16 @@ interface RelaySocketLike {
   once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
 }
 
+interface RelayWebSocketLike extends RelaySocketLike {
+  terminate: () => void;
+  on: (
+    event: "open" | "message" | "close" | "error",
+    listener: (...args: unknown[]) => void,
+  ) => void;
+}
+
+type RelayWebSocketFactory = (url: string) => RelayWebSocketLike;
+
 type ControlMessage =
   | { type: "sync"; connectionIds: string[] }
   | { type: "connected"; connectionId: string }
@@ -42,6 +53,11 @@ type ControlMessage =
 const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
+const RELAY_WEBSOCKET_OPTIONS = { handshakeTimeout: 10_000, perMessageDeflate: false } as const;
+
+function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
+  return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
+}
 
 function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): string | ArrayBuffer {
   if (typeof data === "string") return data;
@@ -106,14 +122,15 @@ export function startRelayTransport({
   relayUseTls,
   serverId,
   daemonKeyPair,
+  createWebSocket = createDefaultRelayWebSocket,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
 
   let stopped = false;
-  let controlWs: WebSocket | null = null;
+  let controlWs: RelayWebSocketLike | null = null;
   let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
-  const dataSockets = new Map<string, WebSocket>(); // connectionId -> ws
+  const dataSockets = new Map<string, RelayWebSocketLike>(); // connectionId -> ws
   let controlKeepaliveInterval: ReturnType<typeof setInterval> | null = null;
   let controlReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   let controlLastSeenAt = 0;
@@ -161,7 +178,7 @@ export function startRelayTransport({
       serverId,
       role: "server",
     });
-    const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
+    const socket = createWebSocket(url);
     controlWs = socket;
     let controlConnected = false;
 
@@ -338,7 +355,7 @@ export function startRelayTransport({
       role: "server",
       connectionId,
     });
-    const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
+    const socket = createWebSocket(url);
     dataSockets.set(connectionId, socket);
 
     let attached = false;
@@ -397,7 +414,7 @@ export function startRelayTransport({
 }
 
 async function attachEncryptedSocket(
-  socket: WebSocket,
+  socket: RelayWebSocketLike,
   daemonKeyPair: KeyPair,
   logger: pino.Logger,
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
@@ -426,7 +443,10 @@ async function attachEncryptedSocket(
   }
 }
 
-function createRelayTransportAdapter(socket: WebSocket, logger: pino.Logger): RelayTransport {
+function createRelayTransportAdapter(
+  socket: RelayWebSocketLike,
+  logger: pino.Logger,
+): RelayTransport {
   const relayTransport: RelayTransport = {
     send: (data) => {
       try {
@@ -445,10 +465,11 @@ function createRelayTransportAdapter(socket: WebSocket, logger: pino.Logger): Re
   };
 
   socket.on("message", (data, isBinary) => {
-    relayTransport.onmessage?.(normalizeMessageData(data, isBinary));
+    relayTransport.onmessage?.(normalizeMessageData(data, isBinary === true));
   });
   socket.on("close", (code, reason) => {
-    relayTransport.onclose?.(code, reason.toString());
+    const closeCode = typeof code === "number" ? code : 1006;
+    relayTransport.onclose?.(closeCode, String(reason ?? ""));
   });
   socket.on("error", (err) => {
     relayTransport.onerror?.(err instanceof Error ? err : new Error(String(err)));
