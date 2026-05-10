@@ -1,9 +1,16 @@
 import { router, useLocalSearchParams, usePathname, type Href } from "expo-router";
+import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { pickAttentionAgent } from "@/utils/agent-attention";
 import {
   buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
+import {
+  resolveWorkspaceIdByExecutionDirectory,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-execution";
 
 export interface ActiveWorkspaceSelection {
   serverId: string;
@@ -45,6 +52,28 @@ export function navigateToWorkspace(
   workspaceId: string,
   _options: NavigateToWorkspaceOptions = {},
 ) {
+  const session = useSessionStore.getState().sessions[serverId];
+  const resolvedWorkspaceId = resolveWorkspaceMapKeyByIdentity({
+    workspaces: session?.workspaces,
+    workspaceId,
+  });
+  const workspaceAgents = resolvedWorkspaceId
+    ? Array.from(session?.agents.values() ?? []).filter(
+        (agent) =>
+          resolveWorkspaceIdByExecutionDirectory({
+            workspaces: session?.workspaces?.values(),
+            workspaceDirectory: agent.cwd,
+          }) === resolvedWorkspaceId,
+      )
+    : [];
+  const attentionAgentId = pickAttentionAgent(workspaceAgents);
+  if (attentionAgentId && resolvedWorkspaceId) {
+    useWorkspaceLayoutStore.getState().openTabFocused(`${serverId}:${resolvedWorkspaceId}`, {
+      kind: "agent",
+      agentId: attentionAgentId,
+    });
+  }
+
   lastWorkspaceSelection = { serverId, workspaceId };
   const route = buildHostWorkspaceRoute(serverId, workspaceId) as Href;
   router.dismissTo(route);

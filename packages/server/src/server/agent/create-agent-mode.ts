@@ -3,6 +3,7 @@ import type { AgentProvider } from "./agent-sdk-types.js";
 interface CreateAgentModeParent {
   provider: AgentProvider;
   modeId: string | null;
+  isUnattended: boolean;
 }
 
 export interface ResolveCreateAgentModeInput {
@@ -12,6 +13,9 @@ export interface ResolveCreateAgentModeInput {
   // `undefined` = target provider's modes unknown: explicit modes pass through
   // unvalidated, but cross-provider inheritance is still refused.
   availableModes: string[] | undefined;
+  // Target provider's own unattended mode id, if it has one. Used to bridge
+  // unattended parents into unattended children across providers.
+  targetUnattendedMode: string | undefined;
 }
 
 function listModes(modes: string[] | undefined): string {
@@ -41,6 +45,10 @@ export function resolveAndValidateCreateAgentMode(
 
   if (parent.provider === targetProvider) {
     return parent.modeId ?? undefined;
+  }
+
+  if (parent.isUnattended && input.targetUnattendedMode !== undefined) {
+    return input.targetUnattendedMode;
   }
 
   throw new Error(

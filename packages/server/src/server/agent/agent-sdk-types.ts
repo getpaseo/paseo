@@ -427,6 +427,13 @@ export interface AgentSlashCommand {
 
 export interface ListPersistedAgentsOptions {
   limit?: number;
+  /**
+   * Optional cwd hint. Providers that can cheaply pre-filter persisted
+   * sessions by working directory should do so before doing expensive
+   * work like fetching turn timelines. Providers that can't filter
+   * cheaply may ignore this hint.
+   */
+  cwd?: string;
 }
 
 export interface PersistedAgentDescriptor {
@@ -558,4 +565,9 @@ export interface AgentClient {
    */
   isAvailable(): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
+  /**
+   * Archive a persisted session in the native provider (best-effort).
+   * Called when Paseo archives an agent so the provider's own UI reflects the same state.
+   */
+  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
 }

@@ -13,7 +13,7 @@ import {
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
 import { validateBranchSlug, type WorktreeConfig } from "../utils/worktree.js";
-import { getCurrentBranch, renameCurrentBranch } from "../utils/checkout-git.js";
+import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
 import {
   markPaseoWorktreeFirstAgentBranchAutoNameAttempted,
   readPaseoWorktreeMetadata,
@@ -85,6 +85,7 @@ export async function attemptFirstAgentBranchAutoName(options: {
   }) => Promise<string | null>;
   getCurrentBranch?: typeof getCurrentBranch;
   renameCurrentBranch?: typeof renameCurrentBranch;
+  localBranchExists?: typeof localBranchExists;
 }): Promise<AttemptFirstAgentBranchAutoNameResult> {
   const firstAgentContext = options.firstAgentContext;
   if (!firstAgentContext || !buildAgentBranchNameSeed(firstAgentContext)) {
@@ -129,13 +130,48 @@ export async function attemptFirstAgentBranchAutoName(options: {
     return { attempted: true, renamed: false, branchName: null };
   }
 
+  const localBranchExistsImpl = options.localBranchExists ?? localBranchExists;
+  const targetName = await findAvailableBranchName({
+    cwd: options.cwd,
+    desiredName: branchName,
+    placeholderBranchName,
+    localBranchExists: localBranchExistsImpl,
+  });
+  if (!targetName) {
+    return { attempted: true, renamed: false, branchName: null };
+  }
+
   const renameCurrentBranchImpl = options.renameCurrentBranch ?? renameCurrentBranch;
-  const renamedBranch = await renameCurrentBranchImpl(options.cwd, branchName);
+  const renamedBranch = await renameCurrentBranchImpl(options.cwd, targetName);
   return {
     attempted: true,
     renamed: true,
-    branchName: renamedBranch.currentBranch ?? branchName,
+    branchName: renamedBranch.currentBranch ?? targetName,
   };
+}
+
+const MAX_BRANCH_NAME_SUFFIX_ATTEMPTS = 50;
+
+async function findAvailableBranchName(options: {
+  cwd: string;
+  desiredName: string;
+  placeholderBranchName: string;
+  localBranchExists: (cwd: string, branchName: string) => Promise<boolean>;
+}): Promise<string | null> {
+  const { cwd, desiredName, placeholderBranchName } = options;
+  if (!(await options.localBranchExists(cwd, desiredName))) {
+    return desiredName;
+  }
+  for (let suffix = 2; suffix <= MAX_BRANCH_NAME_SUFFIX_ATTEMPTS; suffix++) {
+    const candidate = `${desiredName}-${suffix}`;
+    if (candidate === placeholderBranchName) {
+      continue;
+    }
+    if (!(await options.localBranchExists(cwd, candidate))) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 function maybeMarkFirstAgentBranchAutoNameEligible(options: {

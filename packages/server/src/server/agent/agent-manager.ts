@@ -5,6 +5,7 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
+import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -51,11 +52,21 @@ import {
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: false,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: true,
+};
 
 type TimeoutResult = "completed" | "timed_out";
+type ArchivedStoredAgentRecord = StoredAgentRecord & { archivedAt: string };
 
 interface TimeoutOptions {
   operation: Promise<void>;
@@ -65,6 +76,31 @@ interface TimeoutOptions {
 
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
+}
+
+function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
+  const config: AgentSessionConfig = {
+    provider: record.provider,
+    cwd: record.cwd,
+  };
+  if (!record.config) {
+    return config;
+  }
+  if (record.config.title != null) config.title = record.config.title;
+  if (record.config.modeId != null) config.modeId = record.config.modeId;
+  if (record.config.model != null) config.model = record.config.model;
+  if (record.config.thinkingOptionId != null) {
+    config.thinkingOptionId = record.config.thinkingOptionId;
+  }
+  if (record.config.featureValues != null) {
+    config.featureValues = record.config.featureValues;
+  }
+  if (record.config.extra != null) config.extra = record.config.extra;
+  if (record.config.systemPrompt != null) {
+    config.systemPrompt = record.config.systemPrompt;
+  }
+  if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
+  return config;
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -94,8 +130,12 @@ export interface SubscribeOptions {
   replayState?: boolean;
 }
 
-export type PersistedAgentQueryOptions = ListPersistedAgentsOptions & {
-  provider?: AgentProvider;
+export type ImportablePersistedAgentQueryOptions = ListPersistedAgentsOptions & {
+  /**
+   * When set, only providers in this set are scanned, in addition to the
+   * built-in importable allowlist + enabled + non-derived rules.
+   */
+  providerFilter?: Set<string>;
 };
 
 export type AgentAttentionCallback = (params: {
@@ -117,6 +157,7 @@ interface AgentManagerRescueTimeouts {
 
 interface ProviderEnabledFlag {
   enabled: boolean;
+  derivedFromProviderId?: string | null;
 }
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
@@ -381,6 +422,7 @@ function buildExplicitTimelineSeedForRegister(
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
+  private readonly providerDerivedFromId = new Map<AgentProvider, string | null>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -436,6 +478,7 @@ export class AgentManager {
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
         this.providerEnabled.set(provider, definition.enabled);
+        this.providerDerivedFromId.set(provider, definition.derivedFromProviderId ?? null);
       }
     }
     for (const [provider, client] of Object.entries(input.clients)) {
@@ -557,24 +600,21 @@ export class AgentManager {
       .map((agent) => Object.assign({}, agent));
   }
 
-  async listPersistedAgents(
-    options?: PersistedAgentQueryOptions,
+  async listImportablePersistedAgents(
+    options?: ImportablePersistedAgentQueryOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    if (options?.provider) {
-      const client = this.requireClient(options.provider);
-      if (!client.listPersistedAgents) {
-        return [];
-      }
-      return client.listPersistedAgents({ limit: options.limit });
-    }
-
     const providerEntries = Array.from(this.clients.entries()).filter(
-      ([, client]) => !!client.listPersistedAgents,
+      ([provider, client]) =>
+        !!client.listPersistedAgents &&
+        this.isProviderImportable(provider, options?.providerFilter),
     );
     const descriptorLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
-          return await client.listPersistedAgents!({ limit: options?.limit });
+          return await client.listPersistedAgents!({
+            limit: options?.limit,
+            cwd: options?.cwd,
+          });
         } catch (error) {
           this.logger.warn(
             { err: error, provider },
@@ -590,6 +630,25 @@ export class AgentManager {
     return descriptors
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
       .slice(0, limit);
+  }
+
+  private isProviderImportable(
+    provider: AgentProvider,
+    providerFilter: Set<string> | undefined,
+  ): boolean {
+    if (!IMPORTABLE_PROVIDERS.includes(provider as (typeof IMPORTABLE_PROVIDERS)[number])) {
+      return false;
+    }
+    if (this.providerEnabled.get(provider) === false) {
+      return false;
+    }
+    if (this.providerDerivedFromId.get(provider) != null) {
+      return false;
+    }
+    if (providerFilter && !providerFilter.has(provider)) {
+      return false;
+    }
+    return true;
   }
 
   async findPersistedAgent(
@@ -820,17 +879,23 @@ export class AgentManager {
     return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
   }
 
-  // Hot-reload an active agent session with config overrides while preserving
-  // in-memory timeline state.
+  // Hot-reload an active agent session with config overrides. By default the
+  // in-memory timeline is preserved (used for voice-mode toggles and similar
+  // config swaps). When `rehydrateFromDisk` is set, the timeline is wiped so a
+  // new epoch is minted and provider history is re-streamed — this is what the
+  // user-facing "Reload agent" action wants when the on-disk session was
+  // mutated outside Paseo.
   async reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
+    options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
     let existing = this.requireSessionAgent(agentId);
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRun(agentId);
       existing = this.requireSessionAgent(agentId);
     }
+    const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
@@ -860,13 +925,21 @@ export class AgentManager {
     this.foregroundRuns.clearAgent(agentId, existing);
     await this.closeReloadedSession(existing.session, agentId);
 
+    if (rehydrateFromDisk) {
+      // Wipe both durable and in-memory timeline so registerSession mints a
+      // new epoch and hydrateTimelineFromProvider re-streams the freshly read
+      // provider history into an empty timeline.
+      await this.deleteCommittedTimeline(agentId);
+      this.timelineStore.delete(agentId);
+    }
+
     // Preserve existing labels and timeline during reload.
     return this.registerSession(session, normalizedConfig, agentId, {
       labels: existing.labels,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
       lastUserMessageAt: existing.lastUserMessageAt,
-      historyPrimed: preservedHistoryPrimed,
+      historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
       lastUsage: preservedLastUsage,
       lastError: preservedLastError,
       attention: preservedAttention,
@@ -960,25 +1033,107 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
+    const { archivedAt } = await this.markRecordArchived(stored);
+    await this.closeAgent(agentId);
+
+    await this.cascadeArchiveChildren(agentId);
+
+    return { archivedAt };
+  }
+
+  // Children created via the MCP `create_agent` tool carry the parent-agent-id
+  // label pointing back at the caller. Archiving the parent cascades to those
+  // children so subagent fleets don't outlive their orchestrator. Handoff agents
+  // launched the same way are caught by this cascade — see docs/agent-lifecycle.md
+  // for the accepted limitation.
+  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+    const registry = this.registry;
+    if (!registry) {
+      return;
+    }
+    const records = await registry.list();
+    for (const record of records) {
+      if (record.archivedAt) {
+        continue;
+      }
+      if (record.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) {
+        continue;
+      }
+      if (this.agents.has(record.id)) {
+        await this.archiveAgent(record.id);
+      } else {
+        await this.markRecordArchived(record);
+        await this.cascadeArchiveChildren(record.id);
+      }
+    }
+  }
+
+  private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
+    const registry = this.requireRegistry();
     const archivedAt = new Date().toISOString();
     const normalizedStatus =
-      stored.lastStatus === "running" || stored.lastStatus === "initializing"
+      record.lastStatus === "running" || record.lastStatus === "initializing"
         ? "idle"
-        : stored.lastStatus;
-
-    await this.registry.upsert({
-      ...stored,
+        : record.lastStatus;
+    const archivedRecord: ArchivedStoredAgentRecord = {
+      ...record,
       archivedAt,
       updatedAt: archivedAt,
       lastStatus: normalizedStatus,
       requiresAttention: false,
       attentionReason: null,
       attentionTimestamp: null,
-    });
-    this.notifyAgentState(agentId);
-    await this.closeAgent(agentId);
+    };
 
-    return { archivedAt };
+    await registry.upsert(archivedRecord);
+
+    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+
+    if (this.agents.has(record.id)) {
+      this.notifyAgentState(record.id);
+    } else if (!archivedRecord.internal) {
+      this.dispatchArchivedStoredAgent(archivedRecord);
+    }
+
+    return archivedRecord;
+  }
+
+  private dispatchArchivedStoredAgent(record: StoredAgentRecord): void {
+    const updatedAt = new Date(record.updatedAt);
+    this.dispatch({
+      type: "agent_state",
+      agent: {
+        id: record.id,
+        provider: record.provider,
+        cwd: record.cwd,
+        session: null,
+        capabilities: STORED_AGENT_CAPABILITIES,
+        config: buildStoredAgentConfig(record),
+        runtimeInfo: undefined,
+        lifecycle: "closed",
+        createdAt: new Date(record.createdAt),
+        updatedAt,
+        availableModes: [],
+        features: record.features,
+        currentModeId: record.lastModeId ?? null,
+        pendingPermissions: new Map(),
+        bufferedPermissionResolutions: new Map(),
+        inFlightPermissionResponses: new Set(),
+        pendingReplacement: false,
+        activeForegroundTurnId: null,
+        foregroundTurnWaiters: new Set(),
+        finalizedForegroundTurnIds: new Set(),
+        unsubscribeSession: null,
+        persistence: record.persistence ?? null,
+        historyPrimed: true,
+        lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
+        lastUsage: undefined,
+        lastError: record.lastError ?? undefined,
+        attention: { requiresAttention: false },
+        internal: record.internal,
+        labels: record.labels,
+      },
+    });
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
@@ -1118,6 +1273,9 @@ export class AgentManager {
       attentionTimestamp: null,
     };
     await registry.upsert(nextRecord);
+
+    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+
     return nextRecord;
   }
 
@@ -3134,6 +3292,23 @@ export class AgentManager {
       throw new Error(`No client registered for provider '${provider}'`);
     }
     return client;
+  }
+
+  async archiveNativeSessionBestEffort(
+    provider: AgentProvider,
+    persistence: AgentPersistenceHandle | null | undefined,
+  ): Promise<void> {
+    if (!persistence) return;
+    const client = this.clients.get(provider);
+    if (!client?.archiveNativeSession) return;
+    try {
+      await client.archiveNativeSession(persistence);
+    } catch (error) {
+      this.logger.warn(
+        { error, provider, sessionId: persistence.sessionId },
+        "Failed to archive native session (best-effort)",
+      );
+    }
   }
 
   private requireAgent(id: string): LiveManagedAgent {

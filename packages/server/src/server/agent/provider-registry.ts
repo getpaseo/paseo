@@ -25,7 +25,8 @@ import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
-import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
+import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import {
@@ -46,10 +47,18 @@ export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
   enabled: boolean;
+  /**
+   * The id of another *registered* provider this one extends (e.g. a Z.AI
+   * profile that extends "claude"). null for built-in providers and for
+   * generic ACP providers (which only extend the literal "acp" sentinel).
+   */
+  derivedFromProviderId: string | null;
   createClient: (logger: Logger) => AgentClient;
   fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
+
+export { IMPORTABLE_PROVIDERS } from "../../shared/importable-providers.js";
 
 export interface BuildProviderRegistryOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
@@ -70,6 +79,7 @@ interface ResolvedProvider {
   profileModels: ProviderProfileModel[];
   additionalModels: ProviderProfileModel[];
   enabled: boolean;
+  derivedFromProviderId: string | null;
   createBaseClient: (logger: Logger) => AgentClient;
 }
 
@@ -375,6 +385,7 @@ function createRegistryEntry(
   return {
     ...resolved.definition,
     enabled: resolved.enabled,
+    derivedFromProviderId: resolved.derivedFromProviderId,
     createClient: (providerLogger: Logger) =>
       createResolvedProviderClient(providerLogger, provider, resolved),
     fetchModels: async (options: ListModelsOptions) =>
@@ -441,6 +452,7 @@ function buildResolvedBuiltinProviders(
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
       enabled: override?.enabled !== false,
+      derivedFromProviderId: null,
       createBaseClient: (logger) =>
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
@@ -487,6 +499,7 @@ function addDerivedProviders(
         profileModels: override.models ?? [],
         additionalModels: override.additionalModels ?? [],
         enabled: override.enabled !== false,
+        derivedFromProviderId: null,
         createBaseClient: (logger) =>
           new GenericACPAgentClient({
             logger,
@@ -517,6 +530,7 @@ function addDerivedProviders(
       profileModels: override.models ?? [],
       additionalModels: override.additionalModels ?? [],
       enabled: override.enabled !== false,
+      derivedFromProviderId: override.extends,
       createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings),
     });
   }

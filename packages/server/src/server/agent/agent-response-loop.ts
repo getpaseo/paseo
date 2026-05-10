@@ -96,7 +96,8 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
 export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerationProvider[] = [
   { provider: "claude", model: "haiku" },
   { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
-  { provider: "opencode", model: "opencode/gpt-5-nano" },
+  { provider: "opencode", model: "opencode/minimax-m2.5-free" },
+  { provider: "opencode", model: "opencode/nemotron-3-super-free" },
 ] as const;
 
 interface SchemaValidator<T> {

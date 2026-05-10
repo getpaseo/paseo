@@ -6,15 +6,15 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 
 ### ACP (Agent Client Protocol) -- recommended
 
-Extend `ACPAgentClient`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
+Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-Existing ACP providers: `claude-acp`, `copilot`.
+The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
 
 ### Direct
 
-Implement the `AgentClient` and `AgentSession` interfaces yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
+Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Existing direct providers: `claude`, `codex`, `opencode`.
+Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`pi-direct-agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
 ---
 
@@ -151,7 +151,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
 
 ### 3. Add the factory to the provider registry
 
-In `packages/server/src/server/agent/provider-registry.ts`, import your class and add a factory entry:
+In `packages/server/src/server/agent/provider-registry.ts`, import your class and add a factory entry to `PROVIDER_CLIENT_FACTORIES`:
 
 ```ts
 import { MyProviderACPAgentClient } from "./providers/my-provider-agent.js";
@@ -161,10 +161,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   "my-provider": (logger, runtimeSettings) =>
     new MyProviderACPAgentClient({
       logger,
-      runtimeSettings: runtimeSettings?.["my-provider"],
+      runtimeSettings,
     }),
 };
 ```
+
+The factory is invoked with `(logger, runtimeSettings, options)`; `options.workspaceGitService` is also available if you need it (see the `codex` factory for an example). The registry already passes the per-provider runtime settings slice through, so you don't index into the map yourself.
 
 ### 4. Add a provider icon (app)
 
@@ -187,19 +189,18 @@ export function MyProviderIcon({ size = 16, color = "currentColor" }: MyProvider
 }
 ```
 
-Then register it in `packages/app/src/components/provider-icons.ts`:
+Then register it in `packages/app/src/components/provider-icons.ts` by adding an entry to the existing `PROVIDER_ICONS` map (which already covers the built-in providers):
 
 ```ts
 import { MyProviderIcon } from "@/components/icons/my-provider-icon";
 
 const PROVIDER_ICONS: Record<string, typeof Bot> = {
-  claude: ClaudeIcon as unknown as typeof Bot,
-  codex: CodexIcon as unknown as typeof Bot,
+  // ... existing entries ...
   "my-provider": MyProviderIcon as unknown as typeof Bot,
 };
 ```
 
-If no icon is registered, the app falls back to a generic `Bot` icon from lucide.
+If no icon is registered, `getProviderIcon()` falls back to a generic `Bot` icon from lucide.
 
 ### 5. Add E2E test config
 
@@ -219,25 +220,25 @@ export const agentConfigs = {
 } as const satisfies Record<string, AgentTestConfig>;
 ```
 
-Add an availability check in `isProviderAvailable()`:
+Add an availability check in `isProviderAvailable()`. Note `isCommandAvailable` is async, so all branches `await` it:
 
 ```ts
 case "my-provider":
   return (
-    isCommandAvailable("my-agent-binary") &&
+    (await isCommandAvailable("my-agent-binary")) &&
     Boolean(process.env.MY_PROVIDER_API_KEY)
   );
 ```
 
-Add to the `allProviders` array:
+Add to the `allProviders` array (current built-ins are `claude`, `codex`, `copilot`, `opencode`, `pi`):
 
 ```ts
 export const allProviders: AgentProvider[] = [
   "claude",
-  "claude-acp",
   "codex",
   "copilot",
   "opencode",
+  "pi",
   "my-provider",
 ];
 ```
@@ -258,7 +259,9 @@ If your agent does not speak ACP, implement the interfaces from `agent-sdk-types
 
 ### Interfaces to implement
 
-**`AgentClient`** -- factory for sessions and model listing:
+The interfaces below are abridged signatures — read `agent-sdk-types.ts` for the full source of truth (option bag types, generics, etc.).
+
+**`AgentClient`** -- factory for sessions and model/mode listing:
 
 ```ts
 interface AgentClient {
@@ -267,16 +270,19 @@ interface AgentClient {
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession>;
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
-  listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
+  listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   isAvailable(): Promise<boolean>;
   // Optional:
+  listModes?(options: ListModesOptions): Promise<AgentMode[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
+  getDiagnostic?(): Promise<{ diagnostic: string }>;
 }
 ```
 
@@ -287,6 +293,7 @@ interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
+  readonly features?: AgentFeature[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
@@ -296,7 +303,10 @@ interface AgentSession {
   getCurrentMode(): Promise<string | null>;
   setMode(modeId: string): Promise<void>;
   getPendingPermissions(): AgentPermissionRequest[];
-  respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void>;
+  respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   close(): Promise<void>;
@@ -304,6 +314,10 @@ interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
+  setFeature?(featureId: string, value: unknown): Promise<void>;
+  tryHandleOutOfBand?(prompt: AgentPromptInput): {
+    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+  } | null;
 }
 ```
 

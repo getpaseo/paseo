@@ -1,0 +1,121 @@
+name: Bug report
+description: Something is broken or doesn't behave the way it should.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening, please:
+
+        - search existing issues for the same symptom
+        - try to reproduce on the latest version
+        - if it's a UI bug, capture a screenshot or short video. text descriptions of UI bugs almost always lose detail.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What's broken
+      description: What happened, and what did you expect to happen instead?
+      placeholder: |
+        I tried to X, expected Y, got Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that triggers the bug. If you can't reproduce on demand, say so.
+      placeholder: |
+        1. Open the desktop app
+        2. Pair a daemon
+        3. Click X
+        4. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did this happen
+      description: The surface you saw the bug on. Pick the closest match.
+      options:
+        - iOS app
+        - Android app
+        - Web (browser)
+        - Desktop (Electron)
+        - CLI
+        - Daemon
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: paseo-version
+    attributes:
+      label: Paseo version
+      description: Settings → About in the app, or `paseo --version` from the CLI.
+      placeholder: "0.1.71"
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: Only relevant for desktop, CLI, or daemon issues. Skip for mobile or web.
+      placeholder: "macOS 15.2, Windows 11, Ubuntu 24.04"
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Agent provider
+      description: If the bug involves a specific agent provider, pick which one.
+      options:
+        - Not relevant
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Custom provider
+
+  - type: textarea
+    id: provider-details
+    attributes:
+      label: Provider configuration
+      description: |
+        If the bug involves an agent, what version are you on and what API are you using? Provider behavior changes a lot across versions and API backends.
+      placeholder: |
+        Claude Code v1.2.3 with Anthropic API
+        Codex CLI v0.5.0 with OpenAI API
+        OpenCode v0.3.1
+        (or paste the relevant section of ~/.paseo/config.json for custom providers)
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste relevant log output. Strongly preferred for crashes and daemon issues.
+
+        - **Daemon log:** `~/.paseo/daemon.log` (override with `$PASEO_HOME`)
+        - **Electron log (macOS):** `~/Library/Logs/Paseo/main.log`
+        - **Electron log (Windows):** `%APPDATA%\Paseo\logs\main.log`
+        - **Electron log (Linux):** `~/.config/Paseo/logs/main.log`
+
+        Paste the **full log around the time of the bug**, not a summary. If you used an AI to investigate, paste the raw log it read, not the AI's interpretation. AI summaries skew the signal and waste my time.
+      render: text
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or video
+      description: |
+        **Required for UI bugs.** Drag and drop directly into this field. Short videos beat screenshots for anything involving interaction or animation.
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        **A note on AI-assisted reports.** Using an agent to gather information (logs, repro steps, version checks) is fine and useful. Using an agent to *diagnose* the bug and then submitting only that diagnosis is not. Agents routinely correlate adjacent log lines as cause-and-effect when they aren't related, and once a report is filtered through an AI summary I lose the signal I need to actually fix the bug. Paste the raw inputs.

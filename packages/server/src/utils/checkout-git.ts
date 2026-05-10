@@ -12,6 +12,7 @@ import {
   createGitHubService,
   resolveGitHubRepo,
   type GitHubService,
+  type PullRequestMergeable,
 } from "../services/github-service.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
@@ -867,6 +868,10 @@ async function getWorktreePathForBranch(cwd: string, branchName: string): Promis
   } catch {
     return null;
   }
+}
+
+export async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {
+  return doesGitRefExist(cwd, `refs/heads/${branchName}`);
 }
 
 export async function renameCurrentBranch(
@@ -2309,6 +2314,7 @@ export interface PullRequestStatus {
   headRefName: string;
   isMerged: boolean;
   isDraft?: boolean;
+  mergeable?: PullRequestMergeable;
   checks?: PullRequestCheck[];
   checksStatus?: ChecksStatus;
   reviewDecision?: ReviewDecision;

@@ -55,22 +55,30 @@ import {
 import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
+  PaseoMetadataGenerationEntrySchema,
+  PaseoMetadataGenerationSchema,
   PaseoScriptEntryRawSchema,
   PaseoWorktreeConfigRawSchema,
   PaseoConfigRevisionSchema,
   ProjectConfigRpcErrorSchema,
   type PaseoConfigRaw,
   type PaseoConfigRevision,
+  type PaseoMetadataGeneration,
+  type PaseoMetadataGenerationEntry,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 } from "../utils/paseo-config-schema.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
+  PaseoMetadataGenerationEntrySchema,
+  PaseoMetadataGenerationSchema,
   PaseoScriptEntryRawSchema,
   PaseoWorktreeConfigRawSchema,
   type PaseoConfigRaw,
   type PaseoConfigRevision,
+  type PaseoMetadataGeneration,
+  type PaseoMetadataGenerationEntry,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 };
@@ -661,6 +669,21 @@ export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSchema>;
 
+export const RecentProviderSessionDescriptorPayloadSchema = z.object({
+  providerId: z.string(),
+  providerLabel: z.string(),
+  providerHandleId: z.string(),
+  cwd: z.string(),
+  title: z.string().nullable(),
+  firstPromptPreview: z.string().nullable(),
+  lastPromptPreview: z.string().nullable(),
+  lastActivityAt: z.string(),
+});
+
+export type RecentProviderSessionDescriptorPayload = z.infer<
+  typeof RecentProviderSessionDescriptorPayloadSchema
+>;
+
 // ============================================================================
 // Session Inbound Messages (Session receives these)
 // ============================================================================
@@ -905,6 +928,15 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
     .optional(),
 });
 
+export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
+  type: z.literal("fetch_recent_provider_sessions_request"),
+  requestId: z.string(),
+  cwd: z.string().optional(),
+  providers: z.array(z.string()).optional(),
+  since: z.string().optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+
 export const FetchAgentRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_request"),
   requestId: z.string(),
@@ -1060,8 +1092,10 @@ export const ResumeAgentRequestMessageSchema = z.object({
 
 export const ImportAgentRequestMessageSchema = z.object({
   type: z.literal("import_agent_request"),
-  provider: AgentProviderSchema,
-  sessionId: z.string(),
+  provider: AgentProviderSchema.optional(),
+  providerId: z.string().optional(),
+  sessionId: z.string().optional(),
+  providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
   labels: z.record(z.string()).optional(),
   requestId: z.string(),
@@ -1269,6 +1303,13 @@ export const CheckoutPrCreateRequestSchema = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   baseRef: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const CheckoutPrMergeRequestSchema = z.object({
+  type: z.literal("checkout_pr_merge_request"),
+  cwd: z.string(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]),
   requestId: z.string(),
 });
 
@@ -1673,6 +1714,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
   FetchAgentHistoryRequestMessageSchema,
+  FetchRecentProviderSessionsRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
@@ -1719,6 +1761,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPullRequestSchema,
   CheckoutPushRequestSchema,
   CheckoutPrCreateRequestSchema,
+  CheckoutPrMergeRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
@@ -2279,6 +2322,15 @@ export const FetchAgentHistoryResponseMessageSchema = z.object({
   }),
 });
 
+export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
+  type: z.literal("fetch_recent_provider_sessions_response"),
+  payload: z.object({
+    requestId: z.string(),
+    entries: z.array(RecentProviderSessionDescriptorPayloadSchema),
+    filteredAlreadyImportedCount: z.number().int().nonnegative().optional(),
+  }),
+});
+
 export const FetchWorkspacesResponseMessageSchema = z.object({
   type: z.literal("fetch_workspaces_response"),
   payload: z.object({
@@ -2661,6 +2713,11 @@ export const CheckoutPrStatusSchema = z.object({
   headRefName: z.string(),
   isMerged: z.boolean(),
   isDraft: z.boolean().optional().default(false),
+  mergeable: z
+    .enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"])
+    .catch("UNKNOWN")
+    .optional()
+    .default("UNKNOWN"),
   checks: z
     .array(
       z.object({
@@ -2777,6 +2834,16 @@ export const CheckoutPrCreateResponseSchema = z.object({
     cwd: z.string(),
     url: z.string().nullable(),
     number: z.number().nullable(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutPrMergeResponseSchema = z.object({
+  type: z.literal("checkout_pr_merge_response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -3301,6 +3368,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
   FetchAgentHistoryResponseMessageSchema,
+  FetchRecentProviderSessionsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
   StartWorkspaceScriptResponseMessageSchema,
@@ -3338,6 +3406,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPullResponseSchema,
   CheckoutPushResponseSchema,
   CheckoutPrCreateResponseSchema,
+  CheckoutPrMergeResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
@@ -3430,6 +3499,9 @@ export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessa
 export type FetchAgentHistoryResponseMessage = z.infer<
   typeof FetchAgentHistoryResponseMessageSchema
 >;
+export type FetchRecentProviderSessionsResponseMessage = z.infer<
+  typeof FetchRecentProviderSessionsResponseMessageSchema
+>;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
@@ -3506,6 +3578,9 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
+export type FetchRecentProviderSessionsRequestMessage = z.infer<
+  typeof FetchRecentProviderSessionsRequestMessageSchema
+>;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
@@ -3585,6 +3660,10 @@ export type CheckoutPushRequest = z.infer<typeof CheckoutPushRequestSchema>;
 export type CheckoutPushResponse = z.infer<typeof CheckoutPushResponseSchema>;
 export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
+export type CheckoutPrMergeRequest = z.infer<typeof CheckoutPrMergeRequestSchema>;
+export type CheckoutPrMergeResponse = z.infer<typeof CheckoutPrMergeResponseSchema>;
+export type CheckoutPrMergeMethod = z.infer<typeof CheckoutPrMergeRequestSchema>["mergeMethod"];
+export type PullRequestMergeable = z.infer<typeof CheckoutPrStatusSchema>["mergeable"];
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;
 export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
 export type PullRequestTimelineRequest = z.infer<typeof PullRequestTimelineRequestSchema>;

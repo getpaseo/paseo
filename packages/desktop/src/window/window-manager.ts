@@ -1,4 +1,14 @@
-import { app, BrowserWindow, Menu, ipcMain, nativeTheme } from "electron";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  type MenuItemConstructorOptions,
+  type WebContents,
+  clipboard,
+  ipcMain,
+  nativeTheme,
+  shell,
+} from "electron";
 
 export function readBadgeCount(input: unknown): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0) {
@@ -272,14 +282,76 @@ export function setupDarwinPaintRefresh(win: BrowserWindow): void {
   });
 }
 
+export function buildStandardContextMenuItems(
+  contents: WebContents,
+  params: Electron.ContextMenuParams,
+): MenuItemConstructorOptions[] {
+  const items: MenuItemConstructorOptions[] = [];
+
+  if (params.misspelledWord) {
+    if (params.dictionarySuggestions.length > 0) {
+      for (const suggestion of params.dictionarySuggestions) {
+        items.push({
+          label: suggestion,
+          click: () => contents.replaceMisspelling(suggestion),
+        });
+      }
+    } else {
+      items.push({ label: "No suggestions", enabled: false });
+    }
+    items.push({ type: "separator" });
+    items.push({
+      label: "Add to Dictionary",
+      click: () => contents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+    });
+    items.push({ type: "separator" });
+  }
+
+  if (params.linkURL && /^https?:/i.test(params.linkURL)) {
+    items.push({
+      label: "Open Link in Browser",
+      click: () => {
+        void shell.openExternal(params.linkURL);
+      },
+    });
+    items.push({
+      label: "Copy Link Address",
+      click: () => clipboard.writeText(params.linkURL),
+    });
+    items.push({ type: "separator" });
+  }
+
+  if (params.hasImageContents && params.srcURL) {
+    items.push({
+      label: "Copy Image",
+      click: () => contents.copyImageAt(params.x, params.y),
+    });
+    items.push({
+      label: "Save Image As…",
+      click: () => contents.downloadURL(params.srcURL),
+    });
+    items.push({ type: "separator" });
+  }
+
+  if (params.isEditable) {
+    items.push({ role: "cut", enabled: params.editFlags.canCut });
+    items.push({ role: "copy", enabled: params.editFlags.canCopy });
+    items.push({ role: "paste", enabled: params.editFlags.canPaste });
+    items.push({ type: "separator" });
+    items.push({ role: "selectAll" });
+  } else {
+    items.push({ role: "copy", enabled: params.selectionText.length > 0 });
+    items.push({ role: "paste" });
+    items.push({ type: "separator" });
+    items.push({ role: "selectAll" });
+  }
+
+  return items;
+}
+
 export function setupDefaultContextMenu(win: BrowserWindow): void {
   win.webContents.on("context-menu", (_event, params) => {
-    const menu = Menu.buildFromTemplate([
-      { role: "copy", enabled: params.selectionText.length > 0 },
-      { role: "paste" },
-      { type: "separator" },
-      { role: "selectAll" },
-    ]);
+    const menu = Menu.buildFromTemplate(buildStandardContextMenuItems(win.webContents, params));
     menu.popup({ window: win });
   });
 }

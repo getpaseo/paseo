@@ -173,6 +173,44 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
   expect(branchAfterSecond).toBe("renamed-from-agent-context");
 });
 
+test("falls back to a numeric suffix when the desired branch name already exists", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+
+  execFileSync("git", ["branch", "renamed-from-agent-context"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "renamed-from-agent-context-2"], { cwd: repoDir, stdio: "pipe" });
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  const result = await attemptFirstAgentBranchAutoName({
+    cwd: created.worktree.worktreePath,
+    firstAgentContext: { prompt: "Build the agent context name" },
+    generateBranchNameFromContext: async () => "renamed-from-agent-context",
+  });
+
+  expect(result).toEqual({
+    attempted: true,
+    renamed: true,
+    branchName: "renamed-from-agent-context-3",
+  });
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim(),
+  ).toBe("renamed-from-agent-context-3");
+});
+
 test("renames the branch even when the app supplies a random placeholder slug", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
@@ -498,6 +536,7 @@ function createGitHubServiceStub(): GitHubService {
       number: 1,
       url: "https://github.com/acme/repo/pull/1",
     }),
+    mergePullRequest: async () => ({ success: true }),
     isAuthenticated: async () => true,
     invalidate: () => {},
   };

@@ -7,19 +7,19 @@ describe("draft-store lifecycle", () => {
     const nowMs = 1_000_000;
     const drafts = {
       oldSent: {
-        input: { text: "", attachments: [], cwd: "" },
+        input: { text: "", attachments: [] },
         lifecycle: "sent" as const,
         updatedAt: 0,
         version: 2,
       },
       recentAbandoned: {
-        input: { text: "", attachments: [], cwd: "" },
+        input: { text: "", attachments: [] },
         lifecycle: "abandoned" as const,
         updatedAt: nowMs + 2 * 60 * 1000,
         version: 2,
       },
       active: {
-        input: { text: "a", attachments: [], cwd: "/repo" },
+        input: { text: "a", attachments: [] },
         lifecycle: "active" as const,
         updatedAt: 0,
         version: 1,
@@ -53,7 +53,6 @@ describe("draft-store lifecycle", () => {
               },
             },
           ],
-          cwd: "/repo",
         },
         lifecycle: "active",
         updatedAt: 1,
@@ -64,7 +63,7 @@ describe("draft-store lifecycle", () => {
     });
 
     expect(cleared).toEqual({
-      input: { text: "", attachments: [], cwd: "" },
+      input: { text: "", attachments: [] },
       lifecycle: "sent",
       updatedAt: 2,
       version: 2,

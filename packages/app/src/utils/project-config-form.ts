@@ -1,6 +1,19 @@
-import type { PaseoConfigRaw, PaseoScriptEntryRaw } from "@server/shared/messages";
+import type {
+  PaseoConfigRaw,
+  PaseoMetadataGeneration,
+  PaseoMetadataGenerationEntry,
+  PaseoScriptEntryRaw,
+} from "@server/shared/messages";
 
 export type LifecycleOriginalKind = "string" | "array" | "missing";
+
+export const METADATA_PROMPT_KEYS = [
+  "agentTitle",
+  "branchName",
+  "commitMessage",
+  "pullRequest",
+] as const;
+export type MetadataPromptKey = (typeof METADATA_PROMPT_KEYS)[number];
 
 export interface ProjectScriptDraft {
   id: string;
@@ -18,6 +31,8 @@ export interface ProjectConfigDraft {
   teardownText: string;
   teardownOriginalKind: LifecycleOriginalKind;
   scripts: ProjectScriptDraft[];
+  metadataPrompts: Record<MetadataPromptKey, string>;
+  metadataGenerationBase: PaseoMetadataGeneration | undefined;
 }
 
 interface LifecycleProjection {
@@ -88,6 +103,15 @@ function nextScriptDraftId(): string {
   return `script-draft-${scriptDraftIdCounter}`;
 }
 
+function emptyMetadataPrompts(): Record<MetadataPromptKey, string> {
+  return {
+    agentTitle: "",
+    branchName: "",
+    commitMessage: "",
+    pullRequest: "",
+  };
+}
+
 export function configToDraft(config: PaseoConfigRaw | null | undefined): ProjectConfigDraft {
   const worktree = config?.worktree ?? {};
   const setup = projectLifecycle(worktree.setup);
@@ -108,12 +132,23 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
     });
   }
 
+  const metadataGeneration = config?.metadataGeneration;
+  const metadataPrompts = emptyMetadataPrompts();
+  for (const key of METADATA_PROMPT_KEYS) {
+    const instructions = metadataGeneration?.[key]?.instructions;
+    if (typeof instructions === "string") {
+      metadataPrompts[key] = instructions;
+    }
+  }
+
   return {
     setupText: setup.text,
     setupOriginalKind: setup.kind,
     teardownText: teardown.text,
     teardownOriginalKind: teardown.kind,
     scripts,
+    metadataPrompts,
+    metadataGenerationBase: metadataGeneration,
   };
 }
 
@@ -172,6 +207,31 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     nextScripts[trimmedName] = nextEntry as PaseoScriptEntryRaw;
   }
 
+  const nextMetadataGeneration: Record<string, unknown> = {
+    ...input.draft.metadataGenerationBase,
+  };
+  for (const key of METADATA_PROMPT_KEYS) {
+    const text = input.draft.metadataPrompts[key];
+    const baseEntry = input.draft.metadataGenerationBase?.[key] as
+      | PaseoMetadataGenerationEntry
+      | undefined;
+    if (text.trim().length === 0) {
+      if (baseEntry) {
+        const nextEntry: Record<string, unknown> = { ...baseEntry };
+        delete nextEntry.instructions;
+        if (Object.keys(nextEntry).length === 0) {
+          delete nextMetadataGeneration[key];
+        } else {
+          nextMetadataGeneration[key] = nextEntry;
+        }
+      } else {
+        delete nextMetadataGeneration[key];
+      }
+    } else {
+      nextMetadataGeneration[key] = { ...baseEntry, instructions: text };
+    }
+  }
+
   const result: Record<string, unknown> = { ...baseConfig };
   if (Object.keys(nextWorktree).length === 0) {
     delete result.worktree;
@@ -182,6 +242,11 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     delete result.scripts;
   } else {
     result.scripts = nextScripts;
+  }
+  if (Object.keys(nextMetadataGeneration).length === 0) {
+    delete result.metadataGeneration;
+  } else {
+    result.metadataGeneration = nextMetadataGeneration;
   }
   return result as PaseoConfigRaw;
 }

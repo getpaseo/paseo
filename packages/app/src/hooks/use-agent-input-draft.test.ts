@@ -1,24 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDraftComposerCommandConfig,
-  createAgentInputDraftCore,
   resolveDraftKey,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
 } from "./use-agent-input-draft-core";
-
-function makeStorage() {
-  const map = new Map<string, string>();
-  return {
-    getItem: async (key: string) => map.get(key) ?? null,
-    setItem: async (key: string, value: string) => {
-      map.set(key, value);
-    },
-    removeItem: async (key: string) => {
-      map.delete(key);
-    },
-  };
-}
 
 describe("resolveDraftKey", () => {
   it("returns a string draft key unchanged", () => {
@@ -127,62 +113,5 @@ describe("buildDraftComposerCommandConfig", () => {
       model: "gpt-5.4",
       thinkingOptionId: "high",
     });
-  });
-});
-
-describe("createAgentInputDraftCore", () => {
-  it("load returns null when nothing has been saved", async () => {
-    const core = createAgentInputDraftCore({ storage: makeStorage(), storageKey: "test" });
-    expect(await core.load()).toBeNull();
-  });
-
-  it("load returns the draft that was saved", async () => {
-    const core = createAgentInputDraftCore({ storage: makeStorage(), storageKey: "test" });
-    await core.save({ text: "hello world", attachments: [], cwd: "/repo" });
-    expect(await core.load()).toEqual({ text: "hello world", attachments: [], cwd: "/repo" });
-  });
-
-  it("clear removes the persisted draft", async () => {
-    const core = createAgentInputDraftCore({ storage: makeStorage(), storageKey: "test" });
-    await core.save({ text: "hello", attachments: [], cwd: "/repo" });
-    await core.clear();
-    expect(await core.load()).toBeNull();
-  });
-
-  it("load seeds cwd from initialCwd when cwd is absent from stored data", async () => {
-    const storage = makeStorage();
-    await storage.setItem("test", JSON.stringify({ text: "hello", attachments: [] }));
-
-    const core = createAgentInputDraftCore({ storage, storageKey: "test" });
-    const draft = await core.load("/initial");
-    expect(draft?.cwd).toBe("/initial");
-  });
-
-  it("round-trips attachments unchanged", async () => {
-    const attachment = {
-      kind: "github_issue" as const,
-      item: {
-        kind: "issue" as const,
-        number: 42,
-        title: "Unify attachments",
-        url: "https://github.com/example/repo/issues/42",
-        state: "open" as const,
-        body: "body",
-        labels: ["composer"],
-      },
-    };
-    const core = createAgentInputDraftCore({ storage: makeStorage(), storageKey: "test" });
-    await core.save({ text: "", attachments: [attachment], cwd: "/repo" });
-    const draft = await core.load();
-    expect(draft?.attachments).toEqual([attachment]);
-  });
-
-  it("isolated keys do not share state", async () => {
-    const storage = makeStorage();
-    const a = createAgentInputDraftCore({ storage, storageKey: "key-a" });
-    const b = createAgentInputDraftCore({ storage, storageKey: "key-b" });
-    await a.save({ text: "from a", attachments: [], cwd: "" });
-    expect(await b.load()).toBeNull();
-    expect(await a.load()).toMatchObject({ text: "from a" });
   });
 });

@@ -10,6 +10,10 @@ const { asyncStorage } = vi.hoisted(() => ({
   asyncStorage: new Map<string, string>(),
 }));
 
+vi.hoisted(() => {
+  (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
+});
+
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
     getItem: async (key: string) => asyncStorage.get(key) ?? null,
@@ -250,7 +254,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     function Probe() {
-      latest = useAgentInputDraft({ draftKey: "draft:legacy", initialCwd: "/repo" });
+      latest = useAgentInputDraft({ draftKey: "draft:legacy" });
       return null;
     }
 
@@ -271,15 +275,13 @@ describe("useAgentInputDraft live contract", () => {
 
     expect(getLatest().text).toBe("legacy text");
     expect(getLatest().attachments).toEqual([{ kind: "image", metadata: image }]);
-    expect(getLatest().cwd).toBe("/repo");
     expect(useDraftStore.getState().drafts["draft:legacy"]?.input).toEqual({
       text: "legacy text",
       attachments: [{ kind: "image", metadata: image }],
-      cwd: "/repo",
     });
   });
 
-  it("round-trips persisted attachments and cwd unchanged", async () => {
+  it("hydrates drafts saved by old builds with cwd", async () => {
     let latest: ReturnType<typeof useAgentInputDraft> | null = null;
     const githubIssue: ComposerAttachment = {
       kind: "github_issue",
@@ -312,13 +314,13 @@ describe("useAgentInputDraft live contract", () => {
           lifecycle: "active",
           updatedAt: Date.now(),
           version: 1,
-        },
+        } as unknown as DraftRecordForTest,
       },
       createModalDraft: null,
     });
 
     function Probe() {
-      latest = useAgentInputDraft({ draftKey: "draft:new-shape", initialCwd: "/initial" });
+      latest = useAgentInputDraft({ draftKey: "draft:new-shape" });
       return null;
     }
 
@@ -339,7 +341,6 @@ describe("useAgentInputDraft live contract", () => {
 
     expect(getLatest().text).toBe("new text");
     expect(getLatest().attachments).toEqual([githubIssue]);
-    expect(getLatest().cwd).toBe("/persisted");
 
     await act(async () => {
       root.unmount();
@@ -349,112 +350,6 @@ describe("useAgentInputDraft live contract", () => {
       text: "new text",
       attachments: [githubIssue],
       cwd: "/persisted",
-    });
-  });
-
-  it("seeds cwd from initialCwd when persisted cwd is missing", async () => {
-    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
-
-    function getLatest(): ReturnType<typeof useAgentInputDraft> {
-      if (!latest) {
-        throw new Error("Expected hook result");
-      }
-      return latest;
-    }
-
-    useDraftStore.setState({
-      drafts: {
-        "draft:seed-cwd": {
-          input: {
-            text: "seed",
-            attachments: [],
-          },
-          lifecycle: "active",
-          updatedAt: Date.now(),
-          version: 1,
-        } as unknown as DraftRecordForTest,
-      },
-      createModalDraft: null,
-    });
-
-    function Probe() {
-      latest = useAgentInputDraft({ draftKey: "draft:seed-cwd", initialCwd: "/initial" });
-      return null;
-    }
-
-    const queryClient = new QueryClient();
-    const container = document.getElementById("root");
-    if (!container) {
-      throw new Error("Missing root container");
-    }
-
-    const root = createRoot(container);
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <Probe />
-        </QueryClientProvider>,
-      );
-    });
-
-    expect(getLatest().cwd).toBe("/initial");
-    expect(useDraftStore.getState().drafts["draft:seed-cwd"]?.input).toEqual({
-      text: "seed",
-      attachments: [],
-      cwd: "/initial",
-    });
-  });
-
-  it("seeds cwd as empty string when persisted cwd and initialCwd are missing", async () => {
-    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
-
-    function getLatest(): ReturnType<typeof useAgentInputDraft> {
-      if (!latest) {
-        throw new Error("Expected hook result");
-      }
-      return latest;
-    }
-
-    useDraftStore.setState({
-      drafts: {
-        "draft:empty-cwd": {
-          input: {
-            text: "seed",
-            attachments: [],
-          },
-          lifecycle: "active",
-          updatedAt: Date.now(),
-          version: 1,
-        } as unknown as DraftRecordForTest,
-      },
-      createModalDraft: null,
-    });
-
-    function Probe() {
-      latest = useAgentInputDraft({ draftKey: "draft:empty-cwd" });
-      return null;
-    }
-
-    const queryClient = new QueryClient();
-    const container = document.getElementById("root");
-    if (!container) {
-      throw new Error("Missing root container");
-    }
-
-    const root = createRoot(container);
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <Probe />
-        </QueryClientProvider>,
-      );
-    });
-
-    expect(getLatest().cwd).toBe("");
-    expect(useDraftStore.getState().drafts["draft:empty-cwd"]?.input).toEqual({
-      text: "seed",
-      attachments: [],
-      cwd: "",
     });
   });
 
@@ -476,7 +371,7 @@ describe("useAgentInputDraft live contract", () => {
     }
 
     function Probe() {
-      latest = useAgentInputDraft({ draftKey: "draft:attachments", initialCwd: "/repo" });
+      latest = useAgentInputDraft({ draftKey: "draft:attachments" });
       return null;
     }
 
@@ -504,11 +399,10 @@ describe("useAgentInputDraft live contract", () => {
     expect(useDraftStore.getState().drafts["draft:attachments"]?.input).toEqual({
       text: "with attachment",
       attachments: [{ kind: "image", metadata: image }],
-      cwd: "/repo",
     });
   });
 
-  it("clear resets text, attachments, and cwd", async () => {
+  it("clear resets text and attachments", async () => {
     let latest: ReturnType<typeof useAgentInputDraft> | null = null;
     const image: AttachmentMetadata = {
       id: "clear-image",
@@ -526,7 +420,7 @@ describe("useAgentInputDraft live contract", () => {
     }
 
     function Probe() {
-      latest = useAgentInputDraft({ draftKey: "draft:clear", initialCwd: "/repo" });
+      latest = useAgentInputDraft({ draftKey: "draft:clear" });
       return null;
     }
 
@@ -548,7 +442,6 @@ describe("useAgentInputDraft live contract", () => {
     await act(async () => {
       getLatest().setText("queued message");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
-      getLatest().setCwd("/changed");
     });
 
     await act(async () => {
@@ -557,11 +450,9 @@ describe("useAgentInputDraft live contract", () => {
 
     expect(getLatest().text).toBe("");
     expect(getLatest().attachments).toEqual([]);
-    expect(getLatest().cwd).toBe("");
     expect(useDraftStore.getState().drafts["draft:clear"]?.input).toEqual({
       text: "",
       attachments: [],
-      cwd: "",
     });
   });
 
@@ -615,7 +506,7 @@ describe("useAgentInputDraft live contract", () => {
     expect(getLatest().attachments).toEqual([]);
     expect(useDraftStore.getState().drafts["draft:lifecycle"]).toMatchObject({
       lifecycle: "sent",
-      input: { text: "", attachments: [], cwd: "" },
+      input: { text: "", attachments: [] },
     });
 
     await act(async () => {
@@ -628,7 +519,7 @@ describe("useAgentInputDraft live contract", () => {
 
     expect(useDraftStore.getState().drafts["draft:lifecycle"]).toMatchObject({
       lifecycle: "abandoned",
-      input: { text: "", attachments: [], cwd: "" },
+      input: { text: "", attachments: [] },
     });
   });
 });

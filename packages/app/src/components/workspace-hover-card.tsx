@@ -27,7 +27,7 @@ import { Pressable } from "react-native";
 import { Portal } from "@gorhom/portal";
 import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import type { PrHint } from "@/hooks/use-checkout-pr-status-query";
+import type { PrHint } from "@/git/use-pr-status-query";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";

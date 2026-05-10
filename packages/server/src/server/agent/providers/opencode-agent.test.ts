@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -656,3 +656,87 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 });
+
+describe("OpenCode persisted sessions", () => {
+  test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
+    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
+    const cwd = path.join(storageRoot, "repo");
+    const otherCwd = path.join(storageRoot, "other");
+
+    writeOpenCodeJson(storageRoot, "session/project-1/ses_old.json", {
+      id: "ses_old",
+      directory: cwd,
+      title: "Old session",
+      time: { created: 1000, updated: 1000 },
+    });
+    writeOpenCodeJson(storageRoot, "session/project-1/ses_new.json", {
+      id: "ses_new",
+      directory: cwd,
+      title: "New session",
+      time: { created: 2000, updated: 3000 },
+    });
+    writeOpenCodeJson(storageRoot, "session/project-2/ses_other.json", {
+      id: "ses_other",
+      directory: otherCwd,
+      title: "Other cwd",
+      time: { created: 4000, updated: 4000 },
+    });
+    writeOpenCodeJson(storageRoot, "message/ses_new/msg_user.json", {
+      id: "msg_user",
+      sessionID: "ses_new",
+      role: "user",
+      time: { created: 2100 },
+    });
+    writeOpenCodeJson(storageRoot, "part/msg_user/prt_user.json", {
+      id: "prt_user",
+      sessionID: "ses_new",
+      messageID: "msg_user",
+      type: "text",
+      text: "hello world",
+      time: { start: 2100 },
+    });
+    writeOpenCodeJson(storageRoot, "message/ses_new/msg_assistant.json", {
+      id: "msg_assistant",
+      sessionID: "ses_new",
+      role: "assistant",
+      time: { created: 2200 },
+    });
+    writeOpenCodeJson(storageRoot, "part/msg_assistant/prt_assistant.json", {
+      id: "prt_assistant",
+      sessionID: "ses_new",
+      messageID: "msg_assistant",
+      type: "text",
+      text: "hello back",
+      time: { start: 2200 },
+    });
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot);
+    const descriptors = await client.listPersistedAgents({ cwd, limit: 1 });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      provider: "opencode",
+      sessionId: "ses_new",
+      cwd,
+      title: "New session",
+      persistence: {
+        provider: "opencode",
+        sessionId: "ses_new",
+        nativeHandle: "ses_new",
+      },
+    });
+    expect(descriptors[0]?.lastActivityAt.toISOString()).toBe("1970-01-01T00:00:03.000Z");
+    expect(descriptors[0]?.timeline).toEqual([
+      { type: "user_message", text: "hello world", messageId: "msg_user" },
+      { type: "assistant_message", text: "hello back" },
+    ]);
+
+    rmSync(storageRoot, { recursive: true, force: true });
+  });
+});
+
+function writeOpenCodeJson(storageRoot: string, relativePath: string, value: unknown): void {
+  const filePath = path.join(storageRoot, relativePath);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, JSON.stringify(value), "utf8");
+}

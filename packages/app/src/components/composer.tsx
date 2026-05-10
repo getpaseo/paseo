@@ -1541,7 +1541,6 @@ export function Composer({
 
           <View style={styles.messageInputContainer}>
             {autocompletePopover}
-            {attachmentPreviewList}
 
             {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
             <StableMessageInput
@@ -1581,6 +1580,7 @@ export function Composer({
               onFocusChange={handleFocusChange}
               onHeightChange={onComposerHeightChange}
               inputWrapperStyle={inputWrapperStyle}
+              attachmentSlot={attachmentPreviewList}
             />
             <Combobox
               options={githubSearchOptions}
@@ -1621,7 +1621,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     width: "100%",
     overflow: "visible",
-    padding: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
   inputAreaLocked: {
     opacity: 0.6,
@@ -1684,16 +1685,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexWrap: "wrap",
   },
   imageThumbnail: {
-    width: 48,
-    height: 48,
+    width: 32,
+    height: 32,
   },
   imageThumbnailPlaceholder: {
-    width: 48,
-    height: 48,
+    width: 32,
+    height: 32,
     backgroundColor: theme.colors.surface2,
   },
   githubPillBody: {
-    minHeight: 48,
+    minHeight: 32,
     maxWidth: 260,
     flexDirection: "row",
     alignItems: "center",

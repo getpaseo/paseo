@@ -9,6 +9,8 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import { buildMetadataPrompt } from "../../utils/build-metadata-prompt.js";
+import type { WorkspaceGitService } from "../workspace-git-service.js";
 
 export interface AgentMetadataGeneratorDeps {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
@@ -18,6 +20,7 @@ export interface AgentMetadataGenerationOptions {
   agentManager: AgentManager;
   agentId: string;
   cwd: string;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   initialPrompt?: string | null;
   explicitTitle?: string | null;
   paseoHome?: string;
@@ -75,16 +78,26 @@ function buildMetadataSchema(
   return z.object(shape);
 }
 
-function buildPrompt(needs: AgentMetadataNeeds): string {
-  const instructions: string[] = ["Generate metadata for a coding agent based on the user prompt."];
-
+async function buildPrompt(
+  needs: AgentMetadataNeeds,
+  options: {
+    cwd: string;
+    workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  },
+): Promise<string> {
+  const beforeLines: string[] = ["Generate metadata for a coding agent based on the user prompt."];
   if (needs.needsTitle) {
-    instructions.push(`Title: short descriptive label (<= ${MAX_AUTO_AGENT_TITLE_CHARS} chars).`);
+    beforeLines.push(`Title: short descriptive label (<= ${MAX_AUTO_AGENT_TITLE_CHARS} chars).`);
   }
-  instructions.push("Return JSON only with a single field 'title'.");
 
-  instructions.push("", "User prompt:", needs.prompt ?? "");
-  return instructions.join("\n");
+  return buildMetadataPrompt({
+    cwd: options.cwd,
+    workspaceGitService: options.workspaceGitService,
+    configKey: "agentTitle",
+    before: beforeLines.join("\n"),
+    after: "Return JSON only with a single field 'title'.",
+    trailing: `User prompt:\n${needs.prompt ?? ""}`,
+  });
 }
 
 export async function generateAndApplyAgentMetadata(
@@ -110,7 +123,10 @@ export async function generateAndApplyAgentMetadata(
     result = await generator({
       manager: options.agentManager,
       cwd: options.cwd,
-      prompt: buildPrompt(needs),
+      prompt: await buildPrompt(needs, {
+        cwd: options.cwd,
+        workspaceGitService: options.workspaceGitService,
+      }),
       schema,
       schemaName: "AgentMetadata",
       maxRetries: 2,

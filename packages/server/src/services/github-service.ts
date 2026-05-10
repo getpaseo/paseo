@@ -91,6 +91,8 @@ const HeadRepositoryOwnerSchema = z
   .nullable()
   .optional();
 
+const PullRequestMergeableSchema = z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]).catch("UNKNOWN");
+
 const CurrentPullRequestStatusSchema = z.object({
   number: z.number().optional(),
   url: z.string().catch(""),
@@ -102,6 +104,7 @@ const CurrentPullRequestStatusSchema = z.object({
   mergedAt: z.string().nullable().optional(),
   statusCheckRollup: z.unknown().optional(),
   reviewDecision: z.unknown().optional(),
+  mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
   headRepositoryOwner: HeadRepositoryOwnerSchema,
 });
 
@@ -234,7 +237,7 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
 }`;
 
 const CURRENT_PR_STATUS_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner";
 
 const PULL_REQUEST_TIMELINE_QUERY = `
 query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
@@ -290,6 +293,7 @@ interface GitHubServiceDependencies {
 
 export interface GitHubCommandRunnerOptions {
   cwd: string;
+  envOverlay?: Record<string, string>;
 }
 
 export interface GitHubCommandResult {
@@ -346,6 +350,7 @@ export interface PullRequestCheck {
 
 export type PullRequestChecksStatus = "none" | "pending" | "success" | "failure";
 export type PullRequestReviewDecision = "approved" | "changes_requested" | "pending" | null;
+export type PullRequestMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
 export interface GitHubCurrentPullRequestStatus {
   number?: number;
@@ -358,6 +363,7 @@ export interface GitHubCurrentPullRequestStatus {
   headRefName: string;
   isMerged: boolean;
   isDraft?: boolean;
+  mergeable: PullRequestMergeable;
   checks: PullRequestCheck[];
   checksStatus: PullRequestChecksStatus;
   reviewDecision: PullRequestReviewDecision;
@@ -402,6 +408,18 @@ export interface GitHubPullRequestTimeline {
 export interface GitHubPullRequestCreateResult {
   url: string;
   number: number;
+}
+
+export type GitHubPullRequestMergeMethod = "merge" | "squash" | "rebase";
+
+export interface MergeGitHubPullRequestOptions {
+  cwd: string;
+  prNumber: number;
+  mergeMethod: GitHubPullRequestMergeMethod;
+}
+
+export interface GitHubPullRequestMergeResult {
+  success: true;
 }
 
 export type GitHubReadOptions =
@@ -492,6 +510,7 @@ export interface GitHubService {
   createPullRequest(
     options: CreateGitHubPullRequestOptions,
   ): Promise<GitHubPullRequestCreateResult>;
+  mergePullRequest(options: MergeGitHubPullRequestOptions): Promise<GitHubPullRequestMergeResult>;
   isAuthenticated(options: { cwd: string } & GitHubReadOptions): Promise<boolean>;
   retainCurrentPullRequestStatusPoll?(options: {
     cwd: string;
@@ -1030,6 +1049,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return parsed;
     },
 
+    async mergePullRequest(input) {
+      await run(["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`], {
+        cwd: input.cwd,
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      });
+      return { success: true };
+    },
+
     isAuthenticated(input) {
       return cached({
         cwd: input.cwd,
@@ -1167,7 +1194,7 @@ async function runGhCommand(
 ): Promise<GitHubCommandResult> {
   return execCommand("gh", args, {
     cwd: options.cwd,
-    envOverlay: GITHUB_ENV,
+    envOverlay: { ...GITHUB_ENV, ...options.envOverlay },
     maxBuffer: 10 * 1024 * 1024,
   });
 }
@@ -1690,6 +1717,7 @@ function toCurrentPullRequestStatus(
     headRefName: item.headRefName || fallbackHeadRefName,
     isMerged: mergedAt !== null,
     isDraft: item.isDraft ?? false,
+    mergeable: item.mergeable,
     checks,
     checksStatus: computeChecksStatus(checks),
     reviewDecision: mapReviewDecision(item.reviewDecision),

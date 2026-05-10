@@ -87,11 +87,10 @@ describe("draft-store migration", () => {
           },
         },
       ],
-      cwd: "",
     });
   });
 
-  it("is idempotent for already-migrated shapes", async () => {
+  it("hydrates old persisted drafts that still include cwd", async () => {
     const original = {
       drafts: {
         "agent:server:agent": {
@@ -123,6 +122,21 @@ describe("draft-store migration", () => {
     const twice = await __draftStoreTestUtils.migratePersistedState(once);
 
     expect(twice).toEqual(once);
+    expect(twice.drafts["agent:server:agent"]?.input).toEqual({
+      text: "hello",
+      attachments: [
+        {
+          kind: "image",
+          metadata: {
+            id: "att-1",
+            mimeType: "image/jpeg",
+            storageType: "web-indexeddb",
+            storageKey: "att-1",
+            createdAt: 1700000000000,
+          },
+        },
+      ],
+    });
   });
 
   it("rejects workspace review attachments from migrated draft attachments", async () => {
@@ -132,7 +146,6 @@ describe("draft-store migration", () => {
           input: {
             text: "hello",
             attachments: [workspaceReviewAttachment()],
-            cwd: "/repo",
           },
           lifecycle: "active",
           updatedAt: 1700000000001,

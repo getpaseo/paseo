@@ -1,6 +1,6 @@
 # Data Model
 
-Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas and written atomically (write to temp file, then rename). There are no migrations — schemas use optional fields with defaults for forward compatibility.
+Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
 All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 
@@ -11,8 +11,12 @@ All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 ```
 $PASEO_HOME/
 ├── config.json                          # Daemon configuration
+├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
+├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
+├── paseo.pid                            # Daemon PID lock file
+├── daemon.log                           # Default log file (path configurable)
 ├── agents/
-│   └── {project-dir}/
+│   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
@@ -26,6 +30,8 @@ $PASEO_HOME/
 └── push-tokens.json                     # Expo push notification tokens
 ```
 
+The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Atomic writes (temp file + rename): agent records, chat, project/workspace registries, push tokens. Non-atomic (plain `writeFile`): `config.json`, `schedules/*.json`, `loops/loops.json`, `server-id`, `daemon-keypair.json`.
+
 ---
 
 ## 1. Agent Record
@@ -34,28 +40,29 @@ $PASEO_HOME/
 
 Each agent is stored as a separate JSON file, grouped by project directory.
 
-| Field                | Type                                     | Description                                                            |
-| -------------------- | ---------------------------------------- | ---------------------------------------------------------------------- |
-| `id`                 | `string`                                 | UUID, primary key                                                      |
-| `provider`           | `string`                                 | Agent provider (`"claude"`, `"codex"`, `"opencode"`, etc.)             |
-| `cwd`                | `string`                                 | Working directory the agent operates in                                |
-| `createdAt`          | `string` (ISO 8601)                      | Creation timestamp                                                     |
-| `updatedAt`          | `string` (ISO 8601)                      | Last update timestamp                                                  |
-| `lastActivityAt`     | `string?` (ISO 8601)                     | Last activity timestamp                                                |
-| `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                            |
-| `title`              | `string?`                                | User-visible title                                                     |
-| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`)                                        |
-| `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"` |
-| `lastModeId`         | `string?`                                | Last active mode ID                                                    |
-| `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                |
-| `runtimeInfo`        | `RuntimeInfo?`                           | Live runtime state (see below)                                         |
-| `features`           | `AgentFeature[]?`                        | Provider-reported features (toggles/selects)                           |
-| `persistence`        | `PersistenceHandle?`                     | Handle for resuming sessions                                           |
-| `requiresAttention`  | `boolean?`                               | Whether the agent needs user attention                                 |
-| `attentionReason`    | `"finished" \| "error" \| "permission"?` | Why attention is needed                                                |
-| `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                             |
-| `internal`           | `boolean?`                               | Whether this is a system-internal agent (loop workers, etc.)           |
-| `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                  |
+| Field                | Type                                     | Description                                                                                                                                                               |
+| -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | `string`                                 | UUID, primary key                                                                                                                                                         |
+| `provider`           | `string`                                 | Agent provider (`"claude"`, `"codex"`, `"opencode"`, etc.)                                                                                                                |
+| `cwd`                | `string`                                 | Working directory the agent operates in                                                                                                                                   |
+| `createdAt`          | `string` (ISO 8601)                      | Creation timestamp                                                                                                                                                        |
+| `updatedAt`          | `string` (ISO 8601)                      | Last update timestamp                                                                                                                                                     |
+| `lastActivityAt`     | `string?` (ISO 8601)                     | Last activity timestamp                                                                                                                                                   |
+| `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                                                                                                                               |
+| `title`              | `string?`                                | User-visible title                                                                                                                                                        |
+| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). `paseo.parent-agent-id` set automatically when launched via the `create_agent` MCP tool — see [agent-lifecycle.md](./agent-lifecycle.md) |
+| `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"`                                                                                                    |
+| `lastModeId`         | `string?`                                | Last active mode ID                                                                                                                                                       |
+| `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                   |
+| `runtimeInfo`        | `RuntimeInfo?`                           | Live runtime state (see below)                                                                                                                                            |
+| `features`           | `AgentFeature[]?`                        | Provider-reported features (toggles/selects)                                                                                                                              |
+| `persistence`        | `PersistenceHandle?`                     | Handle for resuming sessions                                                                                                                                              |
+| `lastError`          | `string?` (nullable)                     | Last error message, if any                                                                                                                                                |
+| `requiresAttention`  | `boolean?`                               | Whether the agent needs user attention                                                                                                                                    |
+| `attentionReason`    | `"finished" \| "error" \| "permission"?` | Why attention is needed                                                                                                                                                   |
+| `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                                                                                                                                |
+| `internal`           | `boolean?`                               | Whether this is a system-internal agent (loop workers, etc.)                                                                                                              |
+| `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                     |
 
 ### Nested: SerializableConfig
 
@@ -114,7 +121,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `description` | `string?`             |
 | `tooltip`     | `string?`             |
 | `icon`        | `string?`             |
-| `value`       | `string?`             |
+| `value`       | `string \| null`      |
 | `options`     | `AgentSelectOption[]` |
 
 ---
@@ -130,10 +137,11 @@ Single file, validated with `PersistedConfigSchema`.
   version: 1,
   daemon: {
     listen: "127.0.0.1:6767",
-    hostnames: true | string[],
-    mcp: { enabled: boolean },
+    hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
+    mcp: { enabled: boolean, injectIntoAgents: boolean },
     cors: { allowedOrigins: string[] },
-    relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean }
+    relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean },
+    auth: { password: string }    // bcrypt hash, optional
   },
   app: {
     baseUrl: string
@@ -143,12 +151,10 @@ Single file, validated with `PersistedConfigSchema`.
     local: { modelsDir: string }
   },
   agents: {
-    providers: {
-      [provider: string]: {
-        command: { mode: "default" } | { mode: "append", args: string[] } | { mode: "replace", argv: string[] },
-        env: Record<string, string>
-      }
-    }
+    // ProviderOverrideSchema; legacy entries with `command: { mode, ... }` are migrated to the
+    // current shape on load via `migrateProviderSettings`. Custom provider IDs must declare
+    // `extends` (one of the built-ins or `"acp"`) and `label`. See `provider-launch-config.ts`.
+    providers: Record<providerId, ProviderOverride>
   },
   features: {
     dictation: { enabled, stt: { provider, model, confidenceThreshold } },
@@ -170,7 +176,7 @@ All fields are optional with sensible defaults.
 
 **Path:** `$PASEO_HOME/schedules/{id}.json`
 
-One file per schedule. ID is 8 hex characters.
+One file per schedule. ID is 8 hex characters. Writes are direct (not atomic).
 
 | Field       | Type                                  | Description                      |
 | ----------- | ------------------------------------- | -------------------------------- |
@@ -255,7 +261,7 @@ Single file containing all rooms and messages.
 
 **Path:** `$PASEO_HOME/loops/loops.json`
 
-Single file containing an array of all loop records.
+Single file containing an array of all loop records. Writes are direct (not atomic) and serialized through an in-memory queue. On daemon startup any record with `status: "running"` is recovered as `"stopped"` with an interruption log entry.
 
 | Field                   | Type                                                | Description                                |
 | ----------------------- | --------------------------------------------------- | ------------------------------------------ |
@@ -265,10 +271,12 @@ Single file containing an array of all loop records.
 | `cwd`                   | `string`                                            | Working directory                          |
 | `provider`              | `string`                                            | Default provider                           |
 | `model`                 | `string?`                                           | Default model                              |
+| `modeId`                | `string?`                                           | Default mode ID                            |
 | `workerProvider`        | `string?`                                           | Override provider for workers              |
 | `workerModel`           | `string?`                                           | Override model for workers                 |
 | `verifierProvider`      | `string?`                                           | Override provider for verifiers            |
 | `verifierModel`         | `string?`                                           | Override model for verifiers               |
+| `verifierModeId`        | `string?`                                           | Override mode ID for verifiers             |
 | `verifyPrompt`          | `string?`                                           | LLM verification prompt                    |
 | `verifyChecks`          | `string[]`                                          | Shell commands to run as checks            |
 | `archive`               | `boolean`                                           | Whether to archive worker agents after use |
@@ -344,15 +352,15 @@ Single file containing an array of all loop records.
 
 Array of project records.
 
-| Field         | Type                 | Description                    |
-| ------------- | -------------------- | ------------------------------ |
-| `projectId`   | `string`             | Primary key                    |
-| `rootPath`    | `string`             | Filesystem root of the project |
-| `kind`        | `"git" \| "non_git"` |                                |
-| `displayName` | `string`             |                                |
-| `createdAt`   | `string` (ISO 8601)  |                                |
-| `updatedAt`   | `string` (ISO 8601)  |                                |
-| `archivedAt`  | `string?` (ISO 8601) | Soft-delete timestamp          |
+| Field         | Type                        | Description                              |
+| ------------- | --------------------------- | ---------------------------------------- |
+| `projectId`   | `string`                    | Primary key                              |
+| `rootPath`    | `string`                    | Filesystem root of the project           |
+| `kind`        | `"git" \| "non_git"`        |                                          |
+| `displayName` | `string`                    |                                          |
+| `createdAt`   | `string` (ISO 8601)         |                                          |
+| `updatedAt`   | `string` (ISO 8601)         |                                          |
+| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable |
 
 ---
 
@@ -362,16 +370,16 @@ Array of project records.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field         | Type                                            | Description             |
-| ------------- | ----------------------------------------------- | ----------------------- |
-| `workspaceId` | `string`                                        | Primary key             |
-| `projectId`   | `string`                                        | FK to Project.projectId |
-| `cwd`         | `string`                                        | Filesystem path         |
-| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                         |
-| `displayName` | `string`                                        |                         |
-| `createdAt`   | `string` (ISO 8601)                             |                         |
-| `updatedAt`   | `string` (ISO 8601)                             |                         |
-| `archivedAt`  | `string?` (ISO 8601)                            | Soft-delete timestamp   |
+| Field         | Type                                            | Description                    |
+| ------------- | ----------------------------------------------- | ------------------------------ |
+| `workspaceId` | `string`                                        | Primary key                    |
+| `projectId`   | `string`                                        | FK to Project.projectId        |
+| `cwd`         | `string`                                        | Filesystem path                |
+| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                |
+| `displayName` | `string`                                        |                                |
+| `createdAt`   | `string` (ISO 8601)                             |                                |
+| `updatedAt`   | `string` (ISO 8601)                             |                                |
+| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable |
 
 ---
 
@@ -385,7 +393,20 @@ Array of workspace records. A workspace is a specific working directory within a
 }
 ```
 
-Simple set of Expo push notification tokens. No schema validation — just an array of strings.
+Simple set of Expo push notification tokens. Loaded with permissive parsing (filters non-string entries). Persisted with atomic temp-file rename.
+
+---
+
+## 9. Daemon meta files
+
+These small files are not validated as full Zod schemas but are persisted under `$PASEO_HOME` for daemon identity and runtime coordination.
+
+| Path                  | Format                                                         | Notes                                                                             |
+| --------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `server-id`           | Plain text, e.g. `srv_<base64url>`                             | Stable per-`$PASEO_HOME` daemon ID. Overridable via `PASEO_SERVER_ID` env.        |
+| `daemon-keypair.json` | `{ v: 2, publicKeyB64, secretKeyB64 }` (libsodium box keypair) | E2EE relay identity. Written with mode `0600`. Regenerated if file is unreadable. |
+| `paseo.pid`           | JSON `{ pid, startedAt, ... }`                                 | PID lock; prevents two daemons sharing one `$PASEO_HOME`.                         |
+| `daemon.log`          | Pino log output                                                | Default location; path/rotation configurable via `log.file` in `config.json`.     |
 
 ---
 

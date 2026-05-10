@@ -4,54 +4,6 @@ import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import type { UseAgentFormStateResult } from "@/hooks/use-agent-form-state";
 import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 
-export interface DraftStorage {
-  getItem(key: string): Promise<string | null>;
-  setItem(key: string, value: string): Promise<void>;
-  removeItem(key: string): Promise<void>;
-}
-
-export interface StoredDraft {
-  text: string;
-  attachments: UserComposerAttachment[];
-  cwd: string;
-}
-
-export interface AgentInputDraftCore {
-  load(initialCwd?: string): Promise<StoredDraft | null>;
-  save(draft: StoredDraft): Promise<void>;
-  clear(): Promise<void>;
-}
-
-export function createAgentInputDraftCore(input: {
-  storage: DraftStorage;
-  storageKey: string;
-}): AgentInputDraftCore {
-  return {
-    async load(initialCwd?: string) {
-      const json = await input.storage.getItem(input.storageKey);
-      if (!json) return null;
-      try {
-        const parsed = JSON.parse(json) as Record<string, unknown>;
-        return {
-          text: typeof parsed.text === "string" ? parsed.text : "",
-          attachments: Array.isArray(parsed.attachments)
-            ? (parsed.attachments as UserComposerAttachment[])
-            : [],
-          cwd: typeof parsed.cwd === "string" ? parsed.cwd : (initialCwd ?? ""),
-        };
-      } catch {
-        return null;
-      }
-    },
-    async save(draft) {
-      await input.storage.setItem(input.storageKey, JSON.stringify(draft));
-    },
-    async clear() {
-      await input.storage.removeItem(input.storageKey);
-    },
-  };
-}
-
 export interface DraftKeyContext {
   selectedServerId: string | null;
 }
@@ -152,11 +104,8 @@ export function buildDraftStatusControls(input: {
 export function hasDraftContent(input: {
   text: string;
   attachments: UserComposerAttachment[];
-  cwd: string;
 }): boolean {
-  return (
-    input.text.trim().length > 0 || input.attachments.length > 0 || input.cwd.trim().length > 0
-  );
+  return input.text.trim().length > 0 || input.attachments.length > 0;
 }
 
 export function areAttachmentsEqual(input: {

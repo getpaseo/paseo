@@ -1,4 +1,4 @@
-import type { CheckoutStatusPayload } from "@/hooks/use-checkout-status-query";
+import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import {
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostAgentRouteFromPathname,

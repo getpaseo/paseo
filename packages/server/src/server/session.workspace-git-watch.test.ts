@@ -472,6 +472,7 @@ describe("workspace git watch targets", () => {
         baseRefName: "main",
         headRefName: "workspace-git-service",
         isMerged: false,
+        mergeable: "UNKNOWN",
         isDraft: false,
         checks: [
           {
@@ -531,6 +532,7 @@ describe("workspace git watch targets", () => {
         baseRefName: "main",
         headRefName: "workspace-git-service",
         isMerged: true,
+        mergeable: "UNKNOWN",
         isDraft: false,
         checks: [],
         checksStatus: undefined,

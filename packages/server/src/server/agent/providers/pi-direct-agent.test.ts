@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
@@ -9,6 +9,7 @@ import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import {
   PiDirectAgentClient,
   PiDirectAgentSession,
+  type PiDirectSessionRuntimeAdapter,
   type PiDirectSessionAdapter,
 } from "./pi-direct-agent.js";
 
@@ -43,6 +44,16 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
   };
 }
 
+function createPiRuntime(
+  session: PiDirectSessionAdapter,
+  dispose: () => Promise<void> = vi.fn(async () => undefined),
+): PiDirectSessionRuntimeAdapter {
+  return {
+    session,
+    dispose,
+  };
+}
+
 function createPiModel(provider: string, id: string): Model<Api> {
   return {
     provider,
@@ -61,7 +72,7 @@ function createPiModel(provider: string, id: string): Model<Api> {
 describe("PiDirectAgentSession", () => {
   test("treats SDK request abort rejections as turn cancellations", async () => {
     const session = new PiDirectAgentSession(
-      createPiSession(() => Promise.reject(new Error("Request was aborted."))),
+      createPiRuntime(createPiSession(() => Promise.reject(new Error("Request was aborted.")))),
       { find: vi.fn(), getAll: vi.fn(() => []) },
       {
         provider: "pi",
@@ -87,7 +98,7 @@ describe("PiDirectAgentSession", () => {
   test("setModel creates a minimal model for new ids under a known provider", async () => {
     const sdkSession = createPiSession(async () => undefined);
     const session = new PiDirectAgentSession(
-      sdkSession,
+      createPiRuntime(sdkSession),
       {
         find: vi.fn(() => undefined),
         getAll: vi.fn(() => [createPiModel("openrouter", "known-model")]),
@@ -196,12 +207,15 @@ export default function(pi) {
       const agentDir = join(testRoot, "agent");
       const cwd = join(testRoot, "project");
       const extensionDir = join(cwd, ".pi", "extensions");
+      const shutdownMarker = join(testRoot, "shutdown.txt");
       process.env.PI_CODING_AGENT_DIR = agentDir;
 
       await mkdir(extensionDir, { recursive: true });
       await writeFile(
         join(extensionDir, "dummy-command.ts"),
         `
+import { writeFileSync } from "node:fs";
+
 export default function(pi) {
   pi.registerProvider("paseo-dummy", {
     baseUrl: "https://example.invalid/v1",
@@ -224,6 +238,10 @@ export default function(pi) {
     description: "Dummy extension command",
     handler: async () => {}
   });
+
+  pi.on("session_shutdown", async () => {
+    writeFileSync(${JSON.stringify(shutdownMarker)}, "closed");
+  });
 }
 `,
         "utf-8",
@@ -237,6 +255,7 @@ export default function(pi) {
         cwd,
         model: "paseo-dummy/extension-model",
       });
+      let closed = false;
 
       try {
         await expect(session.listCommands()).resolves.toContainEqual({
@@ -244,8 +263,13 @@ export default function(pi) {
           description: "Dummy extension command",
           argumentHint: "",
         });
-      } finally {
         await session.close();
+        closed = true;
+        await expect(readFile(shutdownMarker, "utf-8")).resolves.toBe("closed");
+      } finally {
+        if (!closed) {
+          await session.close();
+        }
       }
     } finally {
       if (previousAgentDir === undefined) {

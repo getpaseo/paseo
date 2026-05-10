@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
-import { toAgentPayload, toStoredAgentRecord, type ManagedAgent } from "./agent-projections.js";
+import {
+  toAgentPayload,
+  toRecentProviderSessionDescriptorPayload,
+  toStoredAgentRecord,
+  type ManagedAgent,
+} from "./agent-projections.js";
 import type { AgentSession } from "./agent-sdk-types.js";
 import type {
   AgentFeature,
   AgentPermissionRequest,
   AgentPersistenceHandle,
   AgentSessionConfig,
+  PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 
 type ManagedAgentOverrides = Omit<Partial<ManagedAgent>, "config" | "pendingPermissions"> & {
@@ -390,5 +396,72 @@ describe("toAgentPayload", () => {
     const payload = toAgentPayload(agent);
 
     expect(payload.features).toEqual(features);
+  });
+});
+
+describe("toRecentProviderSessionDescriptorPayload", () => {
+  it("projects persisted descriptors to provider-opaque public recent sessions", () => {
+    const descriptor: PersistedAgentDescriptor = {
+      provider: "codex-custom",
+      sessionId: "legacy-session-id",
+      cwd: "/tmp/project",
+      title: "Import me",
+      lastActivityAt: new Date("2026-04-30T12:34:56.000Z"),
+      persistence: {
+        provider: "codex-custom",
+        sessionId: "legacy-session-id",
+        nativeHandle: "provider-native-handle",
+      },
+      timeline: [
+        { type: "assistant_message", text: "Ready" },
+        { type: "user_message", text: "  First prompt\n\nwith spacing  " },
+        { type: "user_message", text: "Second prompt" },
+      ],
+    };
+
+    const payload = toRecentProviderSessionDescriptorPayload(descriptor, {
+      providerLabel: "Custom Codex",
+    });
+
+    expect(payload).toEqual({
+      providerId: "codex-custom",
+      providerLabel: "Custom Codex",
+      providerHandleId: "provider-native-handle",
+      cwd: "/tmp/project",
+      title: "Import me",
+      firstPromptPreview: "First prompt with spacing",
+      lastPromptPreview: "Second prompt",
+      lastActivityAt: "2026-04-30T12:34:56.000Z",
+    });
+    expect(payload).not.toHaveProperty("providerKind");
+    expect(payload).not.toHaveProperty("sessionId");
+    expect(payload).not.toHaveProperty("nativeHandle");
+  });
+
+  it("falls back to persistence session id when no provider native handle exists", () => {
+    const descriptor: PersistedAgentDescriptor = {
+      provider: "claude-custom",
+      sessionId: "descriptor-session-id",
+      cwd: "/tmp/project",
+      title: null,
+      lastActivityAt: new Date("2026-04-30T12:34:56.000Z"),
+      persistence: {
+        provider: "claude-custom",
+        sessionId: "persistence-session-id",
+      },
+      timeline: [],
+    };
+
+    expect(
+      toRecentProviderSessionDescriptorPayload(descriptor, {
+        providerLabel: "Custom Claude",
+      }),
+    ).toMatchObject({
+      providerId: "claude-custom",
+      providerLabel: "Custom Claude",
+      providerHandleId: "persistence-session-id",
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+    });
   });
 });

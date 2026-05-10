@@ -13,7 +13,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
-import { PrPane } from "./pr-pane";
+import { PrPane } from "@/git/pr-pane";
 import { usePrPaneData } from "@/hooks/use-pr-pane-data";
 import {
   usePanelStore,
@@ -24,7 +24,7 @@ import {
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { GitDiffPane } from "./git-diff-pane";
+import { GitDiffPane } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useWindowControlsPadding } from "@/utils/desktop-window";

@@ -14,17 +14,17 @@ import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
-import { resolveToolCallIcon } from "@/utils/tool-call-icon";
+import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
 
 // ----- Types -----
 
 export interface ToolCallSheetData {
-  toolName: string;
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
   errorText?: string;
+  icon: ToolCallIconComponent;
   showLoadingSkeleton?: boolean;
 }
 
@@ -139,9 +139,7 @@ interface ToolCallSheetContentProps {
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const { theme } = useUnistyles();
-  const { toolName, displayName, detail, errorText, showLoadingSkeleton } = data;
-
-  const IconComponent = resolveToolCallIcon(toolName, detail);
+  const { displayName, detail, errorText, icon: IconComponent, showLoadingSkeleton } = data;
 
   return (
     <View style={styles.container}>

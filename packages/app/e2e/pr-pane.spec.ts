@@ -28,7 +28,7 @@ test.describe("PR pane", () => {
     seedClient = await connectWorkspaceSetupClient();
 
     repoFixture = await createTempGithubRepo({
-      prefix: "paseo-e2e-pr-",
+      category: "pr-pane",
       prs: [
         { title: "Review selected start ref", state: "open" },
         { title: "Merged feature branch", state: "merged" },

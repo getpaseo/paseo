@@ -21,6 +21,7 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
+  PersistedAgentDescriptor,
 } from "./agent/agent-sdk-types.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
@@ -61,6 +62,10 @@ interface SessionTestAccess {
   agentStorage: {
     list(...args: unknown[]): Promise<unknown[]>;
     get(agentId: string): Promise<unknown>;
+  };
+  agentManager: {
+    listAgents(): unknown[];
+    listImportablePersistedAgents(options?: unknown): Promise<PersistedAgentDescriptor[]>;
   };
   workspaceRegistry: {
     list(...args: unknown[]): Promise<unknown[]>;
@@ -225,6 +230,30 @@ function makeManagedAgent(input: {
     unsubscribeSession: null,
     session: null,
     activeForegroundTurnId: input.lifecycle === "running" ? "turn-1" : null,
+  };
+}
+
+function makePersistedProviderSession(input: {
+  provider: string;
+  sessionId: string;
+  nativeHandle?: string;
+  cwd: string;
+  title?: string | null;
+  lastActivityAt: string;
+  firstPrompt?: string;
+}): PersistedAgentDescriptor {
+  return {
+    provider: input.provider,
+    sessionId: input.sessionId,
+    cwd: input.cwd,
+    title: input.title ?? null,
+    lastActivityAt: new Date(input.lastActivityAt),
+    persistence: {
+      provider: input.provider,
+      sessionId: input.sessionId,
+      ...(input.nativeHandle ? { nativeHandle: input.nativeHandle } : {}),
+    },
+    timeline: input.firstPrompt ? [{ type: "user_message", text: input.firstPrompt }] : [],
   };
 }
 
@@ -1841,6 +1870,238 @@ test("fetch_agent_history_request pages archived historical rows separately", as
     },
   ]);
   expect(session.agentUpdatesSubscription).toBeNull();
+});
+
+test("fetch_recent_provider_sessions_request lists importable provider sessions by handle", async () => {
+  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const session = createSessionForWorkspaceTests();
+
+  session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
+  session.agentManager.listAgents = () => [
+    {
+      provider: "codex",
+      persistence: {
+        provider: "codex",
+        sessionId: "live-session",
+        nativeHandle: "live-handle",
+      },
+    },
+  ];
+  const persistedDescriptors: PersistedAgentDescriptor[] = [
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "outside-filter",
+      nativeHandle: "outside-filter-handle",
+      cwd: "/tmp/elsewhere",
+      title: "Outside filter",
+      lastActivityAt: "2026-04-30T12:05:00.000Z",
+    }),
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "stored-session",
+      nativeHandle: "stored-handle",
+      cwd: "/tmp/recent",
+      title: "Already stored",
+      lastActivityAt: "2026-04-30T12:04:00.000Z",
+    }),
+    makePersistedProviderSession({
+      provider: "claude",
+      sessionId: "wrong-provider",
+      cwd: "/tmp/recent",
+      title: "Wrong provider",
+      lastActivityAt: "2026-04-30T12:03:00.000Z",
+    }),
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "older-session",
+      nativeHandle: "older-handle",
+      cwd: "/tmp/recent",
+      title: "Older than since",
+      lastActivityAt: "2026-04-29T23:59:59.000Z",
+    }),
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "newer-session",
+      nativeHandle: "newer-handle",
+      cwd: "/tmp/recent",
+      title: "Newer import",
+      lastActivityAt: "2026-04-30T12:02:00.000Z",
+      firstPrompt: "newer prompt",
+    }),
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "second-session",
+      nativeHandle: "second-handle",
+      cwd: "/tmp/recent",
+      title: "Second import",
+      lastActivityAt: "2026-04-30T12:00:00.000Z",
+      firstPrompt: "second prompt",
+    }),
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "third-session",
+      nativeHandle: "third-handle",
+      cwd: "/tmp/recent",
+      title: "Third import",
+      lastActivityAt: "2026-04-30T11:59:00.000Z",
+      firstPrompt: "third prompt",
+    }),
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "live-session",
+      nativeHandle: "live-handle",
+      cwd: "/tmp/recent",
+      title: "Already live",
+      lastActivityAt: "2026-04-30T12:01:00.000Z",
+    }),
+  ];
+  // The real AgentManager filters by providerFilter at the fan-out level
+  // (Phase 1). Mirror that here so the mock matches the contract.
+  session.agentManager.listImportablePersistedAgents = async (options?: unknown) => {
+    const providerFilter = (options as { providerFilter?: Set<string> } | undefined)
+      ?.providerFilter;
+    if (!providerFilter) {
+      return persistedDescriptors;
+    }
+    return persistedDescriptors.filter((d) => providerFilter.has(d.provider));
+  };
+  session.agentStorage.list = async () => [
+    {
+      id: "stored-agent",
+      provider: "codex",
+      cwd: "/tmp/recent",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z",
+      title: "Stored",
+      labels: {},
+      lastStatus: "closed",
+      persistence: {
+        provider: "codex",
+        sessionId: "stored-session",
+        nativeHandle: "stored-handle",
+      },
+    },
+  ];
+
+  await session.handleMessage({
+    type: "fetch_recent_provider_sessions_request",
+    requestId: "req-recent-provider-sessions",
+    cwd: "/tmp/recent",
+    providers: ["codex"],
+    since: "2026-04-30T00:00:00.000Z",
+    limit: 2,
+  });
+
+  expect(emitted).toEqual([
+    {
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-recent-provider-sessions",
+        entries: [
+          {
+            providerId: "codex",
+            providerLabel: "Codex",
+            providerHandleId: "newer-handle",
+            cwd: "/tmp/recent",
+            title: "Newer import",
+            firstPromptPreview: "newer prompt",
+            lastPromptPreview: "newer prompt",
+            lastActivityAt: "2026-04-30T12:02:00.000Z",
+          },
+          {
+            providerId: "codex",
+            providerLabel: "Codex",
+            providerHandleId: "second-handle",
+            cwd: "/tmp/recent",
+            title: "Second import",
+            firstPromptPreview: "second prompt",
+            lastPromptPreview: "second prompt",
+            lastActivityAt: "2026-04-30T12:00:00.000Z",
+          },
+        ],
+        filteredAlreadyImportedCount: 2,
+      },
+    },
+  ]);
+});
+
+test("fetch_recent_provider_sessions_request forwards providerFilter to agent manager", async () => {
+  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const session = createSessionForWorkspaceTests();
+  let capturedOptions: { providerFilter?: Set<string>; limit?: number } | undefined;
+
+  session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
+  session.agentManager.listAgents = () => [];
+  session.agentStorage.list = async () => [];
+  session.agentManager.listImportablePersistedAgents = async (options?: unknown) => {
+    capturedOptions = options as { providerFilter?: Set<string>; limit?: number };
+    return [];
+  };
+
+  await session.handleMessage({
+    type: "fetch_recent_provider_sessions_request",
+    requestId: "req-provider-filter",
+    cwd: "/tmp/recent",
+    providers: ["claude"],
+  });
+
+  expect(capturedOptions?.providerFilter).toBeInstanceOf(Set);
+  expect(Array.from(capturedOptions?.providerFilter ?? [])).toEqual(["claude"]);
+  expect(emitted).toEqual([
+    {
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-provider-filter",
+        entries: [],
+      },
+    },
+  ]);
+});
+
+test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCount when all candidates are already imported", async () => {
+  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const session = createSessionForWorkspaceTests();
+
+  session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
+  session.agentManager.listAgents = () => [
+    {
+      provider: "codex",
+      persistence: {
+        provider: "codex",
+        sessionId: "live-session",
+        nativeHandle: "live-handle",
+      },
+    },
+  ];
+  session.agentStorage.list = async () => [];
+  session.agentManager.listImportablePersistedAgents = async () => [
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "live-session",
+      nativeHandle: "live-handle",
+      cwd: "/tmp/recent",
+      title: "Already live",
+      lastActivityAt: "2026-04-30T12:01:00.000Z",
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "fetch_recent_provider_sessions_request",
+    requestId: "req-all-imported",
+    cwd: "/tmp/recent",
+    providers: ["codex"],
+  });
+
+  expect(emitted).toEqual([
+    {
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-all-imported",
+        entries: [],
+        filteredAlreadyImportedCount: 1,
+      },
+    },
+  ]);
 });
 
 test("fetch_agent_request still resolves archived historical agents", async () => {

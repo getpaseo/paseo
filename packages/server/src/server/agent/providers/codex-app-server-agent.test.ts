@@ -15,6 +15,7 @@ import type {
 } from "../agent-sdk-types.js";
 import {
   __codexAppServerInternals,
+  CodexAppServerAgentClient,
   codexAppServerTurnInputFromPrompt,
 } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -95,6 +96,122 @@ function markdownImageSource(markdown: string): string {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
   return match[1].replace(/\\\)/g, ")");
+}
+
+function createChildProcessStub(): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+  child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
+  child.stdout = new PassThrough() as ChildProcessWithoutNullStreams["stdout"];
+  child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = vi.fn((signal?: NodeJS.Signals | number) => {
+    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    return true;
+  }) as ChildProcessWithoutNullStreams["kill"];
+  return child;
+}
+
+function createScriptedCodexPeer(
+  child: ChildProcessWithoutNullStreams,
+  handlers: Record<string, (params: unknown) => unknown>,
+) {
+  const messages: Record<string, unknown>[] = [];
+  const errors: Error[] = [];
+  const waiters = new Set<{
+    predicate: (message: Record<string, unknown>) => boolean;
+    resolve: (message: Record<string, unknown>) => void;
+  }>();
+  let buffer = "";
+
+  const processMessage = (message: Record<string, unknown>) => {
+    messages.push(message);
+    for (const waiter of Array.from(waiters)) {
+      if (waiter.predicate(message)) {
+        waiters.delete(waiter);
+        waiter.resolve(message);
+      }
+    }
+
+    if (typeof message.id !== "number" || typeof message.method !== "string") {
+      return;
+    }
+
+    const handler = handlers[message.method];
+    if (!handler) {
+      errors.push(new Error(`Unexpected Codex app-server request: ${message.method}`));
+      return;
+    }
+
+    Promise.resolve(handler(message.params))
+      .then((result) => {
+        child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
+        return undefined;
+      })
+      .catch((error) => {
+        child.stdout.write(
+          `${JSON.stringify({
+            id: message.id,
+            error: { message: error instanceof Error ? error.message : String(error) },
+          })}\n`,
+        );
+        return undefined;
+      });
+  };
+
+  child.stdin.on("data", (chunk) => {
+    buffer += chunk.toString();
+    for (;;) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        break;
+      }
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line) {
+        continue;
+      }
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          processMessage(parsed as Record<string, unknown>);
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  });
+
+  return {
+    assertNoErrors() {
+      if (errors.length > 0) {
+        throw errors[0];
+      }
+    },
+    waitForMessage(
+      predicate: (message: Record<string, unknown>) => boolean,
+      label: string,
+    ): Promise<Record<string, unknown>> {
+      const existing = messages.find(predicate);
+      if (existing) {
+        return Promise.resolve(existing);
+      }
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          waiters.delete(waiter);
+          reject(new Error(`Timed out waiting for ${label}`));
+        }, 1000);
+        const waiter = {
+          predicate,
+          resolve: (message: Record<string, unknown>) => {
+            clearTimeout(timeout);
+            resolve(message);
+          },
+        };
+        waiters.add(waiter);
+      });
+    },
+  };
 }
 
 describe("Codex app-server provider", () => {
@@ -181,6 +298,103 @@ describe("Codex app-server provider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("round-trips server-initiated command approvals through the real app-server transport", async () => {
+    const child = createChildProcessStub();
+    const peer = createScriptedCodexPeer(child, {
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.connect();
+    peer.assertNoErrors();
+
+    const permissionRequested = new Promise<
+      Extract<AgentStreamEvent, { type: "permission_requested" }>
+    >((resolve, reject) => {
+      const existing = events.find(
+        (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+          event.type === "permission_requested",
+      );
+      if (existing) {
+        resolve(existing);
+        return;
+      }
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Timed out waiting for permission_requested"));
+      }, 1000);
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type !== "permission_requested") {
+          return;
+        }
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve(event);
+      });
+    });
+
+    child.stdout.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 41,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          itemId: "exec-approval-1",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "git restore README.md",
+          cwd: "/workspace/project",
+          reason: "requires escalated permissions",
+        },
+      })}\n`,
+    );
+
+    const permissionEvent = await permissionRequested;
+    expect(permissionEvent.request).toMatchObject({
+      id: "permission-exec-approval-1",
+      provider: "codex",
+      name: "CodexBash",
+      kind: "tool",
+      title: "Run command: git restore README.md",
+      description: "requires escalated permissions",
+      input: {
+        command: "git restore README.md",
+        cwd: "/workspace/project",
+      },
+      metadata: {
+        itemId: "exec-approval-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+
+    await session.respondToPermission(permissionEvent.request.id, { behavior: "allow" });
+
+    await expect(
+      peer.waitForMessage(
+        (message) =>
+          message.id === 41 &&
+          !("method" in message) &&
+          JSON.stringify(message.result) === JSON.stringify({ decision: "accept" }),
+        "command approval response",
+      ),
+    ).resolves.toMatchObject({
+      id: 41,
+      result: { decision: "accept" },
+    });
+    peer.assertNoErrors();
+    await session.close();
   });
 
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
@@ -1654,5 +1868,64 @@ describe("Codex app-server provider", () => {
         }),
       }),
     );
+  });
+});
+
+describe("Codex persisted sessions", () => {
+  test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
+    const allThreads = [
+      {
+        id: "thread-a1",
+        cwd: "/workspace/project-a",
+        preview: "First A session",
+        createdAt: 1000,
+        updatedAt: 2000,
+      },
+      {
+        id: "thread-a2",
+        cwd: "/workspace/project-a",
+        preview: "Second A session",
+        createdAt: 1500,
+        updatedAt: 2500,
+      },
+      {
+        id: "thread-b1",
+        cwd: "/workspace/project-b",
+        preview: "B session",
+        createdAt: 3000,
+        updatedAt: 4000,
+      },
+    ];
+
+    const fakeClient = {
+      request: async (method: string) => {
+        if (method === "thread/list") return { data: allThreads };
+        if (method === "thread/read") return { thread: { turns: [] } };
+        return {};
+      },
+      notify: () => {},
+      dispose: async () => {},
+    };
+
+    const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
+      _createCodexClient: () => fakeClient,
+    });
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => {
+      const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+      child.exitCode = 0;
+      child.signalCode = null;
+      child.stdin = new PassThrough();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+      return child;
+    };
+
+    const descriptors = await provider.listPersistedAgents({ cwd: "/workspace/project-a" });
+
+    expect(descriptors.map((d) => d.sessionId).sort()).toEqual(["thread-a1", "thread-a2"]);
+    expect(descriptors.every((d) => d.cwd === "/workspace/project-a")).toBe(true);
   });
 });

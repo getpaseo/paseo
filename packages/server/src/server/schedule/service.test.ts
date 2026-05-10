@@ -27,6 +27,9 @@ describe("ScheduleService", () => {
   });
 
   afterEach(async () => {
+    // Drain pending background persists before deleting the dir to avoid
+    // ENOTEMPTY races when AgentManager flushes a snapshot mid-cleanup.
+    await agentStorage.flush();
     await rm(tempDir, { recursive: true, force: true });
   });
 

@@ -1901,6 +1901,23 @@ class ClaudeAgentSession implements AgentSession {
     await this.awaitWithTimeout(this.query?.return?.(), "close query return");
     this.query = null;
     this.input = null;
+    if (this.persistSession === false && this.claudeSessionId) {
+      // Claude Code currently ignores --no-session-persistence outside --print mode
+      // (see `claude --help`), so the SDK's persistSession=false is silently dropped
+      // in stream-json mode. Sweep the transcript ourselves so ephemeral runs
+      // (metadata generator, branch-name generator) don't show up as resumable.
+      const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+      if (historyPath) {
+        try {
+          await promises.rm(historyPath, { force: true });
+        } catch (error) {
+          this.logger.warn(
+            { err: error, historyPath, claudeSessionId: this.claudeSessionId },
+            "Failed to delete ephemeral Claude session transcript",
+          );
+        }
+      }
+    }
     this.logger.trace(
       { claudeSessionId: this.claudeSessionId, turnState: this.turnState },
       "Claude session close: completed",

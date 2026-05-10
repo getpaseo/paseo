@@ -1,30 +1,23 @@
 # Contributing to Paseo
 
-Thanks for taking the time to contribute.
-
 ## How this project works
 
-Paseo is a BDFL project. Product direction, scope, and what ships are the maintainer's call.
+Paseo is opinionated and maintained by one person. I read every issue and PR myself, so review cost is real.
 
-This means:
+- **Feature requests are welcome.** Open an issue describing the problem. Get a thumbs up before writing code. Big ideas are better discussed in [Discord](https://discord.gg/jz8T2uahpH) first.
+- **Objective bug fixes don't need a prior issue.** Reference what's broken, keep the diff narrow, open the PR.
+- **The product stays lean.** I'll close, scope down, or rewrite PRs that add surface area I don't want to maintain, even if the code is fine.
 
-- PRs submitted without prior discussion will likely be rejected, heavily modified, or scoped down.
-- The maintainer may rewrite, split, cherry-pick from, or close any PR at their discretion.
-- There is no obligation to merge a PR as-submitted, regardless of code quality.
+## Reporting bugs
 
-This is not meant to discourage contributions. It is meant to set clear expectations so nobody wastes their time.
+Fill in the bug report form. The fields are there because asking back for the surface, version, provider config, and logs is where most of my time on a bad report goes.
 
-## How to contribute
-
-1. **Open an issue first.** Describe the problem or improvement. Get a thumbs up before writing code.
-2. **Keep it small.** One bug, one flow, one focused change.
-3. **Open a PR** once there is alignment on scope.
-
-If you want to propose a direction change, start a conversation.
+- **Full logs, not AI summaries.** Use an agent to grab the relevant log section if you want, but paste the raw log. Agents routinely correlate adjacent lines as cause-and-effect when they aren't, and once a report is filtered through that the signal I need is gone.
+- **Agents for information gathering, not diagnosis.** A bot that grabs your daemon log, version, and OS is helpful. A bot that submits its own theory of the bug is noise 99% of the time.
+- **Screenshots or video for UI bugs.** A 10-second recording beats a paragraph.
+- **One bug per issue.** Three findings, three issues.
 
 ## Before you start
-
-Please read these first:
 
 - [README.md](README.md)
 - [docs/architecture.md](docs/architecture.md)
@@ -35,134 +28,36 @@ Please read these first:
 
 ## What is most helpful
 
-The most useful contributions right now are:
-
-- bug fixes
-- windows and linux specific fixes
+- bug fixes (especially Windows and Linux)
 - regression fixes
 - doc improvements
-- packaging / platform fixes
-- focused UX improvements that fit the existing product direction
+- packaging and platform fixes
+- focused UX improvements that fit the product direction
 - tests that lock down important behavior
-
-## Scope expectations
-
-Please keep PRs narrow.
-
-Good:
-
-- fix one bug
-- improve one flow
-- add one focused panel or command
-- tighten one piece of UI
-
-Bad:
-
-- combine multiple product ideas in one PR
-- bundle unrelated refactors with a feature
-- sneak in roadmap decisions
-
-If a contribution contains multiple ideas, split it up.
-
-## Product fit matters
-
-Paseo is an opinionated product.
-
-When reviewing contributions, the bar is not just:
-
-- is this useful?
-- is this well implemented?
-
-It is also:
-
-- does this fit Paseo?
-- does this add product surface that will be hard to maintain?
-- does the value justify the maintenance surface it adds?
-- does this solve a common need or over-serve an edge case?
-- does this preserve the product's current direction?
 
 ## Development setup
 
-### Prerequisites
-
-- Node.js matching `.tool-versions`
-- npm workspaces
-
-### Start local development
-
 ```bash
-# runs both daemon and expo app
-npm run dev
-```
-
-Useful commands:
-
-```bash
+npm run dev               # daemon + expo
 npm run dev:server
 npm run dev:app
 npm run dev:desktop
 npm run dev:website
-npm run cli -- ls -a -g
 ```
 
-Read [docs/development.md](docs/development.md) for build-sync gotchas, local state, ports, and daemon details.
+[docs/development.md](docs/development.md) covers build sync, local state, and ports. Coding rules live in [docs/coding-standards.md](docs/coding-standards.md).
 
-## Multi-platform testing
+## Pull requests
 
-Paseo ships to mobile (iOS/Android), web, and desktop (Electron). Every UI change must be tested on mobile and web at minimum, and desktop if relevant. Things that look fine on one surface regularly break on another.
+- One focused change per PR. Split unrelated cleanups out.
+- Reference the issue you're fixing, unless it's a small objective bug.
+- UI changes need screenshots or video on every affected platform (mobile, web, desktop). Things that look fine on one surface regularly break on another.
+- `npm run typecheck` and `npm run lint` must pass.
+- Don't make breaking WebSocket or protocol changes. Old apps and old daemons coexist in the wild.
+- The PR template applies whether you used the web UI or `gh pr create`. Don't strip it out.
 
-Common checks:
-
-```bash
-npm run typecheck
-npm run test --workspaces --if-present
-```
-
-Important rules:
-
-- always run `npm run typecheck` after changes
-- tests should be deterministic
-- prefer real dependencies over mocks when possible
-- do not make breaking WebSocket / protocol changes
-- app and daemon versions in the wild lag each other, so compatibility matters
-
-If you touch protocol or shared client/server behavior, read the compatibility notes in [CLAUDE.md](CLAUDE.md).
-
-## Coding standards
-
-Paseo has explicit standards. Follow them.
-
-The full guide lives in [docs/coding-standards.md](docs/coding-standards.md).
-
-## PR checklist
-
-Before opening a PR, make sure:
-
-- there was prior discussion and alignment on scope (issue or conversation)
-- the change is focused, one idea per PR
-- the PR description explains what changed and why
-- **UI changes include screenshots or videos** for every affected platform (mobile, web, desktop)
-- UI changes have been tested on mobile and web at minimum
-- typecheck passes
-- tests pass, or you clearly explain what could not be run
-- relevant docs were updated if needed
-
-## Communication
-
-If you are unsure whether something fits, ask first.
-
-That is especially true for:
-
-- new core UX
-- naming / terminology changes
-- new extension points
-- new orchestration models
-- anything that would be hard to remove later
-
-Early alignment saves everyone time.
+**On AI-assisted PRs.** AI in the loop is fine. The bar is whether _you_ tested the change and can explain why it works. A confident wall of AI prose with no evidence of testing is a red flag and usually gets closed. If you don't fully understand why your fix works, say so directly. "Here's the repro before and after, not sure why this fixes it" is much better than a fabricated explanation.
 
 ## Forks are fine
 
-If you want to explore a different product direction, a fork is completely fine.
-
-Paseo is open source on purpose. Not every idea needs to land in the main repo to be valuable.
+If you want to explore a different product direction, fork. Paseo is open source on purpose. Not every idea needs to land here to be valuable.

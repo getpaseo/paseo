@@ -24,6 +24,7 @@ const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 interface RunnerCall {
   args: string[];
   cwd: string;
+  envOverlay?: Record<string, string>;
 }
 
 interface TestRunner {
@@ -46,7 +47,7 @@ function createRunner(stdoutByCall: string[]): TestRunner {
   return {
     calls,
     runner: async (args: string[], options: GitHubCommandRunnerOptions) => {
-      calls.push({ args, cwd: options.cwd });
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
       const stdout = stdoutByCall.shift() ?? "[]";
       return { stdout, stderr: "" };
     },
@@ -60,7 +61,7 @@ function createScriptedRunner(steps: RunnerStep[]): TestRunner {
   return {
     calls,
     runner: async (args: string[], options: GitHubCommandRunnerOptions) => {
-      calls.push({ args, cwd: options.cwd });
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
       const step = steps.shift() ?? "";
       if (typeof step === "string") {
         return { stdout: step, stderr: "" };
@@ -81,7 +82,7 @@ function createDeferredRunner(): TestRunner {
   return {
     calls,
     runner: (args: string[], options: GitHubCommandRunnerOptions) => {
-      calls.push({ args, cwd: options.cwd });
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
       return new Promise((resolve) => {
         resolveNext = (stdout: string) => resolve({ stdout, stderr: "" });
       });
@@ -125,6 +126,7 @@ function createCurrentPullRequestStatus(
     headRefName: "feature",
     isMerged: false,
     isDraft: false,
+    mergeable: "MERGEABLE",
     checks: [],
     checksStatus: "none",
     reviewDecision: null,
@@ -282,6 +284,33 @@ describe("GitHubService", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it.each([
+    ["merge", ["pr", "merge", "42", "--merge"]],
+    ["squash", ["pr", "merge", "42", "--squash"]],
+    ["rebase", ["pr", "merge", "42", "--rebase"]],
+  ] as const)("merges pull requests with gh using %s", async (mergeMethod, expectedArgs) => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.mergePullRequest({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    expect(runner.calls).toEqual([
+      {
+        args: expectedArgs,
+        cwd: "/tmp/repo",
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      },
+    ]);
   });
 
   it("computes fast cadence for pending and slow cadence for stable PR states", () => {
@@ -1048,7 +1077,7 @@ describe("GitHubService", () => {
       "pr",
       "view",
       "--json",
-      "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+      "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
     ]);
     expect(status).toEqual({
       number: 42,
@@ -1061,6 +1090,7 @@ describe("GitHubService", () => {
       headRefName: "feature/pr-pane",
       isMerged: false,
       isDraft: true,
+      mergeable: "UNKNOWN",
       checks: [
         {
           name: "server-tests",
@@ -1078,6 +1108,25 @@ describe("GitHubService", () => {
       checksStatus: "success",
       reviewDecision: "pending",
     });
+  });
+
+  it("defaults unexpected PR mergeability values to unknown", async () => {
+    const runner = createRunner([
+      currentPullRequestJson({
+        mergeable: "",
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+    });
+
+    expect(status?.mergeable).toBe("UNKNOWN");
   });
 
   it("resolves fork PR heads to the parent repository when gh pr view returns a stale branch match", async () => {
@@ -1145,7 +1194,7 @@ describe("GitHubService", () => {
         "pr",
         "view",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
       ],
       ["repo", "view", "--json", "owner,name,parent"],
       [
@@ -1158,7 +1207,7 @@ describe("GitHubService", () => {
         "--head",
         "forkOwner:feature/fork",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
         "--limit",
         "10",
       ],
@@ -1218,7 +1267,7 @@ describe("GitHubService", () => {
         "pr",
         "view",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
       ],
       ["repo", "view", "--json", "owner,name,parent"],
     ]);
@@ -1279,7 +1328,7 @@ describe("GitHubService", () => {
         "pr",
         "view",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
       ],
       [
         "pr",
@@ -1289,7 +1338,7 @@ describe("GitHubService", () => {
         "--head",
         "main",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
         "--limit",
         "10",
       ],
@@ -1452,6 +1501,7 @@ describe("GitHubService", () => {
       headRefName: "feature",
       isMerged: false,
       isDraft: true,
+      mergeable: "UNKNOWN",
       checks: [
         {
           name: "server-tests",

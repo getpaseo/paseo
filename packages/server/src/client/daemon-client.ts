@@ -30,6 +30,8 @@ import type {
   CheckoutPullResponse,
   CheckoutPushResponse,
   CheckoutPrCreateResponse,
+  CheckoutPrMergeResponse,
+  CheckoutPrMergeMethod,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
   CheckoutSwitchBranchResponse,
@@ -121,12 +123,20 @@ const perfNow: () => number =
     ? () => performance.now()
     : () => Date.now();
 
-export interface ImportAgentInput {
-  provider: AgentProvider;
-  sessionId: string;
+interface ImportAgentInputBase {
   cwd?: string;
   labels?: Record<string, string>;
 }
+
+export type ImportAgentInput =
+  | (ImportAgentInputBase & {
+      providerId: string;
+      providerHandleId: string;
+    })
+  | (ImportAgentInputBase & {
+      provider: AgentProvider;
+      sessionId: string;
+    });
 
 function normalizePassword(value: string | undefined): string | null {
   if (typeof value !== "string") {
@@ -263,6 +273,7 @@ type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPullPayload = CheckoutPullResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
+type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
@@ -435,6 +446,21 @@ export type FetchAgentHistoryOptions = Omit<FetchAgentHistoryRequest, "type" | "
 };
 export type FetchAgentHistoryEntry = FetchAgentHistoryPayload["entries"][number];
 export type FetchAgentHistoryPageInfo = FetchAgentHistoryPayload["pageInfo"];
+type FetchRecentProviderSessionsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_recent_provider_sessions_response" }
+>["payload"];
+type FetchRecentProviderSessionsRequest = Extract<
+  SessionInboundMessage,
+  { type: "fetch_recent_provider_sessions_request" }
+>;
+export type FetchRecentProviderSessionsOptions = Omit<
+  FetchRecentProviderSessionsRequest,
+  "type" | "requestId"
+> & {
+  requestId?: string;
+};
+export type FetchRecentProviderSessionEntry = FetchRecentProviderSessionsPayload["entries"][number];
 type FetchWorkspacesPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_workspaces_response" }
@@ -1550,6 +1576,35 @@ export class DaemonClient {
     });
   }
 
+  async fetchRecentProviderSessions(
+    options?: FetchRecentProviderSessionsOptions,
+  ): Promise<FetchRecentProviderSessionsPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_request",
+      requestId: resolvedRequestId,
+      ...(options?.cwd ? { cwd: options.cwd } : {}),
+      ...(options?.providers ? { providers: options.providers } : {}),
+      ...(options?.since ? { since: options.since } : {}),
+      ...(options?.limit ? { limit: options.limit } : {}),
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "fetch_recent_provider_sessions_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
   async fetchWorkspaces(options?: FetchWorkspacesOptions): Promise<FetchWorkspacesPayload> {
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -1899,8 +1954,9 @@ export class DaemonClient {
     const message = SessionInboundMessageSchema.parse({
       type: "import_agent_request",
       requestId,
-      provider: input.provider,
-      sessionId: input.sessionId,
+      ...("providerId" in input
+        ? { providerId: input.providerId, providerHandleId: input.providerHandleId }
+        : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
     });
@@ -2740,6 +2796,23 @@ export class DaemonClient {
         baseRef: input.baseRef,
       },
       responseType: "checkout_pr_create_response",
+      timeout: 60000,
+    });
+  }
+
+  async checkoutPrMerge(
+    cwd: string,
+    input: { method: CheckoutPrMergeMethod },
+    requestId?: string,
+  ): Promise<CheckoutPrMergePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_pr_merge_request",
+        cwd,
+        mergeMethod: input.method,
+      },
+      responseType: "checkout_pr_merge_response",
       timeout: 60000,
     });
   }

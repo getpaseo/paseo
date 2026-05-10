@@ -98,6 +98,37 @@ When a test is labeled end-to-end, it calls the real service. No environment var
 - Test bodies should read like plain English
 - Build a vocabulary of test helpers that make complex flows simple
 
+### File naming
+
+Vitest picks up tests by suffix. The suffix tells the runner which category it belongs to.
+
+| Suffix                | What it is                                                                                         | Where it runs                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `*.test.ts(x)`        | Unit test — pure, fast, no daemon                                                                  | `npm run test:unit`                                                                  |
+| `*.posix.test.ts`     | Unit test that needs POSIX-only behavior                                                           | unit, skipped on Windows                                                             |
+| `*.browser.test.ts`   | App test that needs a real browser (DOM)                                                           | `npm run test:browser` (Vitest browser mode, Playwright provider, headless Chromium) |
+| `*.e2e.test.ts`       | End-to-end against a real daemon                                                                   | `npm run test:e2e`                                                                   |
+| `*.real.e2e.test.ts`  | E2E that hits a real provider (Claude/Codex/OpenCode) — needs creds in `packages/server/.env.test` | `npm run test:integration:real` / `test:e2e:real`                                    |
+| `*.local.e2e.test.ts` | E2E that needs a local-only resource                                                               | `npm run test:integration:local` / `test:e2e:local`                                  |
+
+App-level Playwright browser E2E lives in `packages/app/e2e/*.spec.ts` and runs via `npm run test:e2e --workspace=@getpaseo/app` (separate from Vitest E2E).
+
+### Test setup
+
+- Server: `packages/server/src/test-utils/vitest-setup.ts` loads `.env.test`, sets `PASEO_SUPERVISED=0`, and disables Git/SSH prompts. Add new global env shims here, not in individual tests.
+- App: `packages/app/vitest.setup.ts` provides `expo`/`__DEV__` shims and stubs a few native-only modules (`react-native-unistyles`, `react-native-svg`, `expo-linking`, `@xterm/addon-ligatures`). Stubbing here is for modules that have no meaningful Node behavior — not a license to mock app code.
+
+## Running tests locally
+
+Test suites in this repo are heavy. Running them in bulk freezes the machine, especially with multiple agents in parallel.
+
+- Run only the file you changed: `npx vitest run <path> --bail=1`
+- Never run `npm run test` for a whole workspace unless asked.
+- For a broad sweep, redirect to a file and read it after: `npx vitest run <path> --bail=1 > /tmp/test-output.txt 2>&1`
+- Never re-run a suite another agent already reported green.
+- For full-suite confidence, push to CI and check GitHub Actions.
+- Never run Playwright E2E (`packages/app/e2e/*.spec.ts`) locally — defer to CI.
+
 ## Agent authentication in tests
 
 Agent providers handle their own auth. Do not add auth checks, environment variable gates, or conditional skips to tests. If auth fails, report it.

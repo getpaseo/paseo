@@ -176,6 +176,7 @@ function createGitHubServiceStub(): GitHubService {
       url: "https://github.com/acme/repo/pull/1",
       number: 1,
     })),
+    mergePullRequest: vi.fn(async () => ({ success: true })),
     isAuthenticated: vi.fn(async () => true),
     invalidate: vi.fn(),
   };

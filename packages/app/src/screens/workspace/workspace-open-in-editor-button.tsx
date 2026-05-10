@@ -19,11 +19,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
-import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { buildGitHubBranchTreeUrl } from "@/utils/github-repo-url";
+import { buildGitHubBranchTreeUrl } from "@/git/github-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";

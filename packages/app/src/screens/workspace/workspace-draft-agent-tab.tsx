@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import invariant from "tiny-invariant";
 import { Composer } from "@/components/composer";
+import { ComposerImportPill } from "@/screens/workspace/composer-import-pill";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-attachments";
@@ -28,7 +29,7 @@ import {
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
@@ -265,6 +266,7 @@ function buildDraftAgentSnapshot(input: {
     model,
     features: composerState.statusControls.features,
     thinkingOptionId,
+    parentAgentId: null,
     labels: {},
   };
 }
@@ -277,6 +279,7 @@ interface WorkspaceDraftAgentTabProps {
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (input: { filePath: string }) => void;
+  onOpenImportSheet?: () => void;
 }
 
 export function WorkspaceDraftAgentTab({
@@ -287,6 +290,7 @@ export function WorkspaceDraftAgentTab({
   isPaneFocused,
   onCreated,
   onOpenWorkspaceFile,
+  onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
@@ -306,7 +310,6 @@ export function WorkspaceDraftAgentTab({
   );
   const draftInput = useAgentInputDraft({
     draftKey: draftStoreKey,
-    initialCwd: workspaceDirectory ?? "",
     composer: {
       initialServerId: serverId,
       initialValues: workspaceDirectory ? { workingDir: workspaceDirectory } : undefined,
@@ -334,7 +337,7 @@ export function WorkspaceDraftAgentTab({
   const isCompact = useIsCompactFormFactor();
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
-    cwd: draftInput.cwd,
+    cwd: composerState.workingDir,
     workspaceId,
   });
   const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey);
@@ -589,6 +592,13 @@ export function WorkspaceDraftAgentTab({
         </View>
 
         <View style={inputAreaWrapperStyle}>
+          {onOpenImportSheet ? (
+            <View style={styles.importPillRow}>
+              <View style={styles.importPillContent}>
+                <ComposerImportPill onPress={onOpenImportSheet} disabled={isSubmitting} />
+              </View>
+            </View>
+          ) : null}
           <Composer
             agentId={tabId}
             serverId={serverId}
@@ -602,7 +612,7 @@ export function WorkspaceDraftAgentTab({
             workspaceAttachments={workspaceAttachments}
             onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
             onChangeAttachments={draftInput.setAttachments}
-            cwd={draftInput.cwd}
+            cwd={composerState.workingDir}
             clearDraft={draftInput.clear}
             autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
             onAddImages={handleAddImagesCallback}
@@ -642,6 +652,18 @@ const styles = StyleSheet.create((theme) => ({
   inputAreaWrapper: {
     width: "100%",
     backgroundColor: theme.colors.surface0,
+  },
+  importPillRow: {
+    width: "100%",
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[3],
+    alignItems: "center",
+  },
+  importPillContent: {
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+    flexDirection: "row",
   },
   errorContainer: {
     marginTop: theme.spacing[2],

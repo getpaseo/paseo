@@ -8,6 +8,8 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
+import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 interface BranchNameGeneratorLogger {
   warn: (obj: object, msg?: string) => void;
@@ -17,6 +19,7 @@ interface BranchNameGeneratorLogger {
 export interface GenerateBranchNameFromFirstAgentContextOptions {
   agentManager: AgentManager;
   cwd: string;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   firstAgentContext: FirstAgentContext | undefined;
   logger: BranchNameGeneratorLogger;
   deps?: {
@@ -28,16 +31,25 @@ const BranchNameSchema = z.object({
   branch: z.string().min(1).max(100),
 });
 
-function buildPrompt(seed: string): string {
-  return [
-    "Generate a git branch name for a coding agent based on the user prompt and attachments.",
-    "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
-    "No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.",
-    "Return JSON only with a single field 'branch'.",
-    "",
-    "User context:",
-    seed,
-  ].join("\n");
+async function buildPrompt(
+  seed: string,
+  options: {
+    cwd: string;
+    workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  },
+): Promise<string> {
+  return buildMetadataPrompt({
+    cwd: options.cwd,
+    workspaceGitService: options.workspaceGitService,
+    configKey: "branchName",
+    before: [
+      "Generate a git branch name for a coding agent based on the user prompt and attachments.",
+      "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
+      "No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.",
+    ].join("\n"),
+    after: "Return JSON only with a single field 'branch'.",
+    trailing: `User context:\n${seed}`,
+  });
 }
 
 export async function generateBranchNameFromFirstAgentContext(
@@ -56,7 +68,10 @@ export async function generateBranchNameFromFirstAgentContext(
     const result = await generator({
       manager: options.agentManager,
       cwd: options.cwd,
-      prompt: buildPrompt(seed),
+      prompt: await buildPrompt(seed, {
+        cwd: options.cwd,
+        workspaceGitService: options.workspaceGitService,
+      }),
       schema: BranchNameSchema,
       schemaName: "BranchName",
       maxRetries: 2,

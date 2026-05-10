@@ -15,6 +15,7 @@ This file is auto-generated. Do not edit it by hand.
 - `SVG_ICONS` maps icon names (e.g. `"typescript"`) to raw SVG strings
 - `EXTENSION_TO_ICON` maps file extensions (e.g. `"ts"`) to icon names
 - `getFileIconSvg(fileName)` returns the SVG string for a given filename, falling back to a generic file icon
+- `packages/app/src/components/file-explorer-pane.tsx` is the only consumer; it renders the SVG with `SvgXml` from `react-native-svg`
 
 ## Adding a new icon
 

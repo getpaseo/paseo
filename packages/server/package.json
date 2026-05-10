@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.70",
+  "version": "0.1.72",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -58,8 +58,8 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.133",
-    "@getpaseo/highlight": "0.1.70",
-    "@getpaseo/relay": "0.1.70",
+    "@getpaseo/highlight": "0.1.72",
+    "@getpaseo/relay": "0.1.72",
     "@isaacs/ttlcache": "^2.1.4",
     "@mariozechner/pi-agent-core": "^0.70.2",
     "@mariozechner/pi-ai": "^0.70.2",
@@ -69,7 +69,7 @@
     "@sctg/sentencepiece-js": "^1.1.0",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
-    "ajv": "^8.17.1",
+    "ajv": "^8.20.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
     "express": "^4.18.2",

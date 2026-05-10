@@ -4,8 +4,9 @@ import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@server/shared/messages";
-import { mapPrPaneData, type PrPaneData } from "../utils/pr-pane-data";
-import { useCheckoutPrStatusQuery } from "./use-checkout-pr-status-query";
+import { mapPrPaneData, type PrPaneData } from "@/git/pr-pane-data";
+import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
+import { prPaneTimelineQueryKey } from "@/git/query-keys";
 
 type CheckoutPrStatusPayloadError = CheckoutPrStatusResponse["payload"]["error"];
 type PullRequestTimeline = PullRequestTimelineResponse["payload"];
@@ -150,18 +151,6 @@ export function usePrPaneData({
     }),
     githubFeaturesEnabled,
   };
-}
-
-export function prPaneTimelineQueryKey({
-  serverId,
-  cwd,
-  prNumber,
-}: {
-  serverId: string;
-  cwd: string;
-  prNumber: number | null;
-}) {
-  return ["prPaneTimeline", serverId, cwd, prNumber] as const;
 }
 
 function firstNonSuppressedError({

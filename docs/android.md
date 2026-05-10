@@ -53,6 +53,8 @@ Stable tag pushes like `v0.1.0` trigger:
 
 Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores.
 
+`android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. Both workflows also support `workflow_dispatch`; the GitHub APK one takes an existing `tag` input so you can rebuild without cutting a new tag.
+
 ### Useful commands
 
 ```bash

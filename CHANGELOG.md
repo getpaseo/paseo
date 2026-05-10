@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.72 - 2026-05-10
+
+### Fixed
+
+- **Codex approval prompts no longer hang.** Fixes a regression introduced in 0.1.70 where Codex agents would wait forever on command and file approvals — the prompt never reached the app and the agent stayed stuck in "running". ([#866](https://github.com/getpaseo/paseo/pull/866), [#869](https://github.com/getpaseo/paseo/pull/869))
+- **Windows: daemon no longer crashes when Codex emits non-JSON output.** Localized stdout lines from the Codex CLI are now ignored instead of taking down the daemon worker. ([#866](https://github.com/getpaseo/paseo/pull/866))
+- Drag-and-drop images onto the new workspace screen now works. ([#850](https://github.com/getpaseo/paseo/pull/850))
+- Archiving a worktree from the toolbar redirects you immediately instead of leaving you on the dead screen for a beat. ([#852](https://github.com/getpaseo/paseo/pull/852))
+- Pi-backed sessions now shut down cleanly when you close them, releasing extension resources on the Pi side. ([#863](https://github.com/getpaseo/paseo/pull/863))
+
+## 0.1.71 - 2026-05-09
+
+### Added
+
+- **Import existing Claude, Codex, and OpenCode sessions** into Paseo — pick up a conversation you started in the terminal and keep going from the app, with the full timeline. ([#766](https://github.com/getpaseo/paseo/pull/766), [#833](https://github.com/getpaseo/paseo/pull/833))
+- **Subagents now appear in a collapsible section above the composer** so you can jump into agents your main agent spawned. ([#532](https://github.com/getpaseo/paseo/pull/532))
+- Merge a pull request directly from the checkout pane. ([#814](https://github.com/getpaseo/paseo/pull/814))
+- Customize the per-project prompts Paseo uses to auto-generate agent titles, branch names, commit messages, and pull request descriptions. ([#836](https://github.com/getpaseo/paseo/pull/836))
+- Open an empty workspace without typing a prompt first. ([#834](https://github.com/getpaseo/paseo/pull/834))
+- Project settings are now grouped with inline links to the relevant docs. ([#837](https://github.com/getpaseo/paseo/pull/837))
+- Rich context menu on desktop — copy link, copy image, and spellcheck suggestions.
+- Archiving a Codex-backed agent now archives the underlying native Codex thread too. ([#827](https://github.com/getpaseo/paseo/pull/827) by [@32r4](https://github.com/32r4))
+
+### Improved
+
+- Opening a workspace auto-focuses the agent that needs your attention. ([#828](https://github.com/getpaseo/paseo/pull/828))
+- An unattended agent that spawns a sub-agent on a different provider via MCP now starts the sub-agent in unattended mode too.
+
+### Fixed
+
+- iOS project picker now submits the typed path. ([#831](https://github.com/getpaseo/paseo/pull/831))
+- System messages and chat mentions routed to multiple agents now reach every recipient consistently. ([#830](https://github.com/getpaseo/paseo/pull/830))
+- Clicking a Markdown link in agent output no longer reloads the desktop app on top of opening the link.
+
+### Security
+
+- Local state files (daemon keypair, stored credentials, persisted config) are now readable only by the owning user. ([#825](https://github.com/getpaseo/paseo/pull/825) by [@joaosa](https://github.com/joaosa))
+
 ## 0.1.70 - 2026-05-08
 
 ### Breaking

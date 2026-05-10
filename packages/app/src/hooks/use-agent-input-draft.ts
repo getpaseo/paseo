@@ -34,7 +34,6 @@ interface AgentInputDraftComposerOptions {
 
 interface UseAgentInputDraftInput {
   draftKey: DraftKeyInput;
-  initialCwd?: string;
   composer?: AgentInputDraftComposerOptions;
 }
 
@@ -52,8 +51,6 @@ interface AgentInputDraft {
   setText: (text: string) => void;
   attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
-  cwd: string;
-  setCwd: (cwd: string) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
   composerState: DraftComposerState | null;
@@ -78,7 +75,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
   const [text, setText] = useState("");
   const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
-  const [cwd, setCwd] = useState(input.initialCwd ?? "");
   const [isHydrated, setIsHydrated] = useState(false);
   const draftGenerationRef = useRef(0);
   const hydratedGenerationRef = useRef(0);
@@ -103,7 +99,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
       setText("");
       setAttachmentsState([]);
-      setCwd("");
       setIsHydrated(true);
     },
     [draftKey],
@@ -117,7 +112,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
     setText("");
     setAttachmentsState([]);
-    setCwd(input.initialCwd ?? "");
     setIsHydrated(false);
 
     let cancelled = false;
@@ -125,7 +119,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     void (async () => {
       const draft = await store.hydrateDraftInput({
         draftKey,
-        initialCwd: input.initialCwd,
       });
       if (cancelled) {
         return;
@@ -137,7 +130,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       if (draft) {
         setText(draft.text);
         setAttachmentsState(draft.attachments);
-        setCwd(draft.cwd);
       }
 
       hydratedGenerationRef.current = generation;
@@ -147,7 +139,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     return () => {
       cancelled = true;
     };
-  }, [draftKey, input.initialCwd]);
+  }, [draftKey]);
 
   useEffect(() => {
     const currentGeneration = draftGenerationRef.current;
@@ -171,7 +163,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     const isSameDraft =
       existing !== undefined &&
       existing.text === text &&
-      existing.cwd === cwd &&
       areAttachmentsEqual({
         left: existing.attachments,
         right: attachments,
@@ -180,7 +171,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       return;
     }
 
-    if (!hasDraftContent({ text, attachments, cwd })) {
+    if (!hasDraftContent({ text, attachments })) {
       if (existing) {
         store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
       }
@@ -192,10 +183,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       draft: {
         text,
         attachments,
-        cwd,
       },
     });
-  }, [attachments, cwd, draftKey, text]);
+  }, [attachments, draftKey, text]);
 
   const lockedWorkingDir = composerOptions?.lockedWorkingDir?.trim() ?? "";
   useEffect(() => {
@@ -301,8 +291,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     setText,
     attachments,
     setAttachments,
-    cwd,
-    setCwd,
     clear,
     isHydrated,
     composerState,

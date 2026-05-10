@@ -1,7 +1,7 @@
 import "@/test/window-local-storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { describe, expect, it } from "vitest";
-import type { ParsedDiffFile } from "@/hooks/use-checkout-diff-query";
+import type { ParsedDiffFile } from "@/git/use-diff-query";
 import {
   buildReviewAttachmentSnapshot,
   buildReviewDraftKey,

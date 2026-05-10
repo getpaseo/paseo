@@ -1,5 +1,6 @@
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
+import { PARENT_AGENT_ID_LABEL } from "@server/shared/agent-labels";
 
 export function derivePendingPermissionKey(
   agentId: string,
@@ -25,6 +26,11 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     ? new Date(snapshot.attentionTimestamp)
     : null;
   const archivedAt = snapshot.archivedAt ? new Date(snapshot.archivedAt) : null;
+  const parentAgentLabel = snapshot.labels?.[PARENT_AGENT_ID_LABEL];
+  const parentAgentId =
+    typeof parentAgentLabel === "string" && parentAgentLabel.trim().length > 0
+      ? parentAgentLabel.trim()
+      : null;
 
   return {
     serverId,
@@ -52,6 +58,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     archivedAt,
+    parentAgentId,
     labels: snapshot.labels,
   };
 }

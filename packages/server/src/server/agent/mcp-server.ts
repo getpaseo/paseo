@@ -38,6 +38,7 @@ import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../path-utils.js";
+import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import type {
   AgentWorktreeSetupContinuation,
@@ -59,13 +60,11 @@ import {
   parseDurationString,
   resolveRequiredProviderModel,
   sanitizePermissionRequest,
-  sendPromptToAgent,
-  setupFinishNotification,
   serializeSnapshotWithMetadata,
-  startAgentRun,
   toScheduleSummary,
   waitForAgentWithTimeout,
 } from "./mcp-shared.js";
+import { sendPromptToAgent, setupFinishNotification, startAgentRun } from "./agent-prompt.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";
@@ -80,7 +79,10 @@ export interface AgentMcpServerOptions {
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
   github?: GitHubService;
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  workspaceGitService?: Pick<
+    WorkspaceGitService,
+    "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
+  >;
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
@@ -635,16 +637,31 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     setupContinuation: AgentWorktreeSetupContinuation | undefined;
   }
 
-  const getAvailableModeIds = (provider: AgentProvider): string[] | undefined => {
+  const getProviderModes = (provider: AgentProvider) => {
     const fromRegistry = providerRegistry?.[provider];
     if (fromRegistry) {
-      return fromRegistry.modes.map((mode) => mode.id);
+      return fromRegistry.modes;
     }
     try {
-      return getAgentProviderDefinition(provider).modes.map((mode) => mode.id);
+      return getAgentProviderDefinition(provider).modes;
     } catch {
       return undefined;
     }
+  };
+
+  const getAvailableModeIds = (provider: AgentProvider): string[] | undefined => {
+    return getProviderModes(provider)?.map((mode) => mode.id);
+  };
+
+  const getUnattendedModeId = (provider: AgentProvider): string | undefined => {
+    return getProviderModes(provider)?.find((mode) => mode.isUnattended)?.id;
+  };
+
+  const isParentInUnattendedMode = (provider: AgentProvider, modeId: string | null): boolean => {
+    if (modeId === null) return false;
+    const modes = getProviderModes(provider);
+    if (!modes) return false;
+    return modes.some((mode) => mode.id === modeId && mode.isUnattended === true);
   };
 
   const resolveCallerCreateAgentArgs = (
@@ -667,8 +684,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     const resolvedMode = resolveAndValidateCreateAgentMode({
       requestedMode: callerArgs.mode,
       targetProvider: provider,
-      parent: { provider: parentAgent.provider, modeId: parentAgent.currentModeId },
+      parent: {
+        provider: parentAgent.provider,
+        modeId: parentAgent.currentModeId,
+        isUnattended: isParentInUnattendedMode(parentAgent.provider, parentAgent.currentModeId),
+      },
       availableModes: getAvailableModeIds(provider),
+      targetUnattendedMode: getUnattendedModeId(provider),
     });
     return {
       provider,
@@ -696,6 +718,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       targetProvider: resolvedProviderModel.provider,
       parent: null,
       availableModes: getAvailableModeIds(resolvedProviderModel.provider),
+      targetUnattendedMode: getUnattendedModeId(resolvedProviderModel.provider),
     });
     let resolvedCwd = expandUserPath(cwd);
     let setupContinuation: AgentWorktreeSetupContinuation | undefined;
@@ -801,7 +824,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const childAgentDefaultLabels = callerContext?.childAgentDefaultLabels;
       const mergedLabels = {
-        ...(callerAgentId ? { "paseo.parent-agent-id": callerAgentId } : {}),
+        ...(callerAgentId ? { [PARENT_AGENT_ID_LABEL]: callerAgentId } : {}),
         ...childAgentDefaultLabels,
         ...labels,
       };
@@ -827,6 +850,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         agentManager,
         agentId: snapshot.id,
         cwd: snapshot.cwd,
+        workspaceGitService: options.workspaceGitService,
         initialPrompt: trimmedPrompt,
         explicitTitle: snapshot.config.title,
         paseoHome: options.paseoHome,

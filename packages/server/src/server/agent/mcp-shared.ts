@@ -1,16 +1,11 @@
 import { z } from "zod";
 import type { Logger } from "pino";
 
-import type {
-  AgentPromptInput,
-  AgentPermissionRequest,
-  AgentRunOptions,
-} from "./agent-sdk-types.js";
+import type { AgentPermissionRequest } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent, WaitForAgentResult } from "./agent-manager.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { selectItemsByProjectedLimit } from "./timeline-projection.js";
 import type { AgentStorage } from "./agent-storage.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
 import { serializeAgentSnapshot } from "../messages.js";
 import { StoredScheduleSchema } from "../schedule/types.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
@@ -91,11 +86,6 @@ export function resolveRequiredProviderModel(
   };
 }
 
-export interface StartAgentRunOptions {
-  replaceRunning?: boolean;
-  runOptions?: AgentRunOptions;
-}
-
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.
  * Returns a friendly message when timeout occurs, rather than letting
@@ -165,213 +155,6 @@ export async function waitForAgentWithTimeout(
     throw error;
   } finally {
     clearTimeout(timeoutId);
-  }
-}
-
-export function startAgentRun(
-  agentManager: AgentManager,
-  agentId: string,
-  prompt: AgentPromptInput,
-  logger: Logger,
-  options?: StartAgentRunOptions,
-): { outOfBand: boolean } {
-  // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
-  // in-flight turn — replaceAgentRun would interrupt the running turn. The
-  // intercept lives at this layer so it covers every prompt entrypoint.
-  if (agentManager.tryRunOutOfBand(agentId, prompt)) {
-    return { outOfBand: true };
-  }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const runOptions = options?.runOptions;
-  const iterator = shouldReplace
-    ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
-  void (async () => {
-    try {
-      for await (const _ of iterator) {
-        // Events are broadcast via AgentManager subscribers.
-      }
-    } catch (error) {
-      logger.error({ err: error, agentId }, "Agent stream failed");
-    }
-  })();
-  return { outOfBand: false };
-}
-
-/**
- * Clear the archived flag from a stored agent record.
- * Shared across Session (app/WS), MCP, and CLI so every surface that acts on
- * an archived agent unarchives it the same way.
- */
-export async function unarchiveAgentState(
-  agentStorage: AgentStorage,
-  agentManager: AgentManager,
-  agentId: string,
-): Promise<boolean> {
-  const record = await agentStorage.get(agentId);
-  if (!record || !record.archivedAt) {
-    return false;
-  }
-  const updatedAt = new Date().toISOString();
-  await agentStorage.upsert({
-    ...record,
-    archivedAt: null,
-    updatedAt,
-  });
-  agentManager.notifyAgentState(agentId);
-  return true;
-}
-
-export interface SendPromptToAgentParams {
-  agentManager: AgentManager;
-  agentStorage: AgentStorage;
-  agentId: string;
-  /** Raw user text to record in the timeline. */
-  userMessageText: string;
-  /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
-  prompt: AgentPromptInput;
-  messageId?: string;
-  runOptions?: AgentRunOptions;
-  /** Optional mode to set on the agent before the run starts. */
-  sessionMode?: string;
-  logger: Logger;
-}
-
-/**
- * Full send-prompt orchestration: unarchive → load → (optional mode change) →
- * record user message → start run.
- *
- * Every surface that sends a prompt to an agent (Session/WS, MCP, CLI-through-MCP)
- * MUST go through this so behavior can never drift between them.
- */
-export async function sendPromptToAgent(
-  params: SendPromptToAgentParams,
-): Promise<{ outOfBand: boolean }> {
-  const {
-    agentManager,
-    agentStorage,
-    agentId,
-    userMessageText,
-    prompt,
-    messageId,
-    runOptions,
-    sessionMode,
-    logger,
-  } = params;
-
-  await unarchiveAgentState(agentStorage, agentManager, agentId);
-
-  await ensureAgentLoaded(agentId, {
-    agentManager,
-    agentStorage,
-    logger,
-  });
-
-  if (sessionMode) {
-    await agentManager.setAgentMode(agentId, sessionMode);
-  }
-
-  try {
-    agentManager.recordUserMessage(agentId, userMessageText, {
-      messageId,
-      emitState: false,
-    });
-  } catch (error) {
-    logger.error({ err: error, agentId }, "Failed to record user message");
-  }
-
-  return startAgentRun(agentManager, agentId, prompt, logger, {
-    replaceRunning: true,
-    runOptions,
-  });
-}
-
-interface SetupFinishNotificationParams {
-  agentManager: AgentManager;
-  agentStorage: AgentStorage;
-  childAgentId: string;
-  callerAgentId: string;
-  logger: Logger;
-}
-
-export function setupFinishNotification(params: SetupFinishNotificationParams): void {
-  const { agentManager, agentStorage, childAgentId, callerAgentId, logger } = params;
-  let hasSeenRunning = false;
-  let fired = false;
-  let unsubscribe: (() => void) | null = null;
-
-  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
-    if (fired) {
-      return;
-    }
-    fired = true;
-    unsubscribe?.();
-
-    if (!agentManager.getAgent(callerAgentId)) {
-      return;
-    }
-
-    const callerRecord = await agentStorage.get(callerAgentId);
-    if (callerRecord?.archivedAt) {
-      return;
-    }
-
-    const title = agentManager.getAgent(childAgentId)?.config?.title ?? childAgentId;
-    const prompt = `<paseo-system>\nAgent ${childAgentId} (${title}) ${reason}.\n</paseo-system>`;
-
-    startAgentRun(agentManager, callerAgentId, prompt, logger, {
-      replaceRunning: true,
-    });
-  }
-
-  unsubscribe = agentManager.subscribe(
-    (event) => {
-      if (fired) {
-        return;
-      }
-
-      if (event.type === "agent_state") {
-        if (event.agent.lifecycle === "running") {
-          hasSeenRunning = true;
-          return;
-        }
-        if (event.agent.lifecycle === "error") {
-          void notify("errored");
-          return;
-        }
-        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          void notify("finished");
-          return;
-        }
-        if (event.agent.lifecycle === "closed") {
-          fired = true;
-          unsubscribe?.();
-          return;
-        }
-        return;
-      }
-
-      if (event.event.type === "permission_requested") {
-        void notify("needs permission");
-      }
-    },
-    { agentId: childAgentId, replayState: false },
-  );
-
-  // Check if the child is already running (catches the case where
-  // the lifecycle flipped before our subscribe call was processed).
-  // Do NOT treat an immediate "idle" as "finished" — the agent may
-  // not have started yet (streamAgent sets a pending run before
-  // transitioning to "running").
-  const childSnapshot = agentManager.getAgent(childAgentId);
-  if (!childSnapshot || childSnapshot.lifecycle === "closed") {
-    unsubscribe();
-    return;
-  }
-  if (childSnapshot.lifecycle === "running") {
-    hasSeenRunning = true;
-  } else if (childSnapshot.lifecycle === "error") {
-    void notify("errored");
   }
 }
 

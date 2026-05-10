@@ -31,7 +31,8 @@ The relay is the simplest way to connect from your phone. It requires no VPN set
 1. The daemon generates a persistent ECDH keypair and stores it in `$PASEO_HOME/daemon-keypair.json`
 2. When you scan the QR code or click the pairing link, your phone receives the daemon's public key
 3. Your phone sends a handshake message with its own public key. The daemon will not accept any commands until this handshake completes.
-4. Both sides perform an ECDH key exchange to derive a shared secret. All subsequent messages are encrypted with AES-256-GCM.
+4. Both sides perform a Curve25519 ECDH key exchange to derive a shared key. All subsequent
+   messages are encrypted with XSalsa20-Poly1305 (NaCl `box`).
 
 The relay sees only: IP addresses, timing, message sizes, and session IDs. It cannot read message contents, forge messages, or derive encryption keys from observing the handshake.
 
@@ -40,8 +41,8 @@ The relay sees only: IP addresses, timing, message sizes, and session IDs. It ca
 The daemon requires a valid cryptographic handshake before processing any commands. A compromised relay cannot:
 
 - **Send commands**, Without your phone's private key, it cannot complete the handshake
-- **Read your traffic**, All messages are encrypted with AES-256-GCM after the handshake
-- **Forge messages**, GCM provides authenticated encryption; tampered messages are rejected
+- **Read your traffic**, All messages are encrypted with XSalsa20-Poly1305 (NaCl `box`) after the handshake
+- **Forge messages**, NaCl `box` provides authenticated encryption; tampered messages are rejected
 - **Replay old messages**, Each session derives fresh encryption keys
 
 ### Trust model

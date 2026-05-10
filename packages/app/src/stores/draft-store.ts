@@ -24,7 +24,6 @@ type PersistedDraftImage = AttachmentMetadata | LegacyDraftImage;
 export interface DraftInput {
   text: string;
   attachments: UserComposerAttachment[];
-  cwd: string;
 }
 
 export type DraftLifecycleState = "active" | "abandoned" | "sent";
@@ -45,10 +44,7 @@ interface DraftStoreState {
 
 interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;
-  hydrateDraftInput: (input: {
-    draftKey: string;
-    initialCwd?: string;
-  }) => Promise<DraftInput | undefined>;
+  hydrateDraftInput: (input: { draftKey: string }) => Promise<DraftInput | undefined>;
   saveDraftInput: (input: { draftKey: string; draft: DraftInput }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
   clearDraftInput: (input: {
@@ -76,7 +72,6 @@ function createDraftRecord(input: {
     input: {
       text: input.draft.text,
       attachments: input.draft.attachments.map(normalizeComposerAttachment),
-      cwd: input.draft.cwd,
     },
     lifecycle: input.lifecycle,
     updatedAt: Date.now(),
@@ -181,11 +176,11 @@ function isCanonicalDraftInput(value: unknown): value is CanonicalDraftInput {
     return false;
   }
   const input = value as Record<string, unknown>;
+  // COMPAT(draft-cwd): accept legacy persisted drafts that include cwd. Stop accepting after 2026-11-09.
   return (
     typeof input.text === "string" &&
     Array.isArray(input.attachments) &&
-    input.attachments.every(isUserComposerAttachment) &&
-    typeof input.cwd === "string"
+    input.attachments.every(isUserComposerAttachment)
   );
 }
 
@@ -202,7 +197,6 @@ function toDraftInputIfReady(record: DraftRecord | null | undefined): DraftInput
   return {
     text: record.input.text,
     attachments: record.input.attachments.map(normalizeComposerAttachment),
-    cwd: record.input.cwd,
   };
 }
 
@@ -262,7 +256,7 @@ function applyClearDraftRecord(input: {
 
   return {
     ...input.record,
-    input: { text: "", attachments: [], cwd: "" },
+    input: { text: "", attachments: [] },
     lifecycle: input.lifecycle,
     updatedAt: input.nowMs,
     version: input.record.version + 1,
@@ -417,10 +411,7 @@ async function migrateLegacyImages(
   return migrated.filter((entry): entry is AttachmentMetadata => entry !== null);
 }
 
-async function migrateDraftInput(input: {
-  rawInput: unknown;
-  initialCwd?: string;
-}): Promise<CanonicalDraftInput> {
+async function migrateDraftInput(input: { rawInput: unknown }): Promise<CanonicalDraftInput> {
   const rawInput =
     input.rawInput && typeof input.rawInput === "object"
       ? (input.rawInput as Record<string, unknown>)
@@ -440,7 +431,6 @@ async function migrateDraftInput(input: {
   return {
     text: typeof rawInput.text === "string" ? rawInput.text : "",
     attachments: [...attachments, ...legacyImagesToAttachments(migratedImages)],
-    cwd: typeof rawInput.cwd === "string" ? rawInput.cwd : (input.initialCwd ?? ""),
   };
 }
 
@@ -505,7 +495,7 @@ export const useDraftStore = create<DraftStore>()(
         return toDraftInputIfReady(record);
       },
 
-      hydrateDraftInput: async ({ draftKey, initialCwd }) => {
+      hydrateDraftInput: async ({ draftKey }) => {
         const current = get().drafts[draftKey];
         if (!current) {
           return undefined;
@@ -520,7 +510,6 @@ export const useDraftStore = create<DraftStore>()(
 
         const migratedDraft = await migrateDraftInput({
           rawInput: current.input,
-          initialCwd,
         });
 
         set((state) => {

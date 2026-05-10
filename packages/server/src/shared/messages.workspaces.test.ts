@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
 import {
+  RecentProviderSessionDescriptorPayloadSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceDescriptorPayloadSchema,
@@ -108,6 +109,125 @@ describe("workspace message schemas", () => {
 
     expect(request.type).toBe("fetch_agent_history_request");
     expect(response.type).toBe("fetch_agent_history_response");
+  });
+
+  test("parses recent provider session descriptors without legacy handle fields", () => {
+    const parsed = RecentProviderSessionDescriptorPayloadSchema.parse({
+      providerId: "custom-codex",
+      providerLabel: "Custom Codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/repo",
+      title: "Resume this",
+      firstPromptPreview: "first prompt",
+      lastPromptPreview: "last prompt",
+      lastActivityAt: "2026-04-30T12:34:56.000Z",
+    });
+
+    expect(parsed).toEqual({
+      providerId: "custom-codex",
+      providerLabel: "Custom Codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/repo",
+      title: "Resume this",
+      firstPromptPreview: "first prompt",
+      lastPromptPreview: "last prompt",
+      lastActivityAt: "2026-04-30T12:34:56.000Z",
+    });
+  });
+
+  test("parses fetch_recent_provider_sessions request and response", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_request",
+      requestId: "req-recent-provider-sessions",
+      cwd: "/tmp/repo",
+      providers: ["my-claude"],
+      since: "2026-04-30T00:00:00.000Z",
+      limit: 25,
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-recent-provider-sessions",
+        entries: [
+          {
+            providerId: "my-claude",
+            providerLabel: "My Claude",
+            providerHandleId: "thread-1",
+            cwd: "/tmp/repo",
+            title: "Resume this",
+            firstPromptPreview: "first prompt",
+            lastPromptPreview: "last prompt",
+            lastActivityAt: "2026-04-30T12:34:56.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(request.type).toBe("fetch_recent_provider_sessions_request");
+    expect(request.providers).toEqual(["my-claude"]);
+    expect(response.payload).toEqual({
+      requestId: "req-recent-provider-sessions",
+      entries: [
+        {
+          providerId: "my-claude",
+          providerLabel: "My Claude",
+          providerHandleId: "thread-1",
+          cwd: "/tmp/repo",
+          title: "Resume this",
+          firstPromptPreview: "first prompt",
+          lastPromptPreview: "last prompt",
+          lastActivityAt: "2026-04-30T12:34:56.000Z",
+        },
+      ],
+    });
+  });
+
+  test("parses fetch_recent_provider_sessions response with filteredAlreadyImportedCount", () => {
+    const response = SessionOutboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-recent-provider-sessions",
+        entries: [],
+        filteredAlreadyImportedCount: 3,
+      },
+    });
+
+    if (response.type !== "fetch_recent_provider_sessions_response") {
+      throw new Error("expected fetch_recent_provider_sessions_response");
+    }
+    expect(response.payload.filteredAlreadyImportedCount).toBe(3);
+  });
+
+  test("parses new and legacy import agent requests", () => {
+    const newRequest = SessionInboundMessageSchema.parse({
+      type: "import_agent_request",
+      requestId: "req-import-new",
+      providerId: "custom-codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/repo",
+    });
+    const legacyRequest = SessionInboundMessageSchema.parse({
+      type: "import_agent_request",
+      requestId: "req-import-legacy",
+      provider: "custom-codex",
+      sessionId: "thread-1",
+      cwd: "/tmp/repo",
+    });
+
+    expect(newRequest).toEqual({
+      type: "import_agent_request",
+      requestId: "req-import-new",
+      providerId: "custom-codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/repo",
+    });
+    expect(legacyRequest).toEqual({
+      type: "import_agent_request",
+      requestId: "req-import-legacy",
+      provider: "custom-codex",
+      sessionId: "thread-1",
+      cwd: "/tmp/repo",
+    });
   });
 
   test("parses open_project_request", () => {

@@ -1849,6 +1849,185 @@ test("fetches paginated agent history separately from active agents", async () =
   });
 });
 
+test("fetches scoped recent provider sessions", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.fetchRecentProviderSessions({
+    cwd: "/tmp/repo",
+    providers: ["my-claude"],
+    since: "2026-04-30T00:00:00.000Z",
+    limit: 25,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = JSON.parse(String(mock.sent[0])) as {
+    type: "session";
+    message: {
+      type: "fetch_recent_provider_sessions_request";
+      requestId: string;
+      cwd?: string;
+      providers?: string[];
+      since?: string;
+      limit?: number;
+    };
+  };
+  expect(request.message).toMatchObject({
+    type: "fetch_recent_provider_sessions_request",
+    cwd: "/tmp/repo",
+    providers: ["my-claude"],
+    since: "2026-04-30T00:00:00.000Z",
+    limit: 25,
+  });
+
+  mock.triggerMessage(
+    JSON.stringify({
+      type: "session",
+      message: {
+        type: "fetch_recent_provider_sessions_response",
+        payload: {
+          requestId: request.message.requestId,
+          entries: [
+            {
+              providerId: "codex",
+              providerLabel: "Codex",
+              providerHandleId: "thread-1",
+              cwd: "/tmp/repo",
+              title: "Import me",
+              firstPromptPreview: "first prompt",
+              lastPromptPreview: "last prompt",
+              lastActivityAt: "2026-04-30T12:34:56.000Z",
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    requestId: request.message.requestId,
+    entries: [
+      {
+        providerId: "codex",
+        providerLabel: "Codex",
+        providerHandleId: "thread-1",
+        cwd: "/tmp/repo",
+        title: "Import me",
+        firstPromptPreview: "first prompt",
+        lastPromptPreview: "last prompt",
+        lastActivityAt: "2026-04-30T12:34:56.000Z",
+      },
+    ],
+  });
+});
+
+test("imports an agent by provider handle id", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.importAgent({
+    providerId: "custom-codex",
+    providerHandleId: "thread-1",
+    cwd: "/tmp/repo",
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = JSON.parse(String(mock.sent[0])) as {
+    type: "session";
+    message: {
+      type: "import_agent_request";
+      requestId: string;
+      providerId?: string;
+      providerHandleId?: string;
+      sessionId?: string;
+      cwd?: string;
+    };
+  };
+  expect(request.message).toMatchObject({
+    type: "import_agent_request",
+    providerId: "custom-codex",
+    providerHandleId: "thread-1",
+    cwd: "/tmp/repo",
+  });
+  expect(request.message).not.toHaveProperty("sessionId");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_resumed",
+        requestId: request.message.requestId,
+        agentId: "agent-1",
+        timelineSize: 0,
+        agent: {
+          id: "agent-1",
+          provider: "custom-codex",
+          cwd: "/tmp/repo",
+          model: null,
+          features: [],
+          thinkingOptionId: null,
+          effectiveThinkingOptionId: null,
+          createdAt: "2026-04-30T00:00:00.000Z",
+          updatedAt: "2026-04-30T00:00:00.000Z",
+          lastUserMessageAt: null,
+          status: "idle",
+          capabilities: {
+            supportsStreaming: false,
+            supportsSessionPersistence: false,
+            supportsDynamicModes: false,
+            supportsMcpServers: false,
+            supportsReasoningStream: false,
+            supportsToolInvocations: false,
+          },
+          currentModeId: null,
+          availableModes: [],
+          pendingPermissions: [],
+          persistence: {
+            provider: "custom-codex",
+            sessionId: "thread-1",
+            nativeHandle: "thread-1",
+          },
+          title: null,
+          labels: {},
+          requiresAttention: false,
+          attentionReason: null,
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toMatchObject({
+    id: "agent-1",
+    provider: "custom-codex",
+  });
+});
+
 test("uses server-provided dictation finish timeout budget", async () => {
   vi.useFakeTimers();
   const logger = createMockLogger();

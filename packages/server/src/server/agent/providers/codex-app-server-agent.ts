@@ -8,6 +8,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   McpServerConfig,
+  AgentPersistenceHandle,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPermissionResult,
@@ -37,7 +38,6 @@ import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { curateAgentActivity } from "../activity-curator.js";
@@ -52,10 +52,10 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
+import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
@@ -82,11 +82,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
-const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
-const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
-const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
@@ -169,8 +166,18 @@ const CODEX_MODES: AgentMode[] = [
 
 const DEFAULT_CODEX_MODE_ID = "auto";
 
+interface CodexAppServerClientLike {
+  request(method: string, params?: unknown): Promise<unknown>;
+  notify(method: string, params?: unknown): void;
+  dispose(): Promise<void>;
+}
+
 interface CodexAppServerAgentDeps {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  _createCodexClient?: (
+    child: ChildProcessWithoutNullStreams,
+    logger: Logger,
+  ) => CodexAppServerClientLike;
 }
 
 const MODE_PRESETS: Record<
@@ -616,52 +623,10 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
     }
   }
 }
-interface JsonRpcRequest {
-  id: number;
-  method: string;
-  params?: unknown;
-}
-
-interface JsonRpcResponse {
-  id: number;
-  result?: unknown;
-  error?: { code?: number; message: string };
-}
-
-interface JsonRpcNotification {
-  method: string;
-  params?: unknown;
-}
-
-function isJsonRpcResponse(msg: unknown): msg is JsonRpcResponse {
-  if (!isRecord(msg)) return false;
-  if (typeof msg.id !== "number") return false;
-  return msg.result !== undefined || !!msg.error;
-}
-
-function isJsonRpcRequest(msg: unknown): msg is JsonRpcRequest {
-  if (!isRecord(msg)) return false;
-  return typeof msg.id === "number" && typeof msg.method === "string";
-}
-
-function isJsonRpcNotification(msg: unknown): msg is JsonRpcNotification {
-  if (!isRecord(msg)) return false;
-  return typeof msg.method === "string" && typeof msg.id !== "number";
-}
 
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
-
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-type RequestHandler = (params: unknown) => unknown;
-
-type NotificationHandler = (method: string, params: unknown) => void;
 
 // Codex app-server API response types
 interface CodexReasoningEffortEntry {
@@ -702,169 +667,18 @@ const CodexModelListResponseSchema = z.object({
     .optional(),
 });
 
-class CodexAppServerClient {
-  private readonly rl: readline.Interface;
-  private readonly pending = new Map<number, PendingRequest>();
-  private readonly requestHandlers = new Map<string, RequestHandler>();
-  private notificationHandler: NotificationHandler | null = null;
-  private nextId = 1;
-  private disposed = false;
-  private stderrBuffer = "";
-
-  constructor(
-    private readonly child: ChildProcessWithoutNullStreams,
-    private readonly logger: Logger,
-  ) {
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => this.handleLine(line));
-
-    child.stderr.on("data", (chunk) => {
-      this.stderrBuffer += chunk.toString();
-      if (this.stderrBuffer.length > 8192) {
-        this.stderrBuffer = this.stderrBuffer.slice(-8192);
-      }
-    });
-
-    child.on("error", (err) => {
-      this.logger.error({ err }, "Codex app-server child process error");
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(err);
-      }
-      this.pending.clear();
-      this.disposed = true;
-    });
-
-    child.on("exit", (code, signal) => {
-      const message =
-        code === 0 && !signal
-          ? "Codex app-server exited"
-          : `Codex app-server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`;
-      const error = new Error(`${message}\n${this.stderrBuffer}`.trim());
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(error);
-      }
-      this.pending.clear();
-      this.disposed = true;
-    });
+function filterCodexThreadsByCwd(
+  threads: Array<Record<string, unknown>>,
+  cwd: string | undefined,
+): Array<Record<string, unknown>> {
+  if (!cwd) {
+    return threads;
   }
-
-  setNotificationHandler(handler: NotificationHandler): void {
-    this.notificationHandler = handler;
-  }
-
-  setRequestHandler(method: string, handler: RequestHandler): void {
-    this.requestHandlers.set(method, handler);
-  }
-
-  request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
-    if (this.disposed) {
-      return Promise.reject(new Error("Codex app-server client is closed"));
-    }
-    const id = this.nextId++;
-    const payload: JsonRpcRequest = { id, method, params };
-    const serialized = JSON.stringify(payload);
-    this.child.stdin.write(`${serialized}\n`);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Codex app-server request timed out for ${method}`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-    });
-  }
-
-  notify(method: string, params?: unknown): void {
-    if (this.disposed) {
-      return;
-    }
-    const payload: JsonRpcNotification = { method, params };
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
-  }
-
-  private writeJsonRpcResponse(response: JsonRpcResponse): void {
-    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
-      return;
-    }
-    try {
-      this.child.stdin.write(`${JSON.stringify(response)}\n`);
-    } catch (error) {
-      this.logger.debug({ error }, "Failed to write Codex app-server JSON-RPC response");
-    }
-  }
-
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.rl.close();
-    try {
-      this.child.stdin.end();
-    } catch {
-      // ignore
-    }
-    const result = await terminateWithTreeKill(this.child, {
-      gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
-      forceTimeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
-      onForceSignal: () => {
-        this.logger.warn(
-          { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
-          "Codex app-server did not exit after SIGTERM; sending SIGKILL",
-        );
-      },
-    });
-    if (result === "kill-timeout") {
-      this.logger.warn(
-        { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-        "Codex app-server did not report exit after SIGKILL",
-      );
-    }
-  }
-
-  private async handleLine(line: string): Promise<void> {
-    if (!line.trim()) return;
-    const raw: unknown = JSON.parse(line);
-    if (!isRecord(raw)) {
-      this.logger.warn({ line }, "Parsed JSON is not an object");
-      return;
-    }
-
-    if (isJsonRpcResponse(raw)) {
-      const id = raw.id;
-      if (raw.result !== undefined || raw.error) {
-        const pending = this.pending.get(id);
-        if (!pending) return;
-        clearTimeout(pending.timer);
-        this.pending.delete(id);
-        if (raw.error) {
-          pending.reject(new Error(raw.error.message ?? "Unknown error"));
-        } else {
-          pending.resolve(raw.result);
-        }
-        return;
-      }
-
-      // Server-initiated request
-      if (isJsonRpcRequest(raw)) {
-        const request = raw;
-        const handler = this.requestHandlers.get(request.method);
-        try {
-          const result = handler ? await handler(request.params) : {};
-          this.writeJsonRpcResponse({ id: request.id, result });
-        } catch (error) {
-          this.writeJsonRpcResponse({
-            id: request.id,
-            error: { message: error instanceof Error ? error.message : String(error) },
-          });
-        }
-        return;
-      }
-    }
-
-    if (isJsonRpcNotification(raw)) {
-      this.notificationHandler?.(raw.method, raw.params);
-    }
-  }
+  // thread/list rows carry an optional cwd. The descriptor builder later
+  // falls back to process.cwd() if the field is missing, so we only match
+  // here when the row genuinely carries a cwd string — otherwise threads
+  // with no cwd would falsely match the daemon's own cwd.
+  return threads.filter((thread) => typeof thread.cwd === "string" && thread.cwd === cwd);
 }
 
 function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
@@ -1730,7 +1544,7 @@ async function loadCodexThreadHistoryTimeline(params: {
   return timeline;
 }
 
-function readCodexThread(client: CodexAppServerClient, threadId: string): Promise<unknown> {
+function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
   return client.request("thread/read", {
     threadId,
     includeTurns: true,
@@ -4768,6 +4582,13 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    if (options?.persistSession === false) {
+      this.logger.debug(
+        "Codex app-server does not expose an ephemeral-session option; persistSession=false is currently a no-op",
+      );
+      // TODO: Honor persistSession=false if app-server adds support, or route
+      // utility generations through `codex exec --ephemeral` in a larger change.
+    }
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const session = new CodexAppServerAgentSession(
@@ -4813,15 +4634,23 @@ export class CodexAppServerAgentClient implements AgentClient {
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
     const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    const client =
+      this.deps._createCodexClient?.(child, this.logger) ??
+      new CodexAppServerClient(child, this.logger);
 
     try {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
 
       const limit = options?.limit ?? 20;
-      const response = toObjectRecord(await client.request("thread/list", { limit }));
-      const threads = Array.isArray(response?.data) ? response.data : [];
+      // thread/list returns the cheap `cwd` field. When the caller supplied
+      // a cwd hint we filter here so the per-thread `thread/read includeTurns`
+      // hydration below only runs for matching threads. Fetch a wider window
+      // when filtering since most threads will be from other cwds.
+      const listLimit = options?.cwd ? Math.max(limit, 50) : limit;
+      const response = toObjectRecord(await client.request("thread/list", { limit: listLimit }));
+      const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+      const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
       const descriptors: PersistedAgentDescriptor[] = await Promise.all(
         threads.slice(0, limit).map(async (thread) => {
           const threadId = typeof thread.id === "string" ? thread.id : "";
@@ -4899,6 +4728,22 @@ export class CodexAppServerAgentClient implements AgentClient {
           hasConfiguredDefaultModel,
         }),
       );
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const threadId = handle.nativeHandle ?? handle.sessionId;
+    if (!threadId) return;
+
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+      await client.request("thread/archive", { threadId });
     } finally {
       await client.dispose();
     }

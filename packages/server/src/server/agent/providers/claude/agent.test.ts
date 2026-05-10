@@ -1,3 +1,6 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
@@ -699,6 +702,133 @@ describe("ClaudeAgentSession context window usage", () => {
     await persistedSession.close();
 
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
+  });
+
+  test("deletes the persisted session jsonl on close when persistSession=false", async () => {
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-persist-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
+
+    try {
+      const sessionId = "session-ephemeral";
+      const cwd = "/tmp/paseo-test-claude";
+      const sanitized = cwd.replace(/[\\/._:]/g, "-");
+      const projectDir = path.join(tmpConfigDir, "projects", sanitized);
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+
+      const queryFactory = createQueryFactoryForTurns([
+        [
+          {
+            type: "system",
+            subtype: "init",
+            session_id: sessionId,
+            permissionMode: "default",
+          },
+          {
+            type: "result",
+            subtype: "success",
+            duration_ms: 10,
+            duration_api_ms: 8,
+            is_error: false,
+            num_turns: 1,
+            result: "done",
+            stop_reason: null,
+            total_cost_usd: 0,
+            usage: {},
+            permission_denials: [],
+            uuid: `${sessionId}-result`,
+            session_id: sessionId,
+          },
+        ],
+      ]);
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      const session = await client.createSession({ provider: "claude", cwd }, undefined, {
+        persistSession: false,
+      });
+      await session.run("turn");
+
+      // Simulate the claude binary writing a session transcript even though we
+      // asked the SDK for ephemeral mode (the CLI ignores --no-session-persistence
+      // outside --print, see issue context).
+      await fs.writeFile(sessionFile, '{"type":"summary"}\n', "utf-8");
+
+      await session.close();
+
+      await expect(fs.access(sessionFile)).rejects.toThrow();
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves the persisted session jsonl on close when persistSession is undefined", async () => {
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-persist-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
+
+    try {
+      const sessionId = "session-persistent";
+      const cwd = "/tmp/paseo-test-claude";
+      const sanitized = cwd.replace(/[\\/._:]/g, "-");
+      const projectDir = path.join(tmpConfigDir, "projects", sanitized);
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+
+      const queryFactory = createQueryFactoryForTurns([
+        [
+          {
+            type: "system",
+            subtype: "init",
+            session_id: sessionId,
+            permissionMode: "default",
+          },
+          {
+            type: "result",
+            subtype: "success",
+            duration_ms: 10,
+            duration_api_ms: 8,
+            is_error: false,
+            num_turns: 1,
+            result: "done",
+            stop_reason: null,
+            total_cost_usd: 0,
+            usage: {},
+            permission_denials: [],
+            uuid: `${sessionId}-result`,
+            session_id: sessionId,
+          },
+        ],
+      ]);
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      const session = await client.createSession({ provider: "claude", cwd });
+      await session.run("turn");
+
+      await fs.writeFile(sessionFile, '{"type":"summary"}\n', "utf-8");
+
+      await session.close();
+
+      await expect(fs.access(sessionFile)).resolves.toBeUndefined();
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true });
+    }
   });
 
   test("convertUsage includes contextWindowMaxTokens and derives used tokens from result usage as initial fallback", async () => {

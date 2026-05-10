@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a new feature or a change to existing behavior.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Paseo is opinionated and maintained by one person. Feature requests are welcome, but they get evaluated against product fit, not just usefulness, and the bar is whether the change keeps the product lean enough for one person to maintain.
+
+        Big ideas are better discussed in [Discord](https://discord.gg/jz8T2uahpH) first. And please don't open a feature request and a PR at the same time, get alignment on the idea before writing code.
+
+  - type: checkboxes
+    id: prior-search
+    attributes:
+      label: Prior search
+      options:
+        - label: I searched existing issues and discussions, and this isn't already proposed.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem
+      description: What are you actually trying to do, and why is the current behavior in the way?
+      placeholder: |
+        When I'm doing X, I want to Y, but Paseo currently Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would solve it
+      description: A rough sketch of the change. Mockups, screenshots from other apps, or a short video are very welcome, especially for UI proposals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Optional. What else did you try, and why doesn't it work?

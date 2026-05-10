@@ -1,9 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey } from "./agent-history-query-key";
 
 export const ARCHIVE_AGENT_PENDING_QUERY_KEY = ["archive-agent-pending"] as const;
+const EMPTY_PENDING_ARCHIVE_AGENT_IDS = new Set<string>();
 
 export interface ArchiveAgentInput {
   serverId: string;
@@ -65,6 +66,35 @@ function toArchiveKey(input: ArchiveAgentInput): string {
 
 function readPendingState(queryClient: QueryClient): ArchiveAgentPendingState {
   return queryClient.getQueryData<ArchiveAgentPendingState>(ARCHIVE_AGENT_PENDING_QUERY_KEY) ?? {};
+}
+
+function selectPendingArchiveAgentIds(
+  pendingState: ArchiveAgentPendingState,
+  serverId: string,
+): ReadonlySet<string> {
+  const normalizedServerId = serverId.trim();
+  if (!normalizedServerId) {
+    return EMPTY_PENDING_ARCHIVE_AGENT_IDS;
+  }
+
+  const prefix = `${normalizedServerId}:`;
+  let agentIds: string[] | null = null;
+  for (const key of Object.keys(pendingState)) {
+    if (!key.startsWith(prefix)) {
+      continue;
+    }
+    const agentId = key.slice(prefix.length);
+    if (!agentId) {
+      continue;
+    }
+    agentIds ??= [];
+    agentIds.push(agentId);
+  }
+
+  if (!agentIds || agentIds.length === 0) {
+    return EMPTY_PENDING_ARCHIVE_AGENT_IDS;
+  }
+  return new Set(agentIds);
 }
 
 function setAgentArchiving(input: SetAgentArchivingInput): void {
@@ -329,16 +359,28 @@ export function clearArchiveAgentPending(input: IsAgentArchivingInput): void {
   });
 }
 
-export function useArchiveAgent() {
-  const queryClient = useQueryClient();
-
-  const pendingQuery = useQuery({
+function useArchiveAgentPendingQuery() {
+  return useQuery({
     queryKey: ARCHIVE_AGENT_PENDING_QUERY_KEY,
     queryFn: async (): Promise<ArchiveAgentPendingState> => ({}),
     initialData: {} as ArchiveAgentPendingState,
     staleTime: Infinity,
     gcTime: Infinity,
   });
+}
+
+export function usePendingArchiveAgentIds(serverId: string): ReadonlySet<string> {
+  const pendingQuery = useArchiveAgentPendingQuery();
+  return useMemo(
+    () => selectPendingArchiveAgentIds(pendingQuery.data ?? {}, serverId),
+    [pendingQuery.data, serverId],
+  );
+}
+
+export function useArchiveAgent() {
+  const queryClient = useQueryClient();
+
+  const pendingQuery = useArchiveAgentPendingQuery();
 
   const archiveMutation = useMutation({
     mutationFn: async (input: ArchiveAgentInput): Promise<{ archivedAt: string }> => {
@@ -434,6 +476,7 @@ export function useArchiveAgent() {
 export const __private__ = {
   toArchiveKey,
   readPendingState,
+  selectPendingArchiveAgentIds,
   setAgentArchiving,
   isAgentArchiving,
   removeAgentFromListPayload,

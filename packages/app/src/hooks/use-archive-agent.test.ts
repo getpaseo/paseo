@@ -1,10 +1,19 @@
+/**
+ * @vitest-environment jsdom
+ */
+import React from "react";
 import type { DaemonClient } from "@server/client/daemon-client";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey } from "./agent-history-query-key";
-import { __private__, applyArchivedAgentCloseResults } from "./use-archive-agent";
+import {
+  __private__,
+  applyArchivedAgentCloseResults,
+  usePendingArchiveAgentIds,
+} from "./use-archive-agent";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -31,6 +40,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     title: "Agent 1",
     cwd: "/repo",
     model: null,
+    parentAgentId: null,
     labels: {},
     archivedAt: null,
     ...overrides,
@@ -89,6 +99,48 @@ describe("useArchiveAgent", () => {
         agentId: "agent-1",
       }),
     ).toBe(false);
+  });
+
+  it("selects pending archive ids for a single server", () => {
+    const pendingIds = __private__.selectPendingArchiveAgentIds(
+      {
+        "server-a:agent-1": true,
+        "server-a:agent-2": true,
+        "server-b:agent-3": true,
+      },
+      "server-a",
+    );
+
+    expect(Array.from(pendingIds)).toEqual(["agent-1", "agent-2"]);
+  });
+
+  it("subscribes to pending archive ids through react-query", async () => {
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result } = renderHook(() => usePendingArchiveAgentIds("server-a"), { wrapper });
+
+    expect(Array.from(result.current)).toEqual([]);
+
+    act(() => {
+      __private__.setAgentArchiving({
+        queryClient,
+        serverId: "server-a",
+        agentId: "agent-1",
+        isArchiving: true,
+      });
+      __private__.setAgentArchiving({
+        queryClient,
+        serverId: "server-b",
+        agentId: "agent-2",
+        isArchiving: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(Array.from(result.current)).toEqual(["agent-1"]);
+    });
   });
 
   it("removes an archived agent from cached list payloads", () => {

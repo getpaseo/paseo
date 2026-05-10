@@ -24,6 +24,7 @@ import type { CreatePaseoWorktreeWorkflowFn } from "../worktree-session.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -281,6 +282,7 @@ function createGitHubServiceStub(): GitHubService {
       number: 1,
       url: "https://github.com/acme/repo/pull/1",
     }),
+    mergePullRequest: async () => ({ success: true }),
     isAuthenticated: async () => true,
     invalidate: () => {},
   };
@@ -1246,7 +1248,7 @@ describe("create_agent MCP tool", () => {
       undefined,
       {
         labels: {
-          "paseo.parent-agent-id": "voice-agent",
+          [PARENT_AGENT_ID_LABEL]: "voice-agent",
           source: "voice",
         },
       },
@@ -1345,13 +1347,13 @@ describe("create_agent MCP tool", () => {
     );
   });
 
-  it("refuses cross-provider mode inheritance when no explicit mode is given", async () => {
+  it("refuses cross-provider mode inheritance when caller is not in an unattended mode", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
       cwd: existingCwd,
       provider: "claude",
-      currentModeId: "bypassPermissions",
+      currentModeId: "default",
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({
@@ -1369,9 +1371,46 @@ describe("create_agent MCP tool", () => {
         initialPrompt: "Do work",
       }),
     ).rejects.toThrow(
-      "cannot inherit mode 'bypassPermissions' from caller (provider 'claude') for new agent (provider 'opencode'). Pass an explicit mode. Available modes for 'opencode': build, full-access, plan",
+      "cannot inherit mode 'default' from caller (provider 'claude') for new agent (provider 'opencode'). Pass an explicit mode. Available modes for 'opencode': build, full-access, plan",
     );
     expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("inherits the target provider's unattended mode when caller is unattended cross-provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "claude",
+      currentModeId: "bypassPermissions",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "full-access",
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.handler({
+      title: "Child",
+      provider: "opencode/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ modeId: "full-access" }),
+      undefined,
+      expect.any(Object),
+    );
   });
 
   it("accepts an explicit valid mode across providers", async () => {
