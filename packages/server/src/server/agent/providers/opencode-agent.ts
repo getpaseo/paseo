@@ -83,6 +83,7 @@ const OPENCODE_STORAGE_SESSION_LIMIT = 200;
 // requests; SSE path broken).
 const OPENCODE_EOF_RECOVERY_TIMEOUT_MS = 5 * 60 * 1000;
 const OPENCODE_EOF_RECOVERY_POLL_INTERVAL_MS = 1_000;
+const OPENCODE_RECOVERY_ABORT_TIMEOUT_MS = 2_000;
 // If OpenCode silently rejects the prompt (invalid model/mode/auth), no assistant
 // message is ever persisted. Bound the wait so the turn fails in seconds instead
 // of hanging until the completion cap. Valid models normally persist their first
@@ -2746,20 +2747,98 @@ class OpenCodeAgentSession implements AgentSession {
 
       const now = Date.now();
       if (!observedActivity && now >= livenessDeadline) {
-        traceOpenCode("recovery.liveness-exhausted", { turnId, attempt });
-        return false;
+        const deferred = await this.deferForPendingPermissionOrFailRecoveredTurnAfterCap(
+          turnId,
+          attempt,
+          "liveness",
+        );
+        if (deferred) {
+          continue;
+        }
+        return true;
       }
       if (now >= completionDeadline) {
-        traceOpenCode("recovery.exhausted", { turnId, attempt });
-        return false;
+        const deferred = await this.deferForPendingPermissionOrFailRecoveredTurnAfterCap(
+          turnId,
+          attempt,
+          "completion",
+        );
+        if (deferred) {
+          continue;
+        }
+        return true;
       }
       const waitMs = Math.min(this.recovery.pollIntervalMs, completionDeadline - now);
-      if (waitMs <= 0) {
-        traceOpenCode("recovery.exhausted", { turnId, attempt });
-        return false;
-      }
       await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
     }
+  }
+
+  private async deferForPendingPermissionOrFailRecoveredTurnAfterCap(
+    turnId: string,
+    attempt: number,
+    cap: "liveness" | "completion",
+  ): Promise<boolean> {
+    if (this.pendingPermissions.size > 0) {
+      // A pending OpenCode question/permission means the turn is blocked on
+      // user input, not dead. Keep polling until the user response lets the
+      // assistant finish or the turn is canceled.
+      traceOpenCode(`recovery.${cap}-deferred-for-permission`, {
+        turnId,
+        attempt,
+        pendingPermissionIds: Array.from(this.pendingPermissions.keys()),
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, this.recovery.pollIntervalMs));
+      return true;
+    }
+
+    traceOpenCode(cap === "liveness" ? "recovery.liveness-exhausted" : "recovery.exhausted", {
+      turnId,
+      attempt,
+    });
+    await this.failRecoveredTurnAfterCap(turnId, cap);
+    return false;
+  }
+
+  private async failRecoveredTurnAfterCap(
+    turnId: string,
+    cap: "liveness" | "completion",
+  ): Promise<void> {
+    await this.abortOpenCodeSessionAfterRecoveryCap(turnId, cap);
+    this.finishForegroundTurn(
+      {
+        type: "turn_failed",
+        provider: "opencode",
+        error: "OpenCode event stream ended before the turn reached a terminal state",
+      },
+      turnId,
+    );
+  }
+
+  private async abortOpenCodeSessionAfterRecoveryCap(
+    turnId: string,
+    cap: "liveness" | "completion",
+  ): Promise<void> {
+    const abortPromise = this.client.session
+      .abort({
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+      })
+      .catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId, turnId, cap },
+          "OpenCode session.abort rejected after EOF recovery cap",
+        );
+      });
+    await withTimeout(
+      abortPromise,
+      OPENCODE_RECOVERY_ABORT_TIMEOUT_MS,
+      "OpenCode session.abort",
+    ).catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId, turnId, cap },
+        "OpenCode session.abort exceeded the EOF recovery cap",
+      );
+    });
   }
 
   private async pollPendingQuestionsAndPermissions(turnId: string): Promise<number> {
