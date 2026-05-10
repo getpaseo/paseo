@@ -84,6 +84,7 @@ const OPENCODE_STORAGE_SESSION_LIMIT = 200;
 const OPENCODE_EOF_RECOVERY_TIMEOUT_MS = 5 * 60 * 1000;
 const OPENCODE_EOF_RECOVERY_POLL_INTERVAL_MS = 1_000;
 const OPENCODE_RECOVERY_ABORT_TIMEOUT_MS = 2_000;
+const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 // If OpenCode silently rejects the prompt (invalid model/mode/auth), no assistant
 // message is ever persisted. Bound the wait so the turn fails in seconds instead
 // of hanging until the completion cap. Valid models normally persist their first
@@ -2207,6 +2208,7 @@ class OpenCodeAgentSession implements AgentSession {
   private currentMode: string = "default";
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
+  private pendingAbortPromise: Promise<void> | null = null;
   private accumulatedUsage: AgentUsage = {};
   private mcpConfigured = false;
   private mcpSetupPromise: Promise<void> | null = null;
@@ -2320,17 +2322,7 @@ class OpenCodeAgentSession implements AgentSession {
     // quickly while still giving OpenCode a chance to confirm the abort
     // cleanly. Drop the timeout once upstream returns abort acknowledgement
     // before tool teardown.
-    const abortPromise = this.client.session
-      .abort({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-      })
-      .catch((error) => {
-        this.logger.warn(
-          { err: error, sessionId: this.sessionId, turnId },
-          "OpenCode session.abort rejected",
-        );
-      });
+    const abortPromise = this.beginSessionAbort(turnId, "interrupt");
     await withTimeout(abortPromise, 2_000, "OpenCode session.abort").catch((error) => {
       this.logger.warn(
         { err: error, sessionId: this.sessionId, turnId },
@@ -2345,6 +2337,46 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
+  private beginSessionAbort(turnId: string | null, reason: string): Promise<void> {
+    const abortPromise = this.client.session
+      .abort({
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+      })
+      .then(() => undefined)
+      .catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId, turnId, reason },
+          "OpenCode session.abort rejected",
+        );
+      });
+    const trackedAbortPromise = abortPromise.finally(() => {
+      if (this.pendingAbortPromise === trackedAbortPromise) {
+        this.pendingAbortPromise = null;
+      }
+    });
+    this.pendingAbortPromise = trackedAbortPromise;
+    return trackedAbortPromise;
+  }
+
+  private async awaitPendingAbortBeforeStartingTurn(): Promise<void> {
+    const pendingAbortPromise = this.pendingAbortPromise;
+    if (!pendingAbortPromise) {
+      return;
+    }
+
+    await withTimeout(
+      pendingAbortPromise,
+      OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
+      "OpenCode pending session.abort",
+    ).catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "OpenCode session.abort was still pending before starting the next turn",
+      );
+    });
+  }
+
   async startTurn(
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
@@ -2352,6 +2384,7 @@ class OpenCodeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
+    await this.awaitPendingAbortBeforeStartingTurn();
 
     this.foregroundTurnStartedAt = Date.now();
     this.runningToolCalls.clear();
@@ -2818,17 +2851,7 @@ class OpenCodeAgentSession implements AgentSession {
     turnId: string,
     cap: "liveness" | "completion",
   ): Promise<void> {
-    const abortPromise = this.client.session
-      .abort({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-      })
-      .catch((error) => {
-        this.logger.warn(
-          { err: error, sessionId: this.sessionId, turnId, cap },
-          "OpenCode session.abort rejected after EOF recovery cap",
-        );
-      });
+    const abortPromise = this.beginSessionAbort(turnId, `recovery-${cap}`);
     await withTimeout(
       abortPromise,
       OPENCODE_RECOVERY_ABORT_TIMEOUT_MS,

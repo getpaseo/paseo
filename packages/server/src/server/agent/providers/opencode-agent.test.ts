@@ -2357,6 +2357,59 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(failed.error).toContain("boom: synchronous throw");
     }
   });
+
+  test("delays the next prompt until a slow interrupt abort settles", async () => {
+    vi.useFakeTimers();
+    const abortDeferred = createTestDeferred<{ data: boolean; error: undefined }>();
+    const promptAsync = vi.fn().mockResolvedValue({ data: {}, error: undefined });
+    const abort = vi
+      .fn()
+      .mockReturnValueOnce(abortDeferred.promise)
+      .mockResolvedValue({ data: true, error: undefined });
+    const fakeClient = {
+      event: {
+        subscribe: vi.fn().mockImplementation(
+          async (
+            _params: { directory: string },
+            options: { signal: AbortSignal },
+          ): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
+            stream: abortableOpenCodeStream(options.signal),
+          }),
+        ),
+      },
+      session: {
+        promptAsync,
+        abort,
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+      "/tmp/opencode-storage",
+    );
+
+    await session.startTurn("first");
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    const interruptPromise = session.interrupt();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await interruptPromise;
+    expect(abort).toHaveBeenCalledTimes(1);
+
+    const secondTurnPromise = session.startTurn("second");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    abortDeferred.resolve({ data: true, error: undefined });
+    await secondTurnPromise;
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    await session.interrupt();
+    vi.useRealTimers();
+  });
 });
 
 describe("OpenCode persisted sessions", () => {
@@ -2478,5 +2531,36 @@ function buildTextPart(messageId: string, partId: string, text: string): unknown
     messageID: messageId,
     type: "text",
     text,
+  };
+}
+
+function createTestDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function abortableOpenCodeStream(signal: AbortSignal): AsyncIterable<OpenCodeEvent> {
+  return {
+    [Symbol.asyncIterator]: () => ({
+      next: () =>
+        new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
+          if (signal.aborted) {
+            resolve({ done: true, value: undefined });
+            return;
+          }
+          signal.addEventListener("abort", () => resolve({ done: true, value: undefined }), {
+            once: true,
+          });
+        }),
+    }),
   };
 }
