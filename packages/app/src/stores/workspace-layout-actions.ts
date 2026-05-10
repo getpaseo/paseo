@@ -1,5 +1,7 @@
 import invariant from "tiny-invariant";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import { defaultWorkspaceLayoutIds } from "@/stores/workspace-layout-ids";
+import type { WorkspaceLayoutNodeIdPrefix } from "@/stores/workspace-layout-ids";
 import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
@@ -86,7 +88,7 @@ interface InsertSplitInternalInput {
   targetPaneId: string;
   tabId: string;
   position: "left" | "right" | "top" | "bottom";
-  createNodeId: (prefix: "pane" | "group") => string;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
 }
 
 interface InsertSplitInternalResult {
@@ -142,7 +144,7 @@ interface SplitPaneInLayoutInput {
   tabId: string;
   targetPaneId: string;
   position: "left" | "right" | "top" | "bottom";
-  createNodeId: (prefix: "pane" | "group") => string;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
   maxTreeDepth: number;
 }
 
@@ -155,7 +157,7 @@ interface SplitPaneEmptyInLayoutInput {
   layout: WorkspaceLayout;
   targetPaneId: string;
   position: "left" | "right" | "top" | "bottom";
-  createNodeId: (prefix: "pane" | "group") => string;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
   maxTreeDepth: number;
 }
 
@@ -230,14 +232,6 @@ function normalizeTabIds(list: unknown): string[] {
     next.push(tabId);
   }
   return next;
-}
-
-function generateNodeId(prefix: "pane" | "group"): string {
-  const randomValue =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `${prefix}_${randomValue}`;
 }
 
 function createPaneNode(input: {
@@ -996,13 +990,16 @@ export function insertSplit(
   targetPaneId: string,
   tabId: string,
   position: "left" | "right" | "top" | "bottom",
+  createNodeId: (
+    prefix: WorkspaceLayoutNodeIdPrefix,
+  ) => string = defaultWorkspaceLayoutIds.createNodeId,
 ): SplitNode {
   return insertSplitInternal({
     root: asInternalNode(root),
     targetPaneId,
     tabId,
     position,
-    createNodeId: generateNodeId,
+    createNodeId,
   }).root;
 }
 
