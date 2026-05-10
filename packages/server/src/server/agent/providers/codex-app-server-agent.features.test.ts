@@ -1,7 +1,11 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
 import { __codexAppServerInternals } from "./codex-app-server-agent.js";
+import {
+  createFakeCodexAppServer,
+  type FakeCodexAppServer,
+} from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 const CODEX_PROVIDER = "codex";
@@ -27,39 +31,7 @@ const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
   },
 ];
 
-interface CodexRequestFn {
-  (method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
-}
-
-interface CodexClientLike {
-  request: CodexRequestFn;
-}
-
-interface CodexSessionTestAccess {
-  client: CodexClientLike | null;
-  connected: boolean;
-  currentThreadId: string | null;
-  serviceTier: "fast" | null;
-  planModeEnabled: boolean;
-  cachedRuntimeInfo: unknown;
-  ensureThreadLoaded: () => Promise<void>;
-  ensureThread: () => Promise<void>;
-  buildUserInput: (...args: unknown[]) => Promise<unknown>;
-  resolveSlashCommandInvocation: (...args: unknown[]) => Promise<unknown>;
-  collaborationModes: CollaborationModeRecord[];
-  refreshResolvedCollaborationMode(): void;
-}
-
-type CodexFeaturesTestSession = AgentSession & {
-  connected: boolean;
-  currentThreadId: string | null;
-  collaborationModes: CollaborationModeRecord[];
-  refreshResolvedCollaborationMode(): void;
-};
-
-function asInternals(session: CodexFeaturesTestSession): CodexSessionTestAccess {
-  return session as unknown as CodexSessionTestAccess;
-}
+type CodexFeaturesTestSession = AgentSession;
 
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
@@ -71,28 +43,36 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
-function createSession(
-  configOverrides: Partial<AgentSessionConfig> = {},
-): CodexFeaturesTestSession {
+function createSessionHarness(configOverrides: Partial<AgentSessionConfig> = {}): {
+  session: CodexFeaturesTestSession;
+  appServer: FakeCodexAppServer;
+} {
   const config = createConfig(configOverrides);
+  const appServer = createFakeCodexAppServer({
+    "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
+  });
   const session = new __codexAppServerInternals.CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
     null,
     createTestLogger(),
-    () => {
-      throw new Error("Test session cannot spawn Codex app-server");
-    },
-  ) as unknown as CodexFeaturesTestSession;
-  session.connected = true;
-  session.currentThreadId = "test-thread";
-  session.collaborationModes = TEST_COLLABORATION_MODES;
-  session.refreshResolvedCollaborationMode();
-  return session;
+    async () => appServer.child,
+  ) as CodexFeaturesTestSession;
+  return { session, appServer };
+}
+
+async function createConnectedSession(configOverrides: Partial<AgentSessionConfig> = {}): Promise<{
+  session: CodexFeaturesTestSession;
+  appServer: FakeCodexAppServer;
+}> {
+  const harness = createSessionHarness(configOverrides);
+  await harness.session.connect();
+  harness.appServer.assertNoErrors();
+  return harness;
 }
 
 describe("Codex app-server provider features", () => {
   test("features returns fast and plan toggles when supported", async () => {
-    const session = createSession();
+    const { session } = await createConnectedSession();
 
     expect(session.features).toEqual([
       {
@@ -140,8 +120,8 @@ describe("Codex app-server provider features", () => {
     ]);
   });
 
-  test("features returns only plan toggle when model does not support fast mode", () => {
-    const session = createSession({ model: "gpt-3.5-turbo" });
+  test("features returns only plan toggle when model does not support fast mode", async () => {
+    const { session } = await createConnectedSession({ model: "gpt-3.5-turbo" });
 
     expect(session.features).toEqual([
       {
@@ -157,49 +137,56 @@ describe("Codex app-server provider features", () => {
   });
 
   test("setFeature('fast_mode', true) sets serviceTier to fast", async () => {
-    const session = createSession();
+    const { session, appServer } = await createConnectedSession();
 
     await session.setFeature?.("fast_mode", true);
+    await session.startTurn("hello");
 
-    expect(asInternals(session).serviceTier).toBe("fast");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      serviceTier: "fast",
+    });
   });
 
   test("setFeature('fast_mode', false) clears serviceTier to null", async () => {
-    const session = createSession({
+    const { session, appServer } = await createConnectedSession({
       featureValues: { fast_mode: true },
     });
 
     await session.setFeature?.("fast_mode", false);
+    await session.startTurn("hello");
 
-    expect(asInternals(session).serviceTier).toBeNull();
+    await expect(appServer.waitForTurnStart()).resolves.not.toMatchObject({
+      serviceTier: expect.anything(),
+    });
   });
 
-  test("setFeature invalidates cachedRuntimeInfo", async () => {
-    const session = createSession();
+  test("setFeature invalidates runtime info", async () => {
+    const { session } = await createConnectedSession();
 
-    await session.getRuntimeInfo();
-    expect(asInternals(session).cachedRuntimeInfo).not.toBeNull();
+    await expect(session.getRuntimeInfo()).resolves.not.toMatchObject({
+      extra: { collaborationMode: "Plan" },
+    });
 
-    await session.setFeature?.("fast_mode", true);
+    await session.setFeature?.("plan_mode", true);
 
-    expect(asInternals(session).cachedRuntimeInfo).toBeNull();
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      extra: { collaborationMode: "Plan" },
+    });
   });
 
   test("setFeature throws for unknown feature ids", async () => {
-    const session = createSession();
+    const { session } = createSessionHarness();
 
     await expect(session.setFeature?.("unknown_feature", true)).rejects.toThrow(
       "Unknown Codex feature: unknown_feature",
     );
   });
 
-  test("constructor restores feature flags from config.featureValues", () => {
-    const session = createSession({
+  test("constructor restores feature flags from config.featureValues", async () => {
+    const { session, appServer } = await createConnectedSession({
       featureValues: { fast_mode: true, plan_mode: true },
     });
 
-    expect(asInternals(session).serviceTier).toBe("fast");
-    expect(asInternals(session).planModeEnabled).toBe(true);
     expect(session.features).toEqual([
       {
         type: "toggle",
@@ -220,41 +207,29 @@ describe("Codex app-server provider features", () => {
         value: true,
       },
     ]);
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      serviceTier: "fast",
+      collaborationMode: expect.objectContaining({
+        mode: "plan",
+      }),
+    });
   });
 
   test("startTurn includes serviceTier when fast mode is enabled", async () => {
-    const session = createSession();
-    const request = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).client = { request };
-    asInternals(session).connected = true;
-    asInternals(session).currentThreadId = "thread-123";
-    asInternals(session).ensureThreadLoaded = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).ensureThread = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).buildUserInput = vi.fn().mockResolvedValue([{ type: "text", text: "hi" }]);
-    asInternals(session).resolveSlashCommandInvocation = vi.fn().mockResolvedValue(null);
+    const { session, appServer } = await createConnectedSession();
 
     await session.setFeature?.("fast_mode", true);
     await session.startTurn("hello");
 
-    expect(request).toHaveBeenCalledWith(
-      "turn/start",
-      expect.objectContaining({
-        serviceTier: "fast",
-      }),
-      expect.any(Number),
-    );
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      serviceTier: "fast",
+    });
   });
 
   test("setModel clears fast mode when switching to an unsupported model", async () => {
-    const session = createSession();
-    const request = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).client = { request };
-    asInternals(session).connected = true;
-    asInternals(session).currentThreadId = "thread-123";
-    asInternals(session).ensureThreadLoaded = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).ensureThread = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).buildUserInput = vi.fn().mockResolvedValue([{ type: "text", text: "hi" }]);
-    asInternals(session).resolveSlashCommandInvocation = vi.fn().mockResolvedValue(null);
+    const { session, appServer } = await createConnectedSession();
 
     await session.setFeature?.("fast_mode", true);
     await session.setModel("gpt-3.5-turbo");
@@ -270,41 +245,23 @@ describe("Codex app-server provider features", () => {
         value: false,
       },
     ]);
-    expect(asInternals(session).serviceTier).toBeNull();
-
     await session.startTurn("hello");
 
-    expect(request).toHaveBeenCalledWith(
-      "turn/start",
-      expect.not.objectContaining({
-        serviceTier: expect.anything(),
-      }),
-      expect.any(Number),
-    );
+    await expect(appServer.waitForTurnStart()).resolves.not.toMatchObject({
+      serviceTier: expect.anything(),
+    });
   });
 
   test("startTurn switches collaboration mode when plan mode is enabled", async () => {
-    const session = createSession();
-    const request = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).client = { request };
-    asInternals(session).connected = true;
-    asInternals(session).currentThreadId = "thread-123";
-    asInternals(session).ensureThreadLoaded = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).ensureThread = vi.fn().mockResolvedValue(undefined);
-    asInternals(session).buildUserInput = vi.fn().mockResolvedValue([{ type: "text", text: "hi" }]);
-    asInternals(session).resolveSlashCommandInvocation = vi.fn().mockResolvedValue(null);
+    const { session, appServer } = await createConnectedSession();
 
     await session.setFeature?.("plan_mode", true);
     await session.startTurn("hello");
 
-    expect(request).toHaveBeenCalledWith(
-      "turn/start",
-      expect.objectContaining({
-        collaborationMode: expect.objectContaining({
-          mode: "plan",
-        }),
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+      collaborationMode: expect.objectContaining({
+        mode: "plan",
       }),
-      expect.any(Number),
-    );
+    });
   });
 });

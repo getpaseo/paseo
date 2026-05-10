@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 import type { AgentSession, AgentStreamEvent } from "../../../agent-sdk-types.js";
 
 type JsonObject = Record<string, unknown>;
+type FakeCodexAppServerHandler = (params: unknown) => unknown;
 type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -14,6 +15,7 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   assertNoErrors(): void;
+  waitForTurnStart(): Promise<JsonObject>;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -41,9 +43,30 @@ export function createCodexAppServerChildProcess(): CodexAppServerChildProcess {
 }
 
 export function createFakeCodexAppServer(
-  handlers: Record<string, (params: unknown) => unknown>,
+  handlers: Record<string, FakeCodexAppServerHandler> = {},
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
+  const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
+    initialize: () => ({}),
+    "collaborationMode/list": () => ({ data: [] }),
+    "config/read": () => ({ config: {} }),
+    getUserSavedConfig: () => ({ config: {} }),
+    "model/list": () => ({
+      data: [
+        {
+          id: "gpt-5.4",
+          isDefault: true,
+          defaultReasoningEffort: "medium",
+        },
+      ],
+    }),
+    "skills/list": () => ({ data: [] }),
+    "thread/start": () => ({ thread: { id: "thread-1" } }),
+    "thread/loaded/list": () => ({ data: [] }),
+    "thread/resume": () => ({}),
+    "turn/start": () => ({}),
+    ...handlers,
+  };
   const messages: JsonObject[] = [];
   const errors: Error[] = [];
   const approvalRequestIds = new Map<string, number>();
@@ -67,7 +90,7 @@ export function createFakeCodexAppServer(
       return;
     }
 
-    const handler = handlers[message.method];
+    const handler = responseHandlers[message.method];
     if (!handler) {
       errors.push(new Error(`Unexpected Codex app-server request: ${message.method}`));
       return;
@@ -143,6 +166,13 @@ export function createFakeCodexAppServer(
         throw errors[0];
       }
     },
+    async waitForTurnStart() {
+      const message = await waitForMessage(
+        (candidate) => candidate.method === "turn/start",
+        "turn start request",
+      );
+      return toJsonObject(message.params);
+    },
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;
       nextServerRequestId += 1;
@@ -169,6 +199,13 @@ export function createFakeCodexAppServer(
       return message.result;
     },
   };
+}
+
+function toJsonObject(value: unknown): JsonObject {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as JsonObject;
+  }
+  return {};
 }
 
 export function waitForNextPermission(
