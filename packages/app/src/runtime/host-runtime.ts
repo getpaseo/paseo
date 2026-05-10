@@ -1506,10 +1506,12 @@ export class HostRuntimeStore {
   }
 
   async upsertConnectionFromOffer(offer: ConnectionOffer, label?: string): Promise<HostProfile> {
+    // COMPAT(oldRelayOfferTls): added in v0.1.73, remove after 2026-11-10.
+    const useTls = offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint);
     return this.upsertRelayConnection({
       serverId: offer.serverId,
       relayEndpoint: offer.relay.endpoint,
-      useTls: offer.relay.useTls,
+      useTls,
       daemonPublicKeyB64: offer.daemonPublicKeyB64,
       label,
     });

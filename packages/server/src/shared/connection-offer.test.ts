@@ -40,7 +40,7 @@ describe("connection offer", () => {
     expect(parseConnectionOfferFromUrl(`https://app.paseo.sh/#offer=${encoded}`)).toEqual(offer);
   });
 
-  it("defaults relay TLS to false when absent", () => {
+  it("leaves relay TLS unset when absent", () => {
     expect(
       ConnectionOfferSchema.parse({
         v: 2,
@@ -52,7 +52,7 @@ describe("connection offer", () => {
       v: 2,
       serverId: "server-123",
       daemonPublicKeyB64: "pubkey",
-      relay: { endpoint: "relay.example.com:80", useTls: false },
+      relay: { endpoint: "relay.example.com:80" },
     });
   });
 

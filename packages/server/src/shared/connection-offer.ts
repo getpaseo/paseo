@@ -12,7 +12,7 @@ export const ConnectionOfferV2Schema = z.object({
   daemonPublicKeyB64: z.string().min(1),
   relay: z.object({
     endpoint: z.string().min(1),
-    useTls: z.boolean().optional().default(false),
+    useTls: z.boolean().optional(),
   }),
 });
 
