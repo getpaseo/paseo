@@ -2210,6 +2210,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        cancelLiveRun: (liveAgentId) => this.interruptAgentIfRunning(liveAgentId),
       },
       agentId,
     );

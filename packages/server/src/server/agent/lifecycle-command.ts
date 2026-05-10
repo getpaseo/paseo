@@ -31,6 +31,7 @@ export interface AgentLifecycleCommandDependencies {
   agentManager: LifecycleAgentManager;
   agentStorage: LifecycleAgentStorage;
   logger: Logger;
+  cancelLiveRun?: (agentId: string) => Promise<void>;
 }
 
 export interface CancelAgentRunResult {
@@ -94,7 +95,11 @@ export async function archiveAgentCommand(
 ): Promise<ArchiveAgentResult> {
   const liveAgent = dependencies.agentManager.getAgent(agentId);
   if (liveAgent) {
-    await cancelAgentRunCommand(dependencies, agentId);
+    if (dependencies.cancelLiveRun) {
+      await dependencies.cancelLiveRun(agentId);
+    } else {
+      await cancelAgentRunCommand(dependencies, agentId);
+    }
     await dependencies.agentManager.clearAgentAttention(agentId).catch(() => undefined);
     await dependencies.agentManager.archiveAgent(agentId);
   } else {
