@@ -1,32 +1,67 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  spawnSync: vi.fn(),
-  spawnProcess: vi.fn(),
-}));
+import {
+  type DaemonLaunchRuntime,
+  type DetachedDaemonProcess,
+  startLocalDaemonDetached,
+  startLocalDaemonForeground,
+} from "./local-daemon.js";
 
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return {
-    ...actual,
-    spawnSync: mocks.spawnSync,
-  };
-});
+type RecordedDaemonLaunch =
+  | {
+      mode: "detached";
+      command: string;
+      args: string[];
+      options: Parameters<DaemonLaunchRuntime["spawnDetached"]>[2];
+    }
+  | {
+      mode: "foreground";
+      command: string;
+      args: string[];
+      options: Parameters<DaemonLaunchRuntime["spawnForeground"]>[2];
+    };
 
-vi.mock("@getpaseo/server", async () => {
-  const actual = await vi.importActual<typeof import("@getpaseo/server")>("@getpaseo/server");
-  return {
-    ...actual,
-    loadConfig: () => ({ listen: "127.0.0.1:6767" }),
-    resolvePaseoHome: (env: NodeJS.ProcessEnv) => env.PASEO_HOME ?? "/tmp/paseo",
-    spawnProcess: mocks.spawnProcess,
-  };
-});
-
-class FakeChildProcess extends EventEmitter {
+class FakeDaemonProcess extends EventEmitter implements DetachedDaemonProcess {
   pid = 4242;
-  unref = vi.fn();
+  wasUnreferenced = false;
+
+  unref(): void {
+    this.wasUnreferenced = true;
+  }
+}
+
+class FakeDaemonRuntime implements DaemonLaunchRuntime {
+  readonly recordedLaunches: RecordedDaemonLaunch[] = [];
+  readonly daemonProcess = new FakeDaemonProcess();
+  foregroundStatus = 0;
+  runnerEntry = "/repo/packages/server/scripts/supervisor-entrypoint.ts";
+
+  resolveRunnerEntry(): string {
+    return this.runnerEntry;
+  }
+
+  resolveHome(env: NodeJS.ProcessEnv): string {
+    return env.PASEO_HOME ?? "/tmp/paseo";
+  }
+
+  spawnDetached(
+    command: string,
+    args: string[],
+    options: Parameters<DaemonLaunchRuntime["spawnDetached"]>[2],
+  ): DetachedDaemonProcess {
+    this.recordedLaunches.push({ mode: "detached", command, args, options });
+    return this.daemonProcess;
+  }
+
+  spawnForeground(
+    command: string,
+    args: string[],
+    options: Parameters<DaemonLaunchRuntime["spawnForeground"]>[2],
+  ) {
+    this.recordedLaunches.push({ mode: "foreground", command, args, options });
+    return { status: this.foregroundStatus, error: undefined };
+  }
 }
 
 function expectSupervisorLaunch(argv: string[]): void {
@@ -41,59 +76,59 @@ function expectSupervisorLaunch(argv: string[]): void {
 describe("local daemon launch supervision", () => {
   beforeEach(() => {
     vi.useRealTimers();
-    mocks.spawnSync.mockReset();
-    mocks.spawnProcess.mockReset();
   });
 
   test("foreground start spawns supervisor-entrypoint instead of server/index", async () => {
-    mocks.spawnSync.mockReturnValue({ status: 0, error: undefined });
+    const runtime = new FakeDaemonRuntime();
 
-    const { startLocalDaemonForeground } = await import("./local-daemon.js");
-    const status = startLocalDaemonForeground({ home: "/tmp/paseo-test", relay: false });
+    const status = startLocalDaemonForeground({ home: "/tmp/paseo-test", relay: false }, runtime);
 
     expect(status).toBe(0);
-    expect(mocks.spawnSync).toHaveBeenCalledOnce();
-    const [command, argv] = mocks.spawnSync.mock.calls[0] as [string, string[]];
-    expect(command).toBe(process.execPath);
-    expectSupervisorLaunch(argv);
-    expect(argv).toContain("--no-relay");
+    expect(runtime.recordedLaunches.map((launch) => launch.mode)).toEqual(["foreground"]);
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.mode).toBe("foreground");
+    expect(launch?.command).toBe(process.execPath);
+    expectSupervisorLaunch(launch?.args ?? []);
+    expect(launch?.args).toContain("--no-relay");
   });
 
   test("detached start spawns supervisor-entrypoint instead of server/index", async () => {
     vi.useFakeTimers();
-    const child = new FakeChildProcess();
-    mocks.spawnProcess.mockReturnValue(child);
+    const runtime = new FakeDaemonRuntime();
 
-    const { startLocalDaemonDetached } = await import("./local-daemon.js");
-    const resultPromise = startLocalDaemonDetached({ home: "/tmp/paseo-test", mcp: false });
+    const resultPromise = startLocalDaemonDetached(
+      { home: "/tmp/paseo-test", mcp: false },
+      runtime,
+    );
     await vi.advanceTimersByTimeAsync(1200);
     const result = await resultPromise;
 
     expect(result).toEqual({ pid: 4242, logPath: "/tmp/paseo-test/daemon.log" });
-    expect(child.unref).toHaveBeenCalledOnce();
-    expect(mocks.spawnProcess).toHaveBeenCalledOnce();
-    const [command, argv] = mocks.spawnProcess.mock.calls[0] as [string, string[]];
-    expect(command).toBe(process.execPath);
-    expectSupervisorLaunch(argv);
-    expect(argv).toContain("--no-mcp");
+    expect(runtime.daemonProcess.wasUnreferenced).toBe(true);
+    expect(runtime.recordedLaunches.map((launch) => launch.mode)).toEqual(["detached"]);
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.mode).toBe("detached");
+    expect(launch?.command).toBe(process.execPath);
+    expectSupervisorLaunch(launch?.args ?? []);
+    expect(launch?.args).toContain("--no-mcp");
   });
 
   test("relay TLS flag is passed to the supervised daemon", async () => {
-    mocks.spawnSync.mockReturnValue({ status: 0, error: undefined });
+    const runtime = new FakeDaemonRuntime();
 
-    const { startLocalDaemonForeground } = await import("./local-daemon.js");
-    const status = startLocalDaemonForeground({
-      home: "/tmp/paseo-test",
-      relayUseTls: true,
-    });
+    const status = startLocalDaemonForeground(
+      {
+        home: "/tmp/paseo-test",
+        relayUseTls: true,
+      },
+      runtime,
+    );
 
     expect(status).toBe(0);
-    const [, argv, options] = mocks.spawnSync.mock.calls[0] as [
-      string,
-      string[],
-      { env?: NodeJS.ProcessEnv },
-    ];
-    expect(argv).toContain("--relay-use-tls");
-    expect(options.env?.PASEO_RELAY_USE_TLS).toBe("true");
+    expect(runtime.recordedLaunches.map((launch) => launch.mode)).toEqual(["foreground"]);
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.mode).toBe("foreground");
+    expect(launch?.args).toContain("--relay-use-tls");
+    expect(launch?.options?.env?.PASEO_RELAY_USE_TLS).toBe("true");
   });
 });

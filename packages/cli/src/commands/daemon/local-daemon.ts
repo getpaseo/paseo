@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -68,6 +68,28 @@ interface ProcessExitDetails {
 
 type DetachedStartupResult = { exitedEarly: false } | ({ exitedEarly: true } & ProcessExitDetails);
 
+export interface DetachedDaemonProcess extends Pick<ChildProcess, "once" | "pid" | "unref"> {}
+
+export interface ForegroundDaemonProcessResult {
+  status: number | null;
+  error?: Error;
+}
+
+export interface DaemonLaunchRuntime {
+  resolveRunnerEntry(): string;
+  resolveHome(env: NodeJS.ProcessEnv): string;
+  spawnDetached(
+    command: string,
+    args: string[],
+    options: Parameters<typeof spawnProcess>[2],
+  ): DetachedDaemonProcess;
+  spawnForeground(
+    command: string,
+    args: string[],
+    options: Parameters<typeof spawnSync>[2],
+  ): ForegroundDaemonProcessResult;
+}
+
 const DETACHED_STARTUP_GRACE_MS = 1200;
 const PID_POLL_INTERVAL_MS = 100;
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -77,6 +99,13 @@ export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
 export const DEFAULT_KILL_TIMEOUT_MS = 3_000;
 
 const require = createRequire(import.meta.url);
+
+const defaultDaemonLaunchRuntime: DaemonLaunchRuntime = {
+  resolveRunnerEntry: resolveDaemonRunnerEntry,
+  resolveHome: resolvePaseoHome,
+  spawnDetached: spawnProcess,
+  spawnForeground: spawnSync,
+};
 
 const startupReady = (): DetachedStartupResult => ({ exitedEarly: false });
 
@@ -395,17 +424,18 @@ export function tailDaemonLog(home?: string, lines = 30): string | null {
 
 export async function startLocalDaemonDetached(
   options: DaemonStartOptions,
+  runtime: DaemonLaunchRuntime = defaultDaemonLaunchRuntime,
 ): Promise<DetachedStartResult> {
   if (options.listen && options.port) {
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const daemonRunnerEntry = runtime.resolveRunnerEntry();
   const childEnv = buildChildEnv(options);
 
-  const paseoHome = resolvePaseoHome(childEnv);
+  const paseoHome = runtime.resolveHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
-  const child = spawnProcess(
+  const child = runtime.spawnDetached(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
@@ -461,14 +491,17 @@ export async function startLocalDaemonDetached(
   };
 }
 
-export function startLocalDaemonForeground(options: DaemonStartOptions): number {
+export function startLocalDaemonForeground(
+  options: DaemonStartOptions,
+  runtime: DaemonLaunchRuntime = defaultDaemonLaunchRuntime,
+): number {
   if (options.listen && options.port) {
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const daemonRunnerEntry = runtime.resolveRunnerEntry();
   const childEnv = buildChildEnv(options);
-  const result = spawnSync(
+  const result = runtime.spawnForeground(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
