@@ -8,7 +8,8 @@ Paseo is a BDFL project. Product direction, scope, and what ships are the mainta
 
 This means:
 
-- PRs submitted without prior discussion will likely be rejected, heavily modified, or scoped down.
+- Feature PRs without prior discussion will likely be closed, scoped down, or heavily modified. Open an issue first.
+- Objective bug fixes are welcome without prior discussion. If something is provably broken and your PR fixes it without dragging in unrelated changes, just open it.
 - The maintainer may rewrite, split, cherry-pick from, or close any PR at their discretion.
 - There is no obligation to merge a PR as-submitted, regardless of code quality.
 
@@ -16,11 +17,22 @@ This is not meant to discourage contributions. It is meant to set clear expectat
 
 ## How to contribute
 
-1. **Open an issue first.** Describe the problem or improvement. Get a thumbs up before writing code.
-2. **Keep it small.** One bug, one flow, one focused change.
-3. **Open a PR** once there is alignment on scope.
+1. **For features or behavior changes: open an issue first.** Describe the problem and the proposed change. Get a thumbs up before writing code. PRs that try to land a feature without an issue are the most common reason a contribution gets rejected.
+2. **For objective bug fixes: just open the PR.** Reference the bug, keep the diff narrow, and show that you tested it. No prior issue needed if the bug is clear.
+3. **Keep it small.** One bug, one flow, one focused change.
 
-If you want to propose a direction change, start a conversation.
+If you want to propose a direction change, start a conversation in [Discord](https://discord.gg/jz8T2uahpH) before opening anything.
+
+## Reporting issues
+
+The bug report form asks for the surface, version, provider configuration, logs, and screenshots. Fill it in. Most of my time on a bad report goes into asking back for what should already be in the issue.
+
+A few things that make reports useful:
+
+- **Full logs, not AI summaries.** Using an agent to grab the relevant log section is fine. Submitting only the agent's _interpretation_ of the log is not. Agents routinely correlate adjacent log lines as cause-and-effect when they aren't, and once a report is filtered through that, the signal I need to fix the bug is gone. Paste the raw log.
+- **Use agents for information gathering, not diagnosis.** An agent that grabs the daemon log, the version, and the OS for you is helpful. An agent that submits its own theory of the bug is noise 99% of the time.
+- **Screenshots and videos for UI bugs.** Text descriptions of UI bugs lose detail. A 10-second screen recording is worth a paragraph.
+- **One bug per issue.** If you found three things, open three issues.
 
 ## Before you start
 
@@ -138,14 +150,26 @@ The full guide lives in [docs/coding-standards.md](docs/coding-standards.md).
 
 Before opening a PR, make sure:
 
-- there was prior discussion and alignment on scope (issue or conversation)
+- there was prior discussion and alignment on scope (issue or conversation), unless it's an objective bug fix
 - the change is focused, one idea per PR
-- the PR description explains what changed and why
+- the PR description explains what changed and why, in your own words
 - **UI changes include screenshots or videos** for every affected platform (mobile, web, desktop)
 - UI changes have been tested on mobile and web at minimum
 - typecheck passes
 - tests pass, or you clearly explain what could not be run
 - relevant docs were updated if needed
+
+The PR template applies whether you opened the PR through the web UI or `gh pr create`. Don't strip it out.
+
+## On AI-assisted contributions
+
+AI is fine. I use it. The bar isn't whether AI helped you write the code or the description, the bar is whether _you_ tested it and understand why it works.
+
+What that looks like in practice:
+
+- **Verification is the section I read most carefully.** "I ran X, observed Y" with a screenshot or a log snippet beats any amount of plausible-looking prose.
+- **A wall of confident AI-generated description with no evidence of testing is a red flag.** It often means the PR was generated end-to-end and never run. If that's what I'm seeing, I'll usually close.
+- **If you don't understand why your change works, say so.** I'd rather see "I'm not sure why this fixes it but here's the repro before and after" than a fabricated explanation.
 
 ## Communication
 
