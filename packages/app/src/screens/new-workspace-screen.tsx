@@ -35,6 +35,16 @@ import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-works
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
 import { syncPickerPrAttachment } from "./new-workspace-picker-state";
 
+function resolveCheckoutRequest(selectedItem: PickerItem | null, currentBranch: string | null) {
+  const selectedCheckoutRequest = pickerItemToCheckoutRequest(selectedItem);
+  if (selectedCheckoutRequest) return selectedCheckoutRequest;
+  if (!currentBranch) return undefined;
+  return {
+    action: "branch-off",
+    refName: currentBranch,
+  };
+}
+
 interface NewWorkspaceScreenProps {
   serverId: string;
   sourceDirectory: string;
@@ -564,7 +574,7 @@ export function NewWorkspaceScreen({
 
   const buildCreateWorktreeInput = useCallback(
     (input: { cwd: string; prompt: string; attachments: AgentAttachment[] }) => {
-      const checkoutRequest = pickerItemToCheckoutRequest(selectedItem);
+      const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
       const trimmedPrompt = input.prompt.trim();
       const hasFirstAgentContext = trimmedPrompt.length > 0 || input.attachments.length > 0;
 
@@ -582,7 +592,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [selectedItem],
+    [currentBranch, selectedItem],
   );
 
   const ensureWorkspace = useCallback(
