@@ -4,16 +4,17 @@ Thanks for taking the time to contribute.
 
 ## How this project works
 
-Paseo is a BDFL project. Product direction, scope, and what ships are the maintainer's call.
+Paseo is opinionated, and it's a one-person project. I read every issue and PR myself, so the cost of reviewing a contribution is real.
 
-This means:
+That shapes what does and doesn't work here:
 
-- Feature PRs without prior discussion will likely be closed, scoped down, or heavily modified. Open an issue first.
-- Objective bug fixes are welcome without prior discussion. If something is provably broken and your PR fixes it without dragging in unrelated changes, just open it.
-- The maintainer may rewrite, split, cherry-pick from, or close any PR at their discretion.
-- There is no obligation to merge a PR as-submitted, regardless of code quality.
+- **Feature requests are welcome.** Open an issue describing the problem you're hitting. I take that input seriously, and a lot of what's in Paseo today came from someone explaining their pain in a thread.
+- **Drive-by feature PRs without a prior issue are not.** A large over-indexed feature that solves one person's edge case is the exact thing that holds the product back, and saying no after the code is written is expensive for both of us. Open the issue first, get a thumbs up on the shape, then write the code.
+- **Objective bug fixes don't need a prior issue.** If something is provably broken and your PR fixes it without dragging in unrelated changes, just open it.
+- The product stays lean. I'll close, scope down, or rewrite PRs that add surface area I don't want to maintain, even if the code is fine.
+- I may rewrite, split, cherry-pick from, or close any PR at my discretion. There's no obligation to merge as-submitted.
 
-This is not meant to discourage contributions. It is meant to set clear expectations so nobody wastes their time.
+This isn't meant to discourage you. If you've taken the time to write up a problem clearly, that already puts you ahead.
 
 ## How to contribute
 
