@@ -8,11 +8,14 @@ import {
   ModelRegistry,
   SessionManager,
   createAgentSessionFromServices,
+  createAgentSessionRuntime,
   createAgentSessionServices,
+  getAgentDir,
   type AgentSession as PiAgentSession,
   type AgentSessionEvent,
   type AgentSessionServices,
   type BashToolInput,
+  type CreateAgentSessionRuntimeFactory,
   type EditToolInput,
   type FindToolInput,
   type GrepToolInput,
@@ -104,7 +107,7 @@ interface StartTurnResult {
 }
 
 interface PiDirectSessionResult {
-  session: PiAgentSession;
+  runtime: PiDirectSessionRuntimeAdapter;
   modelRegistry: ModelRegistry;
 }
 
@@ -127,6 +130,11 @@ export type PiDirectSessionAdapter = Pick<
   | "subscribe"
   | "thinkingLevel"
 >;
+
+export interface PiDirectSessionRuntimeAdapter {
+  readonly session: PiDirectSessionAdapter;
+  dispose(): Promise<void>;
+}
 
 type PiDirectModelRegistry = Pick<ModelRegistry, "find" | "getAll">;
 
@@ -835,16 +843,21 @@ export class PiDirectAgentSession implements AgentSession {
   private latestUsage: AgentUsage | undefined;
 
   constructor(
-    private readonly session: PiDirectSessionAdapter,
+    private readonly runtime: PiDirectSessionRuntimeAdapter,
     private readonly modelRegistry: PiDirectModelRegistry,
     private readonly config: AgentSessionConfig,
   ) {
+    const session = this.session;
     this.lastKnownThinkingOptionId =
       normalizePiThinkingOption(config.thinkingOptionId) ?? session.thinkingLevel ?? null;
 
-    this.session.subscribe((event) => {
+    session.subscribe((event) => {
       this.handleSessionEvent(event);
     });
+  }
+
+  private get session(): PiDirectSessionAdapter {
+    return this.runtime.session;
   }
 
   get id(): string | null {
@@ -1307,7 +1320,7 @@ export class PiDirectAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
-    this.session.dispose();
+    await this.runtime.dispose();
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -1350,9 +1363,10 @@ export class PiDirectAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
   }
 
-  private async getSessionServices(cwd: string): Promise<AgentSessionServices> {
+  private async getSessionServices(cwd: string, agentDir?: string): Promise<AgentSessionServices> {
     return createAgentSessionServices({
       cwd,
+      ...(agentDir ? { agentDir } : {}),
       ...(this.modelRegistry ? { modelRegistry: this.modelRegistry } : {}),
     });
   }
@@ -1369,29 +1383,57 @@ export class PiDirectAgentClient implements AgentClient {
     return findModelInRegistry(registry, parsedReference);
   }
 
-  private async createSdkSession(config: AgentSessionConfig): Promise<PiDirectSessionResult> {
-    const thinkingLevel =
-      normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL;
-    const services = await this.getSessionServices(config.cwd);
-    const model = this.resolveConfiguredModel(services.modelRegistry, config.model);
+  private async createSdkRuntime(
+    config: AgentSessionConfig,
+    sessionManager: SessionManager,
+    options: { defaultThinkingLevel?: ThinkingLevel } = {},
+  ): Promise<PiDirectSessionResult> {
+    const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+      cwd,
+      agentDir,
+      sessionManager: runtimeSessionManager,
+      sessionStartEvent,
+    }) => {
+      const thinkingLevel =
+        normalizePiThinkingOption(config.thinkingOptionId) ?? options.defaultThinkingLevel;
+      const services = await this.getSessionServices(cwd, agentDir);
+      const model = this.resolveConfiguredModel(services.modelRegistry, config.model);
 
-    const { session } = await createAgentSessionFromServices({
-      services,
-      sessionManager: SessionManager.create(config.cwd),
-      thinkingLevel,
-      ...(model ? { model } : {}),
+      return {
+        ...(await createAgentSessionFromServices({
+          services,
+          sessionManager: runtimeSessionManager,
+          sessionStartEvent,
+          ...(thinkingLevel ? { thinkingLevel } : {}),
+          ...(model ? { model } : {}),
+        })),
+        services,
+        diagnostics: services.diagnostics,
+      };
+    };
+
+    const runtime = await createAgentSessionRuntime(createRuntime, {
+      cwd: sessionManager.getCwd(),
+      agentDir: getAgentDir(),
+      sessionManager,
     });
-    await session.bindExtensions({});
-    applySystemPrompt(session, config.systemPrompt);
-    return { session, modelRegistry: services.modelRegistry };
+    await runtime.session.bindExtensions({});
+    applySystemPrompt(runtime.session, config.systemPrompt);
+    return { runtime, modelRegistry: runtime.services.modelRegistry };
   }
 
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const { session, modelRegistry } = await this.createSdkSession(config);
-    return new PiDirectAgentSession(session, modelRegistry, config);
+    const { runtime, modelRegistry } = await this.createSdkRuntime(
+      config,
+      SessionManager.create(config.cwd),
+      {
+        defaultThinkingLevel: DEFAULT_PI_THINKING_LEVEL,
+      },
+    );
+    return new PiDirectAgentSession(runtime, modelRegistry, config);
   }
 
   async resumeSession(
@@ -1404,9 +1446,10 @@ export class PiDirectAgentClient implements AgentClient {
       throw new Error("Pi resume requires a native session file handle");
     }
 
-    const resumedManager = SessionManager.open(sessionFile);
+    const initialManager = SessionManager.open(sessionFile);
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
-    const cwd = overrides?.cwd ?? persistenceMetadata.cwd ?? resumedManager.getCwd();
+    const cwd = overrides?.cwd ?? persistenceMetadata.cwd ?? initialManager.getCwd();
+    const resumedManager = SessionManager.open(sessionFile, undefined, cwd);
     const mergedConfig: AgentSessionConfig = {
       provider: PI_PROVIDER,
       cwd,
@@ -1425,18 +1468,8 @@ export class PiDirectAgentClient implements AgentClient {
       modeId: overrides?.modeId,
     };
 
-    const services = await this.getSessionServices(mergedConfig.cwd);
-    const model = this.resolveConfiguredModel(services.modelRegistry, mergedConfig.model);
-    const thinkingLevel = normalizePiThinkingOption(mergedConfig.thinkingOptionId);
-    const { session } = await createAgentSessionFromServices({
-      services,
-      sessionManager: resumedManager,
-      ...(model ? { model } : {}),
-      ...(thinkingLevel ? { thinkingLevel } : {}),
-    });
-    await session.bindExtensions({});
-    applySystemPrompt(session, mergedConfig.systemPrompt);
-    return new PiDirectAgentSession(session, services.modelRegistry, mergedConfig);
+    const { runtime, modelRegistry } = await this.createSdkRuntime(mergedConfig, resumedManager);
+    return new PiDirectAgentSession(runtime, modelRegistry, mergedConfig);
   }
 
   async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
