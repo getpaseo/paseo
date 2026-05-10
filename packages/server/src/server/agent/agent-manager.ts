@@ -35,6 +35,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
+import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import {
   InMemoryAgentTimelineStore,
@@ -66,7 +67,6 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 type TimeoutResult = "completed" | "timed_out";
-type ArchivedStoredAgentRecord = StoredAgentRecord & { archivedAt: string };
 
 interface TimeoutOptions {
   operation: Promise<void>;
@@ -1071,19 +1071,7 @@ export class AgentManager {
   private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
     const registry = this.requireRegistry();
     const archivedAt = new Date().toISOString();
-    const normalizedStatus =
-      record.lastStatus === "running" || record.lastStatus === "initializing"
-        ? "idle"
-        : record.lastStatus;
-    const archivedRecord: ArchivedStoredAgentRecord = {
-      ...record,
-      archivedAt,
-      updatedAt: archivedAt,
-      lastStatus: normalizedStatus,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-    };
+    const archivedRecord = buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
 
     await registry.upsert(archivedRecord);
 
@@ -1259,19 +1247,7 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const normalizedStatus =
-      record.lastStatus === "running" || record.lastStatus === "initializing"
-        ? "idle"
-        : record.lastStatus;
-
-    const nextRecord: StoredAgentRecord = {
-      ...record,
-      archivedAt,
-      lastStatus: normalizedStatus,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-    };
+    const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
     await registry.upsert(nextRecord);
 
     await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
