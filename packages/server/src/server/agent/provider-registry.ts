@@ -67,10 +67,21 @@ export interface BuildProviderRegistryOptions {
   isDev?: boolean;
 }
 
+interface ProviderClientFactoryOptions extends Pick<
+  BuildProviderRegistryOptions,
+  "workspaceGitService"
+> {
+  customProvider?: {
+    id: string;
+    label: string;
+    extends: string;
+  };
+}
+
 type ProviderClientFactory = (
   logger: Logger,
   runtimeSettings?: ProviderRuntimeSettings,
-  options?: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
+  options?: ProviderClientFactoryOptions,
 ) => AgentClient;
 
 interface ResolvedProvider {
@@ -92,6 +103,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   codex: (logger, runtimeSettings, options) =>
     new CodexAppServerAgentClient(logger, runtimeSettings, {
       workspaceGitService: options?.workspaceGitService,
+      customProvider: options?.customProvider,
     }),
   copilot: (logger, runtimeSettings) =>
     new CopilotACPAgentClient({
@@ -510,10 +522,11 @@ function addDerivedProviders(
       continue;
     }
 
-    const baseProvider = resolvedProviders.get(override.extends);
+    const baseProviderId = override.extends;
+    const baseProvider = resolvedProviders.get(baseProviderId);
     if (!baseProvider) {
       throw new Error(
-        `Custom provider '${providerId}' extends unknown provider '${override.extends}'`,
+        `Custom provider '${providerId}' extends unknown provider '${baseProviderId}'`,
       );
     }
 
@@ -522,7 +535,7 @@ function addDerivedProviders(
       toRuntimeSettings(override),
     );
     const baseDefinition = baseProvider.definition;
-    const baseFactory = getProviderClientFactory(override.extends);
+    const baseFactory = getProviderClientFactory(baseProviderId);
 
     resolvedProviders.set(providerId, {
       definition: createDerivedDefinition(providerId, baseDefinition, override),
@@ -530,8 +543,15 @@ function addDerivedProviders(
       profileModels: override.models ?? [],
       additionalModels: override.additionalModels ?? [],
       enabled: override.enabled !== false,
-      derivedFromProviderId: override.extends,
-      createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings),
+      derivedFromProviderId: baseProviderId,
+      createBaseClient: (logger) =>
+        baseFactory(logger, mergedRuntimeSettings, {
+          customProvider: {
+            id: providerId,
+            label: override.label ?? providerId,
+            extends: baseProviderId,
+          },
+        }),
     });
   }
 }
