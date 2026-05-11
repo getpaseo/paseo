@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.74 - 2026-05-11
+
+### Fixed
+
+- **OpenCode agent turns no longer stall.** Paseo now follows OpenCode's global event stream, so turns stream reliably without falling back to fragile recovery paths. ([#916](https://github.com/getpaseo/paseo/pull/916))
+
 ## 0.1.73 - 2026-05-10
 
 ### Fixed

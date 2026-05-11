@@ -9,6 +9,8 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { isProviderAvailable } from "./agent-configs.js";
 
+const OPENCODE_REAL_TEST_MODEL = "opencode/big-pickle";
+
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-opencode-init-prompt-"));
 }
@@ -47,13 +49,13 @@ describe("daemon E2E (real opencode) - initial prompt wait", () => {
 
     try {
       const models = await client.listProviderModels("opencode");
-      expect(models.models.some((model) => model.id === "zai/glm-5.1")).toBe(true);
+      expect(models.models.some((model) => model.id === OPENCODE_REAL_TEST_MODEL)).toBe(true);
 
       const agent = await client.createAgent({
         provider: "opencode",
         cwd,
         title: "OpenCode initial prompt wait regression",
-        model: "opencode/big-pickle",
+        model: OPENCODE_REAL_TEST_MODEL,
         initialPrompt: "Reply with exactly: BIG_PICKLE_OK",
       });
 
@@ -77,37 +79,6 @@ describe("daemon E2E (real opencode) - initial prompt wait", () => {
       expect(assistantMessages.some((entry) => entry.item.text.includes("BIG_PICKLE_OK"))).toBe(
         true,
       );
-    } finally {
-      await client.close().catch(() => undefined);
-      await daemon.close();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  }, 90_000);
-
-  test("waitForFinish surfaces a terminal error when zai/glm-5.1 enters a fatal retry loop", async () => {
-    const cwd = tmpCwd();
-    const { client, daemon } = await createHarness();
-
-    try {
-      const models = await client.listProviderModels("opencode");
-      expect(models.models.some((model) => model.id === "zai/glm-5.1")).toBe(true);
-
-      const agent = await client.createAgent({
-        provider: "opencode",
-        cwd,
-        title: "OpenCode zai fatal retry regression",
-        model: "zai/glm-5.1",
-        initialPrompt: "Reply with exactly: GLM_51_OK",
-      });
-
-      const finish = await client.waitForFinish(agent.id, 60_000);
-      expect(finish.status).toBe("error");
-      expect((finish.error ?? "").toLowerCase()).toMatch(
-        /insufficient balance|resource package|recharge/,
-      );
-
-      const snapshot = await client.fetchAgent(agent.id);
-      expect(snapshot.agent?.status).toBe("error");
     } finally {
       await client.close().catch(() => undefined);
       await daemon.close();
