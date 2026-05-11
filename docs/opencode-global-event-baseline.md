@@ -60,34 +60,39 @@ Baseline failure notes:
 
 ## Post-Change Results
 
-Full post-change log: `/tmp/paseo-opencode-postchange-final2.log`
-Post-change summary: `/tmp/paseo-opencode-postchange-final2.tsv`
+Full post-change log: `/tmp/paseo-opencode-postchange-final3.log`
+Post-change summary: `/tmp/paseo-opencode-postchange-final3.tsv`
+Targeted reasoning rerun log: `/tmp/paseo-opencode-reasoning-dedup-rerun.log`
 
 | Result | Seconds | Test file                                                                                   |
 | ------ | ------: | ------------------------------------------------------------------------------------------- |
-| FAIL   |       0 | `packages/cli/tests/e2e/opencode-invalid-model.test.ts`                                     |
+| FAIL   |       1 | `packages/cli/tests/e2e/opencode-invalid-model.test.ts`                                     |
 | PASS   |       4 | `packages/server/src/server/agent/opencode-reasoning.e2e.test.ts`                           |
 | PASS   |       3 | `packages/server/src/server/agent/providers/opencode-agent-commands.e2e.test.ts`            |
-| PASS   |       4 | `packages/server/src/server/agent/providers/opencode-agent-commands.real.e2e.test.ts`       |
-| PASS   |       4 | `packages/server/src/server/agent/providers/opencode-agent.error-handling.real.e2e.test.ts` |
+| PASS   |       5 | `packages/server/src/server/agent/providers/opencode-agent-commands.real.e2e.test.ts`       |
+| PASS   |       3 | `packages/server/src/server/agent/providers/opencode-agent.error-handling.real.e2e.test.ts` |
 | PASS   |       1 | `packages/server/src/server/agent/providers/opencode-agent.full-access.test.ts`             |
-| PASS   |       0 | `packages/server/src/server/agent/providers/opencode-agent.list-models-timeout.test.ts`     |
-| PASS   |       1 | `packages/server/src/server/agent/providers/opencode-agent.slash-command-timeout.test.ts`   |
-| PASS   |      48 | `packages/server/src/server/agent/providers/opencode-agent.test.ts`                         |
-| PASS   |      11 | `packages/server/src/server/agent/providers/opencode-assistant-message.real.e2e.test.ts`    |
+| PASS   |       1 | `packages/server/src/server/agent/providers/opencode-agent.list-models-timeout.test.ts`     |
+| PASS   |       0 | `packages/server/src/server/agent/providers/opencode-agent.slash-command-timeout.test.ts`   |
+| PASS   |      43 | `packages/server/src/server/agent/providers/opencode-agent.test.ts`                         |
+| PASS   |      10 | `packages/server/src/server/agent/providers/opencode-assistant-message.real.e2e.test.ts`    |
 | PASS   |      11 | `packages/server/src/server/agent/providers/opencode-reasoning-dedup.real.e2e.test.ts`      |
-| PASS   |       0 | `packages/server/src/server/agent/providers/opencode-server-manager.test.ts`                |
-| PASS   |       1 | `packages/server/src/server/agent/providers/opencode/event-translator.test.ts`              |
-| PASS   |       0 | `packages/server/src/server/agent/providers/opencode/tool-call-mapper.test.ts`              |
+| PASS   |       1 | `packages/server/src/server/agent/providers/opencode-server-manager.test.ts`                |
+| PASS   |       0 | `packages/server/src/server/agent/providers/opencode/event-translator.test.ts`              |
+| PASS   |       1 | `packages/server/src/server/agent/providers/opencode/tool-call-mapper.test.ts`              |
 | PASS   |       5 | `packages/server/src/server/daemon-e2e/opencode-custom-agents.real.e2e.test.ts`             |
-| FAIL   |      12 | `packages/server/src/server/daemon-e2e/opencode-initial-prompt-wait.real.e2e.test.ts`       |
+| PASS   |      11 | `packages/server/src/server/daemon-e2e/opencode-initial-prompt-wait.real.e2e.test.ts`       |
 | PASS   |       5 | `packages/server/src/server/daemon-e2e/opencode-invalid-mode.real.e2e.test.ts`              |
 | PASS   |       5 | `packages/server/src/server/daemon-e2e/opencode-invalid-model.real.e2e.test.ts`             |
-| PASS   |      20 | `packages/server/src/server/daemon-e2e/opencode-plan-and-questions.real.e2e.test.ts`        |
-| FAIL   |      69 | `packages/server/src/server/daemon-e2e/opencode-send-interrupt.real.e2e.test.ts`            |
+| PASS   |      22 | `packages/server/src/server/daemon-e2e/opencode-plan-and-questions.real.e2e.test.ts`        |
+| FAIL   |      66 | `packages/server/src/server/daemon-e2e/opencode-send-interrupt.real.e2e.test.ts`            |
 
 Post-change failure notes:
 
 - `packages/cli/tests/e2e/opencode-invalid-model.test.ts`: unchanged from baseline; Vitest reports "No test suite found in file".
-- `packages/server/src/server/daemon-e2e/opencode-initial-prompt-wait.real.e2e.test.ts`: unchanged from baseline; the provider returned `authentication failed` while the test still expects an insufficient-balance/resource-package/recharge message.
 - `packages/server/src/server/daemon-e2e/opencode-send-interrupt.real.e2e.test.ts`: unchanged from baseline; it timed out waiting for the interrupted sleep tool call even though the recent bash tool call status was `failed`.
+
+Post-change rerun notes:
+
+- `packages/server/src/server/agent/providers/opencode-reasoning-dedup.real.e2e.test.ts`: the full matrix run had one transient no-reasoning response; an immediate targeted rerun passed in 11s.
+- `packages/server/src/server/daemon-e2e/opencode-initial-prompt-wait.real.e2e.test.ts`: replaced the brittle unavailable-model case with the stable `opencode/big-pickle` model; targeted and matrix reruns passed.
