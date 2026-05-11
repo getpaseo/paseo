@@ -34,6 +34,7 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
       getSessionFile: () => "/tmp/pi-session.json",
       getCwd: () => "/tmp/paseo-pi-test",
     },
+    bindExtensions: vi.fn(async () => undefined),
     subscribe: vi.fn(),
     prompt,
     abort: vi.fn(),
@@ -123,6 +124,80 @@ describe("PiDirectAgentSession", () => {
       contextWindow: 128000,
       maxTokens: 16384,
       compat: undefined,
+    });
+  });
+
+  test("bridges extension input dialogs into question permission requests", async () => {
+    const sdkSession = createPiSession(async () => undefined);
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      {
+        find: vi.fn(() => undefined),
+        getAll: vi.fn(() => []),
+      },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+    const ui = (
+      session as unknown as {
+        extensionUIContext: { input: (title: string) => Promise<string | undefined> };
+      }
+    ).extensionUIContext;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const answerPromise = ui.input("Which environment should I use?");
+
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    expect(events).toContainEqual({
+      type: "permission_requested",
+      provider: "pi",
+      turnId: undefined,
+      request: expect.objectContaining({
+        kind: "question",
+        input: {
+          questions: [
+            {
+              question: "Which environment should I use?",
+              header: "Response",
+              options: [],
+            },
+          ],
+        },
+      }),
+    });
+
+    const [request] = session.getPendingPermissions();
+    expect(request).toBeDefined();
+
+    await session.respondToPermission(request!.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...request!.input,
+        answers: {
+          Response: "Production",
+        },
+      },
+    });
+
+    await expect(answerPromise).resolves.toBe("Production");
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    expect(events).toContainEqual({
+      type: "permission_resolved",
+      provider: "pi",
+      requestId: request!.id,
+      resolution: {
+        behavior: "allow",
+        updatedInput: {
+          ...request!.input,
+          answers: {
+            Response: "Production",
+          },
+        },
+      },
+      turnId: undefined,
     });
   });
 });

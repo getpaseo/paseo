@@ -125,6 +125,7 @@ export type PiDirectSessionAdapter = Pick<
   | "resourceLoader"
   | "sessionId"
   | "sessionManager"
+  | "bindExtensions"
   | "setModel"
   | "setThinkingLevel"
   | "subscribe"
@@ -134,6 +135,84 @@ export type PiDirectSessionAdapter = Pick<
 export interface PiDirectSessionRuntimeAdapter {
   readonly session: PiDirectSessionAdapter;
   dispose(): Promise<void>;
+}
+
+interface PiQuestionPermissionOption {
+  label: string;
+  description?: string;
+}
+
+type PiPendingPermission =
+  | {
+      dialogKind: "input";
+      request: AgentPermissionRequest;
+      header: string;
+      turnId?: string;
+      finish: (resolution: AgentPermissionResponse, value: string | undefined) => void;
+    }
+  | {
+      dialogKind: "select";
+      request: AgentPermissionRequest;
+      header: string;
+      turnId?: string;
+      finish: (resolution: AgentPermissionResponse, value: string | undefined) => void;
+    }
+  | {
+      dialogKind: "confirm";
+      request: AgentPermissionRequest;
+      header: string;
+      acceptLabel: string;
+      turnId?: string;
+      finish: (resolution: AgentPermissionResponse, value: boolean) => void;
+    };
+
+interface PiDialogOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+}
+
+type PiQuestionDialogKind = PiPendingPermission["dialogKind"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildPiQuestionPermissionInput(
+  question: string,
+  header: string,
+  options: PiQuestionPermissionOption[],
+): AgentMetadata {
+  return {
+    questions: [
+      {
+        question,
+        header,
+        options,
+      },
+    ],
+  } as AgentMetadata;
+}
+
+function readPiPermissionAnswer(
+  updatedInput: AgentMetadata | undefined,
+  header: string,
+): string | undefined {
+  if (!isRecord(updatedInput)) {
+    return undefined;
+  }
+
+  const answers = updatedInput["answers"];
+  if (!isRecord(answers)) {
+    return undefined;
+  }
+
+  const value = answers[header];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 type PiDirectModelRegistry = Pick<ModelRegistry, "find" | "getAll">;
@@ -838,9 +917,12 @@ export class PiDirectAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
+  private readonly pendingPermissions = new Map<string, PiPendingPermission>();
+  private readonly extensionUIContext = this.createExtensionUIContext();
   private activeTurnId: string | null = null;
   private lastKnownThinkingOptionId: string | null;
   private latestUsage: AgentUsage | undefined;
+  private editorText = "";
 
   constructor(
     private readonly runtime: PiDirectSessionRuntimeAdapter,
@@ -854,6 +936,11 @@ export class PiDirectAgentSession implements AgentSession {
     session.subscribe((event) => {
       this.handleSessionEvent(event);
     });
+  }
+
+  async bindExtensions(): Promise<void> {
+    await this.session.bindExtensions({ uiContext: this.extensionUIContext as never });
+    applySystemPrompt(this.session as PiAgentSession, this.config.systemPrompt);
   }
 
   private get session(): PiDirectSessionAdapter {
@@ -872,6 +959,214 @@ export class PiDirectAgentSession implements AgentSession {
 
   private currentTurnIdForEvent(): string | undefined {
     return this.activeTurnId ?? undefined;
+  }
+
+  private createExtensionUIContext() {
+    const requestQuestion = (params: {
+      dialogKind: PiQuestionDialogKind;
+      title: string;
+      header: string;
+      options?: PiQuestionPermissionOption[];
+      dialogOptions?: PiDialogOptions;
+      metadata?: AgentMetadata;
+      acceptLabel?: string;
+    }) => {
+      const requestId = randomUUID();
+      const request: AgentPermissionRequest = {
+        id: requestId,
+        provider: PI_PROVIDER,
+        name: `pi_${params.dialogKind}_dialog`,
+        kind: "question",
+        title: "Question",
+        input: buildPiQuestionPermissionInput(params.title, params.header, params.options ?? []),
+        metadata: {
+          source: "pi_extension_ui_bridge",
+          dialogKind: params.dialogKind,
+          header: params.header,
+          ...params.metadata,
+        },
+      };
+      const turnId = this.currentTurnIdForEvent();
+
+      return new Promise<string | boolean | undefined>((resolve) => {
+        let settled = false;
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        let resolvePending: ((value: string | boolean | undefined) => void) | undefined = resolve;
+
+        const cleanupSignal = () => {
+          params.dialogOptions?.signal?.removeEventListener("abort", abortPendingRequest);
+        };
+
+        const finish = (
+          resolution: AgentPermissionResponse,
+          value: string | boolean | undefined,
+        ) => {
+          if (settled || !resolvePending) {
+            return;
+          }
+          settled = true;
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+          cleanupSignal();
+          this.pendingPermissions.delete(requestId);
+          this.emit({
+            type: "permission_resolved",
+            provider: PI_PROVIDER,
+            requestId,
+            resolution,
+            turnId,
+          });
+          const resolveNow = resolvePending;
+          resolvePending = undefined;
+          resolveNow(value);
+        };
+
+        const pending: PiPendingPermission =
+          params.dialogKind === "confirm"
+            ? {
+                dialogKind: "confirm",
+                request,
+                header: params.header,
+                acceptLabel: params.acceptLabel ?? "Yes",
+                turnId,
+                finish: (resolution, value) => finish(resolution, value),
+              }
+            : {
+                dialogKind: params.dialogKind,
+                request,
+                header: params.header,
+                turnId,
+                finish: (resolution, value) => finish(resolution, value),
+              };
+
+        const defaultValue = params.dialogKind === "confirm" ? false : undefined;
+        const abortPendingRequest = () => {
+          finish(
+            {
+              behavior: "deny",
+              message: "Dismissed before the dialog completed",
+            },
+            defaultValue,
+          );
+        };
+
+        if (params.dialogOptions?.signal) {
+          params.dialogOptions.signal.addEventListener("abort", abortPendingRequest, {
+            once: true,
+          });
+        }
+        if (params.dialogOptions?.timeout && params.dialogOptions.timeout > 0) {
+          timeoutHandle = setTimeout(abortPendingRequest, params.dialogOptions.timeout);
+          timeoutHandle.unref?.();
+        }
+
+        this.pendingPermissions.set(requestId, pending);
+        this.emit({
+          type: "permission_requested",
+          provider: PI_PROVIDER,
+          request,
+          turnId,
+        });
+      });
+    };
+
+    return {
+      select: async (title: string, options: string[], dialogOptions?: PiDialogOptions) => {
+        const result = await requestQuestion({
+          dialogKind: "select",
+          title,
+          header: "Choice",
+          options: options.map((label) => ({ label })),
+          dialogOptions,
+          metadata: { options },
+        });
+        return typeof result === "string" ? result : undefined;
+      },
+      confirm: async (title: string, message: string, dialogOptions?: PiDialogOptions) => {
+        const acceptLabel = "Yes";
+        const rejectLabel = "No";
+        const question = message
+          ? `${title}
+
+${message}`
+          : title;
+        const result = await requestQuestion({
+          dialogKind: "confirm",
+          title: question,
+          header: "Answer",
+          options: [{ label: acceptLabel }, { label: rejectLabel }],
+          dialogOptions,
+          metadata: { message },
+          acceptLabel,
+        });
+        return Boolean(result);
+      },
+      input: async (title: string, placeholder?: string, dialogOptions?: PiDialogOptions) => {
+        const result = await requestQuestion({
+          dialogKind: "input",
+          title,
+          header: "Response",
+          dialogOptions,
+          metadata: placeholder ? { placeholder } : undefined,
+        });
+        return typeof result === "string" ? result : undefined;
+      },
+      notify: () => undefined,
+      onTerminalInput: () => () => undefined,
+      setStatus: () => undefined,
+      setWorkingMessage: () => undefined,
+      setWorkingVisible: () => undefined,
+      setWorkingIndicator: () => undefined,
+      setHiddenThinkingLabel: () => undefined,
+      setWidget: () => undefined,
+      setFooter: () => undefined,
+      setHeader: () => undefined,
+      setTitle: () => undefined,
+      // Returning undefined mirrors Pi's RPC mode and lets extensions like
+      // pi-ask-user fall back to simpler dialog methods we can bridge into
+      // Paseo's existing permission-request UI.
+      custom: async () => undefined as never,
+      pasteToEditor: (text: string) => {
+        this.editorText += text;
+      },
+      setEditorText: (text: string) => {
+        this.editorText = text;
+      },
+      getEditorText: () => this.editorText,
+      editor: async (title: string, prefill?: string) => {
+        const question = prefill
+          ? `${title}
+
+${prefill}`
+          : title;
+        const result = await requestQuestion({
+          dialogKind: "input",
+          title: question,
+          header: "Response",
+        });
+        return typeof result === "string" ? result : undefined;
+      },
+      addAutocompleteProvider: () => undefined,
+      setEditorComponent: () => undefined,
+      getEditorComponent: () => undefined,
+      theme: undefined as never,
+      getAllThemes: () => [],
+      getTheme: () => undefined,
+      setTheme: () => ({ success: false, error: "Themes are unavailable in Paseo's Pi bridge" }),
+      getToolsExpanded: () => false,
+      setToolsExpanded: () => undefined,
+    };
+  }
+
+  private cancelPendingPermissions(message: string): void {
+    for (const pending of Array.from(this.pendingPermissions.values())) {
+      if (pending.dialogKind === "confirm") {
+        pending.finish({ behavior: "deny", message }, false);
+      } else {
+        pending.finish({ behavior: "deny", message }, undefined);
+      }
+    }
   }
 
   private emitToolCallEvent(
@@ -1005,6 +1300,7 @@ export class PiDirectAgentSession implements AgentSession {
         });
         return;
       case "agent_end": {
+        this.cancelPendingPermissions("Pi agent session ended before the dialog completed");
         this.latestUsage = toAgentUsage(this.session.getSessionStats());
         const currentTurnId = turnId;
         this.activeTurnId = null;
@@ -1296,12 +1592,31 @@ export class PiDirectAgentSession implements AgentSession {
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return [];
+    return Array.from(this.pendingPermissions.values(), (pending) => pending.request);
   }
 
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
-    void requestId;
-    void response;
+    const pending = this.pendingPermissions.get(requestId);
+    if (!pending) {
+      throw new Error(`No pending permission request with id '${requestId}'`);
+    }
+
+    if (response.behavior === "deny") {
+      if (pending.dialogKind === "confirm") {
+        pending.finish(response, false);
+      } else {
+        pending.finish(response, undefined);
+      }
+      return;
+    }
+
+    const answer = readPiPermissionAnswer(response.updatedInput, pending.header);
+    if (pending.dialogKind === "confirm") {
+      pending.finish(response, answer === pending.acceptLabel);
+      return;
+    }
+
+    pending.finish(response, answer);
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -1316,10 +1631,12 @@ export class PiDirectAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.cancelPendingPermissions("Pi agent turn was interrupted");
     await this.session.abort();
   }
 
   async close(): Promise<void> {
+    this.cancelPendingPermissions("Pi agent session was closed");
     await this.runtime.dispose();
   }
 
@@ -1417,8 +1734,6 @@ export class PiDirectAgentClient implements AgentClient {
       agentDir: getAgentDir(),
       sessionManager,
     });
-    await runtime.session.bindExtensions({});
-    applySystemPrompt(runtime.session, config.systemPrompt);
     return { runtime, modelRegistry: runtime.services.modelRegistry };
   }
 
@@ -1433,7 +1748,9 @@ export class PiDirectAgentClient implements AgentClient {
         defaultThinkingLevel: DEFAULT_PI_THINKING_LEVEL,
       },
     );
-    return new PiDirectAgentSession(runtime, modelRegistry, config);
+    const session = new PiDirectAgentSession(runtime, modelRegistry, config);
+    await session.bindExtensions();
+    return session;
   }
 
   async resumeSession(
@@ -1469,7 +1786,9 @@ export class PiDirectAgentClient implements AgentClient {
     };
 
     const { runtime, modelRegistry } = await this.createSdkRuntime(mergedConfig, resumedManager);
-    return new PiDirectAgentSession(runtime, modelRegistry, mergedConfig);
+    const session = new PiDirectAgentSession(runtime, modelRegistry, mergedConfig);
+    await session.bindExtensions();
+    return session;
   }
 
   async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
