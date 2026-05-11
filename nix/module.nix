@@ -111,9 +111,41 @@ in
       '';
       description = "Extra environment variables for the Paseo daemon.";
     };
+
+    settings = lib.mkOption {
+      type = (pkgs.formats.json { }).type;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          daemon.mcp = { enabled = true; injectIntoAgents = false; };
+          agents.providers.myAcp = {
+            extends = "acp";
+            label = "My Agent";
+            command = { path = "/run/current-system/sw/bin/my-acp"; };
+          };
+          log.file = { level = "info"; path = "/var/lib/paseo/daemon.log"; };
+        }
+      '';
+      description = ''
+        Declarative content for `$PASEO_HOME/config.json`. Rendered to JSON
+        and installed on every service start.
+
+        Runtime mutations to `config.json` (e.g. via `paseo daemon set-password`
+        or the mobile app toggling MCP injection / provider overrides) are
+        overwritten on the next restart. Pick one: manage via this option, or
+        manage via the CLI — not both.
+
+        The full schema is defined by `PersistedConfigSchema` in
+        `packages/server/src/server/persisted-config.ts`.
+      '';
+    };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (
+    let
+      settingsFile = (pkgs.formats.json { }).generate "paseo-config.json" cfg.settings;
+    in
+    {
     users.users.${cfg.user} = lib.mkIf (cfg.user == "paseo") {
       isSystemUser = true;
       group = cfg.group;
@@ -130,6 +162,10 @@ in
       description = "Paseo - self-hosted daemon for AI coding agents";
       after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
+
+      preStart = lib.mkIf (cfg.settings != { }) ''
+        install -m 0600 ${settingsFile} ${cfg.dataDir}/config.json
+      '';
 
       environment = {
         NODE_ENV = "production";
@@ -172,5 +208,6 @@ in
     environment.systemPackages = [ cfg.package ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
-  };
+    }
+  );
 }
