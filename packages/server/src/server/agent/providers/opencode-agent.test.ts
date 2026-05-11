@@ -78,6 +78,14 @@ async function collectTurnEvents(iterator: AsyncGenerator<AgentStreamEvent>): Pr
   return result;
 }
 
+function createAsyncIterable<T>(items: T[]): AsyncIterable<T> {
+  return (async function* () {
+    for (const item of items) {
+      yield item;
+    }
+  })();
+}
+
 function isBinaryInstalled(binary: string): boolean {
   try {
     const out = execFileSync("which", [binary], { encoding: "utf8" }).trim();
@@ -566,1703 +574,158 @@ describe("OpenCode adapter context-window normalization", () => {
 });
 
 describe("OpenCode adapter startTurn error handling", () => {
-  test("recovers SSE EOF into turn_completed when messages API returns a completed assistant after a delay", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const completedMessagesResponse = {
-      data: [
-        {
-          info: buildAssistantMessageInfo({
-            id: "msg_assistant",
-            createdAt: 2100,
-            completedAt: 2500,
-            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
-          }),
-          parts: [buildTextPart("msg_assistant", "prt_text", "Recovered assistant reply")],
+  test("unwraps OpenCode global event payloads during a turn", async () => {
+    const globalEvents = [
+      {
+        payload: {
+          type: "server.connected",
+          properties: {},
         },
-      ],
-      error: undefined,
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
+      },
+      {
+        directory: "/tmp/other",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "other-session",
+            messageID: "msg_other",
+            partID: "prt_other",
+            field: "text",
+            delta: "ignore me",
           },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount < 3) {
-            return { data: [], error: undefined };
-          }
-          return completedMessagesResponse;
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe(
-      "Recovered assistant reply",
-    );
-    expect(turn.events).toContainEqual(
-      expect.objectContaining({
-        type: "turn_completed",
-        usage: expect.objectContaining({
-          contextWindowUsedTokens: 15,
-          inputTokens: 10,
-          outputTokens: 5,
-        }),
-      }),
-    );
-    expect(messagesCallCount).toBeGreaterThanOrEqual(3);
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("continues SSE EOF recovery when one messages API poll rejects", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const completedMessagesResponse = {
-      data: [
-        {
-          info: buildAssistantMessageInfo({
-            id: "msg_assistant",
-            createdAt: 2100,
-            completedAt: 2500,
-            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
-          }),
-          parts: [buildTextPart("msg_assistant", "prt_text", "Recovered after retry")],
         },
-      ],
-      error: undefined,
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
       },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount === 1) {
-            throw new Error("transient messages failure");
-          }
-          return completedMessagesResponse;
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe(
-      "Recovered after retry",
-    );
-    expect(messagesCallCount).toBe(2);
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("recovers structured-only assistant completions from messages API", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const startedAt = Date.now();
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const completedMessagesResponse = {
-      data: [
-        {
-          info: {
-            ...(buildAssistantMessageInfo({
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.updated",
+          properties: {
+            info: {
               id: "msg_assistant",
-              createdAt: startedAt + 1,
-              completedAt: startedAt + 500,
-              tokens: {
-                input: 10,
-                output: 5,
-                reasoning: 0,
-                cache: { read: 0, write: 0 },
-                total: 15,
-              },
-            }) as Record<string, unknown>),
-            structured: { status: "ok", files: ["README.md"] },
-          },
-          parts: [],
-        },
-      ],
-      error: undefined,
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue(completedMessagesResponse),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1, pollIntervalMs: 1, livenessMs: 1 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(turn.assistantMessages).toEqual([
-      { type: "assistant_message", text: '{"status":"ok","files":["README.md"]}' },
-    ]);
-
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("keeps SSE EOF as turn_failed when messages API never returns a completion before the cap", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue({ data: [], error: undefined }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 0, pollIntervalMs: 1, livenessMs: 0 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(false);
-    expect(turn.turnFailed).toBe(true);
-    expect(turn.error).toBe("OpenCode event stream ended before the turn reached a terminal state");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("aborts the OpenCode session when recovery caps an in-progress assistant message", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue({
-          data: [
-            {
-              info: {
-                ...(buildAssistantMessageInfo({
-                  id: "msg_assistant",
-                  createdAt: 2100,
-                  completedAt: 2500,
-                  tokens: {
-                    input: 0,
-                    output: 0,
-                    reasoning: 0,
-                    cache: { read: 0, write: 0 },
-                    total: 0,
-                  },
-                }) as Record<string, unknown>),
-                time: { created: 2100 },
-              },
-              parts: [],
+              sessionID: "ses_unit_test",
+              role: "assistant",
             },
-          ],
-          error: undefined,
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort,
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 0, pollIntervalMs: 1, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(false);
-    expect(turn.turnFailed).toBe(true);
-    expect(abort).toHaveBeenCalledWith({
-      sessionID: "ses_unit_test",
-      directory: cwd,
-    });
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("ignores assistant messages that completed before the turn started", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const staleMessages = {
-      data: [
-        {
-          info: buildAssistantMessageInfo({
-            id: "msg_assistant_old",
-            createdAt: 1500,
-            completedAt: 1600,
-            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
-          }),
-          parts: [buildTextPart("msg_assistant_old", "prt_text_old", "Old assistant reply")],
+          },
         },
-      ],
-      error: undefined,
-    };
-
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "ses_unit_test",
+            messageID: "msg_assistant",
+            partID: "prt_text",
+            field: "text",
+            delta: "Hello from global",
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "session.status",
+          properties: {
+            sessionID: "ses_unit_test",
+            status: { type: "idle" },
+          },
+        },
+      },
+    ];
     const fakeClient = {
       event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
+        subscribe: vi.fn(),
       },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
+      global: {
+        event: vi.fn().mockResolvedValue({ stream: createAsyncIterable(globalEvents) }),
       },
       session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue(staleMessages),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
       },
     } as never;
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 0, pollIntervalMs: 1, livenessMs: 0 },
-    });
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+      "/tmp/opencode-storage",
+    );
 
-    const session = await client.createSession({ provider: "opencode", cwd });
     const turn = await collectTurnEvents(streamSession(session, "hello"));
 
-    expect(turn.turnCompleted).toBe(false);
-    expect(turn.turnFailed).toBe(true);
-    expect(turn.assistantMessages).toHaveLength(0);
-    expect(turn.error).toBe("OpenCode event stream ended before the turn reached a terminal state");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("fails fast when no assistant message ever appears before the liveness cap (silent rejection)", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
+    expect(fakeClient.global.event).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal),
+      sseMaxRetryAttempts: 0,
     });
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue({ data: [], error: undefined }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 60_000, pollIntervalMs: 5, livenessMs: 0 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(false);
-    expect(turn.turnFailed).toBe(true);
-    expect(turn.error).toBe("OpenCode event stream ended before the turn reached a terminal state");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("keeps polling for completion past the liveness cap once an assistant message appears", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const completedAssistantInfo = buildAssistantMessageInfo({
-      id: "msg_assistant",
-      createdAt: 2100,
-      completedAt: 2500,
-      tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
-    });
-    const inProgressAssistantInfo = {
-      ...(completedAssistantInfo as Record<string, unknown>),
-      time: { created: 2100 },
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount < 4) {
-            return {
-              data: [
-                {
-                  info: inProgressAssistantInfo,
-                  parts: [],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          return {
-            data: [
-              {
-                info: completedAssistantInfo,
-                parts: [buildTextPart("msg_assistant", "prt_text", "Done after waiting")],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 0 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
+    expect(fakeClient.event.subscribe).not.toHaveBeenCalled();
     expect(turn.turnCompleted).toBe(true);
     expect(turn.turnFailed).toBe(false);
     expect(turn.assistantMessages.map((message) => message.text).join("")).toBe(
-      "Done after waiting",
+      "Hello from global",
     );
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
   });
 
-  test("fails fast when messages API surfaces an assistant message with provider error", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const erroredMessages = {
-      data: [
-        {
-          info: {
-            id: "msg_assistant_failed",
-            sessionID: "ses_unit_test",
-            role: "assistant",
-            time: { created: 2100 },
-            parentID: "msg_user",
-            modelID: "test-model",
-            providerID: "test-provider",
-            mode: "build",
-            agent: "build",
-            path: { cwd: "/tmp/test", root: "/tmp/test" },
-            cost: 0,
-            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-            error: {
-              name: "ProviderAuthError",
-              data: { providerID: "openai", message: "Insufficient balance for openai/gpt-5-nano" },
-            },
-          },
-          parts: [],
-        },
-      ],
-      error: undefined,
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue(erroredMessages),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(false);
-    expect(turn.turnFailed).toBe(true);
-    expect(turn.error).toBe("Insufficient balance for openai/gpt-5-nano");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("emits running tool calls incrementally while the assistant message is in progress", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount < 3) {
-            return {
-              data: [
-                {
-                  info: {
-                    ...(buildAssistantMessageInfo({
-                      id: "msg_assistant",
-                      createdAt: 2100,
-                      completedAt: 2500,
-                      tokens: {
-                        input: 0,
-                        output: 0,
-                        reasoning: 0,
-                        cache: { read: 0, write: 0 },
-                        total: 0,
-                      },
-                    }) as Record<string, unknown>),
-                    time: { created: 2100 },
-                  },
-                  parts: [
-                    {
-                      id: "prt_tool",
-                      sessionID: "ses_unit_test",
-                      messageID: "msg_assistant",
-                      type: "tool",
-                      tool: "bash",
-                      callID: "call_long",
-                      state: { status: "running", input: { command: "sleep 60" } },
-                    },
-                  ],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          return {
-            data: [
-              {
-                info: buildAssistantMessageInfo({
-                  id: "msg_assistant",
-                  createdAt: 2100,
-                  completedAt: 2700,
-                  tokens: {
-                    input: 10,
-                    output: 5,
-                    reasoning: 0,
-                    cache: { read: 0, write: 0 },
-                    total: 15,
-                  },
-                }),
-                parts: [
-                  {
-                    id: "prt_tool",
-                    sessionID: "ses_unit_test",
-                    messageID: "msg_assistant",
-                    type: "tool",
-                    tool: "bash",
-                    callID: "call_long",
-                    state: {
-                      status: "completed",
-                      input: { command: "sleep 60" },
-                      output: "",
-                    },
-                  },
-                  buildTextPart("msg_assistant", "prt_text", "Done."),
-                ],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 5_000, pollIntervalMs: 5, livenessMs: 5_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    const toolCallStatuses = turn.toolCalls.map((toolCall) => toolCall.status);
-    expect(toolCallStatuses).toContain("running");
-    expect(toolCallStatuses).toContain("completed");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("emits only new reasoning text when recovered reasoning parts grow across polls", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const inProgressAssistantInfo = {
-      ...(buildAssistantMessageInfo({
-        id: "msg_assistant",
-        createdAt: 2100,
-        completedAt: 2500,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 }, total: 0 },
-      }) as Record<string, unknown>),
-      time: { created: 2100 },
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount === 1) {
-            return {
-              data: [
-                {
-                  info: inProgressAssistantInfo,
-                  parts: [
-                    {
-                      id: "prt_reasoning",
-                      sessionID: "ses_unit_test",
-                      messageID: "msg_assistant",
-                      type: "reasoning",
-                      text: "Thinking",
-                    },
-                  ],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          if (messagesCallCount === 2) {
-            return {
-              data: [
-                {
-                  info: inProgressAssistantInfo,
-                  parts: [
-                    {
-                      id: "prt_reasoning",
-                      sessionID: "ses_unit_test",
-                      messageID: "msg_assistant",
-                      type: "reasoning",
-                      text: "Thinking more",
-                    },
-                  ],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          return {
-            data: [
-              {
-                info: buildAssistantMessageInfo({
-                  id: "msg_assistant",
-                  createdAt: 2100,
-                  completedAt: 2700,
-                  tokens: {
-                    input: 10,
-                    output: 5,
-                    reasoning: 0,
-                    cache: { read: 0, write: 0 },
-                    total: 15,
-                  },
-                }),
-                parts: [
-                  {
-                    id: "prt_reasoning",
-                    sessionID: "ses_unit_test",
-                    messageID: "msg_assistant",
-                    type: "reasoning",
-                    text: "Thinking more",
-                  },
-                  buildTextPart("msg_assistant", "prt_text", "Done."),
-                ],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(
-      turn.allTimelineItems.filter((item) => item.type === "reasoning").map((item) => item.text),
-    ).toEqual(["Thinking", " more"]);
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("emits running tool calls again when recovered tool input changes", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const inProgressAssistantInfo = {
-      ...(buildAssistantMessageInfo({
-        id: "msg_assistant",
-        createdAt: 2100,
-        completedAt: 2500,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 }, total: 0 },
-      }) as Record<string, unknown>),
-      time: { created: 2100 },
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount === 1) {
-            return {
-              data: [
-                {
-                  info: inProgressAssistantInfo,
-                  parts: [
-                    {
-                      id: "prt_tool",
-                      sessionID: "ses_unit_test",
-                      messageID: "msg_assistant",
-                      type: "tool",
-                      tool: "bash",
-                      callID: "call_long",
-                      state: { status: "running", input: { command: "echo one" } },
-                    },
-                  ],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          if (messagesCallCount === 2) {
-            return {
-              data: [
-                {
-                  info: inProgressAssistantInfo,
-                  parts: [
-                    {
-                      id: "prt_tool",
-                      sessionID: "ses_unit_test",
-                      messageID: "msg_assistant",
-                      type: "tool",
-                      tool: "bash",
-                      callID: "call_long",
-                      state: { status: "running", input: { command: "echo two" } },
-                    },
-                  ],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          return {
-            data: [
-              {
-                info: buildAssistantMessageInfo({
-                  id: "msg_assistant",
-                  createdAt: 2100,
-                  completedAt: 2700,
-                  tokens: {
-                    input: 10,
-                    output: 5,
-                    reasoning: 0,
-                    cache: { read: 0, write: 0 },
-                    total: 15,
-                  },
-                }),
-                parts: [
-                  {
-                    id: "prt_tool",
-                    sessionID: "ses_unit_test",
-                    messageID: "msg_assistant",
-                    type: "tool",
-                    tool: "bash",
-                    callID: "call_long",
-                    state: {
-                      status: "completed",
-                      input: { command: "echo two" },
-                      output: "two",
-                    },
-                  },
-                  buildTextPart("msg_assistant", "prt_text", "Done."),
-                ],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(
-      turn.toolCalls
-        .filter((toolCall) => toolCall.status === "running")
-        .map((toolCall) => toolCall.detail),
-    ).toEqual([
-      { type: "shell", command: "echo one" },
-      { type: "shell", command: "echo two" },
-    ]);
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("emits permission_requested for pending OpenCode questions while the turn is still in progress", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let questionListCount = 0;
-    let messagesCallCount = 0;
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      question: {
-        list: vi.fn().mockImplementation(async () => {
-          questionListCount += 1;
-          if (questionListCount < 2) {
-            return { data: [], error: undefined };
-          }
-          return {
-            data: [
-              {
-                id: "qst_1",
-                sessionID: "ses_unit_test",
-                questions: [
-                  {
-                    question: "Pick a color",
-                    header: "Color",
-                    options: [{ label: "red" }, { label: "blue" }],
-                  },
-                ],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-      },
-      permission: {
-        list: vi.fn().mockResolvedValue({ data: [], error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount < 5) {
-            return {
-              data: [
-                {
-                  info: {
-                    ...(buildAssistantMessageInfo({
-                      id: "msg_assistant",
-                      createdAt: 2100,
-                      completedAt: 2500,
-                      tokens: {
-                        input: 10,
-                        output: 5,
-                        reasoning: 0,
-                        cache: { read: 0, write: 0 },
-                        total: 15,
-                      },
-                    }) as Record<string, unknown>),
-                    time: { created: 2100 },
-                  },
-                  parts: [],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          return {
-            data: [
-              {
-                info: buildAssistantMessageInfo({
-                  id: "msg_assistant",
-                  createdAt: 2100,
-                  completedAt: 2700,
-                  tokens: {
-                    input: 10,
-                    output: 5,
-                    reasoning: 0,
-                    cache: { read: 0, write: 0 },
-                    total: 15,
-                  },
-                }),
-                parts: [buildTextPart("msg_assistant", "prt_text", "Done")],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 5_000, pollIntervalMs: 5, livenessMs: 5_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const events: AgentStreamEvent[] = [];
-    const terminalReached = new Promise<void>((resolve) => {
-      session.subscribe((event) => {
-        events.push(event);
-        if (
-          event.type === "turn_completed" ||
-          event.type === "turn_failed" ||
-          event.type === "turn_canceled"
-        ) {
-          resolve();
-        }
-      });
-    });
-    await session.startTurn("hello");
-    await terminalReached;
-
-    const permissionEvents = events.filter((event) => event.type === "permission_requested");
-    expect(permissionEvents).toHaveLength(1);
-    expect(permissionEvents[0]).toMatchObject({
-      type: "permission_requested",
-      request: { id: "qst_1", kind: "question" },
-    });
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("keeps recovering past the completion cap while a question is pending", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    let messagesCallCount = 0;
-    const inProgressAssistantInfo = {
-      ...(buildAssistantMessageInfo({
-        id: "msg_assistant",
-        createdAt: 2100,
-        completedAt: 2500,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 }, total: 0 },
-      }) as Record<string, unknown>),
-      time: { created: 2100 },
-    };
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      question: {
-        list: vi.fn().mockResolvedValue({
-          data: [
-            {
-              id: "qst_1",
-              sessionID: "ses_unit_test",
-              questions: [
-                {
-                  question: "Pick a color",
-                  header: "Color",
-                  options: [{ label: "red" }, { label: "blue" }],
-                },
-              ],
-            },
-          ],
-          error: undefined,
-        }),
-      },
-      permission: {
-        list: vi.fn().mockResolvedValue({ data: [], error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockImplementation(async () => {
-          messagesCallCount += 1;
-          if (messagesCallCount < 3) {
-            return {
-              data: [
-                {
-                  info: inProgressAssistantInfo,
-                  parts: [],
-                },
-              ],
-              error: undefined,
-            };
-          }
-          return {
-            data: [
-              {
-                info: buildAssistantMessageInfo({
-                  id: "msg_assistant",
-                  createdAt: 2100,
-                  completedAt: 2700,
-                  tokens: {
-                    input: 10,
-                    output: 5,
-                    reasoning: 0,
-                    cache: { read: 0, write: 0 },
-                    total: 15,
-                  },
-                }),
-                parts: [buildTextPart("msg_assistant", "prt_text", "Done")],
-              },
-            ],
-            error: undefined,
-          };
-        }),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 0, pollIntervalMs: 1, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe("Done");
-    expect(turn.events.filter((event) => event.type === "permission_requested")).toHaveLength(1);
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("emits tool calls and reasoning from the recovered assistant message parts", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const completedMessages = {
-      data: [
-        {
-          info: buildAssistantMessageInfo({
-            id: "msg_assistant",
-            createdAt: 2100,
-            completedAt: 2500,
-            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
-          }),
-          parts: [
-            {
-              id: "prt_reasoning",
-              sessionID: "ses_unit_test",
-              messageID: "msg_assistant",
-              type: "reasoning",
-              text: "Thinking through the request",
-            },
-            {
-              id: "prt_tool",
-              sessionID: "ses_unit_test",
-              messageID: "msg_assistant",
-              type: "tool",
-              tool: "bash",
-              callID: "call_1",
-              state: {
-                status: "completed",
-                input: { command: "echo hi" },
-                output: "hi",
-              },
-            },
-            buildTextPart("msg_assistant", "prt_text", "Done."),
-          ],
-        },
-      ],
-      error: undefined,
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => {
-                await streamMayEnd;
-                return { done: true, value: undefined };
-              },
-            }),
-          },
-        }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue(completedMessages),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-      },
-    } as never;
-
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
-    });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(turn.toolCalls).toHaveLength(1);
-    expect(turn.toolCalls[0]).toMatchObject({
-      type: "tool_call",
-      callId: "call_1",
-      status: "completed",
-    });
-    const reasoningItems = turn.allTimelineItems.filter((item) => item.type === "reasoning");
-    expect(reasoningItems).toHaveLength(1);
-    expect(reasoningItems[0]).toMatchObject({ text: "Thinking through the request" });
-    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe("Done.");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
-  });
-
-  test("dedups partial-streamed assistant text against recovered completion", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = "/tmp/test";
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(2000);
-
-    let releaseStream!: () => void;
-    const streamMayEnd = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-
-    const completedMessages = {
-      data: [
-        {
-          info: buildAssistantMessageInfo({
-            id: "msg_assistant",
-            createdAt: 2100,
-            completedAt: 2500,
-            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 }, total: 15 },
-          }),
-          parts: [buildTextPart("msg_assistant", "prt_text", "Hello, world!")],
-        },
-      ],
-      error: undefined,
-    };
-
-    const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: {
-            [Symbol.asyncIterator]: () => {
-              let index = 0;
-              const events: OpenCodeEvent[] = [
-                {
-                  type: "message.updated",
-                  properties: {
-                    info: {
-                      id: "msg_assistant",
-                      sessionID: "ses_unit_test",
-                      role: "assistant",
-                    },
-                  },
-                } as OpenCodeEvent,
-                {
-                  type: "message.part.delta",
-                  properties: {
-                    sessionID: "ses_unit_test",
-                    messageID: "msg_assistant",
-                    partID: "prt_text",
-                    field: "text",
-                    delta: "Hello, ",
-                  },
-                } as OpenCodeEvent,
-              ];
+  test("fails a turn when OpenCode retry status does not recover", async () => {
+    vi.useFakeTimers();
+    const retryStream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]: () => {
+        let emitted = false;
+        return {
+          next: async () => {
+            if (!emitted) {
+              emitted = true;
               return {
-                next: async () => {
-                  if (index < events.length) {
-                    return { done: false, value: events[index++] };
-                  }
-                  await streamMayEnd;
-                  return { done: true, value: undefined };
+                done: false,
+                value: {
+                  payload: {
+                    type: "session.status",
+                    properties: {
+                      sessionID: "ses_unit_test",
+                      status: {
+                        type: "retry",
+                        attempt: 1,
+                        message: "model does not exist",
+                      },
+                    },
+                  },
                 },
               };
-            },
+            }
+            return new Promise(() => {});
           },
-        }),
+        };
       },
-      provider: {
-        list: vi.fn().mockResolvedValue({ data: { connected: [], all: [] }, error: undefined }),
+    };
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockResolvedValue({ stream: retryStream }),
       },
       session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "ses_unit_test" }, error: undefined }),
-        messages: vi.fn().mockResolvedValue(completedMessages),
-        promptAsync: vi.fn().mockImplementation(async () => {
-          releaseStream();
-          return { data: {}, error: undefined };
-        }),
-        abort: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        update: vi.fn().mockResolvedValue({ data: true, error: undefined }),
-        delete: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+        promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
       },
     } as never;
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot, {
-      runtime: {
-        acquireServer: vi.fn().mockResolvedValue({
-          server: { port: 0, url: "http://localhost" },
-          release: () => {},
-        }),
-        ensureServerRunning: vi.fn().mockResolvedValue({ port: 0, url: "http://localhost" }),
-        createClient: vi.fn().mockReturnValue(fakeClient),
-        shutdown: vi.fn().mockResolvedValue(undefined),
-      },
-      recovery: { timeoutMs: 1_000, pollIntervalMs: 5, livenessMs: 1_000 },
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+      "/tmp/opencode-storage",
+    );
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("hello");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const failed = events.find((event) => event.type === "turn_failed");
+    expect(failed).toMatchObject({
+      type: "turn_failed",
+      error: expect.stringContaining("model does not exist"),
     });
-
-    const session = await client.createSession({ provider: "opencode", cwd });
-    const turn = await collectTurnEvents(streamSession(session, "hello"));
-
-    expect(turn.turnCompleted).toBe(true);
-    expect(turn.turnFailed).toBe(false);
-    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe("Hello, world!");
-
-    dateNowSpy.mockRestore();
-    rmSync(storageRoot, { recursive: true, force: true });
+    vi.useRealTimers();
   });
 
   test("deletes provider session on close when persistence is disabled", async () => {
@@ -2316,19 +779,29 @@ describe("OpenCode adapter startTurn error handling", () => {
   });
 
   test("emits turn_failed when client.session.promptAsync throws synchronously", async () => {
-    // Async iterable that never yields and never resolves. The IIFE in
-    // startTurn synchronously hits the promptAsync throw and finishes the
-    // turn before this iterator is ever pulled, so the never-resolving
-    // promise inside next() is fine and gets garbage-collected.
+    // Yield the server-connected event, then park forever. The adapter waits
+    // for that first event before sending the prompt.
     const neverYieldingStream: AsyncIterable<OpenCodeEvent> = {
-      [Symbol.asyncIterator]: () => ({
-        next: () => new Promise(() => {}),
-      }),
+      [Symbol.asyncIterator]: () => {
+        let emittedConnected = false;
+        return {
+          next: () => {
+            if (!emittedConnected) {
+              emittedConnected = true;
+              return Promise.resolve({
+                done: false,
+                value: { type: "server.connected", properties: {} } as OpenCodeEvent,
+              });
+            }
+            return new Promise(() => {});
+          },
+        };
+      },
     };
 
     const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: neverYieldingStream }),
+      global: {
+        event: vi.fn().mockResolvedValue({ stream: neverYieldingStream }),
       },
       session: {
         promptAsync: vi.fn(() => {
@@ -2367,12 +840,11 @@ describe("OpenCode adapter startTurn error handling", () => {
       .mockReturnValueOnce(abortDeferred.promise)
       .mockResolvedValue({ data: true, error: undefined });
     const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockImplementation(
-          async (
-            _params: { directory: string },
-            options: { signal: AbortSignal },
-          ): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
+      global: {
+        event: vi.fn().mockImplementation(
+          async (options: {
+            signal: AbortSignal;
+          }): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
             stream: abortableOpenCodeStream(options.signal),
           }),
         ),
@@ -2496,44 +968,6 @@ function writeOpenCodeJson(storageRoot: string, relativePath: string, value: unk
   writeFileSync(filePath, JSON.stringify(value), "utf8");
 }
 
-function buildAssistantMessageInfo(args: {
-  id: string;
-  createdAt: number;
-  completedAt: number;
-  tokens: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cache: { read: number; write: number };
-    total: number;
-  };
-}): unknown {
-  return {
-    id: args.id,
-    sessionID: "ses_unit_test",
-    role: "assistant",
-    time: { created: args.createdAt, completed: args.completedAt },
-    parentID: "msg_user",
-    modelID: "test-model",
-    providerID: "test-provider",
-    mode: "build",
-    agent: "build",
-    path: { cwd: "/tmp/test", root: "/tmp/test" },
-    cost: 0,
-    tokens: args.tokens,
-  };
-}
-
-function buildTextPart(messageId: string, partId: string, text: string): unknown {
-  return {
-    id: partId,
-    sessionID: "ses_unit_test",
-    messageID: messageId,
-    type: "text",
-    text,
-  };
-}
-
 function createTestDeferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -2550,17 +984,28 @@ function createTestDeferred<T>(): {
 
 function abortableOpenCodeStream(signal: AbortSignal): AsyncIterable<OpenCodeEvent> {
   return {
-    [Symbol.asyncIterator]: () => ({
-      next: () =>
-        new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
-          if (signal.aborted) {
-            resolve({ done: true, value: undefined });
-            return;
+    [Symbol.asyncIterator]: () => {
+      let emittedConnected = false;
+      return {
+        next: () => {
+          if (!emittedConnected) {
+            emittedConnected = true;
+            return Promise.resolve({
+              done: false,
+              value: { type: "server.connected", properties: {} } as OpenCodeEvent,
+            });
           }
-          signal.addEventListener("abort", () => resolve({ done: true, value: undefined }), {
-            once: true,
+          return new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
+            if (signal.aborted) {
+              resolve({ done: true, value: undefined });
+              return;
+            }
+            signal.addEventListener("abort", () => resolve({ done: true, value: undefined }), {
+              once: true,
+            });
           });
-        }),
-    }),
+        },
+      };
+    },
   };
 }
