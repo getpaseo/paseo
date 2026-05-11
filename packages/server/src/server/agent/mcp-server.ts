@@ -1858,6 +1858,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         resolveDefaultBranch: mcpInput.resolveDefaultBranch,
       });
       const { worktree } = createdWorktree;
+      await options.workspaceGitService?.listWorktrees?.(repoRoot, {
+        force: true,
+        reason: "mcp:create-worktree",
+      });
 
       return {
         content: [],
@@ -1948,6 +1952,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           requestId: "mcp:archive_worktree",
         },
       );
+      await options.workspaceGitService.listWorktrees(repoRoot, {
+        force: true,
+        reason: "mcp:archive-worktree",
+      });
 
       return {
         content: [],

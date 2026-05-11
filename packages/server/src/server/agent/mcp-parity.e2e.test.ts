@@ -683,8 +683,11 @@ describe("Suite E: Worktree Tools", () => {
     try {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
-        branchName,
-        baseBranch: "main",
+        target: {
+          mode: "branch-off",
+          newBranch: branchName,
+          base: "main",
+        },
       });
       worktreePath = str(created.worktreePath);
 
@@ -711,8 +714,11 @@ describe("Suite E: Worktree Tools", () => {
     try {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
-        branchName,
-        baseBranch: "main",
+        target: {
+          mode: "branch-off",
+          newBranch: branchName,
+          base: "main",
+        },
       });
       worktreePath = str(created.worktreePath);
 

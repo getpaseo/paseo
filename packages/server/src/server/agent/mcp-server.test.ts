@@ -1033,6 +1033,7 @@ describe("create_agent MCP tool", () => {
       execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
       const workspaceGitService = {
         getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
       };
 
       const server = await createAgentMcpServer({
@@ -1059,6 +1060,10 @@ describe("create_agent MCP tool", () => {
       expect(response.structuredContent.branchName).toBe("tool-worktree");
       expect(response.structuredContent.worktreePath).toContain("tool-worktree");
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+      expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "mcp:create-worktree",
+      });
       expect(setupContinuations).toEqual([undefined]);
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0]).toContain("tool-worktree");
@@ -1093,6 +1098,7 @@ describe("create_agent MCP tool", () => {
 
       const workspaceGitService = {
         getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
       };
       const archiveWorkspaceRecord = vi.fn(async () => undefined);
       const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => undefined);
@@ -1132,6 +1138,10 @@ describe("create_agent MCP tool", () => {
       expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
         force: true,
         reason: "archive-worktree",
+      });
+      expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "mcp:archive-worktree",
       });
       expect(archiveWorkspaceRecord).toHaveBeenCalledWith(created.structuredContent.worktreePath);
       expect(markWorkspaceArchiving).toHaveBeenCalledWith(
