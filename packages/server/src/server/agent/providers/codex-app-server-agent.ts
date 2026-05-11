@@ -3109,50 +3109,18 @@ class CodexAppServerAgentSession implements AgentSession {
     return args ? `$${commandName} ${args}` : `$${commandName}`;
   }
 
-  async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
-    return runProviderTurn({
-      prompt,
-      runOptions: options,
-      startTurn: (p, o) => this.startTurn(p, o),
-      subscribe: (callback) => this.subscribe(callback),
-      getSessionId: async () => (await this.getRuntimeInfo()).sessionId ?? "",
-      reduceFinalText: ({ current, item }) => {
-        if (item.type === "assistant_message") {
-          return item.text;
-        }
-        if (item.type === "tool_call" && item.detail.type === "plan") {
-          return item.detail.text;
-        }
-        return current;
-      },
-    });
-  }
-
-  async startTurn(
-    prompt: AgentPromptInput,
+  private async buildTurnStartParams(
+    prompt: CodexPromptInput,
     options?: AgentRunOptions,
-  ): Promise<{ turnId: string }> {
-    if (this.activeForegroundTurnId) {
-      throw new Error("A foreground turn is already active");
-    }
-
-    await this.connect();
-    if (!this.client) {
-      throw new Error("Codex client not initialized");
-    }
-
-    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
-    const effectivePrompt = slashCommand
-      ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
-      : prompt;
-
-    if (this.currentThreadId) {
-      await this.ensureThreadLoaded();
-    } else {
-      await this.ensureThread();
-    }
-
-    const input = await this.buildUserInput(effectivePrompt);
+  ): Promise<{
+    params: Record<string, unknown>;
+    thinkingOptionId?: string;
+    approvalPolicy: string;
+    sandboxPolicyType: string;
+    hasOutputSchema: boolean;
+    hasCodexConfig: boolean;
+  }> {
+    const input = await this.buildUserInput(prompt);
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
     const sandboxPolicyType = this.config.sandboxMode ?? preset.sandbox;
@@ -3200,11 +3168,109 @@ class CodexAppServerAgentSession implements AgentSession {
       params.config = codexConfig;
     }
 
+    return {
+      params,
+      thinkingOptionId,
+      approvalPolicy,
+      sandboxPolicyType,
+      hasOutputSchema: Boolean(options?.outputSchema),
+      hasCodexConfig: Boolean(codexConfig),
+    };
+  }
+
+  private logTurnStartSummary({
+    turnId,
+    thinkingOptionId,
+    approvalPolicy,
+    sandboxPolicyType,
+    hasOutputSchema,
+    hasCodexConfig,
+  }: {
+    turnId: string;
+    thinkingOptionId?: string;
+    approvalPolicy: string;
+    sandboxPolicyType: string;
+    hasOutputSchema: boolean;
+    hasCodexConfig: boolean;
+  }): void {
+    this.logger.info(
+      {
+        turnId,
+        threadId: this.currentThreadId,
+        model: this.config.model ?? null,
+        modeId: this.currentMode ?? null,
+        effort: thinkingOptionId ?? null,
+        serviceTier: this.serviceTier,
+        cwd: this.config.cwd ?? null,
+        approvalPolicy,
+        sandboxPolicyType,
+        hasCollaborationMode: Boolean(this.resolvedCollaborationMode),
+        hasOutputSchema,
+        hasDeveloperInstructions: Boolean(this.config.systemPrompt?.trim()),
+        hasCodexConfig,
+      },
+      "Starting Codex app-server turn",
+    );
+  }
+
+  async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
+    return runProviderTurn({
+      prompt,
+      runOptions: options,
+      startTurn: (p, o) => this.startTurn(p, o),
+      subscribe: (callback) => this.subscribe(callback),
+      getSessionId: async () => (await this.getRuntimeInfo()).sessionId ?? "",
+      reduceFinalText: ({ current, item }) => {
+        if (item.type === "assistant_message") {
+          return item.text;
+        }
+        if (item.type === "tool_call" && item.detail.type === "plan") {
+          return item.detail.text;
+        }
+        return current;
+      },
+    });
+  }
+
+  async startTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
+    if (this.activeForegroundTurnId) {
+      throw new Error("A foreground turn is already active");
+    }
+
+    await this.connect();
+    if (!this.client) {
+      throw new Error("Codex client not initialized");
+    }
+
+    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+    const effectivePrompt = slashCommand
+      ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
+      : prompt;
+
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+
+    const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
 
     try {
-      await this.client.request("turn/start", params, TURN_START_TIMEOUT_MS);
+      this.logTurnStartSummary({
+        turnId,
+        thinkingOptionId: turnStart.thinkingOptionId,
+        approvalPolicy: turnStart.approvalPolicy,
+        sandboxPolicyType: turnStart.sandboxPolicyType,
+        hasOutputSchema: turnStart.hasOutputSchema,
+        hasCodexConfig: turnStart.hasCodexConfig,
+      });
+      await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
     } catch (error) {
       this.activeForegroundTurnId = null;
       throw error;

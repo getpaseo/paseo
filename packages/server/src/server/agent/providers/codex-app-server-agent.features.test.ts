@@ -1,3 +1,4 @@
+import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
@@ -33,6 +34,25 @@ const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
 
 type CodexFeaturesTestSession = AgentSession;
 
+interface CapturedLogEntry {
+  level?: number;
+  msg?: string;
+  [key: string]: unknown;
+}
+
+function createCapturedLogger(): { logger: pino.Logger; entries: CapturedLogEntry[] } {
+  const entries: CapturedLogEntry[] = [];
+  const logger = pino(
+    { level: "debug" },
+    {
+      write(line: string) {
+        entries.push(JSON.parse(line) as CapturedLogEntry);
+      },
+    },
+  );
+  return { logger, entries };
+}
+
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
     provider: CODEX_PROVIDER,
@@ -43,7 +63,10 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
-function createSessionHarness(configOverrides: Partial<AgentSessionConfig> = {}): {
+function createSessionHarness(
+  configOverrides: Partial<AgentSessionConfig> = {},
+  options: { logger?: pino.Logger } = {},
+): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
 } {
@@ -54,17 +77,20 @@ function createSessionHarness(configOverrides: Partial<AgentSessionConfig> = {})
   const session = new __codexAppServerInternals.CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
     null,
-    createTestLogger(),
+    options.logger ?? createTestLogger(),
     async () => appServer.child,
   ) as CodexFeaturesTestSession;
   return { session, appServer };
 }
 
-async function createConnectedSession(configOverrides: Partial<AgentSessionConfig> = {}): Promise<{
+async function createConnectedSession(
+  configOverrides: Partial<AgentSessionConfig> = {},
+  options: { logger?: pino.Logger } = {},
+): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
 }> {
-  const harness = createSessionHarness(configOverrides);
+  const harness = createSessionHarness(configOverrides, options);
   await harness.session.connect();
   harness.appServer.assertNoErrors();
   return harness;
@@ -226,6 +252,30 @@ describe("Codex app-server provider features", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
       serviceTier: "fast",
     });
+  });
+
+  test("startTurn logs a sanitized turn/start summary for fast mode observability", async () => {
+    const capture = createCapturedLogger();
+    const prompt = "secret prompt text should not be logged";
+    const { session } = await createConnectedSession(
+      { featureValues: { fast_mode: true } },
+      { logger: capture.logger },
+    );
+
+    await session.startTurn(prompt);
+
+    const entry = capture.entries.find(
+      (candidate) => candidate.msg === "Starting Codex app-server turn",
+    );
+    expect(entry).toMatchObject({
+      level: 30,
+      msg: "Starting Codex app-server turn",
+      model: "gpt-5.4",
+      modeId: "auto",
+      serviceTier: "fast",
+      cwd: "/tmp/codex-fast-mode-test",
+    });
+    expect(JSON.stringify(entry)).not.toContain(prompt);
   });
 
   test("setModel clears fast mode when switching to an unsupported model", async () => {
