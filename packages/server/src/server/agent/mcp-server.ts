@@ -489,6 +489,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       "Required provider/model pair, for example codex/gpt-5.4.",
     ),
     thinking: z.string().optional().describe("Thinking option ID"),
+    features: z
+      .record(z.unknown())
+      .optional()
+      .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
     labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
       .string()
@@ -531,6 +535,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       "Required provider/model pair, for example codex/gpt-5.4.",
     ),
     thinking: z.string().optional().describe("Thinking option ID"),
+    features: z
+      .record(z.unknown())
+      .optional()
+      .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
     labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
       .string()
@@ -630,6 +638,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     normalizedTitle: string | null;
     model: string | undefined;
     thinking: string | undefined;
+    features: Record<string, unknown> | undefined;
     labels: Record<string, string> | undefined;
     notifyOnFinish: boolean;
     resolvedCwd: string;
@@ -699,6 +708,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       normalizedTitle: callerArgs.title.trim(),
       model: resolvedProviderModel.model,
       thinking: callerArgs.thinking,
+      features: callerArgs.features,
       labels: callerArgs.labels,
       notifyOnFinish: callerArgs.notifyOnFinish ?? false,
       resolvedCwd,
@@ -772,6 +782,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       normalizedTitle: topLevelArgs.title.trim(),
       model: resolvedProviderModel.model,
       thinking: topLevelArgs.thinking,
+      features: topLevelArgs.features,
       labels: topLevelArgs.labels,
       notifyOnFinish: topLevelArgs.notifyOnFinish ?? false,
       resolvedCwd,
@@ -815,6 +826,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         normalizedTitle,
         model,
         thinking,
+        features,
         labels,
         notifyOnFinish,
         resolvedCwd,
@@ -836,6 +848,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           title: normalizedTitle ?? undefined,
           model,
           thinkingOptionId: thinking,
+          featureValues: features,
         },
         undefined,
         Object.keys(mergedLabels).length > 0 ? { labels: mergedLabels } : undefined,
@@ -920,6 +933,29 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         }),
       };
       return response;
+    },
+  );
+
+  server.registerTool(
+    "set_agent_feature",
+    {
+      title: "Set agent feature",
+      description: "Set a provider-specific feature on an existing agent, such as Codex fast_mode.",
+      inputSchema: {
+        agentId: z.string(),
+        featureId: z.string().trim().min(1),
+        value: z.unknown(),
+      },
+      outputSchema: {
+        success: z.boolean(),
+      },
+    },
+    async ({ agentId, featureId, value }) => {
+      await agentManager.setAgentFeature(agentId, featureId, value);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ success: true }),
+      };
     },
   );
 

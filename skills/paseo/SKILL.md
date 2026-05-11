@@ -20,11 +20,15 @@ Returns `{ branchName, worktreePath }`. Pass `cwd` to target a specific repo.
 
 ## Agents
 
-**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `cwd` (often a `worktreePath`), `background` (default `false` — blocks until completion or permission), `notifyOnFinish`. Returns `{ agentId, … }`.
+**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `cwd` (often a `worktreePath`), `background` (default `false` — blocks until completion or permission), `notifyOnFinish`, `features`. Returns `{ agentId, … }`.
+
+Provider features are provider-specific. For Codex fast mode, pass `features: { "fast_mode": true }` when creating the agent.
 
 Compose: call `create_worktree` first, then `create_agent` with `cwd` set to the returned `worktreePath`.
 
 **`send_agent_prompt`** — `{ agentId, prompt }`. Blocks by default; pass `background: true` to fire-and-forget.
+
+**`set_agent_feature`** — `{ agentId, featureId, value }`. Use for provider-specific toggles on an existing agent, for example `{ agentId, featureId: "fast_mode", value: true }` for Codex.
 
 **`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`.
 
