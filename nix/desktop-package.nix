@@ -118,9 +118,16 @@ buildNpmPackage rec {
     # --no-sandbox: Chromium's setuid sandbox can't live in /nix/store
     # (immutable, no setuid). Acceptable for v1; a follow-up can wire
     # `security.wrappers` via a NixOS module for users who want the sandbox.
+    #
+    # EXPO_DEV_URL: We run unpackaged via `electron path/to/main.js`, so
+    # `app.isPackaged` is false. In that mode main.ts loads `DEV_SERVER_URL`
+    # (defaults to http://localhost:8081 — the Expo dev server, which doesn't
+    # exist here). Point it at the `paseo://` protocol handler instead, which
+    # serves from `__dirname/../../app/dist` (our install layout matches).
     makeWrapper ${electron}/bin/electron $out/bin/paseo-desktop \
       --add-flags "$out/share/paseo-desktop/packages/desktop/dist/main.js" \
-      --add-flags "--no-sandbox"
+      --add-flags "--no-sandbox" \
+      --set EXPO_DEV_URL "paseo://app/"
 
     copyDesktopItems
 
