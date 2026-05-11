@@ -95,27 +95,14 @@ buildNpmPackage rec {
     # (`__dirname/../../app/dist`, `__dirname/../assets/icon.png`) works
     # without patching: invoked unpackaged via `electron path/to/main.js`,
     # `app.isPackaged` is false, so these relative paths are used.
+    #
+    # Copy the entire packages/ tree (not just built artifacts) because npm
+    # creates workspace symlinks from node_modules/@getpaseo/* into packages/*.
+    # Missing any workspace package leaves dangling symlinks and fails the
+    # noBrokenSymlinks output check. The cleanSourceWith filter above already
+    # drops the big platform-specific things (android/ios, website, tests).
     cp package.json $out/share/paseo-desktop/
-
-    mkdir -p $out/share/paseo-desktop/packages/desktop
-    cp -a packages/desktop/dist $out/share/paseo-desktop/packages/desktop/
-    cp -a packages/desktop/assets $out/share/paseo-desktop/packages/desktop/
-    cp packages/desktop/package.json $out/share/paseo-desktop/packages/desktop/
-
-    mkdir -p $out/share/paseo-desktop/packages/app
-    cp -a packages/app/dist $out/share/paseo-desktop/packages/app/
-    cp packages/app/package.json $out/share/paseo-desktop/packages/app/
-
-    # Built daemon workspaces (server, cli, relay, highlight, expo-two-way-audio)
-    for pkg in server cli relay highlight expo-two-way-audio; do
-      if [ -d packages/$pkg/dist ]; then
-        mkdir -p $out/share/paseo-desktop/packages/$pkg
-        cp packages/$pkg/package.json $out/share/paseo-desktop/packages/$pkg/
-        cp -a packages/$pkg/dist $out/share/paseo-desktop/packages/$pkg/
-      fi
-    done
-
-    # node_modules (with workspace symlinks intact)
+    cp -a packages $out/share/paseo-desktop/
     cp -a node_modules $out/share/paseo-desktop/
 
     # Skills directory referenced at runtime by some agents
