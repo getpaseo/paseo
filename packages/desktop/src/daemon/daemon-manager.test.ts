@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
@@ -68,6 +69,34 @@ function desktopSettingsWithManagement(enabled: boolean) {
       manageBuiltInDaemon: enabled,
     },
   };
+}
+
+type MockChildProcess = EventEmitter & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  pid: number;
+  spawnfile: string;
+  spawnargs: string[];
+  unref: ReturnType<typeof vi.fn>;
+};
+
+function createMockChildProcess(): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 1234;
+  child.spawnfile = "node";
+  child.spawnargs = ["node", "daemon.js"];
+  child.unref = vi.fn();
+  return child;
+}
+
+function scheduleFailedStartupOutput(child: MockChildProcess): void {
+  setImmediate(() => {
+    child.stdout.emit("data", Buffer.from(`${"x".repeat(80_000)}stdout-tail`));
+    child.stderr.emit("data", Buffer.from(`${"y".repeat(80_000)}stderr-tail`));
+    child.emit("exit", 1, null);
+  });
 }
 
 describe("daemon-manager commands", () => {
@@ -164,5 +193,62 @@ describe("daemon-manager commands", () => {
       "status",
       "--json",
     ]);
+  });
+
+  it("uses a reachable daemon when the PID file is stale", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "stale_pid",
+      connectedDaemon: "reachable",
+      serverId: "server-1",
+      pid: 7675,
+      listen: "127.0.0.1:6767",
+      hostname: "dev-host",
+      daemonVersion: "1.2.2",
+      desktopManaged: true,
+    });
+    const handlers = createDaemonCommandHandlers();
+
+    await expect(handlers.start_desktop_daemon()).resolves.toEqual({
+      serverId: "server-1",
+      status: "running",
+      listen: "127.0.0.1:6767",
+      hostname: "dev-host",
+      pid: null,
+      home: "/tmp/paseo-home",
+      version: "1.2.2",
+      desktopManaged: false,
+      error: null,
+    });
+
+    expect(mocks.spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("bounds captured daemon startup output", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "stopped",
+      connectedDaemon: "unreachable",
+      serverId: "",
+    });
+    mocks.spawnProcess.mockImplementation(() => {
+      const child = createMockChildProcess();
+      scheduleFailedStartupOutput(child);
+      return child;
+    });
+    const handlers = createDaemonCommandHandlers();
+
+    let thrown: Error | null = null;
+    try {
+      await handlers.start_desktop_daemon();
+    } catch (error) {
+      thrown = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = thrown?.message ?? "";
+    expect(message).toContain("Daemon failed to start: exit code 1");
+    expect(message).toContain("output truncated to the last 65536 chars");
+    expect(message).toContain("stdout-tail");
+    expect(message).toContain("stderr-tail");
+    expect(message.length).toBeLessThan(150_000);
   });
 });
