@@ -34,6 +34,17 @@ function recordArr(val: unknown): StructuredContent[] {
   return z.array(z.record(z.unknown())).parse(val);
 }
 
+function expectAgentFeatureValue(snapshot: StructuredContent, featureId: string, value: unknown) {
+  expect(recordArr(snapshot.features)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: featureId,
+        value,
+      }),
+    ]),
+  );
+}
+
 function strArrOptional(val: unknown): string[] | undefined {
   return z.array(z.string()).optional().parse(val);
 }
@@ -325,6 +336,60 @@ describe("Suite A: Core Fixes", () => {
     }
   });
 
+  test("create_agent accepts provider features over MCP", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createTopLevelAgent({ features: { test_feature: true } });
+      const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
+
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      expectAgentFeatureValue(snapshot, "test_feature", true);
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  test("agent-scoped create_agent accepts provider features over MCP", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createChildAgent({
+        provider: "claude/claude-test-model",
+        features: { test_feature: true },
+      });
+      const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
+
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      expectAgentFeatureValue(snapshot, "test_feature", true);
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  test("set_agent_feature updates provider features over MCP", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createTopLevelAgent({ features: { test_feature: false } });
+      const updated = await callToolStructured(topLevelClient, "set_agent_feature", {
+        agentId,
+        featureId: "test_feature",
+        value: true,
+      });
+      expect(updated.success).toBe(true);
+      const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
+
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      expectAgentFeatureValue(snapshot, "test_feature", true);
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
   test("create_agent accepts labels param", async () => {
     let agentId: string | null = null;
     try {
@@ -480,6 +545,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity schedule list",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -527,6 +593,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity inspect schedule",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -551,6 +618,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity pause schedule",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -577,6 +645,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity delete schedule",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 

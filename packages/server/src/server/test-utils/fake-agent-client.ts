@@ -6,6 +6,7 @@ import path from "node:path";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentFeature,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -31,6 +32,8 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsReasoningStream: true,
   supportsToolInvocations: true,
 };
+
+const TEST_FEATURE_ID = "test_feature";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -323,6 +326,18 @@ class FakeAgentSession implements AgentSession {
 
   get provider() {
     return this.providerName;
+  }
+
+  get features(): AgentFeature[] {
+    return [
+      {
+        type: "toggle",
+        id: TEST_FEATURE_ID,
+        label: "Test feature",
+        description: "Deterministic provider feature used by MCP integration tests.",
+        value: this.config.featureValues?.[TEST_FEATURE_ID] === true,
+      },
+    ];
   }
 
   private async appendHistoryEvent(event: AgentStreamEvent): Promise<void> {
@@ -784,6 +799,13 @@ class FakeAgentSession implements AgentSession {
 
   async setMode(modeId: string): Promise<void> {
     this.config.modeId = modeId;
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    this.config.featureValues = {
+      ...this.config.featureValues,
+      [featureId]: value,
+    };
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
