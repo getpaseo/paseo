@@ -581,6 +581,7 @@ function buildOpenCodeModelContextWindowLookup(
         connected?: string[];
         all?: Array<{
           id: string;
+          source?: string;
           models?: Record<string, unknown>;
         }>;
       }
@@ -594,7 +595,9 @@ function buildOpenCodeModelContextWindowLookup(
 
   const connectedProviderIds = new Set(providers.connected ?? []);
   for (const provider of providers.all ?? []) {
-    if (!connectedProviderIds.has(provider.id)) {
+    // Providers with source "api" are managed by the OpenCode console/subscription and are
+    // usable even though they don't appear in `connected` (which only lists env/config providers).
+    if (!connectedProviderIds.has(provider.id) && provider.source !== "api") {
       continue;
     }
     for (const [modelId, modelDefinition] of Object.entries(provider.models ?? {})) {
@@ -1121,21 +1124,27 @@ export class OpenCodeAgentClient implements AgentClient {
         return [];
       }
 
-      // Only include models from connected providers (ones that are actually available)
       const connectedProviderIds = new Set(providers.connected);
 
-      // Fail fast if no providers are connected
-      if (connectedProviderIds.size === 0) {
+      // Providers with source "api" are managed by the OpenCode console/subscription (e.g. Pi
+      // coding agent). They do not appear in `connected` (which only lists env/config providers)
+      // but are fully usable — OpenCode authenticates them internally via the console session.
+      const isAccessible = (provider: { id: string; source: string }): boolean =>
+        connectedProviderIds.has(provider.id) || provider.source === "api";
+
+      // Fail fast if no providers are accessible at all
+      if (!providers.all.some(isAccessible)) {
         throw new Error(
-          "OpenCode has no connected providers. Please authenticate with at least one provider (e.g., openai, anthropic) or set appropriate environment variables (e.g., OPENAI_API_KEY).",
+          "OpenCode has no connected providers. Please authenticate with at least one provider " +
+            "(e.g., openai, anthropic), set appropriate environment variables (e.g., OPENAI_API_KEY), " +
+            "or log in to OpenCode Go via the console.",
         );
       }
 
       const models: AgentModelDefinition[] = [];
       this.modelContextWindows.clear();
       for (const provider of providers.all) {
-        // Skip providers that aren't connected/configured
-        if (!connectedProviderIds.has(provider.id)) {
+        if (!isAccessible(provider)) {
           continue;
         }
 

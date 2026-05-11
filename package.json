@@ -104,6 +104,7 @@
     "oxlint-tsgolint": "^0.22.1",
     "patch-package": "^8.0.1",
     "playwright": "^1.56.1",
+    "portless": "^0.13.0",
     "typescript": "^5.9.3",
     "ws": "^8.20.0"
   },
