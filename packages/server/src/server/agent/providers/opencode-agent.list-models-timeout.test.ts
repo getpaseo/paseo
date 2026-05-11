@@ -72,3 +72,94 @@ test("passes explicit refresh force through server acquisition", async () => {
 
   expect(runtime.acquisitions).toEqual([{ force: true, releaseCount: 1 }]);
 });
+
+test("includes models from api-source providers not in connected", async () => {
+  // Providers with source "api" are managed by the OpenCode console/subscription.
+  // They don't appear in `connected` but are fully usable.
+  const runtime = new TestOpenCodeRuntime();
+  const openCodeClient = new TestOpenCodeClient();
+  openCodeClient.providerListResponse = {
+    data: {
+      connected: [],
+      all: [
+        {
+          id: "pi",
+          name: "Pi",
+          source: "api",
+          models: {
+            "pi-model-1": {
+              name: "Pi Model 1",
+              limit: { context: 200_000 },
+            },
+          },
+        },
+      ],
+    },
+  };
+  runtime.enqueueClient(openCodeClient);
+
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+  const models = await client.listModels({ cwd: "/tmp/opencode-models", force: false });
+
+  expect(models).toMatchObject([
+    {
+      provider: "opencode",
+      id: "pi/pi-model-1",
+      label: "Pi Model 1",
+    },
+  ]);
+});
+
+test("throws when no providers are accessible (neither connected nor api-source)", async () => {
+  const runtime = new TestOpenCodeRuntime();
+  const openCodeClient = new TestOpenCodeClient();
+  openCodeClient.providerListResponse = {
+    data: {
+      connected: [],
+      all: [
+        {
+          id: "anthropic",
+          name: "Anthropic",
+          source: "env",
+          models: {
+            "claude-opus": { name: "Claude Opus", limit: { context: 1_000_000 } },
+          },
+        },
+      ],
+    },
+  };
+  runtime.enqueueClient(openCodeClient);
+
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+
+  await expect(client.listModels({ cwd: "/tmp/opencode-models", force: false })).rejects.toThrow(
+    "OpenCode has no connected providers",
+  );
+});
+
+test("does not throw when only api-source providers are present with no connected providers", async () => {
+  const runtime = new TestOpenCodeRuntime();
+  const openCodeClient = new TestOpenCodeClient();
+  openCodeClient.providerListResponse = {
+    data: {
+      connected: [],
+      all: [
+        {
+          id: "pi",
+          name: "Pi",
+          source: "api",
+          models: {
+            "pi-model-1": { name: "Pi Model 1", limit: { context: 200_000 } },
+          },
+        },
+      ],
+    },
+  };
+  runtime.enqueueClient(openCodeClient);
+
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+
+  await expect(
+    client.listModels({ cwd: "/tmp/opencode-models", force: false }),
+  ).resolves.toHaveLength(1);
+});

@@ -475,6 +475,50 @@ describe("OpenCode adapter context-window normalization", () => {
     ).toBeUndefined();
   });
 
+  test("includes api-source providers in context window lookup even when absent from connected", () => {
+    // Providers with source "api" are managed by the OpenCode console/subscription and are
+    // usable even when they don't appear in `connected`.
+    const lookup = __openCodeInternals.buildOpenCodeModelContextWindowLookup({
+      connected: [],
+      all: [
+        {
+          id: "pi",
+          source: "api",
+          models: {
+            "pi-model-1": { limit: { context: 200_000 } },
+          },
+        },
+      ],
+    });
+
+    expect(lookup.get("pi/pi-model-1")).toBe(200_000);
+  });
+
+  test("excludes non-api-source providers absent from connected in context window lookup", () => {
+    const lookup = __openCodeInternals.buildOpenCodeModelContextWindowLookup({
+      connected: ["openai"],
+      all: [
+        {
+          id: "openai",
+          source: "env",
+          models: {
+            "gpt-5": { limit: { context: 400_000 } },
+          },
+        },
+        {
+          id: "anthropic",
+          source: "env",
+          models: {
+            "claude-opus": { limit: { context: 1_000_000 } },
+          },
+        },
+      ],
+    });
+
+    expect(lookup.get("openai/gpt-5")).toBe(400_000);
+    expect(lookup.get("anthropic/claude-opus")).toBeUndefined();
+  });
+
   test("normalizes step-finish usage into AgentUsage context window fields", () => {
     const usage = { contextWindowMaxTokens: 400_000 };
 
