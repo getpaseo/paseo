@@ -2714,7 +2714,7 @@ class CodexAppServerAgentSession implements AgentSession {
     this.currentMode = config.modeId;
     this.config = config;
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
-    if (this.config.featureValues?.fast_mode) {
+    if (this.config.featureValues?.fast_mode && codexModelSupportsFastMode(this.config.model)) {
       this.serviceTier = "fast";
     }
     if (this.config.featureValues?.plan_mode) {
@@ -3354,6 +3354,11 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
     if (featureId === "fast_mode") {
+      if (Boolean(value) && !codexModelSupportsFastMode(this.config.model)) {
+        throw new Error(
+          `Codex fast mode is not available for model '${this.config.model ?? "default"}'`,
+        );
+      }
       this.applyFeatureValue("fast_mode", Boolean(value));
       return;
     }

@@ -162,6 +162,30 @@ describe("Codex app-server provider features", () => {
     ]);
   });
 
+  test("constructor ignores restored fast mode when model does not support it", async () => {
+    const { session, appServer } = await createConnectedSession({
+      model: "gpt-3.5-turbo",
+      featureValues: { fast_mode: true },
+    });
+
+    expect(session.features).toEqual([
+      {
+        type: "toggle",
+        id: "plan_mode",
+        label: "Plan",
+        description: "Switch Codex into planning-only collaboration mode",
+        tooltip: "Toggle plan mode",
+        icon: "list-todo",
+        value: false,
+      },
+    ]);
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.not.toMatchObject({
+      serviceTier: expect.anything(),
+    });
+  });
+
   test("setFeature('fast_mode', true) sets serviceTier to fast", async () => {
     const { session, appServer } = await createConnectedSession();
 
@@ -184,6 +208,14 @@ describe("Codex app-server provider features", () => {
     await expect(appServer.waitForTurnStart()).resolves.not.toMatchObject({
       serviceTier: expect.anything(),
     });
+  });
+
+  test("setFeature('fast_mode', true) rejects models that do not support fast mode", async () => {
+    const { session } = await createConnectedSession({ model: "gpt-3.5-turbo" });
+
+    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(
+      "Codex fast mode is not available for model 'gpt-3.5-turbo'",
+    );
   });
 
   test("setFeature invalidates runtime info", async () => {
