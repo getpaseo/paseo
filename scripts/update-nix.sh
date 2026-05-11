@@ -42,8 +42,8 @@ if ! NEW_HASH="$(nix shell "${NIXPKGS_URL}#prefetch-npm-deps" -c prefetch-npm-de
 fi
 echo "Computed hash: $NEW_HASH"
 
-# 3. Read current hash
-CURRENT_HASH="$(grep 'npmDepsHash' "$PACKAGE_NIX" | sed 's/.*"\(.*\)".*/\1/')"
+# 3. Read current hash (default value of the `npmDepsHash ? "..."` callPackage arg)
+CURRENT_HASH="$(grep -E '^\s*npmDepsHash \? "' "$PACKAGE_NIX" | sed 's/.*"\(.*\)".*/\1/')"
 
 if [[ "$NEW_HASH" == "$CURRENT_HASH" ]]; then
   echo "Hash is already up to date."
@@ -57,7 +57,7 @@ else
   fi
 
   echo "Updating npmDepsHash in nix/package.nix..."
-  sed -i.bak "s|npmDepsHash = \".*\"|npmDepsHash = \"$NEW_HASH\"|" "$PACKAGE_NIX"
+  sed -i.bak "s|npmDepsHash ? \".*\"|npmDepsHash ? \"$NEW_HASH\"|" "$PACKAGE_NIX"
   rm -f "$PACKAGE_NIX.bak"
   echo "Updated: $CURRENT_HASH -> $NEW_HASH"
 fi
