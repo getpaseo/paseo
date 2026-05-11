@@ -81,7 +81,48 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Whether to enable the relay connection for remote access via app.paseo.sh.";
+        description = ''
+          Whether to enable relay-based remote access. When false, the daemon
+          runs with `--no-relay` and only accepts direct (LAN/loopback)
+          connections.
+        '';
+      };
+
+      mode = lib.mkOption {
+        type = lib.types.enum [ "hosted" "remote" ];
+        default = "hosted";
+        description = ''
+          How the daemon reaches the relay when `relay.enable = true`:
+
+          - `"hosted"` (default): use the upstream `app.paseo.sh` relay.
+            Preserves the current behavior; no extra options needed.
+          - `"remote"`: connect to a self-hosted relay at
+            `relay.host:relay.port`. Sets `PASEO_RELAY_ENDPOINT` and
+            `PASEO_RELAY_USE_TLS` for the daemon.
+
+          A `"local"` mode (running a relay on the same host as a systemd
+          unit) is not yet implemented — the relay package currently only
+          ships a Cloudflare Workers adapter. Tracked separately.
+        '';
+      };
+
+      host = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "relay.example.com";
+        description = "Relay hostname. Required when `relay.mode = \"remote\"`.";
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 443;
+        description = "Relay port. Used when `relay.mode = \"remote\"`.";
+      };
+
+      useTls = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Whether to use TLS when connecting to the relay. Used when `relay.mode = \"remote\"`.";
       };
     };
 
@@ -146,6 +187,15 @@ in
       settingsFile = (pkgs.formats.json { }).generate "paseo-config.json" cfg.settings;
     in
     {
+    assertions = [
+      {
+        assertion = !(cfg.relay.enable && cfg.relay.mode == "remote" && cfg.relay.host == "");
+        message = ''
+          services.paseo.relay.host must be set when relay.mode = "remote".
+        '';
+      }
+    ];
+
     users.users.${cfg.user} = lib.mkIf (cfg.user == "paseo") {
       isSystemUser = true;
       group = cfg.group;
@@ -185,6 +235,9 @@ in
         PASEO_HOSTNAMES = "true";
       } // lib.optionalAttrs (lib.isList cfg.hostnames && cfg.hostnames != [ ]) {
         PASEO_HOSTNAMES = lib.concatStringsSep "," cfg.hostnames;
+      } // lib.optionalAttrs (cfg.relay.enable && cfg.relay.mode == "remote") {
+        PASEO_RELAY_ENDPOINT = "${cfg.relay.host}:${toString cfg.relay.port}";
+        PASEO_RELAY_USE_TLS = if cfg.relay.useTls then "true" else "false";
       } // cfg.environment;
 
       serviceConfig = {
