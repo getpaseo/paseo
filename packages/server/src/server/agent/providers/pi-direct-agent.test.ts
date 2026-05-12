@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 import pino from "pino";
 
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -13,12 +13,49 @@ import {
   type PiDirectSessionAdapter,
 } from "./pi-direct-agent.js";
 
-function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
+interface CreatePiSessionOptions {
+  prompt?: () => Promise<void>;
+  compact?: () => Promise<void>;
+  messages?: PiDirectSessionAdapter["messages"];
+  errorMessage?: string | null;
+}
+
+function createPiAssistantErrorMessage(errorMessage: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "openai-completions",
+    provider: "github-copilot",
+    model: "gpt-5.4",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "error",
+    errorMessage,
+    timestamp: Date.now(),
+  };
+}
+
+function createPiSession(options: CreatePiSessionOptions = {}): PiDirectSessionAdapter {
+  const prompt = options.prompt ?? vi.fn(async () => undefined);
+  const compact = options.compact ?? vi.fn(async () => undefined);
+
   return {
     sessionId: "pi-session-1",
     thinkingLevel: "medium",
     model: undefined,
-    messages: [],
+    messages: options.messages ?? [],
     extensionRunner: undefined,
     promptTemplates: [],
     resourceLoader: {
@@ -27,7 +64,7 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
     agent: {
       state: {
         systemPrompt: "",
-        errorMessage: null,
+        errorMessage: options.errorMessage ?? null,
       },
     },
     sessionManager: {
@@ -36,6 +73,7 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
     },
     subscribe: vi.fn(),
     prompt,
+    compact,
     abort: vi.fn(),
     dispose: vi.fn(),
     getSessionStats: vi.fn(() => ({})),
@@ -72,7 +110,9 @@ function createPiModel(provider: string, id: string): Model<Api> {
 describe("PiDirectAgentSession", () => {
   test("treats SDK request abort rejections as turn cancellations", async () => {
     const session = new PiDirectAgentSession(
-      createPiRuntime(createPiSession(() => Promise.reject(new Error("Request was aborted.")))),
+      createPiRuntime(
+        createPiSession({ prompt: () => Promise.reject(new Error("Request was aborted.")) }),
+      ),
       { find: vi.fn(), getAll: vi.fn(() => []) },
       {
         provider: "pi",
@@ -95,8 +135,111 @@ describe("PiDirectAgentSession", () => {
     ]);
   });
 
+  test("compacts stale overflow sessions before prompting again", async () => {
+    const callOrder: string[] = [];
+    const sdkSession = createPiSession({
+      compact: vi.fn(async () => {
+        callOrder.push("compact");
+      }),
+      prompt: vi.fn(async () => {
+        callOrder.push("prompt");
+      }),
+      messages: [createPiAssistantErrorMessage("413 failed to parse request")],
+      errorMessage: "413 failed to parse request",
+    });
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      { find: vi.fn(), getAll: vi.fn(() => []) },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+
+    await session.startTurn("continue");
+
+    expect(sdkSession.compact).toHaveBeenCalledTimes(1);
+    expect(sdkSession.prompt).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(["compact", "prompt"]);
+  });
+
+  test("does not compact before prompting for non-overflow errors", async () => {
+    const sdkSession = createPiSession({
+      messages: [createPiAssistantErrorMessage("429 rate limit")],
+      errorMessage: "429 rate limit",
+    });
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      { find: vi.fn(), getAll: vi.fn(() => []) },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+
+    await session.startTurn("continue");
+
+    expect(sdkSession.compact).not.toHaveBeenCalled();
+    expect(sdkSession.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores harmless compaction errors and still prompts", async () => {
+    const sdkSession = createPiSession({
+      compact: vi.fn(async () => {
+        throw new Error("Already compacted");
+      }),
+      messages: [createPiAssistantErrorMessage("413 failed to parse request")],
+      errorMessage: "413 failed to parse request",
+    });
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      { find: vi.fn(), getAll: vi.fn(() => []) },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+
+    await session.startTurn("continue");
+
+    expect(sdkSession.compact).toHaveBeenCalledTimes(1);
+    expect(sdkSession.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  test("emits turn_failed when pre-prompt compaction fails", async () => {
+    const sdkSession = createPiSession({
+      compact: vi.fn(async () => {
+        throw new Error("Compaction exploded");
+      }),
+      messages: [createPiAssistantErrorMessage("413 failed to parse request")],
+      errorMessage: "413 failed to parse request",
+    });
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      { find: vi.fn(), getAll: vi.fn(() => []) },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("continue");
+
+    expect(sdkSession.prompt).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "pi",
+        turnId,
+        error: "Compaction exploded",
+      },
+    ]);
+  });
+
   test("setModel creates a minimal model for new ids under a known provider", async () => {
-    const sdkSession = createPiSession(async () => undefined);
+    const sdkSession = createPiSession();
     const session = new PiDirectAgentSession(
       createPiRuntime(sdkSession),
       {

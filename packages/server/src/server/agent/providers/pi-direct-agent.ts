@@ -27,7 +27,14 @@ import {
   type WriteToolInput,
 } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
+import {
+  isContextOverflow,
+  type Api,
+  type AssistantMessage,
+  type ImageContent,
+  type Model,
+  type TextContent,
+} from "@mariozechner/pi-ai";
 import { z } from "zod";
 
 import {
@@ -116,6 +123,7 @@ export type PiDirectSessionAdapter = Pick<
   PiAgentSession,
   | "abort"
   | "agent"
+  | "compact"
   | "dispose"
   | "extensionRunner"
   | "getSessionStats"
@@ -739,6 +747,71 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): PiPersis
   return {};
 }
 
+const PI_STALE_OVERFLOW_ERROR_PATTERNS = [/^413\b.*failed to parse request$/i] as const;
+
+function createPiOverflowProbeMessage(errorMessage: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "openai-completions",
+    provider: "github-copilot",
+    model: "pi-overflow-probe",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "error",
+    errorMessage,
+    timestamp: 0,
+  };
+}
+
+function isPiOverflowErrorMessage(errorMessage: string | null | undefined): boolean {
+  const normalized = errorMessage?.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (isContextOverflow(createPiOverflowProbeMessage(normalized))) {
+    return true;
+  }
+
+  return PI_STALE_OVERFLOW_ERROR_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function getLatestAssistantErrorMessage(session: PiDirectSessionAdapter): string | null {
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const message = session.messages[index];
+    if (message.role !== "assistant") {
+      continue;
+    }
+    return message.stopReason === "error" ? (message.errorMessage?.trim() ?? null) : null;
+  }
+  return null;
+}
+
+function shouldCompactBeforePrompt(session: PiDirectSessionAdapter): boolean {
+  if (isPiOverflowErrorMessage(getLatestAssistantErrorMessage(session))) {
+    return true;
+  }
+  return isPiOverflowErrorMessage(session.agent.state.errorMessage);
+}
+
+function isHarmlessPiCompactionError(error: unknown): boolean {
+  const message = toDiagnosticErrorMessage(error);
+  return /already compacted|nothing to compact/i.test(message);
+}
+
 function isPiRequestAbortError(error: unknown): boolean {
   if (error instanceof Error && error.name === "AbortError") {
     return true;
@@ -1095,6 +1168,27 @@ export class PiDirectAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt);
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+
+    try {
+      if (shouldCompactBeforePrompt(this.session)) {
+        try {
+          await this.session.compact();
+        } catch (error) {
+          if (!isHarmlessPiCompactionError(error)) {
+            throw error;
+          }
+        }
+      }
+    } catch (error) {
+      this.activeTurnId = null;
+      this.emit({
+        type: "turn_failed",
+        provider: PI_PROVIDER,
+        turnId,
+        error: toDiagnosticErrorMessage(error),
+      });
+      return { turnId };
+    }
 
     void this.session
       .prompt(payload.text, payload.images ? { images: payload.images } : undefined)
