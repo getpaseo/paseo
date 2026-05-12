@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.75 - 2026-05-12
+
+### Added
+
+- Set the speech-to-text language used by dictation and voice mode from settings. ([#941](https://github.com/getpaseo/paseo/pull/941))
+- NixOS: `services.paseo.settings` renders declarative daemon config to disk, and typed `services.paseo.relay` options auto-wire the relay endpoint. ([#923](https://github.com/getpaseo/paseo/pull/923) by [@ixxie](https://github.com/ixxie))
+- NixOS: Paseo desktop is now packaged in the flake — `nix run github:getpaseo/paseo#desktop` launches the Electron app. ([#923](https://github.com/getpaseo/paseo/pull/923) by [@ixxie](https://github.com/ixxie))
+
+### Fixed
+
+- Codex resume failures now surface as explicit errors instead of leaving the agent silently stuck. ([#947](https://github.com/getpaseo/paseo/pull/947))
+- Custom providers extending Codex now route correctly when they set a custom `OPENAI_BASE_URL`. ([#915](https://github.com/getpaseo/paseo/pull/915))
+- Copilot's **Allow All** mode (previously misnamed Autopilot) now actually suppresses tool, path, and URL permission prompts. ([#935](https://github.com/getpaseo/paseo/pull/935))
+- Desktop: daemon startup no longer fails when a stale PID file is left next to a still-running daemon. ([#913](https://github.com/getpaseo/paseo/pull/913) by [@biaoma-ty](https://github.com/biaoma-ty))
+- iPhone HEIC photos now attach correctly from the image picker. ([#934](https://github.com/getpaseo/paseo/pull/934))
+- Scheduled agents now archive automatically after each run instead of piling up in the active list. ([#945](https://github.com/getpaseo/paseo/pull/945))
+- Windows: Codex command summaries show the underlying command instead of `pwsh`, `powershell`, or `cmd` wrappers. ([#931](https://github.com/getpaseo/paseo/pull/931) by [@32r4](https://github.com/32r4))
+- iPad: settings sidebar and main sidebar respect the top safe area in wide layouts. ([#922](https://github.com/getpaseo/paseo/pull/922), [#937](https://github.com/getpaseo/paseo/pull/937) by [@kongjiadongyuan](https://github.com/kongjiadongyuan))
+
 ## 0.1.74 - 2026-05-11
 
 ### Fixed
