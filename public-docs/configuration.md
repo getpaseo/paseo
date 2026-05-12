@@ -161,6 +161,7 @@ In the mobile app, enter the password in the direct connection setup screen.
 - `PASEO_LOCAL_MODELS_DIR`, control local model directory
 - `PASEO_DICTATION_LOCAL_STT_MODEL`, override local dictation STT model
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, override local voice STT/TTS models
+- `PASEO_DICTATION_LANGUAGE`, `PASEO_VOICE_LANGUAGE`, override dictation and voice STT language
 - `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED`, optional local voice TTS tuning
 
 ## Schema

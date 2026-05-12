@@ -173,6 +173,7 @@ export function resolveSpeechConfig(params: {
     openai,
     speech: {
       providers,
+      sttLanguages: local.sttLanguages,
       ...(local.local ? { local: local.local } : {}),
     },
   };

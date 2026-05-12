@@ -29,13 +29,21 @@ export interface LocalSpeechProviderConfig {
 
 export interface ResolvedLocalSpeechConfig {
   local: LocalSpeechProviderConfig | undefined;
+  sttLanguages: LocalSpeechSttLanguageConfig;
 }
 
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
 
 const DEFAULT_LOCAL_MODELS_SUBDIR = path.join("models", "local-speech");
+const DEFAULT_STT_LANGUAGE = "en";
+
+export interface LocalSpeechSttLanguageConfig {
+  dictation: string;
+  voice: string;
+}
 
 const NumberLikeSchema = z.union([z.number(), z.string().trim().min(1)]);
+const LanguageSchema = z.string().trim().min(1).default(DEFAULT_STT_LANGUAGE);
 
 const OptionalFiniteNumberSchema = NumberLikeSchema.pipe(z.coerce.number().finite()).optional();
 
@@ -47,6 +55,8 @@ const LocalSpeechResolutionSchema = z.object({
   dictationLocalSttModel: LocalSttModelIdSchema.default(DEFAULT_LOCAL_STT_MODEL),
   voiceLocalSttModel: LocalSttModelIdSchema.default(DEFAULT_LOCAL_STT_MODEL),
   voiceLocalTtsModel: LocalTtsModelIdSchema.default(DEFAULT_LOCAL_TTS_MODEL),
+  dictationLanguage: LanguageSchema,
+  voiceLanguage: LanguageSchema,
   voiceLocalTtsSpeakerId: OptionalIntegerSchema,
   voiceLocalTtsSpeed: OptionalFiniteNumberSchema,
 });
@@ -88,6 +98,37 @@ function firstDefinedValue<T>(values: Array<T | null | undefined>): T | undefine
     }
   }
   return undefined;
+}
+
+function firstNonEmptyString(values: Array<string | null | undefined>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function buildLocalSpeechLanguageResolutionInput(params: {
+  env: NodeJS.ProcessEnv;
+  persisted: PersistedConfig;
+}): Record<string, unknown> {
+  const { env, persisted } = params;
+  return {
+    dictationLanguage: firstNonEmptyString([
+      env.PASEO_DICTATION_LANGUAGE,
+      persisted.features?.dictation?.stt?.language,
+      DEFAULT_STT_LANGUAGE,
+    ]),
+    voiceLanguage: firstNonEmptyString([
+      env.PASEO_VOICE_LANGUAGE,
+      env.PASEO_DICTATION_LANGUAGE,
+      persisted.features?.voiceMode?.stt?.language,
+      persisted.features?.dictation?.stt?.language,
+      DEFAULT_STT_LANGUAGE,
+    ]),
+  };
 }
 
 function buildLocalSpeechResolutionInput(params: {
@@ -132,6 +173,7 @@ function buildLocalSpeechResolutionInput(params: {
       ),
       DEFAULT_LOCAL_TTS_MODEL,
     ]),
+    ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
       env.PASEO_VOICE_LOCAL_TTS_SPEAKER_ID,
       persisted.features?.voiceMode?.tts?.speakerId,
@@ -159,6 +201,10 @@ export function resolveLocalSpeechConfig(params: {
     (parsed.voiceLocalTtsModel === "kokoro-en-v0_19" ? 0 : undefined);
 
   return {
+    sttLanguages: {
+      dictation: parsed.dictationLanguage,
+      voice: parsed.voiceLanguage,
+    },
     local: parsed.includeProviderConfig
       ? {
           modelsDir: parsed.modelsDir,

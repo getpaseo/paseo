@@ -342,9 +342,11 @@ function resolveEffectiveProviderIds(params: {
 
 export interface SpeechService {
   resolveStt: () => SpeechToTextProvider | null;
+  resolveSttLanguage: () => string;
   resolveTts: () => TextToSpeechProvider | null;
   resolveTurnDetection: () => TurnDetectionProvider | null;
   resolveDictationStt: () => SpeechToTextProvider | null;
+  resolveDictationSttLanguage: () => string;
   getReadiness: () => SpeechReadinessSnapshot;
   onReadinessChange: (listener: (snapshot: SpeechReadinessSnapshot) => void) => () => void;
   start: () => void;
@@ -709,8 +711,10 @@ export function createSpeechService(params: {
   return {
     resolveTurnDetection: () => turnDetectionService,
     resolveStt: () => sttService,
+    resolveSttLanguage: () => speechConfig?.sttLanguages?.voice ?? "en",
     resolveTts: () => ttsService,
     resolveDictationStt: () => dictationSttService,
+    resolveDictationSttLanguage: () => speechConfig?.sttLanguages?.dictation ?? "en",
     getReadiness: () => lastPublishedReadinessSnapshot ?? computeReadinessSnapshot(),
     onReadinessChange: subscribeSpeechReadiness,
     start,
