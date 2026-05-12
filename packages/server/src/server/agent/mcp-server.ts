@@ -1891,7 +1891,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ cwd, worktreePath, worktreeSlug }) => {
-      const repoRoot = resolveScopedCwd(cwd, { required: true });
+      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
       if (!worktreePath && !worktreeSlug) {
         throw new Error("worktreePath or worktreeSlug is required");
       }
@@ -1916,6 +1916,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!options.emitSessionMessage) {
         throw new Error("Session message emitter is required to archive worktrees");
       }
+      const repoRoot = await options.workspaceGitService.resolveRepoRoot(resolvedCwd);
 
       const targetPath =
         worktreePath ??
