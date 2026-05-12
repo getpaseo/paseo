@@ -1,4 +1,4 @@
-name: Nix Build
+name: Nix
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
       - "packages/cli/**"
       - "scripts/update-nix.sh"
       - "scripts/fix-lockfile.mjs"
-      - ".github/workflows/nix-build.yml"
+      - ".github/workflows/nix.yml"
   pull_request:
     branches: [main]
     paths:
@@ -30,31 +30,18 @@ on:
       - "packages/cli/**"
       - "scripts/update-nix.sh"
       - "scripts/fix-lockfile.mjs"
-      - ".github/workflows/nix-build.yml"
+      - ".github/workflows/nix.yml"
 
 permissions:
   contents: read
 
 jobs:
   build:
-    # Skip fork PRs: this workflow executes scripts/update-nix.sh and
-    # scripts/fix-lockfile.mjs from the checked-out tree. A fork could
-    # edit those to run arbitrary code on the runner. Same-repo PRs and
-    # main pushes still run.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: app-token
-        with:
-          app-id: ${{ secrets.PASEO_BOT_APP_ID }}
-          private-key: ${{ secrets.PASEO_BOT_APP_PRIVATE_KEY }}
-
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
-          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - uses: actions/setup-node@v4
         with:
@@ -71,8 +58,37 @@ jobs:
       - name: Build Nix package
         run: nix build .#default -o result
 
-      - name: Commit hash/lockfile updates (main push only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  update-hash:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.PASEO_BOT_APP_ID }}
+          private-key: ${{ secrets.PASEO_BOT_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Update lockfile + Nix hash if stale
+        run: ./scripts/update-nix.sh
+
+      - name: Build Nix package
+        run: nix build .#default -o result
+
+      - name: Commit hash/lockfile updates
         run: |
           git diff --quiet package-lock.json nix/npm-deps.hash && exit 0
           git config user.name "paseo-ai[bot]"
