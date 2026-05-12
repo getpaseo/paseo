@@ -27,6 +27,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  ShieldQuestionMark,
   Zap,
 } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -180,6 +181,7 @@ const MODE_ICONS = {
   ShieldCheck,
   ShieldAlert,
   ShieldOff,
+  ShieldQuestionMark,
 } as const;
 
 function alwaysTrue() {
