@@ -943,6 +943,36 @@ describe("ACPAgentSession Zed parity", () => {
     expect(events.some((event) => event.type === "permission_requested")).toBe(false);
   });
 
+  test("accepts Copilot's legacy autopilot mode ID as Allow All", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("on"),
+      ],
+    }));
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig();
+    prepareConfiguredOverrideSession(session, {
+      currentMode: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("off"),
+      ],
+      connection: { setSessionConfigOption, setSessionMode },
+    });
+
+    await session.setMode("https://agentclientprotocol.com/protocol/session-modes#autopilot");
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "allow_all",
+      value: "on",
+    });
+    expect(setSessionMode).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
+  });
+
   test("switching Copilot away from Allow All turns allow_all off before setting the ACP mode", async () => {
     const setSessionConfigOption = vi.fn(async (input: { value: string }) => ({
       configOptions: [
