@@ -33,7 +33,11 @@ import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages"
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
-import { syncPickerPrAttachment } from "./new-workspace-picker-state";
+import {
+  derivePickerSelectionFromAttachments,
+  syncPickerPrAttachment,
+  type PickerSelection,
+} from "./new-workspace-picker-state";
 
 interface NewWorkspaceScreenProps {
   serverId: string;
@@ -44,11 +48,6 @@ interface NewWorkspaceScreenProps {
 interface PickerOptionData {
   options: ComboboxOptionType[];
   itemById: Map<string, PickerItem>;
-}
-
-interface PickerSelection {
-  item: PickerItem;
-  attachedPrNumber: number | null;
 }
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -430,6 +429,15 @@ export function NewWorkspaceScreen({
   });
   const composerState = chatDraft.composerState;
 
+  useEffect(() => {
+    setPickerSelection((current) =>
+      derivePickerSelectionFromAttachments({
+        attachments: chatDraft.attachments,
+        current,
+      }),
+    );
+  }, [chatDraft.attachments]);
+
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
       throw new Error("Host is not connected");
@@ -528,6 +536,7 @@ export function NewWorkspaceScreen({
       setPickerSelection({
         item,
         attachedPrNumber: next.attachedPrNumber,
+        source: "manual",
       });
       if (next.attachments !== chatDraft.attachments) {
         chatDraft.setAttachments(next.attachments);
