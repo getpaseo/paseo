@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -24,6 +24,7 @@ import {
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
+import { buildProviderRegistry } from "../provider-registry.js";
 
 interface CollaborationModeRecord {
   name: string;
@@ -100,6 +101,100 @@ function markdownImageSource(markdown: string): string {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
   return match[1].replace(/\\\)/g, ")");
+}
+
+type CapturedFakeCodexRecord = Record<string, unknown>;
+
+async function runCustomCodexProviderTurn(
+  providerId: string,
+  baseUrl: string,
+): Promise<CapturedFakeCodexRecord[]> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "codex-custom-provider-"));
+  const fakeAppServerPath = path.join(tempDir, "fake-codex-app-server.cjs");
+  const capturedRequestsPath = path.join(tempDir, "requests.jsonl");
+  writeFileSync(
+    fakeAppServerPath,
+    `
+const fs = require("node:fs");
+
+const capturePath = process.env.PASEO_FAKE_CODEX_CAPTURE;
+let buffer = "";
+
+fs.appendFileSync(capturePath, JSON.stringify({
+  kind: "env",
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+}) + "\\n");
+
+function record(method, params) {
+  fs.appendFileSync(capturePath, JSON.stringify({ kind: "request", method, params }) + "\\n");
+}
+
+function resultFor(method) {
+  if (method === "initialize") return {};
+  if (method === "collaborationMode/list") return { data: [] };
+  if (method === "skills/list") return { data: [] };
+  if (method === "config/read") return { config: {} };
+  if (method === "getUserSavedConfig") return { config: {} };
+  if (method === "model/list") return { data: [{ id: "custom-model", isDefault: true }] };
+  if (method === "thread/start") return { thread: { id: "thread-1" } };
+  if (method === "turn/start") return {};
+  return {};
+}
+
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (;;) {
+    const newlineIndex = buffer.indexOf("\\n");
+    if (newlineIndex === -1) break;
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    record(message.method, message.params);
+    process.stdout.write(JSON.stringify({ id: message.id, result: resultFor(message.method) }) + "\\n");
+  }
+});
+`,
+  );
+
+  const registry = buildProviderRegistry(createTestLogger(), {
+    providerOverrides: {
+      [providerId]: {
+        extends: "codex",
+        label: "Custom Codex",
+        command: [process.execPath, fakeAppServerPath],
+        env: {
+          OPENAI_API_KEY: "sk-custom",
+          OPENAI_BASE_URL: baseUrl,
+          PASEO_FAKE_CODEX_CAPTURE: capturedRequestsPath,
+        },
+      },
+    },
+  });
+  const session = await registry[providerId].createClient(createTestLogger()).createSession({
+    provider: providerId,
+    cwd: "/workspace/project",
+    modeId: "auto",
+    model: "custom-model",
+  });
+
+  try {
+    await session.startTurn("use the custom endpoint");
+    return readFileSync(capturedRequestsPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as CapturedFakeCodexRecord);
+  } finally {
+    await session.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function capturedThreadStartConfig(records: CapturedFakeCodexRecord[]): unknown {
+  const threadStart = records.find((record) => record.method === "thread/start");
+  const params = threadStart?.params as Record<string, unknown> | undefined;
+  return params?.config;
 }
 
 describe("Codex app-server provider", () => {
@@ -240,6 +335,47 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("configures Codex app-server to use a custom provider base URL", async () => {
+    const capturedRequests = await runCustomCodexProviderTurn(
+      "codex-iisb",
+      "https://custom-relay.example.com",
+    );
+
+    expect(capturedRequests[0]).toEqual({
+      kind: "env",
+      OPENAI_API_KEY: "sk-custom",
+      OPENAI_BASE_URL: "https://custom-relay.example.com",
+    });
+    expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      model_provider: "codex-iisb",
+      model_providers: {
+        "codex-iisb": {
+          name: "Custom Codex",
+          base_url: "https://custom-relay.example.com/v1",
+          env_key: "OPENAI_API_KEY",
+          requires_openai_auth: false,
+          wire_api: "responses",
+        },
+      },
+    });
+  });
+
+  test("does not append v1 twice for custom Codex provider base URLs", async () => {
+    const capturedRequests = await runCustomCodexProviderTurn(
+      "codex-custom",
+      "https://custom-relay.example.com/v1/",
+    );
+
+    expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      model_provider: "codex-custom",
+      model_providers: {
+        "codex-custom": expect.objectContaining({
+          base_url: "https://custom-relay.example.com/v1",
+        }),
+      },
+    });
   });
 
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {

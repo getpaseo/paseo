@@ -174,6 +174,12 @@ interface CodexAppServerClientLike {
 
 interface CodexAppServerAgentDeps {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  customProvider?: {
+    id: string;
+    label: string;
+    extends: string;
+  };
+  customCodexConfig?: Record<string, unknown> | null;
   _createCodexClient?: (
     child: ChildProcessWithoutNullStreams,
     logger: Logger,
@@ -2525,6 +2531,50 @@ function buildCodexAppServerInitializeParams(): {
   };
 }
 
+function normalizeOpenAICompatibleBaseUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const withoutTrailingSlashes = trimmed.replace(/\/+$/u, "");
+  if (withoutTrailingSlashes.endsWith("/v1")) {
+    return withoutTrailingSlashes;
+  }
+  return `${withoutTrailingSlashes}/v1`;
+}
+
+function buildCodexCustomProviderConfig(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  customProvider: CodexAppServerAgentDeps["customProvider"],
+): Record<string, unknown> | null {
+  if (customProvider?.extends !== CODEX_PROVIDER) {
+    return null;
+  }
+  const baseUrl = runtimeSettings?.env?.OPENAI_BASE_URL;
+  if (typeof baseUrl !== "string") {
+    return null;
+  }
+  const normalizedBaseUrl = normalizeOpenAICompatibleBaseUrl(baseUrl);
+  if (!normalizedBaseUrl) {
+    return null;
+  }
+  const providerConfig: Record<string, unknown> = {
+    name: customProvider.label,
+    base_url: normalizedBaseUrl,
+    wire_api: "responses",
+  };
+  if (runtimeSettings?.env?.OPENAI_API_KEY?.trim()) {
+    providerConfig.env_key = "OPENAI_API_KEY";
+    providerConfig.requires_openai_auth = false;
+  }
+  return {
+    model_provider: customProvider.id,
+    model_providers: {
+      [customProvider.id]: providerConfig,
+    },
+  };
+}
+
 interface CodexSubAgentCallState {
   callId: string;
   toolCall: ToolCallTimelineItem;
@@ -3587,6 +3637,9 @@ class CodexAppServerAgentSession implements AgentSession {
     if (this.config.extra?.codex) {
       Object.assign(innerConfig, this.config.extra.codex);
     }
+    if (this.deps.customCodexConfig) {
+      Object.assign(innerConfig, this.deps.customCodexConfig);
+    }
     return Object.keys(innerConfig).length > 0 ? innerConfig : null;
   }
 
@@ -4528,6 +4581,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
+  private sessionDeps(): CodexAppServerAgentDeps {
+    return {
+      ...this.deps,
+      customCodexConfig: buildCodexCustomProviderConfig(
+        this.runtimeSettings,
+        this.deps.customProvider,
+      ),
+    };
+  }
+
   private resolveGoalsEnabled(): Promise<boolean> {
     if (!this.goalsEnabledPromise) {
       this.goalsEnabledPromise = (async () => {
@@ -4593,7 +4656,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       null,
       this.logger,
       () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
-      this.deps,
+      this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
     );
@@ -4619,7 +4682,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       handle,
       this.logger,
       () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
-      this.deps,
+      this.sessionDeps(),
       false,
       goalsEnabled,
     );
