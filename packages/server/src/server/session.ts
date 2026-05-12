@@ -895,7 +895,7 @@ export class Session {
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
-    this.sessionLogger.trace("Session created");
+    this.sessionLogger.trace({ traceKind: "session_lifecycle" }, "Session created");
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -1017,14 +1017,23 @@ export class Session {
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
     const snapshot = this.agentManager.getAgent(agentId);
     if (!snapshot) {
-      this.sessionLogger.trace({ agentId }, "interruptAgentIfRunning: agent not found");
+      this.sessionLogger.trace(
+        { agentId, traceKind: "session_interrupt" },
+        "interruptAgentIfRunning: agent not found",
+      );
       throw new Error(`Agent ${agentId} not found`);
     }
 
     const hasInFlightRun = this.agentManager.hasInFlightRun(agentId);
     if (!hasInFlightRun) {
       this.sessionLogger.trace(
-        { agentId, lifecycle: snapshot.lifecycle, hasInFlightRun },
+        {
+          agentId,
+          provider: snapshot.provider,
+          traceKind: "session_interrupt",
+          lifecycle: snapshot.lifecycle,
+          hasInFlightRun,
+        },
         "interruptAgentIfRunning: skipping because agent is not running",
       );
       return;
@@ -1067,6 +1076,7 @@ export class Session {
     this.sessionLogger.trace(
       {
         agentId,
+        traceKind: "session_start_stream",
         promptType: typeof prompt === "string" ? "string" : "structured",
         hasRunOptions: Boolean(runOptions),
       },
@@ -1079,7 +1089,7 @@ export class Session {
         ? this.agentManager.replaceAgentRun(agentId, prompt, runOptions)
         : this.agentManager.streamAgent(agentId, prompt, runOptions);
       this.sessionLogger.trace(
-        { agentId, shouldReplace },
+        { agentId, traceKind: "session_start_stream", shouldReplace },
         "startAgentStream: agent iterator returned",
       );
     } catch (error) {
@@ -1092,9 +1102,15 @@ export class Session {
         for await (const _ of iterator) {
           // Events are forwarded via the session's AgentManager subscription.
         }
-        this.sessionLogger.trace({ agentId }, "startAgentStream: iterator drained");
+        this.sessionLogger.trace(
+          { agentId, traceKind: "session_iterator_drained" },
+          "startAgentStream: iterator drained",
+        );
       } catch (error) {
-        this.sessionLogger.trace({ agentId, err: error }, "startAgentStream: iterator threw");
+        this.sessionLogger.trace(
+          { agentId, traceKind: "session_iterator_error", err: error },
+          "startAgentStream: iterator threw",
+        );
         this.handleAgentRunError(agentId, error, "Agent stream failed");
       }
     })();
@@ -1136,7 +1152,7 @@ export class Session {
       this.agentTools = (await this.agentMcpClient.tools()) as ToolSet;
       const agentToolCount = Object.keys(this.agentTools ?? {}).length;
       this.sessionLogger.trace(
-        { agentToolCount },
+        { traceKind: "session_mcp_init", agentToolCount },
         `Agent MCP initialized with ${agentToolCount} tools`,
       );
     } catch (error) {
@@ -1210,6 +1226,17 @@ export class Session {
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
         if (event.type === "agent_state") {
+          this.sessionLogger.trace(
+            {
+              agentId: event.agent.id,
+              provider: event.agent.provider,
+              sessionId: event.agent.persistence?.sessionId ?? undefined,
+              turnId: event.agent.activeForegroundTurnId ?? undefined,
+              traceKind: "session_forward",
+              lifecycle: event.agent.lifecycle,
+            },
+            "Session forwarding agent update",
+          );
           void this.forwardAgentUpdate(event.agent);
           return;
         }
@@ -1260,6 +1287,18 @@ export class Session {
         if (!serializedEvent) {
           return;
         }
+        this.sessionLogger.trace(
+          {
+            agentId: event.agentId,
+            provider: event.event.provider,
+            turnId: (event.event as { turnId?: string }).turnId,
+            traceKind: "session_forward",
+            seq: event.seq,
+            epoch: event.epoch,
+            event: event.event,
+          },
+          "Session forwarding agent stream",
+        );
 
         const payload = {
           agentId: event.agentId,
@@ -1612,7 +1651,11 @@ export class Session {
     }
     try {
       this.sessionLogger.trace(
-        { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
+        {
+          traceKind: "session_inbound",
+          messageType: msg.type,
+          payloadBytes: JSON.stringify(msg).length,
+        },
         "inbound message",
       );
       try {
@@ -7180,7 +7223,12 @@ export class Session {
 
       const prompt = this.buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
-        { agentId, messageId: msg.messageId, textPrefix: msg.text.slice(0, 80) },
+        {
+          agentId,
+          traceKind: "session_send_agent_message",
+          messageId: msg.messageId,
+          textPrefix: msg.text.slice(0, 80),
+        },
         "send_agent_message_request: dispatching shared sendPromptToAgent",
       );
       let dispatchResult: { outOfBand: boolean };
@@ -7966,7 +8014,11 @@ export class Session {
    */
   private emit(msg: SessionOutboundMessage): void {
     this.sessionLogger.trace(
-      { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
+      {
+        traceKind: "session_outbound",
+        messageType: msg.type,
+        payloadBytes: JSON.stringify(msg).length,
+      },
       "outbound message",
     );
     if (
@@ -8035,7 +8087,7 @@ export class Session {
    * Clean up session resources
    */
   public async cleanup(): Promise<void> {
-    this.sessionLogger.trace("Cleaning up");
+    this.sessionLogger.trace({ traceKind: "session_lifecycle" }, "Cleaning up");
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

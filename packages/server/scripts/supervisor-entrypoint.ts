@@ -9,12 +9,15 @@ import {
 } from "../src/server/pid-lock.js";
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
+import { resolvePaseoNodeEnv } from "../src/server/paseo-env.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
-const DEFAULT_LOG_ROTATE_SIZE = "10m";
-const DEFAULT_LOG_ROTATE_MAX_FILES = 2;
+const DEFAULT_PROD_LOG_ROTATE_SIZE = "10m";
+const DEFAULT_PROD_LOG_ROTATE_MAX_FILES = 3;
+const DEFAULT_DEV_LOG_ROTATE_SIZE = "100m";
+const DEFAULT_DEV_LOG_ROTATE_MAX_FILES = 10;
 
 interface DaemonRunnerConfig {
   devMode: boolean;
@@ -77,12 +80,20 @@ function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): str
   return existsSync(runnerPath) ? runnerPath : null;
 }
 
-function resolveSupervisorLogFile(
+export function resolveSupervisorLogFile(
   paseoHome: string,
   persistedConfig: ReturnType<typeof loadPersistedConfig>,
+  env: NodeJS.ProcessEnv = process.env,
 ) {
   const configuredFile = persistedConfig.log?.file;
   const configuredPath = configuredFile?.path;
+  const isDev = resolvePaseoNodeEnv(env) === "development";
+  const defaultRotateSize = isDev ? DEFAULT_DEV_LOG_ROTATE_SIZE : DEFAULT_PROD_LOG_ROTATE_SIZE;
+  const defaultRotateMaxFiles = isDev
+    ? DEFAULT_DEV_LOG_ROTATE_MAX_FILES
+    : DEFAULT_PROD_LOG_ROTATE_MAX_FILES;
+  const envRotateSize = env.PASEO_LOG_ROTATE_SIZE?.trim();
+  const envRotateMaxFiles = parsePositiveIntegerEnv(env.PASEO_LOG_ROTATE_COUNT);
   let logPath = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
   if (configuredPath) {
     logPath = path.isAbsolute(configuredPath)
@@ -93,10 +104,19 @@ function resolveSupervisorLogFile(
   return {
     path: logPath,
     rotate: {
-      maxSize: configuredFile?.rotate?.maxSize ?? DEFAULT_LOG_ROTATE_SIZE,
-      maxFiles: configuredFile?.rotate?.maxFiles ?? DEFAULT_LOG_ROTATE_MAX_FILES,
+      maxSize: configuredFile?.rotate?.maxSize ?? envRotateSize ?? defaultRotateSize,
+      maxFiles: configuredFile?.rotate?.maxFiles ?? envRotateMaxFiles ?? defaultRotateMaxFiles,
     },
   };
+}
+
+function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function main(): Promise<void> {
@@ -113,7 +133,7 @@ async function main(): Promise<void> {
 
   const paseoHome = resolvePaseoHome(workerEnv);
   const persistedConfig = loadPersistedConfig(paseoHome);
-  const supervisorLogFile = resolveSupervisorLogFile(paseoHome, persistedConfig);
+  const supervisorLogFile = resolveSupervisorLogFile(paseoHome, persistedConfig, workerEnv);
 
   try {
     await acquirePidLock(paseoHome, null, {
@@ -170,8 +190,10 @@ async function main(): Promise<void> {
   });
 }
 
-void main().catch((error) => {
-  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  void main().catch((error) => {
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  });
+}

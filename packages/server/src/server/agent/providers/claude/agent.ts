@@ -1152,8 +1152,6 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   };
 }
 
-const claudeDebug = process.env.PASEO_CLAUDE_DEBUG === "1";
-
 export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1529,7 +1527,7 @@ class ClaudeAgentSession implements AgentSession {
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
     this.persistSession = options.persistSession;
-    this.logger = options.logger;
+    this.logger = options.logger.child({ agentId: options.launchEnv?.PASEO_AGENT_ID });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     const handle = options.handle;
@@ -1869,6 +1867,11 @@ class ClaudeAgentSession implements AgentSession {
   async close(): Promise<void> {
     this.logger.trace(
       {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: "claude",
+        sessionId: this.claudeSessionId,
+        turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+        traceKind: "provider_session_close",
         claudeSessionId: this.claudeSessionId,
         turnState: this.turnState,
         hasQuery: Boolean(this.query),
@@ -1910,7 +1913,14 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
     this.logger.trace(
-      { claudeSessionId: this.claudeSessionId, turnState: this.turnState },
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: "claude",
+        sessionId: this.claudeSessionId,
+        traceKind: "provider_session_close",
+        claudeSessionId: this.claudeSessionId,
+        turnState: this.turnState,
+      },
       "Claude session close: completed",
     );
   }
@@ -2188,15 +2198,43 @@ class ClaudeAgentSession implements AgentSession {
     label: string,
   ): Promise<void> {
     if (!promise) {
-      this.logger.trace({ label }, "Claude query operation skipped (no promise)");
+      this.logger.trace(
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          traceKind: "provider_query_operation",
+          label,
+        },
+        "Claude query operation skipped (no promise)",
+      );
       return;
     }
     const startedAt = Date.now();
-    this.logger.trace({ label }, "Claude query operation wait start");
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: "claude",
+        sessionId: this.claudeSessionId,
+        turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+        traceKind: "provider_query_operation",
+        label,
+      },
+      "Claude query operation wait start",
+    );
     try {
       await withTimeout(promise, 3_000, "timeout");
       this.logger.trace(
-        { label, durationMs: Date.now() - startedAt },
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          traceKind: "provider_query_operation",
+          label,
+          durationMs: Date.now() - startedAt,
+        },
         "Claude query operation settled",
       );
     } catch (error) {
@@ -2593,7 +2631,17 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const pump = this.runQueryPump().catch((error) => {
-      this.logger.trace({ err: error }, "Claude query pump exited unexpectedly");
+      this.logger.trace(
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          traceKind: "provider_query_pump",
+          err: error,
+        },
+        "Claude query pump exited unexpectedly",
+      );
     });
 
     this.queryPumpPromise = pump;
@@ -2609,22 +2657,35 @@ class ClaudeAgentSession implements AgentSession {
     try {
       activeQuery = await this.ensureQuery();
     } catch (error) {
-      this.logger.trace({ err: error }, "Failed to initialize Claude query pump");
+      this.logger.trace(
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          traceKind: "provider_query_pump",
+          err: error,
+        },
+        "Failed to initialize Claude query pump",
+      );
       this.failActiveTurns(error instanceof Error ? error.message : "Claude stream failed");
       return;
     }
 
     let consecutiveInterruptAbortRecoveries = 0;
     const logRawMessage = (message: SDKMessage): void => {
-      if (!claudeDebug) {
-        return;
-      }
       this.logger.trace(
         {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          traceKind: "provider_raw_event",
           claudeSessionId: this.claudeSessionId,
           messageType: message.type,
           messageSubtype: "subtype" in message ? message.subtype : undefined,
           messageUuid: "uuid" in message ? message.uuid : undefined,
+          rawEvent: message,
         },
         "Claude query pump: raw SDK message",
       );
@@ -2739,16 +2800,20 @@ class ClaudeAgentSession implements AgentSession {
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
     const identifiers = readEventIdentifiers(message);
 
-    if (claudeDebug) {
-      this.logger.trace(
-        {
-          claudeSessionId: this.claudeSessionId,
-          messageType: message.type,
-          turnId,
-        },
-        "Claude query pump: SDK message",
-      );
-    }
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: "claude",
+        sessionId: this.claudeSessionId,
+        turnId: turnId ?? undefined,
+        traceKind: "provider_parsed_event",
+        claudeSessionId: this.claudeSessionId,
+        messageType: message.type,
+        identifiers,
+        rawEvent: message,
+      },
+      "Claude query pump: SDK message",
+    );
 
     const messageEvents = this.translateMessageToEvents(message, {
       suppressAssistantText: true,
@@ -2846,7 +2911,16 @@ class ClaudeAgentSession implements AgentSession {
   private async interruptActiveTurn(): Promise<void> {
     const queryToInterrupt = this.query;
     if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
-      this.logger.trace("interruptActiveTurn: no query to interrupt");
+      this.logger.trace(
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: "claude",
+          sessionId: this.claudeSessionId,
+          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
+          traceKind: "provider_interrupt",
+        },
+        "interruptActiveTurn: no query to interrupt",
+      );
       return;
     }
     this.pendingInterruptAbort = true;
@@ -3455,6 +3529,17 @@ class ClaudeAgentSession implements AgentSession {
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
     const tagged = turnId ? { ...event, turnId } : event;
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: "claude",
+        sessionId: this.claudeSessionId,
+        turnId: eventTurnId(tagged),
+        traceKind: "provider_emit_event",
+        event: tagged,
+      },
+      "Claude event emitted",
+    );
     for (const callback of this.subscribers) {
       try {
         callback(tagged);
@@ -4569,4 +4654,8 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
     }
   }
   return null;
+}
+
+function eventTurnId(event: AgentStreamEvent): string | undefined {
+  return (event as { turnId?: string }).turnId;
 }

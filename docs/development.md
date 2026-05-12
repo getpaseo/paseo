@@ -39,7 +39,15 @@ In any worktree-style or portless setup, never assume default ports.
 
 ### Daemon logs
 
-Check `$PASEO_HOME/daemon.log` for trace-level logs.
+Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set
+`PASEO_LOG_LEVEL=trace` before launching the daemon when you need full provider,
+session, and agent-manager traces for stuck-state debugging.
+
+The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
+`$PASEO_HOME/config.json` win first. Without persisted config, the optional
+`PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
+defaults. Production defaults are `10m` x `3` files; `PASEO_NODE_ENV=development`
+defaults are `100m` x `10` files.
 
 ## paseo.json service scripts
 

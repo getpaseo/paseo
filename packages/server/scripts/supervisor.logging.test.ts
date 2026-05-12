@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "vitest";
 import { isPlatform } from "../src/test-utils/platform.js";
+import { resolveSupervisorLogFile } from "./supervisor-entrypoint.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
@@ -87,6 +88,73 @@ async function runSupervisorFixture(options: {
 }
 
 describe("supervisor durable logging", () => {
+  test("resolves production rotation defaults", () => {
+    const logFile = resolveSupervisorLogFile(
+      "/tmp/paseo-home",
+      {},
+      { PASEO_NODE_ENV: "production" },
+    );
+
+    expect(logFile).toEqual({
+      path: "/tmp/paseo-home/daemon.log",
+      rotate: { maxSize: "10m", maxFiles: 3 },
+    });
+  });
+
+  test("resolves development rotation defaults", () => {
+    const logFile = resolveSupervisorLogFile(
+      "/tmp/paseo-home",
+      {},
+      { PASEO_NODE_ENV: "development" },
+    );
+
+    expect(logFile).toEqual({
+      path: "/tmp/paseo-home/daemon.log",
+      rotate: { maxSize: "100m", maxFiles: 10 },
+    });
+  });
+
+  test("lets persisted rotation override env rotation defaults", () => {
+    const logFile = resolveSupervisorLogFile(
+      "/tmp/paseo-home",
+      {
+        log: {
+          file: {
+            path: "logs/daemon.log",
+            rotate: { maxSize: "25m", maxFiles: 4 },
+          },
+        },
+      },
+      {
+        PASEO_NODE_ENV: "development",
+        PASEO_LOG_ROTATE_SIZE: "200m",
+        PASEO_LOG_ROTATE_COUNT: "12",
+      },
+    );
+
+    expect(logFile).toEqual({
+      path: "/tmp/paseo-home/logs/daemon.log",
+      rotate: { maxSize: "25m", maxFiles: 4 },
+    });
+  });
+
+  test("uses env rotation when persisted rotation is absent", () => {
+    const logFile = resolveSupervisorLogFile(
+      "/tmp/paseo-home",
+      {},
+      {
+        PASEO_NODE_ENV: "production",
+        PASEO_LOG_ROTATE_SIZE: "50m",
+        PASEO_LOG_ROTATE_COUNT: "8",
+      },
+    );
+
+    expect(logFile).toEqual({
+      path: "/tmp/paseo-home/daemon.log",
+      rotate: { maxSize: "50m", maxFiles: 8 },
+    });
+  });
+
   test("writes supervised worker stdout and stderr to daemon.log", async () => {
     const result = await runSupervisorFixture({
       workerSource: `

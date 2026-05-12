@@ -224,6 +224,16 @@ export class CodexAppServerClient {
     }
 
     if (isJsonRpcNotification(raw)) {
+      this.logger.trace(
+        {
+          provider: "codex",
+          traceKind: "provider_raw_event",
+          method: raw.method,
+          params: raw.params,
+          rawEvent: raw,
+        },
+        "Codex app-server JSON-RPC notification received",
+      );
       this.notificationHandler?.(raw.method, raw.params);
     }
   }

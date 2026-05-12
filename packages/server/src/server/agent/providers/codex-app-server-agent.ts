@@ -2653,8 +2653,13 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
+    private readonly launchEnv?: Record<string, string>,
   ) {
-    this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
+    this.logger = logger.child({
+      module: "agent",
+      provider: CODEX_PROVIDER,
+      agentId: this.launchEnv?.PASEO_AGENT_ID,
+    });
     if (config.modeId === undefined) {
       throw new Error("Codex agent requires modeId to be specified");
     }
@@ -2729,7 +2734,17 @@ class CodexAppServerAgentSession implements AgentSession {
         };
       });
     } catch (error) {
-      this.logger.trace({ error }, "Failed to load collaboration modes");
+      this.logger.trace(
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: CODEX_PROVIDER,
+          sessionId: this.currentThreadId,
+          turnId: this.activeForegroundTurnId ?? undefined,
+          traceKind: "provider_metadata_load",
+          error,
+        },
+        "Failed to load collaboration modes",
+      );
       this.collaborationModes = [];
     }
     this.refreshResolvedCollaborationMode();
@@ -2761,7 +2776,17 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       this.cachedSkills = skills;
     } catch (error) {
-      this.logger.trace({ error }, "Failed to load skills list");
+      this.logger.trace(
+        {
+          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          provider: CODEX_PROVIDER,
+          sessionId: this.currentThreadId,
+          turnId: this.activeForegroundTurnId ?? undefined,
+          traceKind: "provider_metadata_load",
+          error,
+        },
+        "Failed to load skills list",
+      );
       this.cachedSkills = [];
     }
   }
@@ -3657,6 +3682,17 @@ class CodexAppServerAgentSession implements AgentSession {
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId = this.activeForegroundTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        turnId: eventTurnId(tagged),
+        traceKind: "provider_emit_event",
+        event: tagged,
+      },
+      "Codex event emitted",
+    );
     for (const callback of this.subscribers) {
       try {
         callback(tagged);
@@ -3672,6 +3708,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private handleNotification(method: string, params: unknown): void {
     const parsed = CodexNotificationSchema.parse({ method, params });
+    this.traceParsedNotification(method, params, parsed);
     switch (parsed.kind) {
       case "thread_started":
         this.handleThreadStartedNotification(parsed);
@@ -3726,6 +3763,26 @@ class CodexAppServerAgentSession implements AgentSession {
       default:
         this.warnUnknownNotificationMethod(parsed.method, parsed.params);
     }
+  }
+
+  private traceParsedNotification(
+    method: string,
+    params: unknown,
+    parsed: z.infer<typeof CodexNotificationSchema>,
+  ): void {
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        turnId: this.activeForegroundTurnId ?? undefined,
+        traceKind: "provider_parsed_event",
+        method,
+        params,
+        parsed,
+      },
+      "Codex app-server notification parsed",
+    );
   }
 
   private getSubAgentCallIdForThread(threadId: string | null | undefined): string | null {
@@ -4320,7 +4377,18 @@ class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnedUnknownNotificationMethods.add(method);
-    this.logger.trace({ method, params }, "Unhandled Codex app-server notification method");
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        turnId: this.activeForegroundTurnId ?? undefined,
+        traceKind: "provider_unhandled_event",
+        method,
+        params,
+      },
+      "Unhandled Codex app-server notification method",
+    );
   }
 
   private warnInvalidNotificationPayload(method: string, params: unknown): void {
@@ -4598,7 +4666,15 @@ export class CodexAppServerAgentClient implements AgentClient {
           const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
           const versionOutput = await resolveBinaryVersion(launchPrefix.command);
           const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
-          this.logger.trace({ versionOutput, enabled }, "Resolved codex goals feature gate");
+          this.logger.trace(
+            {
+              provider: CODEX_PROVIDER,
+              traceKind: "provider_config",
+              versionOutput,
+              enabled,
+            },
+            "Resolved codex goals feature gate",
+          );
           return enabled;
         } catch (error) {
           this.logger.warn({ err: error }, "Failed to probe codex version for goals gate");
@@ -4620,6 +4696,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
     this.logger.trace(
       {
+        agentId: launchEnv?.PASEO_AGENT_ID,
+        provider: CODEX_PROVIDER,
+        traceKind: "provider_spawn",
         launchPrefix,
         goalsEnabled: options?.goalsEnabled === true,
       },
@@ -4659,6 +4738,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
+      launchContext?.env,
     );
     await session.connect();
     return session;
@@ -4685,6 +4765,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.sessionDeps(),
       false,
       goalsEnabled,
+      launchContext?.env,
     );
     await session.connect();
     return session;
@@ -4956,6 +5037,10 @@ function resolveSkillDescription(skill: Record<string, unknown>): string {
     return skill.shortDescription;
   }
   return "Skill";
+}
+
+function eventTurnId(event: AgentStreamEvent): string | undefined {
+  return (event as { turnId?: string }).turnId;
 }
 
 export const __codexAppServerInternals = {

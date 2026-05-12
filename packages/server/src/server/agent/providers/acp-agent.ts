@@ -519,7 +519,10 @@ export class ACPAgentClient implements AgentClient {
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
     this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
-    this.logger = options.logger.child({ module: "agent", provider: options.provider });
+    this.logger = options.logger.child({
+      module: "agent",
+      provider: options.provider,
+    });
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
@@ -1567,11 +1570,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: this.provider,
+        sessionId: params.sessionId,
+        traceKind: "provider_raw_event",
+        rawEvent: params,
+      },
+      "ACP session notification received",
+    );
     if (params.sessionId !== this.sessionId) {
       return;
     }
 
     const events = this.translateSessionUpdate(params.update);
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: this.provider,
+        sessionId: this.sessionId,
+        turnId: this.activeForegroundTurnId ?? undefined,
+        traceKind: "provider_translated_event",
+        rawEvent: params,
+        events,
+      },
+      "ACP session notification translated",
+    );
     if (this.replayingHistory) {
       for (const event of events) {
         if (event.type === "timeline") {
@@ -2002,6 +2027,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private pushEvent(event: AgentStreamEvent): void {
+    this.logger.trace(
+      {
+        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        provider: this.provider,
+        sessionId: this.sessionId,
+        turnId: eventTurnId(event) ?? this.activeForegroundTurnId ?? undefined,
+        traceKind: "provider_emit_event",
+        event,
+      },
+      "ACP event emitted",
+    );
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
@@ -2641,6 +2677,10 @@ function stringifyUnknown(value: unknown): string | undefined {
   } catch {
     return typeof value === "bigint" ? String(value) : "[unserializable]";
   }
+}
+
+function eventTurnId(event: AgentStreamEvent): string | undefined {
+  return (event as { turnId?: string }).turnId;
 }
 
 function coerceSessionConfigMetadata(
