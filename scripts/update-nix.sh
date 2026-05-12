@@ -10,7 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOCK_FILE="$ROOT_DIR/package-lock.json"
-PACKAGE_NIX="$ROOT_DIR/nix/package.nix"
+HASH_FILE="$ROOT_DIR/nix/npm-deps.hash"
 
 CHECK_MODE=false
 if [[ "${1:-}" == "--check" ]]; then
@@ -42,8 +42,8 @@ if ! NEW_HASH="$(nix shell "${NIXPKGS_URL}#prefetch-npm-deps" -c prefetch-npm-de
 fi
 echo "Computed hash: $NEW_HASH"
 
-# 3. Read current hash
-CURRENT_HASH="$(grep 'npmDepsHash' "$PACKAGE_NIX" | sed 's/.*"\(.*\)".*/\1/')"
+# 3. Read current hash from the sidecar file
+CURRENT_HASH="$(tr -d '[:space:]' < "$HASH_FILE")"
 
 if [[ "$NEW_HASH" == "$CURRENT_HASH" ]]; then
   echo "Hash is already up to date."
@@ -56,8 +56,7 @@ else
     exit 1
   fi
 
-  echo "Updating npmDepsHash in nix/package.nix..."
-  sed -i.bak "s|npmDepsHash = \".*\"|npmDepsHash = \"$NEW_HASH\"|" "$PACKAGE_NIX"
-  rm -f "$PACKAGE_NIX.bak"
+  echo "Updating nix/npm-deps.hash..."
+  printf '%s\n' "$NEW_HASH" > "$HASH_FILE"
   echo "Updated: $CURRENT_HASH -> $NEW_HASH"
 fi

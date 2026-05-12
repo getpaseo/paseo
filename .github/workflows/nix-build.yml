@@ -41,10 +41,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.PASEO_BOT_APP_ID }}
+          private-key: ${{ secrets.PASEO_BOT_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: actions/setup-node@v4
         with:
@@ -64,9 +70,9 @@ jobs:
       - name: Commit hash/lockfile updates (main push only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          git diff --quiet package-lock.json nix/package.nix && exit 0
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json nix/package.nix
+          git diff --quiet package-lock.json nix/npm-deps.hash && exit 0
+          git config user.name "paseo-ai[bot]"
+          git config user.email "266920839+paseo-ai[bot]@users.noreply.github.com"
+          git add package-lock.json nix/npm-deps.hash
           git commit -m "fix: update lockfile signatures and Nix hash"
           git push
