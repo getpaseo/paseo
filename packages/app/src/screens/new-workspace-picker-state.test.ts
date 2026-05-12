@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { GitHubSearchItem } from "@server/shared/messages";
 import {
-  derivePickerSelectionFromAttachments,
-  type PickerSelection,
+  deriveAutoPickerItemFromAttachments,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 
@@ -99,116 +98,34 @@ describe("syncPickerPrAttachment", () => {
   });
 });
 
-describe("derivePickerSelectionFromAttachments", () => {
-  function manualBranch(name: string): PickerSelection {
-    return { item: { kind: "branch", name }, attachedPrNumber: null, source: "manual" };
-  }
-
-  function manualPr(pr: GitHubSearchItem, ownsAttachment: boolean): PickerSelection {
-    return {
-      item: { kind: "github-pr", item: pr },
-      attachedPrNumber: ownsAttachment ? pr.number : null,
-      source: "manual",
-    };
-  }
-
-  function autoPr(pr: GitHubSearchItem): PickerSelection {
-    return {
-      item: { kind: "github-pr", item: pr },
-      attachedPrNumber: null,
-      source: "attachment",
-    };
-  }
-
-  it("returns null when there are no attachments and nothing is selected", () => {
-    expect(derivePickerSelectionFromAttachments({ attachments: [], current: null })).toBeNull();
+describe("deriveAutoPickerItemFromAttachments", () => {
+  it("returns null when there are no attachments", () => {
+    expect(deriveAutoPickerItemFromAttachments([])).toBeNull();
   });
 
-  it("auto-promotes a single PR attachment when nothing is selected", () => {
+  it("returns the PR when exactly one is attached", () => {
     const pr = makePrItem(923, "Nix overridable npm deps hash");
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [prAttachment(pr)],
-      current: null,
+    expect(deriveAutoPickerItemFromAttachments([prAttachment(pr)])).toEqual({
+      kind: "github-pr",
+      item: pr,
     });
-    expect(result).toEqual(autoPr(pr));
   });
 
-  it("does not auto-promote when multiple PRs are attached", () => {
+  it("returns null when multiple PRs are attached", () => {
     const a = makePrItem(101, "A");
     const b = makePrItem(202, "B");
-    expect(
-      derivePickerSelectionFromAttachments({
-        attachments: [prAttachment(a), prAttachment(b)],
-        current: null,
-      }),
-    ).toBeNull();
-  });
-
-  it("preserves a manual branch selection even when a PR is attached", () => {
-    const pr = makePrItem(923, "Nix overridable npm deps hash");
-    const current = manualBranch("main");
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [prAttachment(pr)],
-      current,
-    });
-    expect(result).toBe(current);
-  });
-
-  it("preserves a manual PR selection when other PRs become attached", () => {
-    const picked = makePrItem(101, "Picked");
-    const extra = makePrItem(202, "Extra");
-    const current = manualPr(picked, true);
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [prAttachment(picked), prAttachment(extra)],
-      current,
-    });
-    expect(result).toBe(current);
-  });
-
-  it("keeps the auto-promoted PR while its attachment is still present", () => {
-    const pr = makePrItem(923, "Nix overridable npm deps hash");
-    const current = autoPr(pr);
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [prAttachment(pr)],
-      current,
-    });
-    expect(result).toBe(current);
-  });
-
-  it("clears the auto-promoted selection when its attachment is removed", () => {
-    const pr = makePrItem(923, "Nix overridable npm deps hash");
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [],
-      current: autoPr(pr),
-    });
-    expect(result).toBeNull();
-  });
-
-  it("re-promotes a different PR when the auto-promoted one is replaced", () => {
-    const a = makePrItem(101, "A");
-    const b = makePrItem(202, "B");
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [prAttachment(b)],
-      current: autoPr(a),
-    });
-    expect(result).toEqual(autoPr(b));
-  });
-
-  it("does not auto-promote when the auto-promoted PR is gone and ambiguity arises", () => {
-    const a = makePrItem(101, "A");
-    const b = makePrItem(202, "B");
-    const c = makePrItem(303, "C");
-    const result = derivePickerSelectionFromAttachments({
-      attachments: [prAttachment(b), prAttachment(c)],
-      current: autoPr(a),
-    });
-    expect(result).toBeNull();
+    expect(deriveAutoPickerItemFromAttachments([prAttachment(a), prAttachment(b)])).toBeNull();
   });
 
   it("ignores non-PR attachments", () => {
-    const issue = issueAttachment(44);
-    expect(
-      derivePickerSelectionFromAttachments({ attachments: [issue], current: null }),
-    ).toBeNull();
+    expect(deriveAutoPickerItemFromAttachments([issueAttachment(44)])).toBeNull();
+  });
+
+  it("returns the lone PR even when other non-PR attachments are present", () => {
+    const pr = makePrItem(923, "Nix overridable npm deps hash");
+    expect(deriveAutoPickerItemFromAttachments([issueAttachment(44), prAttachment(pr)])).toEqual({
+      kind: "github-pr",
+      item: pr,
+    });
   });
 });

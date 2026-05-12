@@ -34,9 +34,8 @@ import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
 import {
-  derivePickerSelectionFromAttachments,
+  deriveAutoPickerItemFromAttachments,
   syncPickerPrAttachment,
-  type PickerSelection,
 } from "./new-workspace-picker-state";
 
 interface NewWorkspaceScreenProps {
@@ -48,6 +47,22 @@ interface NewWorkspaceScreenProps {
 interface PickerOptionData {
   options: ComboboxOptionType[];
   itemById: Map<string, PickerItem>;
+}
+
+interface PickerSelection {
+  item: PickerItem;
+  attachedPrNumber: number | null;
+}
+
+// Manual picks always win; the auto-promoted item is a fallback so the user
+// doesn't silently get "main" when they meant the PR they just attached.
+function combinePickerSelection(
+  manual: PickerSelection | null,
+  autoItem: PickerItem | null,
+): PickerSelection | null {
+  if (manual) return manual;
+  if (autoItem) return { item: autoItem, attachedPrNumber: null };
+  return null;
 }
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -399,7 +414,7 @@ export function NewWorkspaceScreen({
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | null>(null);
-  const [pickerSelection, setPickerSelection] = useState<PickerSelection | null>(null);
+  const [manualPickerSelection, setManualPickerSelection] = useState<PickerSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
@@ -413,7 +428,6 @@ export function NewWorkspaceScreen({
 
   const displayName = displayNameProp?.trim() ?? "";
   const workspace = createdWorkspace;
-  const selectedItem = pickerSelection?.item ?? null;
   const isPending = pendingAction !== null;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -429,14 +443,12 @@ export function NewWorkspaceScreen({
   });
   const composerState = chatDraft.composerState;
 
-  useEffect(() => {
-    setPickerSelection((current) =>
-      derivePickerSelectionFromAttachments({
-        attachments: chatDraft.attachments,
-        current,
-      }),
-    );
-  }, [chatDraft.attachments]);
+  const autoPickerItem = useMemo(
+    () => deriveAutoPickerItemFromAttachments(chatDraft.attachments),
+    [chatDraft.attachments],
+  );
+  const pickerSelection = combinePickerSelection(manualPickerSelection, autoPickerItem);
+  const selectedItem = pickerSelection?.item ?? null;
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
@@ -533,10 +545,9 @@ export function NewWorkspaceScreen({
         item,
       });
 
-      setPickerSelection({
+      setManualPickerSelection({
         item,
         attachedPrNumber: next.attachedPrNumber,
-        source: "manual",
       });
       if (next.attachments !== chatDraft.attachments) {
         chatDraft.setAttachments(next.attachments);
