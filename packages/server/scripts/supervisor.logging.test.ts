@@ -89,17 +89,19 @@ async function runSupervisorFixture(options: {
 
 describe("supervisor durable logging", () => {
   test("resolves rotation defaults", () => {
-    const logFile = resolveSupervisorLogFile("/tmp/paseo-home", {}, {});
+    const paseoHome = path.join(path.sep, "tmp", "paseo-home");
+    const logFile = resolveSupervisorLogFile(paseoHome, {}, {});
 
     expect(logFile).toEqual({
-      path: "/tmp/paseo-home/daemon.log",
+      path: path.join(paseoHome, "daemon.log"),
       rotate: { maxSize: "10m", maxFiles: 3 },
     });
   });
 
   test("lets persisted rotation override env rotation defaults", () => {
+    const paseoHome = path.join(path.sep, "tmp", "paseo-home");
     const logFile = resolveSupervisorLogFile(
-      "/tmp/paseo-home",
+      paseoHome,
       {
         log: {
           file: {
@@ -115,14 +117,15 @@ describe("supervisor durable logging", () => {
     );
 
     expect(logFile).toEqual({
-      path: "/tmp/paseo-home/logs/daemon.log",
+      path: path.join(paseoHome, "logs", "daemon.log"),
       rotate: { maxSize: "25m", maxFiles: 4 },
     });
   });
 
   test("uses env rotation when persisted rotation is absent", () => {
+    const paseoHome = path.join(path.sep, "tmp", "paseo-home");
     const logFile = resolveSupervisorLogFile(
-      "/tmp/paseo-home",
+      paseoHome,
       {},
       {
         PASEO_LOG_ROTATE_SIZE: "50m",
@@ -131,7 +134,7 @@ describe("supervisor durable logging", () => {
     );
 
     expect(logFile).toEqual({
-      path: "/tmp/paseo-home/daemon.log",
+      path: path.join(paseoHome, "daemon.log"),
       rotate: { maxSize: "50m", maxFiles: 8 },
     });
   });
