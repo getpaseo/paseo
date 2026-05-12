@@ -17,6 +17,8 @@ const mockState = vi.hoisted(() => {
       genericAcp: [] as Array<{
         command: string[];
         env?: Record<string, string>;
+        providerId?: string;
+        label?: string;
       }>,
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
@@ -241,7 +243,12 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
     readonly provider = "acp";
     readonly runtimeSettings?: unknown;
 
-    constructor(options: { command: string[]; env?: Record<string, string> }) {
+    constructor(options: {
+      command: string[];
+      env?: Record<string, string>;
+      providerId?: string;
+      label?: string;
+    }) {
       this.runtimeSettings = {
         command: {
           mode: "replace",
@@ -252,6 +259,8 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
       mockState.constructorArgs.genericAcp.push({
         command: options.command,
         env: options.env,
+        providerId: options.providerId,
+        label: options.label,
       });
     }
 
@@ -387,12 +396,16 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
       env: {
         ACP_TOKEN: "secret",
       },
+      providerId: "my-agent",
+      label: "My Agent",
     },
     {
       command: ["my-agent", "--acp"],
       env: {
         ACP_TOKEN: "secret",
       },
+      providerId: "my-agent",
+      label: "My Agent",
     },
   ]);
 });

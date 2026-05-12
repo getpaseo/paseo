@@ -713,7 +713,10 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async spawnProcess(launchEnv?: Record<string, string>): Promise<SpawnedACPProcess> {
+  protected async spawnProcess(
+    launchEnv?: Record<string, string>,
+    options?: { initializeTimeoutMs?: number },
+  ): Promise<SpawnedACPProcess> {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
@@ -743,14 +746,35 @@ export class ACPAgentClient implements AgentClient {
       { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
-    const initialize = await Promise.race([
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: ACP_CLIENT_CAPABILITIES,
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
-      spawnErrorPromise,
-    ]);
+
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const initializeTimeoutPromise = options?.initializeTimeoutMs
+      ? new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new Error(`ACP initialize timed out after ${options.initializeTimeoutMs}ms`));
+          }, options.initializeTimeoutMs);
+        })
+      : null;
+
+    let initialize: InitializeResponse;
+    try {
+      initialize = await Promise.race([
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: ACP_CLIENT_CAPABILITIES,
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+        spawnErrorPromise,
+        ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
+      ]);
+    } catch (error) {
+      await terminateChildProcess(child, 2_000);
+      throw error;
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
 
     return { child, connection, initialize };
   }
@@ -782,8 +806,7 @@ export class ACPAgentClient implements AgentClient {
         // No active session to close here; ignore capability.
       }
     } finally {
-      probe.child.kill("SIGTERM");
-      await waitForChildExit(probe.child, 2_000);
+      await terminateChildProcess(probe.child, 2_000);
     }
   }
 
@@ -2705,4 +2728,15 @@ async function waitForChildExit(
   if (child.exitCode === null && child.signalCode === null) {
     child.kill("SIGKILL");
   }
+}
+
+async function terminateChildProcess(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  child.kill("SIGTERM");
+  child.stdin.destroy();
+  child.stdout.destroy();
+  child.stderr.destroy();
+  await waitForChildExit(child, timeoutMs);
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { GitHubSearchItem } from "@server/shared/messages";
-import { syncPickerPrAttachment } from "./new-workspace-picker-state";
+import {
+  deriveAutoPickerItemFromAttachments,
+  syncPickerPrAttachment,
+} from "./new-workspace-picker-state";
 
 function makePrItem(number: number, title: string, headRefName = "feature/x"): GitHubSearchItem {
   return {
@@ -92,5 +95,37 @@ describe("syncPickerPrAttachment", () => {
     });
     expect(result.attachedPrNumber).toBeNull();
     expect(result.attachments).toHaveLength(1);
+  });
+});
+
+describe("deriveAutoPickerItemFromAttachments", () => {
+  it("returns null when there are no attachments", () => {
+    expect(deriveAutoPickerItemFromAttachments([])).toBeNull();
+  });
+
+  it("returns the PR when exactly one is attached", () => {
+    const pr = makePrItem(923, "Nix overridable npm deps hash");
+    expect(deriveAutoPickerItemFromAttachments([prAttachment(pr)])).toEqual({
+      kind: "github-pr",
+      item: pr,
+    });
+  });
+
+  it("returns null when multiple PRs are attached", () => {
+    const a = makePrItem(101, "A");
+    const b = makePrItem(202, "B");
+    expect(deriveAutoPickerItemFromAttachments([prAttachment(a), prAttachment(b)])).toBeNull();
+  });
+
+  it("ignores non-PR attachments", () => {
+    expect(deriveAutoPickerItemFromAttachments([issueAttachment(44)])).toBeNull();
+  });
+
+  it("returns the lone PR even when other non-PR attachments are present", () => {
+    const pr = makePrItem(923, "Nix overridable npm deps hash");
+    expect(deriveAutoPickerItemFromAttachments([issueAttachment(44), prAttachment(pr)])).toEqual({
+      kind: "github-pr",
+      item: pr,
+    });
   });
 });
