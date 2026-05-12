@@ -13,33 +13,34 @@ import { findExecutable, isCommandAvailable } from "../../../utils/executable.js
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentCreateSessionOptions,
-  AgentLaunchContext,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPermissionRequest,
-  AgentPermissionResponse,
-  AgentPersistenceHandle,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentRuntimeInfo,
-  AgentSession,
-  AgentSessionConfig,
-  AgentSlashCommand,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  AgentUsage,
-  ListModelsOptions,
-  ListModesOptions,
-  ListPersistedAgentsOptions,
-  McpServerConfig,
-  PersistedAgentDescriptor,
-  ToolCallDetail,
-  ToolCallTimelineItem,
+import {
+  getAgentStreamEventTurnId,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentCreateSessionOptions,
+  type AgentLaunchContext,
+  type AgentMode,
+  type AgentModelDefinition,
+  type AgentPermissionRequest,
+  type AgentPermissionResponse,
+  type AgentPersistenceHandle,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentRuntimeInfo,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentSlashCommand,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type AgentUsage,
+  type ListModelsOptions,
+  type ListModesOptions,
+  type ListPersistedAgentsOptions,
+  type McpServerConfig,
+  type PersistedAgentDescriptor,
+  type ToolCallDetail,
+  type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import { createProviderEnvSpec, type ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
@@ -284,14 +285,6 @@ function toTerminalTurnEvent(event: AgentStreamEvent): TerminalTurnEvent | null 
     return event;
   }
   return null;
-}
-
-function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return "turnId" in event ? event.turnId : undefined;
-}
-
-function normalizeTraceTag(tag: string): string {
-  return tag.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
 function isOpenCodeNotFoundError(error: unknown): boolean {
@@ -1291,6 +1284,23 @@ interface OpenCodeTraceData {
   turnId?: string;
   [key: string]: unknown;
 }
+
+type OpenCodeTraceMessage =
+  | "provider.opencode.prompt_async.start"
+  | "provider.opencode.prompt_async.response"
+  | "provider.opencode.prompt_async.throw"
+  | "provider.opencode.subscribe.start"
+  | "provider.opencode.subscribe.ready"
+  | "provider.opencode.stream.eof"
+  | "provider.opencode.turn.fail_eof"
+  | "provider.opencode.subscribe.error"
+  | "provider.opencode.raw_event"
+  | "provider.opencode.event.skip"
+  | "provider.opencode.parsed_event"
+  | "provider.opencode.parsed_event.skip_active"
+  | "provider.opencode.event.terminal"
+  | "provider.opencode.finish_foreground_turn"
+  | "provider.opencode.event_emit";
 
 type OpenCodeToolPartEventPart = Extract<
   Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
@@ -2487,7 +2497,7 @@ class OpenCodeAgentSession implements AgentSession {
       // SDK input validation) is caught alongside async rejections. A plain
       // `.then().catch()` chain would let a sync throw escape unhandled.
       void (async () => {
-        this.traceOpenCode("promptAsync.start", {
+        this.traceOpenCode("provider.opencode.prompt_async.start", {
           turnId,
           sessionId: this.sessionId,
           model,
@@ -2513,7 +2523,7 @@ class OpenCodeAgentSession implements AgentSession {
             ...(effectiveMode ? { agent: effectiveMode } : {}),
             ...(effectiveVariant ? { variant: effectiveVariant } : {}),
           });
-          this.traceOpenCode("promptAsync.response", {
+          this.traceOpenCode("provider.opencode.prompt_async.response", {
             turnId,
             hasError: promptResponse.error !== undefined,
             error: promptResponse.error,
@@ -2530,7 +2540,7 @@ class OpenCodeAgentSession implements AgentSession {
             );
           }
         } catch (error) {
-          this.traceOpenCode("promptAsync.throw", {
+          this.traceOpenCode("provider.opencode.prompt_async.throw", {
             turnId,
             error:
               error instanceof Error
@@ -2564,7 +2574,7 @@ class OpenCodeAgentSession implements AgentSession {
     turnAbortController: AbortController,
     subscriptionReady: Deferred<void>,
   ): Promise<void> {
-    this.traceOpenCode("subscribe.start", {
+    this.traceOpenCode("provider.opencode.subscribe.start", {
       turnId,
       sessionId: this.sessionId,
       cwd: this.config.cwd,
@@ -2580,7 +2590,10 @@ class OpenCodeAgentSession implements AgentSession {
         eventCount += 1;
         if (!subscriptionReadyResolved) {
           subscriptionReadyResolved = true;
-          this.traceOpenCode("subscribe.ready", { turnId, sessionId: this.sessionId });
+          this.traceOpenCode("provider.opencode.subscribe.ready", {
+            turnId,
+            sessionId: this.sessionId,
+          });
           subscriptionReady.resolve();
         }
         const shouldContinue = await this.consumeOpenCodeStreamEvent({
@@ -2594,7 +2607,7 @@ class OpenCodeAgentSession implements AgentSession {
         }
       }
 
-      this.traceOpenCode("stream.eof", {
+      this.traceOpenCode("provider.opencode.stream.eof", {
         turnId,
         eventCount,
         aborted: turnAbortController.signal.aborted,
@@ -2602,7 +2615,7 @@ class OpenCodeAgentSession implements AgentSession {
       });
 
       if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
-        this.traceOpenCode("turn.fail.eof", { turnId, eventCount });
+        this.traceOpenCode("provider.opencode.turn.fail_eof", { turnId, eventCount });
         if (!subscriptionReadyResolved) {
           subscriptionReady.reject(new Error("OpenCode event stream ended before it became ready"));
         }
@@ -2616,7 +2629,7 @@ class OpenCodeAgentSession implements AgentSession {
         );
       }
     } catch (error) {
-      this.traceOpenCode("subscribe.error", {
+      this.traceOpenCode("provider.opencode.subscribe.error", {
         turnId,
         error:
           error instanceof Error ? { name: error.name, message: error.message } : String(error),
@@ -2657,7 +2670,7 @@ class OpenCodeAgentSession implements AgentSession {
   }): Promise<boolean> {
     const { rawEvent, eventCount, turnId, turnAbortController } = params;
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
-    this.traceOpenCode("event.raw", {
+    this.traceOpenCode("provider.opencode.raw_event", {
       turnId,
       n: eventCount,
       type: event?.type,
@@ -2670,7 +2683,7 @@ class OpenCodeAgentSession implements AgentSession {
       return true;
     }
     if (turnAbortController.signal.aborted || this.activeForegroundTurnId !== turnId) {
-      this.traceOpenCode("event.skip", {
+      this.traceOpenCode("provider.opencode.event.skip", {
         turnId,
         n: eventCount,
         aborted: turnAbortController.signal.aborted,
@@ -2681,7 +2694,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     this.armRetryFailureTimerForStatus(event, turnId);
     const translated = await this.translateEvent(event);
-    this.traceOpenCode("event.translated", {
+    this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
       n: eventCount,
       count: translated.length,
@@ -2691,7 +2704,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     for (const e of translated) {
       if (this.activeForegroundTurnId !== turnId) {
-        this.traceOpenCode("event.translated.skip-active", { turnId, type: e.type });
+        this.traceOpenCode("provider.opencode.parsed_event.skip_active", { turnId, type: e.type });
         return false;
       }
       if (e.type === "timeline" && e.item.type === "tool_call") {
@@ -2699,7 +2712,10 @@ class OpenCodeAgentSession implements AgentSession {
       }
       const terminalEvent = toTerminalTurnEvent(e);
       if (terminalEvent) {
-        this.traceOpenCode("event.terminal", { turnId, type: terminalEvent.type });
+        this.traceOpenCode("provider.opencode.event.terminal", {
+          turnId,
+          type: terminalEvent.type,
+        });
         this.finishForegroundTurn(terminalEvent, turnId);
         return false;
       }
@@ -2713,7 +2729,7 @@ class OpenCodeAgentSession implements AgentSession {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
     turnId: string,
   ): void {
-    this.traceOpenCode("finishForegroundTurn", {
+    this.traceOpenCode("provider.opencode.finish_foreground_turn", {
       turnId,
       activeTurnId: this.activeForegroundTurnId,
       type: event.type,
@@ -2813,8 +2829,8 @@ class OpenCodeAgentSession implements AgentSession {
   private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string): void {
     const turnId = turnIdOverride ?? this.activeForegroundTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
-    this.traceOpenCode("provider.emit", {
-      turnId: eventTurnId(tagged),
+    this.traceOpenCode("provider.opencode.event_emit", {
+      turnId: getAgentStreamEventTurnId(tagged),
       event: tagged,
     });
     for (const callback of this.subscribers) {
@@ -2830,7 +2846,7 @@ class OpenCodeAgentSession implements AgentSession {
     return `opencode-turn-${this.nextTurnOrdinal++}`;
   }
 
-  private traceOpenCode(tag: string, data: OpenCodeTraceData = {}): void {
+  private traceOpenCode(msg: OpenCodeTraceMessage, data: OpenCodeTraceData = {}): void {
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2839,7 +2855,7 @@ class OpenCodeAgentSession implements AgentSession {
         turnId: data.turnId ?? this.activeForegroundTurnId ?? undefined,
         ...data,
       },
-      `provider.opencode.${normalizeTraceTag(tag)}`,
+      msg,
     );
   }
 

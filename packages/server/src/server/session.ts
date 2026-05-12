@@ -119,16 +119,17 @@ import {
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
-import type {
-  AgentPersistenceHandle,
-  AgentPermissionResponse,
-  AgentProvider,
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentSessionConfig,
-  AgentStreamEvent,
-  ProviderSnapshotEntry,
+import {
+  getAgentStreamEventTurnId,
+  type AgentPersistenceHandle,
+  type AgentPermissionResponse,
+  type AgentProvider,
+  type AgentPromptContentBlock,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentSessionConfig,
+  type AgentStreamEvent,
+  type ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -1216,7 +1217,7 @@ export class Session {
             {
               agentId: event.agent.id,
               provider: event.agent.provider,
-              sessionId: event.agent.persistence?.sessionId ?? undefined,
+              providerSessionId: event.agent.persistence?.sessionId ?? undefined,
               turnId: event.agent.activeForegroundTurnId ?? undefined,
               lifecycle: event.agent.lifecycle,
             },
@@ -1276,7 +1277,7 @@ export class Session {
           {
             agentId: event.agentId,
             provider: event.event.provider,
-            turnId: agentStreamEventTurnId(event.event),
+            turnId: getAgentStreamEventTurnId(event.event),
             seq: event.seq,
             epoch: event.epoch,
             event: event.event,
@@ -8687,10 +8688,6 @@ function isValidPullRequestTimelineIdentity(options: {
     return false;
   }
   return isValidGitHubRepoSegment(options.repoOwner) && isValidGitHubRepoSegment(options.repoName);
-}
-
-function agentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
-  return "turnId" in event ? event.turnId : undefined;
 }
 
 function isValidGitHubRepoSegment(value: string): boolean {

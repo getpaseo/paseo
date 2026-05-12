@@ -9,13 +9,9 @@ import {
 } from "../src/server/pid-lock.js";
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
-import { parseOptionalPositiveIntegerEnv } from "../src/server/paseo-env.js";
 import { runSupervisor } from "./supervisor.js";
+import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
-
-const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
-const DEFAULT_LOG_ROTATE_SIZE = "10m";
-const DEFAULT_LOG_ROTATE_MAX_FILES = 3;
 
 interface DaemonRunnerConfig {
   devMode: boolean;
@@ -76,32 +72,6 @@ function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): str
   const appRoot = currentScriptPath.slice(0, markerIndex);
   const runnerPath = path.join(appRoot, "dist", "daemon", "node-entrypoint-runner.js");
   return existsSync(runnerPath) ? runnerPath : null;
-}
-
-export function resolveSupervisorLogFile(
-  paseoHome: string,
-  persistedConfig: ReturnType<typeof loadPersistedConfig>,
-  env: NodeJS.ProcessEnv = process.env,
-) {
-  const configuredFile = persistedConfig.log?.file;
-  const configuredPath = configuredFile?.path;
-  const envRotateSize = env.PASEO_LOG_ROTATE_SIZE?.trim();
-  const envRotateMaxFiles = parseOptionalPositiveIntegerEnv(env.PASEO_LOG_ROTATE_COUNT);
-  let logPath = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
-  if (configuredPath) {
-    logPath = path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.resolve(paseoHome, configuredPath);
-  }
-
-  return {
-    path: logPath,
-    rotate: {
-      maxSize: configuredFile?.rotate?.maxSize ?? envRotateSize ?? DEFAULT_LOG_ROTATE_SIZE,
-      maxFiles:
-        configuredFile?.rotate?.maxFiles ?? envRotateMaxFiles ?? DEFAULT_LOG_ROTATE_MAX_FILES,
-    },
-  };
 }
 
 async function main(): Promise<void> {
@@ -175,10 +145,8 @@ async function main(): Promise<void> {
   });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  void main().catch((error) => {
-    const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exit(1);
-  });
-}
+void main().catch((error) => {
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+});

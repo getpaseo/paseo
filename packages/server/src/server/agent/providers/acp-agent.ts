@@ -54,35 +54,36 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentLaunchContext,
-  AgentMetadata,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPermissionRequest,
-  AgentPermissionRequestKind,
-  AgentPermissionResponse,
-  AgentPersistenceHandle,
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentRuntimeInfo,
-  AgentSession,
-  AgentSessionConfig,
-  AgentSlashCommand,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  AgentUsage,
-  ListModesOptions,
-  ListModelsOptions,
-  ListPersistedAgentsOptions,
-  McpServerConfig,
-  PersistedAgentDescriptor,
-  ToolCallDetail,
-  ToolCallTimelineItem,
+import {
+  getAgentStreamEventTurnId,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentLaunchContext,
+  type AgentMetadata,
+  type AgentMode,
+  type AgentModelDefinition,
+  type AgentPermissionRequest,
+  type AgentPermissionRequestKind,
+  type AgentPermissionResponse,
+  type AgentPersistenceHandle,
+  type AgentPromptContentBlock,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentRuntimeInfo,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentSlashCommand,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type AgentUsage,
+  type ListModesOptions,
+  type ListModelsOptions,
+  type ListPersistedAgentsOptions,
+  type McpServerConfig,
+  type PersistedAgentDescriptor,
+  type ToolCallDetail,
+  type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
   createProviderEnvSpec,
@@ -1582,7 +1583,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: params.sessionId,
         rawEvent: params,
       },
-      "provider.acp.session_notification",
+      "provider.acp.raw_event",
     );
     if (params.sessionId !== this.sessionId) {
       return;
@@ -1598,7 +1599,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         rawEvent: params,
         events,
       },
-      "provider.acp.event_translated",
+      "provider.acp.parsed_event",
     );
     if (this.replayingHistory) {
       for (const event of events) {
@@ -2035,7 +2036,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         agentId: this.agentId,
         provider: this.provider,
         sessionId: this.sessionId,
-        turnId: eventTurnId(event) ?? this.activeForegroundTurnId ?? undefined,
+        turnId: getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? undefined,
         event,
       },
       "provider.acp.event_emit",
@@ -2679,10 +2680,6 @@ function stringifyUnknown(value: unknown): string | undefined {
   } catch {
     return typeof value === "bigint" ? String(value) : "[unserializable]";
   }
-}
-
-function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return "turnId" in event ? event.turnId : undefined;
 }
 
 function coerceSessionConfigMetadata(

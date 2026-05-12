@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { AgentStreamEvent } from "./agent-sdk-types.js";
+import { getAgentStreamEventTurnId, type AgentStreamEvent } from "./agent-sdk-types.js";
 
 export interface ForegroundTurnWaiter {
   turnId: string;
@@ -105,7 +105,7 @@ export class ForegroundRunState {
     event: AgentStreamEvent,
     options?: { terminal?: boolean },
   ): void {
-    const waiters = this.getMatchingWaiters(agent, eventTurnId(event));
+    const waiters = this.getMatchingWaiters(agent, getAgentStreamEventTurnId(event));
     this.notifyWaiters(waiters, event, { terminal: options?.terminal ?? false });
   }
 
@@ -225,8 +225,4 @@ function settlePendingForegroundRun(pendingRun: PendingForegroundRun): void {
 
   pendingRun.settled = true;
   pendingRun.resolveSettled();
-}
-
-function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return (event as { turnId?: string }).turnId;
 }

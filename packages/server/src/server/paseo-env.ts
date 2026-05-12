@@ -79,12 +79,3 @@ export function resolvePaseoNodeEnv(env: NodeJS.ProcessEnv): PaseoNodeEnv | unde
   const value = env[PASEO_NODE_ENV];
   return value === "development" || value === "production" || value === "test" ? value : undefined;
 }
-
-export function parseOptionalPositiveIntegerEnv(value: string | undefined): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}

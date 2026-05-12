@@ -10,30 +10,31 @@ import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentCreateSessionOptions,
-  AgentFeature,
-  AgentLaunchContext,
-  AgentSlashCommand,
-  AgentMode,
-  AgentPermissionRequest,
-  AgentPermissionResponse,
-  AgentPermissionResult,
-  AgentPersistenceHandle,
-  AgentPromptInput,
-  AgentProvider,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentSession,
-  AgentSessionConfig,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  AgentUsage,
-  AgentRuntimeInfo,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
+import {
+  getAgentStreamEventTurnId,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentCreateSessionOptions,
+  type AgentFeature,
+  type AgentLaunchContext,
+  type AgentSlashCommand,
+  type AgentMode,
+  type AgentPermissionRequest,
+  type AgentPermissionResponse,
+  type AgentPermissionResult,
+  type AgentPersistenceHandle,
+  type AgentPromptInput,
+  type AgentProvider,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type AgentUsage,
+  type AgentRuntimeInfo,
+  type ListPersistedAgentsOptions,
+  type PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
@@ -2398,7 +2399,7 @@ export class AgentManager {
         agentId,
         provider: event.provider,
         sessionId: this.agents.get(agentId)?.persistence?.sessionId ?? undefined,
-        turnId: readEventTurnId(event),
+        turnId: getAgentStreamEventTurnId(event),
         event,
       },
       "agent.manager.enqueue",
@@ -2419,7 +2420,7 @@ export class AgentManager {
             agentId,
             provider: event.provider,
             sessionId: current.persistence?.sessionId ?? undefined,
-            turnId: readEventTurnId(event),
+            turnId: getAgentStreamEventTurnId(event),
             event,
           },
           "agent.manager.dequeue",
@@ -2447,7 +2448,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
-    const turnId = readEventTurnId(event);
+    const turnId = getAgentStreamEventTurnId(event);
     const matchingWaiters = this.foregroundRuns.getMatchingWaiters(agent, turnId);
     this.logger.trace(
       {
@@ -2594,7 +2595,7 @@ export class AgentManager {
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {
-    const turnId = readEventTurnId(event);
+    const turnId = getAgentStreamEventTurnId(event);
     if (turnId == null) {
       return;
     }
@@ -2622,7 +2623,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
-    const eventTurnId = readEventTurnId(event);
+    const eventTurnId = getAgentStreamEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
@@ -2891,7 +2892,6 @@ export class AgentManager {
         turnId: eventTurnId,
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
-        eventTurnId,
       },
       "agent.manager.turn.completed",
     );
@@ -2996,7 +2996,6 @@ export class AgentManager {
         turnId: eventTurnId,
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
-        eventTurnId,
       },
       "agent.manager.turn.started",
     );
@@ -3291,7 +3290,7 @@ export class AgentManager {
         agentId,
         provider: event.provider,
         sessionId: agent?.persistence?.sessionId ?? undefined,
-        turnId: readEventTurnId(event),
+        turnId: getAgentStreamEventTurnId(event),
         metadata,
         event,
       },
@@ -3481,8 +3480,4 @@ export class AgentManager {
     }
     return agent;
   }
-}
-
-function readEventTurnId(event: AgentStreamEvent): string | undefined {
-  return "turnId" in event ? event.turnId : undefined;
 }

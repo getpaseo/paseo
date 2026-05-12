@@ -42,34 +42,35 @@ import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../prov
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 
-import type {
-  AgentPermissionAction,
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentCreateSessionOptions,
-  AgentLaunchContext,
-  AgentMetadata,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPermissionRequest,
-  AgentPermissionRequestKind,
-  AgentPermissionResponse,
-  AgentPermissionUpdate,
-  AgentPersistenceHandle,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentSession,
-  AgentSessionConfig,
-  AgentSlashCommand,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  AgentUsage,
-  AgentRuntimeInfo,
-  ListModelsOptions,
-  ListPersistedAgentsOptions,
-  McpServerConfig,
-  PersistedAgentDescriptor,
+import {
+  getAgentStreamEventTurnId,
+  type AgentPermissionAction,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentCreateSessionOptions,
+  type AgentLaunchContext,
+  type AgentMetadata,
+  type AgentMode,
+  type AgentModelDefinition,
+  type AgentPermissionRequest,
+  type AgentPermissionRequestKind,
+  type AgentPermissionResponse,
+  type AgentPermissionUpdate,
+  type AgentPersistenceHandle,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentSlashCommand,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type AgentUsage,
+  type AgentRuntimeInfo,
+  type ListModelsOptions,
+  type ListPersistedAgentsOptions,
+  type McpServerConfig,
+  type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
 import {
   createProviderEnv,
@@ -2681,7 +2682,7 @@ class ClaudeAgentSession implements AgentSession {
           messageUuid: "uuid" in message ? message.uuid : undefined,
           rawEvent: message,
         },
-        "provider.claude.sdk_message.raw",
+        "provider.claude.raw_event",
       );
     };
     const handlePumpedMessage = async (message: SDKMessage): Promise<boolean> => {
@@ -2804,7 +2805,7 @@ class ClaudeAgentSession implements AgentSession {
         identifiers,
         rawEvent: message,
       },
-      "provider.claude.sdk_message.parsed",
+      "provider.claude.parsed_event",
     );
 
     const messageEvents = this.translateMessageToEvents(message, {
@@ -3524,7 +3525,7 @@ class ClaudeAgentSession implements AgentSession {
         agentId: this.agentId,
         provider: "claude",
         sessionId: this.claudeSessionId,
-        turnId: eventTurnId(tagged),
+        turnId: getAgentStreamEventTurnId(tagged),
         event: tagged,
       },
       "provider.claude.event_emit",
@@ -4643,8 +4644,4 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
     }
   }
   return null;
-}
-
-function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return "turnId" in event ? event.turnId : undefined;
 }

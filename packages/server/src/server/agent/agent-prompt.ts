@@ -17,6 +17,19 @@ export function startAgentRun(
   logger: Logger,
   options?: StartAgentRunOptions,
 ): { outOfBand: boolean } {
+  const snapshot = agentManager.getAgent(agentId);
+  logger.trace(
+    {
+      agentId,
+      provider: snapshot?.provider,
+      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+      turnId: snapshot?.activeForegroundTurnId ?? undefined,
+      promptType: typeof prompt === "string" ? "string" : "structured",
+      hasRunOptions: Boolean(options?.runOptions),
+      replaceRunning: Boolean(options?.replaceRunning),
+    },
+    "agent.session.start_stream.request",
+  );
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
@@ -28,12 +41,38 @@ export function startAgentRun(
   const iterator = shouldReplace
     ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
     : agentManager.streamAgent(agentId, prompt, runOptions);
+  logger.trace(
+    {
+      agentId,
+      provider: snapshot?.provider,
+      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+      shouldReplace,
+    },
+    "agent.session.start_stream.iterator_returned",
+  );
   void (async () => {
     try {
       for await (const _ of iterator) {
         // Events are broadcast via AgentManager subscribers.
       }
+      logger.trace(
+        {
+          agentId,
+          provider: snapshot?.provider,
+          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+        },
+        "agent.session.iterator.drained",
+      );
     } catch (error) {
+      logger.trace(
+        {
+          agentId,
+          provider: snapshot?.provider,
+          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+          err: error,
+        },
+        "agent.session.iterator.error",
+      );
       logger.error({ err: error, agentId }, "Agent stream failed");
     }
   })();

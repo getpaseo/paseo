@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "vitest";
 import { isPlatform } from "../src/test-utils/platform.js";
-import { resolveSupervisorLogFile } from "./supervisor-entrypoint.js";
+import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
