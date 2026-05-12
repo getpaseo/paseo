@@ -517,6 +517,8 @@ function addDerivedProviders(
             logger,
             command,
             env: override.env,
+            providerId,
+            label: override.label ?? providerId,
           }),
       });
       continue;

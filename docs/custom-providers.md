@@ -366,6 +366,14 @@ Required fields for ACP providers:
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
 
+### Generic ACP diagnostics
+
+Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
+
+For package-runner commands such as `npx -y @google/gemini-cli --acp`, the version probe keeps the package spec and runs `npx -y @google/gemini-cli --version`. This diagnoses the actual agent package instead of only proving that `npx` exists.
+
+ACP probes use short timeouts and browser-suppression environment variables so agents that enter an auth/browser flow fail as a diagnostic error instead of hanging the provider screen.
+
 ### Example: Google Gemini CLI
 
 [Gemini CLI](https://github.com/google-gemini/gemini-cli) supports ACP via the `--acp` flag.
