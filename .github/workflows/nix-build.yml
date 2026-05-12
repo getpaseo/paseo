@@ -64,9 +64,9 @@ jobs:
       - name: Commit hash/lockfile updates (main push only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          git diff --quiet package-lock.json nix/package.nix && exit 0
+          git diff --quiet package-lock.json nix/npm-deps.hash && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json nix/package.nix
+          git add package-lock.json nix/npm-deps.hash
           git commit -m "fix: update lockfile signatures and Nix hash"
           git push
