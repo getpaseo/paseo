@@ -30,29 +30,30 @@ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import { z } from "zod";
 
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentLaunchContext,
-  AgentMetadata,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPermissionRequest,
-  AgentPermissionResponse,
-  AgentPersistenceHandle,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentRuntimeInfo,
-  AgentSession,
-  AgentSessionConfig,
-  AgentSlashCommand,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  AgentUsage,
-  ListModesOptions,
-  ListModelsOptions,
-  ToolCallDetail,
+import {
+  getAgentStreamEventTurnId,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentLaunchContext,
+  type AgentMetadata,
+  type AgentMode,
+  type AgentModelDefinition,
+  type AgentPermissionRequest,
+  type AgentPermissionResponse,
+  type AgentPersistenceHandle,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentRuntimeInfo,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentSlashCommand,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type AgentUsage,
+  type ListModesOptions,
+  type ListModelsOptions,
+  type ToolCallDetail,
 } from "../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
@@ -738,21 +739,6 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): PiPersis
   return {};
 }
 
-function getStreamEventTurnId(event: AgentStreamEvent): string | undefined {
-  switch (event.type) {
-    case "turn_started":
-    case "turn_completed":
-    case "turn_failed":
-    case "turn_canceled":
-    case "timeline":
-    case "permission_requested":
-    case "permission_resolved":
-      return event.turnId;
-    default:
-      return undefined;
-  }
-}
-
 function isPiRequestAbortError(error: unknown): boolean {
   if (error instanceof Error && error.name === "AbortError") {
     return true;
@@ -1045,7 +1031,7 @@ export class PiDirectAgentSession implements AgentSession {
         return;
       }
 
-      const eventTurnId = getStreamEventTurnId(event);
+      const eventTurnId = getAgentStreamEventTurnId(event);
       if (turnId && eventTurnId && eventTurnId !== turnId) {
         return;
       }

@@ -1,32 +1,33 @@
-import type {
-  AgentPermissionAction,
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentCreateSessionOptions,
-  AgentFeature,
-  AgentLaunchContext,
-  AgentMode,
-  AgentModelDefinition,
-  McpServerConfig,
-  AgentPersistenceHandle,
-  AgentPermissionRequest,
-  AgentPermissionResponse,
-  AgentPermissionResult,
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentRuntimeInfo,
-  AgentSession,
-  AgentSessionConfig,
-  AgentSlashCommand,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  ToolCallTimelineItem,
-  AgentUsage,
-  ListModelsOptions,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
+import {
+  getAgentStreamEventTurnId,
+  type AgentPermissionAction,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentCreateSessionOptions,
+  type AgentFeature,
+  type AgentLaunchContext,
+  type AgentMode,
+  type AgentModelDefinition,
+  type McpServerConfig,
+  type AgentPersistenceHandle,
+  type AgentPermissionRequest,
+  type AgentPermissionResponse,
+  type AgentPermissionResult,
+  type AgentPromptContentBlock,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentRuntimeInfo,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentSlashCommand,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type ToolCallTimelineItem,
+  type AgentUsage,
+  type ListModelsOptions,
+  type ListPersistedAgentsOptions,
+  type PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import type { Logger } from "pino";
 import { homedir } from "node:os";
@@ -55,7 +56,10 @@ import { findExecutable, isCommandAvailable } from "../../../utils/executable.js
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
-import { CodexAppServerClient } from "./codex/app-server-transport.js";
+import {
+  CodexAppServerClient,
+  type CodexAppServerTraceContext,
+} from "./codex/app-server-transport.js";
 import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
@@ -183,6 +187,7 @@ interface CodexAppServerAgentDeps {
   _createCodexClient?: (
     child: ChildProcessWithoutNullStreams,
     logger: Logger,
+    getTraceContext: () => CodexAppServerTraceContext,
   ) => CodexAppServerClientLike;
 }
 
@@ -2653,8 +2658,13 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
+    private readonly agentId?: string,
   ) {
-    this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
+    this.logger = logger.child({
+      module: "agent",
+      provider: CODEX_PROVIDER,
+      agentId: this.agentId,
+    });
     if (config.modeId === undefined) {
       throw new Error("Codex agent requires modeId to be specified");
     }
@@ -2691,7 +2701,7 @@ class CodexAppServerAgentSession implements AgentSession {
   async connect(): Promise<void> {
     if (this.connected) return;
     const child = await this.spawnAppServer();
-    this.client = new CodexAppServerClient(child, this.logger);
+    this.client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
 
@@ -2707,6 +2717,14 @@ class CodexAppServerAgentSession implements AgentSession {
     }
 
     this.connected = true;
+  }
+
+  private traceContext(): CodexAppServerTraceContext {
+    return {
+      agentId: this.agentId,
+      sessionId: this.currentThreadId ?? undefined,
+      turnId: this.activeForegroundTurnId ?? undefined,
+    };
   }
 
   private async loadCollaborationModes(): Promise<void> {
@@ -2729,7 +2747,16 @@ class CodexAppServerAgentSession implements AgentSession {
         };
       });
     } catch (error) {
-      this.logger.trace({ error }, "Failed to load collaboration modes");
+      this.logger.trace(
+        {
+          agentId: this.agentId,
+          provider: CODEX_PROVIDER,
+          sessionId: this.currentThreadId,
+          turnId: this.activeForegroundTurnId ?? undefined,
+          error,
+        },
+        "provider.codex.metadata.collaboration_modes_failed",
+      );
       this.collaborationModes = [];
     }
     this.refreshResolvedCollaborationMode();
@@ -2761,7 +2788,16 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       this.cachedSkills = skills;
     } catch (error) {
-      this.logger.trace({ error }, "Failed to load skills list");
+      this.logger.trace(
+        {
+          agentId: this.agentId,
+          provider: CODEX_PROVIDER,
+          sessionId: this.currentThreadId,
+          turnId: this.activeForegroundTurnId ?? undefined,
+          error,
+        },
+        "provider.codex.metadata.skills_failed",
+      );
       this.cachedSkills = [];
     }
   }
@@ -3657,6 +3693,16 @@ class CodexAppServerAgentSession implements AgentSession {
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId = this.activeForegroundTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        turnId: getAgentStreamEventTurnId(tagged),
+        event: tagged,
+      },
+      "provider.codex.event_emit",
+    );
     for (const callback of this.subscribers) {
       try {
         callback(tagged);
@@ -3672,6 +3718,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private handleNotification(method: string, params: unknown): void {
     const parsed = CodexNotificationSchema.parse({ method, params });
+    this.traceParsedNotification(method, params, parsed);
     switch (parsed.kind) {
       case "thread_started":
         this.handleThreadStartedNotification(parsed);
@@ -3726,6 +3773,25 @@ class CodexAppServerAgentSession implements AgentSession {
       default:
         this.warnUnknownNotificationMethod(parsed.method, parsed.params);
     }
+  }
+
+  private traceParsedNotification(
+    method: string,
+    params: unknown,
+    parsed: z.infer<typeof CodexNotificationSchema>,
+  ): void {
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        turnId: this.activeForegroundTurnId ?? undefined,
+        method,
+        params,
+        parsed,
+      },
+      "provider.codex.parsed_event",
+    );
   }
 
   private getSubAgentCallIdForThread(threadId: string | null | undefined): string | null {
@@ -4320,7 +4386,17 @@ class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnedUnknownNotificationMethods.add(method);
-    this.logger.trace({ method, params }, "Unhandled Codex app-server notification method");
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: CODEX_PROVIDER,
+        sessionId: this.currentThreadId,
+        turnId: this.activeForegroundTurnId ?? undefined,
+        method,
+        params,
+      },
+      "provider.codex.event_unhandled",
+    );
   }
 
   private warnInvalidNotificationPayload(method: string, params: unknown): void {
@@ -4598,7 +4674,14 @@ export class CodexAppServerAgentClient implements AgentClient {
           const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
           const versionOutput = await resolveBinaryVersion(launchPrefix.command);
           const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
-          this.logger.trace({ versionOutput, enabled }, "Resolved codex goals feature gate");
+          this.logger.trace(
+            {
+              provider: CODEX_PROVIDER,
+              versionOutput,
+              enabled,
+            },
+            "provider.codex.config.goals_resolved",
+          );
           return enabled;
         } catch (error) {
           this.logger.warn({ err: error }, "Failed to probe codex version for goals gate");
@@ -4611,7 +4694,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean },
+    options?: { goalsEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
@@ -4620,10 +4703,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
     this.logger.trace(
       {
+        agentId: options?.agentId,
+        provider: CODEX_PROVIDER,
         launchPrefix,
         goalsEnabled: options?.goalsEnabled === true,
       },
-      "Spawning Codex app server",
+      "provider.codex.spawn",
     );
     const child = spawnProcess(launchPrefix.command, args, {
       detached: process.platform !== "win32",
@@ -4655,10 +4740,12 @@ export class CodexAppServerAgentClient implements AgentClient {
       sessionConfig,
       null,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () =>
+        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
+      launchContext?.agentId,
     );
     await session.connect();
     return session;
@@ -4681,10 +4768,12 @@ export class CodexAppServerAgentClient implements AgentClient {
       merged,
       handle,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () =>
+        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
       this.sessionDeps(),
       false,
       goalsEnabled,
+      launchContext?.agentId,
     );
     await session.connect();
     return session;
@@ -4695,7 +4784,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   ): Promise<PersistedAgentDescriptor[]> {
     const child = await this.spawnAppServer();
     const client =
-      this.deps._createCodexClient?.(child, this.logger) ??
+      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
       new CodexAppServerClient(child, this.logger);
 
     try {

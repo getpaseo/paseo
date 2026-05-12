@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "vitest";
 import { isPlatform } from "../src/test-utils/platform.js";
+import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
@@ -87,6 +88,57 @@ async function runSupervisorFixture(options: {
 }
 
 describe("supervisor durable logging", () => {
+  test("resolves rotation defaults", () => {
+    const paseoHome = path.join(path.sep, "tmp", "paseo-home");
+    const logFile = resolveSupervisorLogFile(paseoHome, {}, {});
+
+    expect(logFile).toEqual({
+      path: path.join(paseoHome, "daemon.log"),
+      rotate: { maxSize: "10m", maxFiles: 3 },
+    });
+  });
+
+  test("lets persisted rotation override env rotation defaults", () => {
+    const paseoHome = path.join(path.sep, "tmp", "paseo-home");
+    const logFile = resolveSupervisorLogFile(
+      paseoHome,
+      {
+        log: {
+          file: {
+            path: "logs/daemon.log",
+            rotate: { maxSize: "25m", maxFiles: 4 },
+          },
+        },
+      },
+      {
+        PASEO_LOG_ROTATE_SIZE: "200m",
+        PASEO_LOG_ROTATE_COUNT: "12",
+      },
+    );
+
+    expect(logFile).toEqual({
+      path: path.resolve(paseoHome, "logs", "daemon.log"),
+      rotate: { maxSize: "25m", maxFiles: 4 },
+    });
+  });
+
+  test("uses env rotation when persisted rotation is absent", () => {
+    const paseoHome = path.join(path.sep, "tmp", "paseo-home");
+    const logFile = resolveSupervisorLogFile(
+      paseoHome,
+      {},
+      {
+        PASEO_LOG_ROTATE_SIZE: "50m",
+        PASEO_LOG_ROTATE_COUNT: "8",
+      },
+    );
+
+    expect(logFile).toEqual({
+      path: path.join(paseoHome, "daemon.log"),
+      rotate: { maxSize: "50m", maxFiles: 8 },
+    });
+  });
+
   test("writes supervised worker stdout and stderr to daemon.log", async () => {
     const result = await runSupervisorFixture({
       workerSource: `

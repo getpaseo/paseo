@@ -358,6 +358,10 @@ export type AgentStreamEvent =
       timestamp: string;
     };
 
+export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
+  return "turnId" in event ? event.turnId : undefined;
+}
+
 export type AgentPermissionRequestKind = "tool" | "plan" | "question" | "mode" | "other";
 
 export type AgentPermissionUpdate = AgentMetadata;
@@ -476,6 +480,7 @@ export interface AgentSessionConfig {
 }
 
 export interface AgentLaunchContext {
+  agentId?: string;
   env?: Record<string, string>;
 }
 

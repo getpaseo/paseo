@@ -54,35 +54,36 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentLaunchContext,
-  AgentMetadata,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPermissionRequest,
-  AgentPermissionRequestKind,
-  AgentPermissionResponse,
-  AgentPersistenceHandle,
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentRuntimeInfo,
-  AgentSession,
-  AgentSessionConfig,
-  AgentSlashCommand,
-  AgentStreamEvent,
-  AgentTimelineItem,
-  AgentUsage,
-  ListModesOptions,
-  ListModelsOptions,
-  ListPersistedAgentsOptions,
-  McpServerConfig,
-  PersistedAgentDescriptor,
-  ToolCallDetail,
-  ToolCallTimelineItem,
+import {
+  getAgentStreamEventTurnId,
+  type AgentCapabilityFlags,
+  type AgentClient,
+  type AgentLaunchContext,
+  type AgentMetadata,
+  type AgentMode,
+  type AgentModelDefinition,
+  type AgentPermissionRequest,
+  type AgentPermissionRequestKind,
+  type AgentPermissionResponse,
+  type AgentPersistenceHandle,
+  type AgentPromptContentBlock,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentRuntimeInfo,
+  type AgentSession,
+  type AgentSessionConfig,
+  type AgentSlashCommand,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
+  type AgentUsage,
+  type ListModesOptions,
+  type ListModelsOptions,
+  type ListPersistedAgentsOptions,
+  type McpServerConfig,
+  type PersistedAgentDescriptor,
+  type ToolCallDetail,
+  type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
   createProviderEnvSpec,
@@ -265,6 +266,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   handle?: AgentPersistenceHandle;
+  agentId?: string;
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
@@ -519,7 +521,10 @@ export class ACPAgentClient implements AgentClient {
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
     this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
-    this.logger = options.logger.child({ module: "agent", provider: options.provider });
+    this.logger = options.logger.child({
+      module: "agent",
+      provider: options.provider,
+    });
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
@@ -557,6 +562,7 @@ export class ACPAgentClient implements AgentClient {
         beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
         capabilities: this.capabilities,
+        agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -603,6 +609,7 @@ export class ACPAgentClient implements AgentClient {
       thinkingOptionWriter: this.thinkingOptionWriter,
       capabilities: this.capabilities,
       handle,
+      agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -842,6 +849,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
@@ -894,6 +902,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.availableModes = options.defaultModes;
+    this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
     this.initialHandle = options.handle;
     this.config = { ...config, provider: options.provider };
@@ -1567,11 +1576,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: this.provider,
+        sessionId: params.sessionId,
+        rawEvent: params,
+      },
+      "provider.acp.raw_event",
+    );
     if (params.sessionId !== this.sessionId) {
       return;
     }
 
     const events = this.translateSessionUpdate(params.update);
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: this.provider,
+        sessionId: this.sessionId,
+        turnId: this.activeForegroundTurnId ?? undefined,
+        rawEvent: params,
+        events,
+      },
+      "provider.acp.parsed_event",
+    );
     if (this.replayingHistory) {
       for (const event of events) {
         if (event.type === "timeline") {
@@ -2002,6 +2031,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private pushEvent(event: AgentStreamEvent): void {
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: this.provider,
+        sessionId: this.sessionId,
+        turnId: getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? undefined,
+        event,
+      },
+      "provider.acp.event_emit",
+    );
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
