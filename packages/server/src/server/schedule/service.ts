@@ -545,7 +545,22 @@ export class ScheduleService {
       "paseo.schedule-run": runId,
     };
     const agent = await this.agentManager.createAgent(config, undefined, { labels });
-    const result = await this.agentManager.runAgent(agent.id, wrappedPrompt);
+    let result;
+    try {
+      result = await this.agentManager.runAgent(agent.id, wrappedPrompt);
+    } catch (error) {
+      try {
+        await this.agentManager.archiveAgent(agent.id);
+      } catch (archiveError) {
+        this.logger.warn(
+          { err: archiveError, agentId: agent.id, scheduleId: schedule.id, runId },
+          "Failed to archive scheduled agent after failed run",
+        );
+      }
+      throw error;
+    }
+
+    await this.agentManager.archiveAgent(agent.id);
     const timelineText = curateAgentActivity(result.timeline);
     return {
       agentId: agent.id,

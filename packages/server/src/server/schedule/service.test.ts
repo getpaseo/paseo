@@ -4,6 +4,22 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
+import type {
+  AgentCapabilityFlags,
+  AgentClient,
+  AgentMode,
+  AgentModelDefinition,
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentPersistenceHandle,
+  AgentPromptInput,
+  AgentRunOptions,
+  AgentRunResult,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+  ListModelsOptions,
+} from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleService } from "./service.js";
@@ -12,6 +28,15 @@ import type { StoredSchedule, ScheduleExecutionResult } from "./types.js";
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult>;
 }
+
+const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: true,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: true,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: true,
+};
 
 describe("ScheduleService", () => {
   let tempDir: string;
@@ -179,6 +204,182 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("archives new-agent schedule sessions after the run finishes", async () => {
+    class CountingScheduleSession implements AgentSession {
+      readonly provider = "claude";
+      readonly capabilities = SCHEDULE_TEST_CAPABILITIES;
+      readonly id: string;
+      closed = false;
+      private turnCount = 0;
+      private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+
+      constructor(private readonly config: AgentSessionConfig) {
+        this.id = "scheduled-session-1";
+      }
+
+      async run(_prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
+        return {
+          sessionId: this.id,
+          finalText: "done",
+          timeline: [{ type: "assistant_message", text: "done" }],
+        };
+      }
+
+      async startTurn(
+        _prompt: AgentPromptInput,
+        _options?: AgentRunOptions,
+      ): Promise<{ turnId: string }> {
+        const turnId = `turn-${++this.turnCount}`;
+        setImmediate(() => {
+          this.emit({ type: "turn_started", provider: this.provider, turnId });
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text: "done" },
+          });
+          this.emit({
+            type: "turn_completed",
+            provider: this.provider,
+            turnId,
+            usage: { inputTokens: 1, outputTokens: 1 },
+          });
+        });
+        return { turnId };
+      }
+
+      subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+        this.subscribers.add(callback);
+        return () => {
+          this.subscribers.delete(callback);
+        };
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+      async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: this.config.model ?? null,
+          modeId: this.config.modeId ?? null,
+        };
+      }
+
+      async getAvailableModes(): Promise<AgentMode[]> {
+        return [];
+      }
+
+      async getCurrentMode(): Promise<string | null> {
+        return this.config.modeId ?? null;
+      }
+
+      async setMode(modeId: string): Promise<void> {
+        this.config.modeId = modeId;
+      }
+
+      getPendingPermissions(): AgentPermissionRequest[] {
+        return [];
+      }
+
+      async respondToPermission(
+        _requestId: string,
+        _response: AgentPermissionResponse,
+      ): Promise<void> {}
+
+      describePersistence(): AgentPersistenceHandle {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          metadata: { ...this.config },
+        };
+      }
+
+      async interrupt(): Promise<void> {}
+
+      async close(): Promise<void> {
+        this.closed = true;
+      }
+
+      private emit(event: AgentStreamEvent): void {
+        for (const subscriber of this.subscribers) {
+          subscriber(event);
+        }
+      }
+    }
+
+    class CountingScheduleClient implements AgentClient {
+      readonly provider = "claude";
+      readonly capabilities = SCHEDULE_TEST_CAPABILITIES;
+      readonly sessions: CountingScheduleSession[] = [];
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const session = new CountingScheduleSession(config);
+        this.sessions.push(session);
+        return session;
+      }
+
+      async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+        const metadata = handle.metadata as Partial<AgentSessionConfig> | undefined;
+        const session = new CountingScheduleSession({
+          ...metadata,
+          provider: this.provider,
+          cwd: metadata?.cwd ?? tempDir,
+        });
+        this.sessions.push(session);
+        return session;
+      }
+
+      async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+        return [];
+      }
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+    }
+
+    const client = new CountingScheduleClient();
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: { claude: client },
+      registry: agentStorage,
+    });
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "finish and stop",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          approvalPolicy: "never",
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    const agentId = inspected.runs[0]?.agentId;
+    expect(agentId).toBeTruthy();
+    expect(client.sessions).toHaveLength(1);
+    expect(client.sessions[0]?.closed).toBe(true);
+    expect(manager.getAgent(agentId!)).toBeNull();
+    const storedAgent = await agentStorage.get(agentId!);
+    expect(storedAgent?.archivedAt).toBeTruthy();
+  });
+
   test("defaults new-agent modeId to provider's unattended mode", async () => {
     const manager = new AgentManager({
       logger: createTestLogger(),
@@ -213,8 +414,9 @@ describe("ScheduleService", () => {
     const inspected = await service.inspect(created.id);
     const agentId = inspected.runs[0]?.agentId;
     expect(agentId).toBeTruthy();
-    const agent = manager.getAgent(agentId!);
-    expect(agent?.currentModeId).toBe("bypassPermissions");
+    const agent = await agentStorage.get(agentId!);
+    expect(agent?.lastModeId).toBe("bypassPermissions");
+    expect(agent?.archivedAt).toBeTruthy();
   });
 
   test("advances stale nextRunAt on daemon restart", async () => {
