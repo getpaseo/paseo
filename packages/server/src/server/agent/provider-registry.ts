@@ -24,6 +24,7 @@ import type {
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
+import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
@@ -110,6 +111,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
     }),
+  cursor: (logger, runtimeSettings) =>
+    new CursorACPAgentClient({
+      logger,
+      command: getCursorACPCommand(runtimeSettings),
+      env: runtimeSettings?.env,
+    }),
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
   pi: (logger, runtimeSettings) =>
     new PiDirectAgentClient({
@@ -118,6 +125,19 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
 };
+
+function getCursorACPCommand(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+): [string, ...string[]] {
+  if (
+    runtimeSettings?.command?.mode === "replace" &&
+    isNonEmptyStringArray(runtimeSettings.command.argv)
+  ) {
+    return runtimeSettings.command.argv;
+  }
+
+  return ["cursor-agent", "acp"];
+}
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {
   const factory = PROVIDER_CLIENT_FACTORIES[provider];
@@ -513,13 +533,21 @@ function addDerivedProviders(
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         createBaseClient: (logger) =>
-          new GenericACPAgentClient({
-            logger,
-            command,
-            env: override.env,
-            providerId,
-            label: override.label ?? providerId,
-          }),
+          providerId === "cursor"
+            ? new CursorACPAgentClient({
+                logger,
+                command,
+                env: override.env,
+                providerId,
+                label: override.label ?? providerId,
+              })
+            : new GenericACPAgentClient({
+                logger,
+                command,
+                env: override.env,
+                providerId,
+                label: override.label ?? providerId,
+              }),
       });
       continue;
     }
