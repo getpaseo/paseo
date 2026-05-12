@@ -236,8 +236,9 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
   }
 }`;
 
-const CURRENT_PR_STATUS_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner";
+const CURRENT_PR_STATUS_BASE_FIELDS =
+  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 const PULL_REQUEST_TIMELINE_QUERY = `
 query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
@@ -1314,6 +1315,21 @@ function isNoPullRequestFoundError(error: unknown): boolean {
   return text.includes("no pull requests found");
 }
 
+function isStatusCheckRollupPermissionError(error: unknown): boolean {
+  if (!(error instanceof GitHubCommandError)) {
+    return false;
+  }
+  const text = error.stderr.toLowerCase();
+  if (text.includes("statuscheckrollup")) {
+    return true;
+  }
+  return (
+    text.includes("resource not accessible by personal access token") ||
+    text.includes("requires one of the following scopes") ||
+    text.includes("insufficient permission")
+  );
+}
+
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
@@ -1370,8 +1386,10 @@ async function tryCurrentPullRequestView(options: {
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<ResolvedPullRequestCandidate | null> {
   try {
-    const stdout = await options.run(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS], {
+    const stdout = await runCurrentPullRequestStatusCommand({
       cwd: options.cwd,
+      run: options.run,
+      args: ["pr", "view"],
     });
     return parseCurrentPullRequestCandidate(stdout, options.headRef);
   } catch (error) {
@@ -1397,19 +1415,40 @@ async function listCurrentPullRequestCandidates(options: {
     "all",
     "--head",
     options.headRef,
-    "--json",
-    CURRENT_PR_STATUS_FIELDS,
     "--limit",
     "10",
   );
   try {
-    const stdout = await options.run(args, { cwd: options.cwd });
+    const stdout = await runCurrentPullRequestStatusCommand({
+      cwd: options.cwd,
+      run: options.run,
+      args,
+    });
     return parseCurrentPullRequestCandidateList(stdout, options.headRef);
   } catch (error) {
     if (isNoPullRequestFoundError(error)) {
       return [];
     }
     throw error;
+  }
+}
+
+async function runCurrentPullRequestStatusCommand(options: {
+  cwd: string;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+  args: string[];
+}): Promise<string> {
+  try {
+    return await options.run([...options.args, "--json", CURRENT_PR_STATUS_FIELDS], {
+      cwd: options.cwd,
+    });
+  } catch (error) {
+    if (!isStatusCheckRollupPermissionError(error)) {
+      throw error;
+    }
+    return options.run([...options.args, "--json", CURRENT_PR_STATUS_BASE_FIELDS], {
+      cwd: options.cwd,
+    });
   }
 }
 

@@ -20,6 +20,9 @@ import { CheckoutPrStatusResponseSchema } from "../shared/messages.js";
 const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
+const CURRENT_PR_STATUS_BASE_FIELDS =
+  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 interface RunnerCall {
   args: string[];
@@ -150,6 +153,16 @@ function noPullRequestError(args: string[] = ["pr", "view"]): GitHubCommandError
     cwd: "/repo",
     exitCode: 1,
     stderr: "no pull requests found for branch",
+  });
+}
+
+function statusCheckRollupPermissionError(args: string[]): GitHubCommandError {
+  return new GitHubCommandError({
+    args,
+    cwd: "/repo",
+    exitCode: 1,
+    stderr:
+      "GraphQL: Resource not accessible by personal access token (repository.pullRequest.statusCheckRollup)",
   });
 }
 
@@ -1077,7 +1090,7 @@ describe("GitHubService", () => {
       "pr",
       "view",
       "--json",
-      "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
+      CURRENT_PR_STATUS_FIELDS,
     ]);
     expect(status).toEqual({
       number: 42,
@@ -1107,6 +1120,38 @@ describe("GitHubService", () => {
       ],
       checksStatus: "success",
       reviewDecision: "pending",
+    });
+  });
+
+  it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {
+    const runner = createScriptedRunner([
+      { error: statusCheckRollupPermissionError(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS]) },
+      currentPullRequestJson({
+        headRefName: "feature/pr-pane",
+        reviewDecision: "APPROVED",
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/pr-pane",
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
+      ["pr", "view", "--json", CURRENT_PR_STATUS_BASE_FIELDS],
+    ]);
+    expect(status).toMatchObject({
+      title: "Fork PR",
+      headRefName: "feature/pr-pane",
+      checks: [],
+      checksStatus: "none",
+      reviewDecision: "approved",
     });
   });
 
@@ -1194,7 +1239,7 @@ describe("GitHubService", () => {
         "pr",
         "view",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
+        CURRENT_PR_STATUS_FIELDS,
       ],
       ["repo", "view", "--json", "owner,name,parent"],
       [
@@ -1206,10 +1251,107 @@ describe("GitHubService", () => {
         "all",
         "--head",
         "forkOwner:feature/fork",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
         "--limit",
         "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
+    ]);
+  });
+
+  it("retries scoped PR list without statusCheckRollup when token permissions are insufficient", async () => {
+    const runner = createScriptedRunner([
+      currentPullRequestJson({
+        number: 7,
+        url: "https://github.com/parentOwner/parentRepo/pull/7",
+        title: "Stale tracking PR",
+        headRefName: "old-branch",
+      }),
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "parentRepo",
+        parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+      }),
+      {
+        error: statusCheckRollupPermissionError([
+          "pr",
+          "list",
+          "--repo",
+          "parentOwner/parentRepo",
+          "--state",
+          "all",
+          "--head",
+          "forkOwner:feature/fork",
+          "--json",
+          CURRENT_PR_STATUS_FIELDS,
+          "--limit",
+          "10",
+        ]),
+      },
+      JSON.stringify([
+        {
+          number: 42,
+          url: "https://github.com/parentOwner/parentRepo/pull/42",
+          title: "Real fork PR",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "main",
+          headRefName: "feature/fork",
+          mergedAt: null,
+          reviewDecision: "REVIEW_REQUIRED",
+          headRepositoryOwner: { login: "forkOwner" },
+        },
+      ]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+    });
+
+    expect(status).toMatchObject({
+      number: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+      headRefName: "feature/fork",
+      checks: [],
+      checksStatus: "none",
+    });
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
+      ["repo", "view", "--json", "owner,name,parent"],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "parentOwner/parentRepo",
+        "--state",
+        "all",
+        "--head",
+        "forkOwner:feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "parentOwner/parentRepo",
+        "--state",
+        "all",
+        "--head",
+        "forkOwner:feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_BASE_FIELDS,
       ],
     ]);
   });
@@ -1267,7 +1409,7 @@ describe("GitHubService", () => {
         "pr",
         "view",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
+        CURRENT_PR_STATUS_FIELDS,
       ],
       ["repo", "view", "--json", "owner,name,parent"],
     ]);
@@ -1328,7 +1470,7 @@ describe("GitHubService", () => {
         "pr",
         "view",
         "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
+        CURRENT_PR_STATUS_FIELDS,
       ],
       [
         "pr",
@@ -1337,10 +1479,10 @@ describe("GitHubService", () => {
         "all",
         "--head",
         "main",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,mergeable,headRepositoryOwner",
         "--limit",
         "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
       ],
     ]);
   });
