@@ -7,6 +7,15 @@
   makeWrapper,
   # node-pty needs libuv headers on Linux
   libuv,
+  # Exposed so downstream flakes that follow a different nixpkgs revision
+  # (where `fetchNpmDeps` may produce a different hash for the same lockfile)
+  # can override via `.override { npmDepsHash = "sha256-..."; }` without
+  # `overrideAttrs` gymnastics — `npmDepsHash` is destructured from
+  # `buildNpmPackage`'s args, so `overrideAttrs` cannot reach it.
+  #
+  # The default is read from a sidecar file so the CI auto-updater can replace
+  # the hash with a single file write instead of a sed against this source.
+  npmDepsHash ? lib.fileContents ./npm-deps.hash,
 }:
 
 buildNpmPackage rec {
@@ -40,9 +49,9 @@ buildNpmPackage rec {
 
   nodejs = nodejs_22;
 
-  # To update: run `nix build` with lib.fakeHash, copy the `got:` hash.
-  # CI auto-updates this when package-lock.json changes (see .github/workflows/).
-  npmDepsHash = "sha256-qXCfTM7Q1PyXL53C+AFgFA5b99uznKaKomwmX2UcZHo=";
+  # Default hash lives in nix/npm-deps.hash (see arg default above).
+  # CI auto-updates that file when package-lock.json changes (see .github/workflows/).
+  inherit npmDepsHash;
 
   # Prevent onnxruntime-node's install script from running during automatic
   # npm rebuild (it tries to download from api.nuget.org, which fails in the sandbox).

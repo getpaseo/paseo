@@ -43,7 +43,7 @@ const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
 
 const DEFAULT_CONSOLE_LEVEL: LogLevel = "info";
 const DEFAULT_CONSOLE_FORMAT: LogFormat = "json";
-const DEFAULT_FILE_LEVEL: LogLevel = "debug";
+const DEFAULT_FILE_LEVEL: LogLevel = "info";
 const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
 const REDACT_PATHS = [
   "authorization",

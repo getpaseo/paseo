@@ -59,6 +59,30 @@ Required fields for custom providers:
 - `extends` — which built-in provider to inherit from (or `"acp"`)
 - `label` — display name in the UI
 
+### Codex with an OpenAI-compatible endpoint
+
+Custom providers that extend `"codex"` can point Codex at an OpenAI-compatible API by setting `OPENAI_BASE_URL` and `OPENAI_API_KEY` in the provider `env`. Paseo still passes those variables through to the Codex app-server process, and also maps them into Codex's thread config (`model_provider` / `model_providers`) because Codex reads provider routing from config rather than from `OPENAI_BASE_URL`.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-codex": {
+        "extends": "codex",
+        "label": "My Codex",
+        "env": {
+          "OPENAI_API_KEY": "sk-...",
+          "OPENAI_BASE_URL": "https://custom-relay.example.com"
+        },
+        "models": [{ "id": "custom-model", "label": "Custom Model", "isDefault": true }]
+      }
+    }
+  }
+}
+```
+
+If the base URL does not end in `/v1`, Paseo appends `/v1` for Codex's OpenAI-compatible provider config. If it already ends in `/v1`, Paseo leaves it as-is.
+
 ---
 
 ## Z.AI (Zhipu) coding plan
@@ -341,6 +365,14 @@ Required fields for ACP providers:
 - `extends: "acp"`
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
+
+### Generic ACP diagnostics
+
+Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
+
+For package-runner commands such as `npx -y @google/gemini-cli --acp`, the version probe keeps the package spec and runs `npx -y @google/gemini-cli --version`. This diagnoses the actual agent package instead of only proving that `npx` exists.
+
+ACP probes use short timeouts and browser-suppression environment variables so agents that enter an auth/browser flow fail as a diagnostic error instead of hanging the provider screen.
 
 ### Example: Google Gemini CLI
 

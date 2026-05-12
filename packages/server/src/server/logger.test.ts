@@ -106,6 +106,31 @@ describe("resolveLogConfig", () => {
       },
     });
   });
+
+  it("defaults file output to info when log.file is present without a level", () => {
+    const config: PersistedConfig = {
+      log: {
+        console: {
+          level: "warn",
+        },
+        file: {
+          path: "daemon.log",
+        },
+      },
+    };
+
+    expect(resolveLogConfig(config, { paseoHome })).toEqual({
+      level: "info",
+      console: {
+        level: "warn",
+        format: "json",
+      },
+      file: {
+        level: "info",
+        path: path.resolve(paseoHome, "daemon.log"),
+      },
+    });
+  });
 });
 
 describe("loadConfig logger config", () => {

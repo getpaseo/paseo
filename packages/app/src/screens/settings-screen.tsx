@@ -720,9 +720,16 @@ function SettingsSidebar({
   }, [hosts, localServerId]);
   const isDesktopApp = isElectronRuntime();
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => !item.desktopOnly || isDesktopApp);
+  const insets = useSafeAreaInsets();
   const padding = useWindowControlsPadding("sidebar");
   const isDesktop = layout === "desktop";
-  const containerStyle = isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer;
+  const containerStyle = useMemo(
+    () => [
+      isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer,
+      isDesktop ? { paddingTop: insets.top } : null,
+    ],
+    [insets.top, isDesktop],
+  );
   const selectedSectionId = view.kind === "section" ? view.section : null;
   const selectedServerId = view.kind === "host" ? view.serverId : null;
   const isProjectsSelected = view.kind === "projects" || view.kind === "project";

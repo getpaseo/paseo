@@ -35,6 +35,12 @@ interface PendingRequest {
 type RequestHandler = (params: unknown) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 
+export interface CodexAppServerTraceContext {
+  agentId?: string;
+  sessionId?: string;
+  turnId?: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -54,6 +60,24 @@ function isJsonRpcNotification(msg: unknown): msg is JsonRpcNotification {
   return typeof msg.method === "string" && msg.id === undefined;
 }
 
+function readProviderSessionId(params: unknown): string | undefined {
+  if (!isRecord(params)) {
+    return undefined;
+  }
+  return typeof params.threadId === "string" ? params.threadId : undefined;
+}
+
+function readProviderTurnId(params: unknown): string | undefined {
+  if (!isRecord(params)) {
+    return undefined;
+  }
+  if (typeof params.turnId === "string") {
+    return params.turnId;
+  }
+  const turn = params.turn;
+  return isRecord(turn) && typeof turn.id === "string" ? turn.id : undefined;
+}
+
 export class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
@@ -66,6 +90,7 @@ export class CodexAppServerClient {
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly logger: Logger,
+    private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
     this.rl = readline.createInterface({ input: child.stdout });
     this.rl.on("line", (line) => {
@@ -224,6 +249,19 @@ export class CodexAppServerClient {
     }
 
     if (isJsonRpcNotification(raw)) {
+      const traceContext = this.getTraceContext();
+      this.logger.trace(
+        {
+          provider: "codex",
+          agentId: traceContext.agentId,
+          sessionId: traceContext.sessionId ?? readProviderSessionId(raw.params),
+          turnId: traceContext.turnId ?? readProviderTurnId(raw.params),
+          method: raw.method,
+          params: raw.params,
+          rawEvent: raw,
+        },
+        "provider.codex.raw_event",
+      );
       this.notificationHandler?.(raw.method, raw.params);
     }
   }

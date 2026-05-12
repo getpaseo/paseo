@@ -47,6 +47,7 @@ export class TestOpenCodeClient {
     appAgents: [] as unknown[],
     commandList: [] as unknown[],
     eventSubscribe: [] as unknown[],
+    globalEvent: [] as unknown[],
     permissionReply: [] as unknown[],
     providerList: [] as unknown[],
     questionReject: [] as unknown[],
@@ -96,6 +97,12 @@ export class TestOpenCodeClient {
       event: {
         subscribe: async (parameters: unknown, options: unknown) => {
           this.calls.eventSubscribe.push({ parameters, options });
+          return { stream: this.eventStream };
+        },
+      },
+      global: {
+        event: async (options: unknown) => {
+          this.calls.globalEvent.push(options);
           return { stream: this.eventStream };
         },
       },

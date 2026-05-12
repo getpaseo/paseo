@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.1.73",
+  "version": "0.1.75",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -63,6 +63,7 @@
     "expo-file-system": "~19.0.17",
     "expo-haptics": "~15.0.7",
     "expo-image": "~3.0.10",
+    "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "^17.0.8",
     "expo-keep-awake": "^15.0.7",
     "expo-linking": "~8.0.8",

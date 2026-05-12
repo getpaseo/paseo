@@ -1,9 +1,10 @@
-import type {
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentRunResult,
-  AgentStreamEvent,
-  AgentTimelineItem,
+import {
+  getAgentStreamEventTurnId,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
 } from "../agent-sdk-types.js";
 
 export type ProviderFinalTextReducer = (params: {
@@ -44,7 +45,7 @@ export async function runProviderTurn({
     if (settled) {
       return;
     }
-    const eventTurnId = "turnId" in event ? event.turnId : undefined;
+    const eventTurnId = getAgentStreamEventTurnId(event);
     if (turnId && eventTurnId && eventTurnId !== turnId) {
       return;
     }

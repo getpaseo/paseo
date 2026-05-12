@@ -215,8 +215,17 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     undefined,
     speechReadiness
       ? {
+          resolveStt: () => null,
+          resolveSttLanguage: () => "en",
+          resolveTts: () => null,
+          resolveTurnDetection: () => null,
+          resolveDictationStt: () => null,
+          resolveDictationSttLanguage: () => "en",
           getReadiness: () => speechReadiness,
           onReadinessChange: vi.fn(() => () => {}),
+          start: vi.fn(),
+          stop: vi.fn(),
+          ready: Promise.resolve(),
         }
       : undefined,
     undefined,

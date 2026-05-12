@@ -14,7 +14,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
+import {
+  getAgentStreamEventTurnId,
+  type AgentSession,
+  type AgentStreamEvent,
+} from "../../agent-sdk-types.js";
 import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
 import { ClaudeAgentClient } from "./agent.js";
 
@@ -37,15 +41,14 @@ function isTerminalEvent(event: AgentStreamEvent): boolean {
   );
 }
 
-// turnId is optional on AgentStreamEvent — this narrows to events where it's present.
 type EventWithTurnId = AgentStreamEvent & { turnId: string };
 
 function hasTurnId(event: AgentStreamEvent): event is EventWithTurnId {
-  return "turnId" in event && typeof (event as Record<string, unknown>).turnId === "string";
+  return getAgentStreamEventTurnId(event) !== undefined;
 }
 
 function eventsForTurn(events: AgentStreamEvent[], turnId: string): AgentStreamEvent[] {
-  return events.filter((e) => hasTurnId(e) && e.turnId === turnId);
+  return events.filter((e) => getAgentStreamEventTurnId(e) === turnId);
 }
 
 function userMessagesWithText(events: AgentStreamEvent[], text: string): AgentStreamEvent[] {
@@ -157,7 +160,7 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
   // Invariant 2: Every turn_started has exactly one matching terminal
   const turnStartedIds = events
     .filter((e) => e.type === "turn_started" && hasTurnId(e))
-    .map((e) => (e as EventWithTurnId).turnId);
+    .map((e) => e.turnId);
 
   for (const turnId of turnStartedIds) {
     const terminals = eventsForTurn(events, turnId).filter(isTerminalEvent);
@@ -277,7 +280,7 @@ test("Test 3: Lifecycle doesn't get stuck in running", async () => {
 
     // Any turn_started after terminal must have a different turnId
     for (const ts of afterTerminal.filter((e) => e.type === "turn_started" && hasTurnId(e))) {
-      expect((ts as EventWithTurnId).turnId).not.toBe(turnId);
+      expect(ts.turnId).not.toBe(turnId);
     }
 
     assertInvariants(events, [turnId]);
@@ -313,8 +316,9 @@ test("Test 4: Autonomous run", async () => {
 
     // Autonomous turn_started with a different turnId
     const autoStarts = afterForeground.filter(
-      (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId !== fgTurnId,
-    ) as EventWithTurnId[];
+      (e): e is EventWithTurnId =>
+        e.type === "turn_started" && hasTurnId(e) && e.turnId !== fgTurnId,
+    );
     if (autoStarts.length === 0) {
       assertInvariants(events, [fgTurnId]);
       return;

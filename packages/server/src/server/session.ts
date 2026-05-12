@@ -119,16 +119,17 @@ import {
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
-import type {
-  AgentPersistenceHandle,
-  AgentPermissionResponse,
-  AgentProvider,
-  AgentPromptContentBlock,
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentSessionConfig,
-  AgentStreamEvent,
-  ProviderSnapshotEntry,
+import {
+  getAgentStreamEventTurnId,
+  type AgentPersistenceHandle,
+  type AgentPermissionResponse,
+  type AgentProvider,
+  type AgentPromptContentBlock,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentSessionConfig,
+  type AgentStreamEvent,
+  type ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -545,6 +546,7 @@ export interface SessionOptions {
   daemonConfigStore: DaemonConfigStore;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
+  sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
@@ -571,6 +573,7 @@ export interface SessionOptions {
   dictation?: {
     finalTimeoutMs?: number;
     stt?: Resolvable<SpeechToTextProvider | null>;
+    sttLanguage?: string;
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
@@ -782,6 +785,7 @@ export class Session {
   private registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
   private unregisterVoiceCallerContext?: (agentId: string) => void;
   private getSpeechReadiness?: () => SpeechReadinessSnapshot;
+  private readonly sttLanguage: string;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
@@ -813,6 +817,7 @@ export class Session {
       daemonConfigStore,
       mcpBaseUrl,
       stt,
+      sttLanguage,
       tts,
       terminalManager,
       providerSnapshotManager,
@@ -874,6 +879,7 @@ export class Session {
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.sttLanguage = sttLanguage ?? "en";
     this.subscribeToOptionalManagers();
     this.bindVoiceBridges({ voice, voiceBridge, dictation });
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
@@ -889,13 +895,13 @@ export class Session {
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
-    this.initializePerSessionManagers({ tts, stt, dictation });
+    this.initializePerSessionManagers({ tts, stt, sttLanguage, dictation });
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
-    this.sessionLogger.trace("Session created");
+    this.sessionLogger.trace({}, "agent.session.lifecycle.created");
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -1017,15 +1023,20 @@ export class Session {
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
     const snapshot = this.agentManager.getAgent(agentId);
     if (!snapshot) {
-      this.sessionLogger.trace({ agentId }, "interruptAgentIfRunning: agent not found");
+      this.sessionLogger.trace({ agentId }, "agent.session.interrupt.not_found");
       throw new Error(`Agent ${agentId} not found`);
     }
 
     const hasInFlightRun = this.agentManager.hasInFlightRun(agentId);
     if (!hasInFlightRun) {
       this.sessionLogger.trace(
-        { agentId, lifecycle: snapshot.lifecycle, hasInFlightRun },
-        "interruptAgentIfRunning: skipping because agent is not running",
+        {
+          agentId,
+          provider: snapshot.provider,
+          lifecycle: snapshot.lifecycle,
+          hasInFlightRun,
+        },
+        "agent.session.interrupt.skip_not_running",
       );
       return;
     }
@@ -1070,7 +1081,7 @@ export class Session {
         promptType: typeof prompt === "string" ? "string" : "structured",
         hasRunOptions: Boolean(runOptions),
       },
-      "startAgentStream: requested",
+      "agent.session.start_stream.request",
     );
     let iterator: AsyncGenerator<AgentStreamEvent>;
     try {
@@ -1080,7 +1091,7 @@ export class Session {
         : this.agentManager.streamAgent(agentId, prompt, runOptions);
       this.sessionLogger.trace(
         { agentId, shouldReplace },
-        "startAgentStream: agent iterator returned",
+        "agent.session.start_stream.iterator_returned",
       );
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to start agent run");
@@ -1092,9 +1103,9 @@ export class Session {
         for await (const _ of iterator) {
           // Events are forwarded via the session's AgentManager subscription.
         }
-        this.sessionLogger.trace({ agentId }, "startAgentStream: iterator drained");
+        this.sessionLogger.trace({ agentId }, "agent.session.iterator.drained");
       } catch (error) {
-        this.sessionLogger.trace({ agentId, err: error }, "startAgentStream: iterator threw");
+        this.sessionLogger.trace({ agentId, err: error }, "agent.session.iterator.error");
         this.handleAgentRunError(agentId, error, "Agent stream failed");
       }
     })();
@@ -1135,10 +1146,7 @@ export class Session {
 
       this.agentTools = (await this.agentMcpClient.tools()) as ToolSet;
       const agentToolCount = Object.keys(this.agentTools ?? {}).length;
-      this.sessionLogger.trace(
-        { agentToolCount },
-        `Agent MCP initialized with ${agentToolCount} tools`,
-      );
+      this.sessionLogger.trace({ agentToolCount }, "agent.session.mcp_init");
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to initialize Agent MCP");
     }
@@ -1188,16 +1196,20 @@ export class Session {
   private initializePerSessionManagers(params: {
     tts: SessionOptions["tts"];
     stt: SessionOptions["stt"];
+    sttLanguage: SessionOptions["sttLanguage"];
     dictation: SessionOptions["dictation"];
   }): void {
-    const { tts, stt, dictation } = params;
+    const { tts, stt, sttLanguage, dictation } = params;
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
-    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt);
+    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt, {
+      language: sttLanguage,
+    });
     this.dictationStreamManager = new DictationStreamManager({
       logger: this.sessionLogger,
       sessionId: this.sessionId,
       emit: (msg) => this.handleDictationManagerMessage(msg),
       stt: dictation?.stt ?? null,
+      language: dictation?.sttLanguage,
       finalTimeoutMs: dictation?.finalTimeoutMs,
     });
   }
@@ -1210,6 +1222,16 @@ export class Session {
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
         if (event.type === "agent_state") {
+          this.sessionLogger.trace(
+            {
+              agentId: event.agent.id,
+              provider: event.agent.provider,
+              providerSessionId: event.agent.persistence?.sessionId ?? undefined,
+              turnId: event.agent.activeForegroundTurnId ?? undefined,
+              lifecycle: event.agent.lifecycle,
+            },
+            "agent.session.forward_update",
+          );
           void this.forwardAgentUpdate(event.agent);
           return;
         }
@@ -1260,6 +1282,17 @@ export class Session {
         if (!serializedEvent) {
           return;
         }
+        this.sessionLogger.trace(
+          {
+            agentId: event.agentId,
+            provider: event.event.provider,
+            turnId: getAgentStreamEventTurnId(event.event),
+            seq: event.seq,
+            epoch: event.epoch,
+            event: event.event,
+          },
+          "agent.session.forward_stream",
+        );
 
         const payload = {
           agentId: event.agentId,
@@ -1612,8 +1645,11 @@ export class Session {
     }
     try {
       this.sessionLogger.trace(
-        { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
-        "inbound message",
+        {
+          messageType: msg.type,
+          payloadBytes: JSON.stringify(msg).length,
+        },
+        "agent.session.inbound",
       );
       try {
         await this.dispatchInboundMessage(msg);
@@ -2738,6 +2774,7 @@ export class Session {
       logger: this.sessionLogger.child({ component: "voice-turn-controller" }),
       turnDetection,
       stt,
+      sttLanguage: this.sttLanguage,
       callbacks: {
         onSpeechStarted: async () => {
           this.sessionLogger.debug("Voice VAD speech_started");
@@ -3048,6 +3085,17 @@ export class Session {
     const { handle, overrides, requestId } = msg;
     if (!handle) {
       this.sessionLogger.warn("Resume request missing persistence handle");
+      if (requestId) {
+        this.emit({
+          type: "rpc_error",
+          payload: {
+            requestId,
+            requestType: msg.type,
+            error: "Unable to resume agent: missing persistence handle",
+            code: "agent_resume_failed",
+          },
+        });
+      }
       this.emit({
         type: "activity_log",
         payload: {
@@ -3084,14 +3132,26 @@ export class Session {
         });
       }
     } catch (error) {
+      const message = getErrorMessage(error);
       this.sessionLogger.error({ err: error }, "Failed to resume agent");
+      if (requestId) {
+        this.emit({
+          type: "rpc_error",
+          payload: {
+            requestId,
+            requestType: msg.type,
+            error: message,
+            code: "agent_resume_failed",
+          },
+        });
+      }
       this.emit({
         type: "activity_log",
         payload: {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to resume agent: ${getErrorMessage(error)}`,
+          content: `Failed to resume agent: ${message}`,
         },
       });
     }
@@ -3212,14 +3272,26 @@ export class Session {
         });
       }
     } catch (error) {
+      const message = getErrorMessage(error);
       this.sessionLogger.error({ err: error, agentId }, `Failed to refresh agent ${agentId}`);
+      if (requestId) {
+        this.emit({
+          type: "rpc_error",
+          payload: {
+            requestId,
+            requestType: msg.type,
+            error: message,
+            code: "agent_refresh_failed",
+          },
+        });
+      }
       this.emit({
         type: "activity_log",
         payload: {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to refresh agent: ${getErrorMessage(error)}`,
+          content: `Failed to refresh agent: ${message}`,
         },
       });
     }
@@ -7180,8 +7252,12 @@ export class Session {
 
       const prompt = this.buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
-        { agentId, messageId: msg.messageId, textPrefix: msg.text.slice(0, 80) },
-        "send_agent_message_request: dispatching shared sendPromptToAgent",
+        {
+          agentId,
+          messageId: msg.messageId,
+          textPrefix: msg.text.slice(0, 80),
+        },
+        "agent.session.send_agent_message",
       );
       let dispatchResult: { outOfBand: boolean };
       try {
@@ -7966,8 +8042,11 @@ export class Session {
    */
   private emit(msg: SessionOutboundMessage): void {
     this.sessionLogger.trace(
-      { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
-      "outbound message",
+      {
+        messageType: msg.type,
+        payloadBytes: JSON.stringify(msg).length,
+      },
+      "agent.session.outbound",
     );
     if (
       msg.type === "audio_output" &&
@@ -8035,7 +8114,7 @@ export class Session {
    * Clean up session resources
    */
   public async cleanup(): Promise<void> {
-    this.sessionLogger.trace("Cleaning up");
+    this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

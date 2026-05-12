@@ -483,6 +483,26 @@ describe("PersistedConfigSchema voice mode config", () => {
 
     expect(parsed.features?.voiceMode?.turnDetection?.provider).toBe("local");
   });
+
+  test("accepts trimmed STT language fields", () => {
+    const parsed = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          stt: {
+            language: " fr ",
+          },
+        },
+        voiceMode: {
+          stt: {
+            language: " de ",
+          },
+        },
+      },
+    });
+
+    expect(parsed.features?.dictation?.stt?.language).toBe("fr");
+    expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
+  });
 });
 
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {

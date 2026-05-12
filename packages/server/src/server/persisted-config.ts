@@ -86,6 +86,7 @@ const FeatureDictationSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
+        language: z.string().trim().min(1).optional(),
         confidenceThreshold: z.number().optional(),
       })
       .strict()
@@ -107,6 +108,7 @@ const FeatureVoiceModeSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
+        language: z.string().trim().min(1).optional(),
       })
       .strict()
       .optional(),
