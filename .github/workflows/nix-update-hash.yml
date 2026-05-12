@@ -1,7 +1,7 @@
-name: Nix
+name: Nix Update Hash
 
 on:
-  pull_request:
+  push:
     branches: [main]
     paths:
       - "nix/**"
@@ -15,18 +15,25 @@ on:
       - "packages/cli/**"
       - "scripts/update-nix.sh"
       - "scripts/fix-lockfile.mjs"
-      - ".github/workflows/nix.yml"
+      - ".github/workflows/nix-update-hash.yml"
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  update-hash:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.PASEO_BOT_APP_ID }}
+          private-key: ${{ secrets.PASEO_BOT_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.ref }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: actions/setup-node@v4
         with:
@@ -42,3 +49,12 @@ jobs:
 
       - name: Build Nix package
         run: nix build .#default -o result
+
+      - name: Commit hash/lockfile updates
+        run: |
+          git diff --quiet package-lock.json nix/npm-deps.hash && exit 0
+          git config user.name "paseo-ai[bot]"
+          git config user.email "266920839+paseo-ai[bot]@users.noreply.github.com"
+          git add package-lock.json nix/npm-deps.hash
+          git commit -m "fix: update lockfile signatures and Nix hash [skip ci]"
+          git push
