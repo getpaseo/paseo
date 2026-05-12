@@ -67,6 +67,28 @@ import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 const MIN_CHAT_WIDTH = 400;
+const HOST_PICKER_STATUS_MEASURE_LABELS = [
+  formatConnectionStatus("idle"),
+  formatConnectionStatus("connecting"),
+  formatConnectionStatus("online"),
+  formatConnectionStatus("offline"),
+  formatConnectionStatus("error"),
+];
+
+function buildHostContentMeasureOptions(hostOptions: ComboboxOption[]): ComboboxOption[] {
+  const measureOptions: ComboboxOption[] = [];
+  for (const option of hostOptions) {
+    for (const description of HOST_PICKER_STATUS_MEASURE_LABELS) {
+      measureOptions.push({
+        id: `${option.id}:${description}`,
+        label: option.label,
+        description,
+        kind: option.kind,
+      });
+    }
+  }
+  return measureOptions;
+}
 
 type SidebarShortcutModel = ReturnType<typeof useSidebarShortcutModel>;
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
@@ -81,6 +103,7 @@ interface SidebarSharedProps {
   activeHostLabel: string;
   activeHostStatusColor: string;
   hostOptions: ComboboxOption[];
+  hostContentMeasureOptions: ComboboxOption[];
   hostTriggerRef: RefObject<View | null>;
   isHostPickerOpen: boolean;
   setIsHostPickerOpen: Dispatch<SetStateAction<boolean>>;
@@ -157,6 +180,10 @@ export const LeftSidebar = memo(function LeftSidebar({
         label: daemon.label?.trim() || daemon.serverId,
       })),
     [daemons],
+  );
+  const hostContentMeasureOptions = useMemo(
+    () => buildHostContentMeasureOptions(hostOptions),
+    [hostOptions],
   );
   const renderHostOption = useCallback(
     ({
@@ -248,6 +275,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     activeHostLabel,
     activeHostStatusColor,
     hostOptions,
+    hostContentMeasureOptions,
     hostTriggerRef,
     isHostPickerOpen,
     setIsHostPickerOpen,
@@ -408,6 +436,7 @@ function SidebarFooter({
   activeHostLabel,
   hostStatusDotStyle,
   hostOptions,
+  hostContentMeasureOptions,
   hostTriggerRef,
   isHostPickerOpen,
   setIsHostPickerOpen,
@@ -421,6 +450,7 @@ function SidebarFooter({
   activeHostLabel: string;
   hostStatusDotStyle: StyleProp<ViewStyle>;
   hostOptions: ComboboxOption[];
+  hostContentMeasureOptions: ComboboxOption[];
   hostTriggerRef: RefObject<View | null>;
   isHostPickerOpen: boolean;
   setIsHostPickerOpen: Dispatch<SetStateAction<boolean>>;
@@ -472,6 +502,8 @@ function SidebarFooter({
         searchable={false}
         title="Switch host"
         searchPlaceholder="Search hosts..."
+        desktopWidthStrategy="content"
+        desktopContentMeasureOptions={hostContentMeasureOptions}
         open={isHostPickerOpen}
         onOpenChange={setIsHostPickerOpen}
         anchorRef={hostTriggerRef}
@@ -486,6 +518,7 @@ function MobileSidebar({
   activeHostLabel,
   activeHostStatusColor,
   hostOptions,
+  hostContentMeasureOptions,
   hostTriggerRef,
   isHostPickerOpen,
   setIsHostPickerOpen,
@@ -703,6 +736,7 @@ function MobileSidebar({
               activeHostLabel={activeHostLabel}
               hostStatusDotStyle={hostStatusDotStyle}
               hostOptions={hostOptions}
+              hostContentMeasureOptions={hostContentMeasureOptions}
               hostTriggerRef={hostTriggerRef}
               isHostPickerOpen={isHostPickerOpen}
               setIsHostPickerOpen={setIsHostPickerOpen}
@@ -724,6 +758,7 @@ function DesktopSidebar({
   activeHostLabel,
   activeHostStatusColor,
   hostOptions,
+  hostContentMeasureOptions,
   hostTriggerRef,
   isHostPickerOpen,
   setIsHostPickerOpen,
@@ -845,6 +880,7 @@ function DesktopSidebar({
           activeHostLabel={activeHostLabel}
           hostStatusDotStyle={hostStatusDotStyle}
           hostOptions={hostOptions}
+          hostContentMeasureOptions={hostContentMeasureOptions}
           hostTriggerRef={hostTriggerRef}
           isHostPickerOpen={isHostPickerOpen}
           setIsHostPickerOpen={setIsHostPickerOpen}

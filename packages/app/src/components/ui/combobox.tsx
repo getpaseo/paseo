@@ -45,8 +45,11 @@ import {
 } from "./isolated-bottom-sheet-modal";
 
 const IS_WEB = isWeb;
+const DEFAULT_DESKTOP_POPOVER_MIN_WIDTH = 200;
+const DEFAULT_DESKTOP_POPOVER_MAX_WIDTH = 400;
 
 export type ComboboxOption = ComboboxOptionModel;
+type DesktopWidthStrategy = "anchor" | "content";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
@@ -78,6 +81,14 @@ export interface ComboboxProps {
    * for that combobox instance to avoid animation overriding hidden opacity.
    */
   desktopPreventInitialFlash?: boolean;
+  /**
+   * Desktop popovers normally use the trigger width as their minimum. "content"
+   * measures option text and sets an explicit width so native layouts do not
+   * depend on web-only shrink-to-fit behavior.
+   */
+  desktopWidthStrategy?: DesktopWidthStrategy;
+  /** Options used only for measuring content-sized desktop popovers. */
+  desktopContentMeasureOptions?: ComboboxOption[];
   /** Minimum width for the desktop popover (overrides trigger-based width). */
   desktopMinWidth?: number;
   /** Fixed height for the desktop popover (overrides default 400px max). */
@@ -726,6 +737,59 @@ function applyDesktopContentLayout(
   }
 }
 
+function getDesktopContentMeasurementOptions(
+  desktopContentMeasureOptions: ComboboxOption[] | undefined,
+  orderedVisibleOptions: ComboboxOption[],
+): ComboboxOption[] {
+  return desktopContentMeasureOptions ?? orderedVisibleOptions;
+}
+
+function buildDesktopContentMeasurementProps(input: {
+  desktopWidthStrategy: DesktopWidthStrategy;
+  isOpen: boolean;
+  isMobile: boolean;
+  hasChildren: boolean;
+  desktopContentMeasureOptions: ComboboxOption[] | undefined;
+  orderedVisibleOptions: ComboboxOption[];
+  handleDesktopContentWidthLayout: (event: LayoutChangeEvent) => void;
+}): DesktopContentMeasurementProps {
+  return {
+    desktopWidthStrategy: input.desktopWidthStrategy,
+    isOpen: input.isOpen,
+    isMobile: input.isMobile,
+    hasChildren: input.hasChildren,
+    options: getDesktopContentMeasurementOptions(
+      input.desktopContentMeasureOptions,
+      input.orderedVisibleOptions,
+    ),
+    onLayout: input.handleDesktopContentWidthLayout,
+  };
+}
+
+function shouldResetDesktopContentWidth(input: {
+  desktopWidthStrategy: DesktopWidthStrategy;
+  isOpen: boolean;
+  isMobile: boolean;
+}): boolean {
+  return !input.isOpen || input.isMobile || input.desktopWidthStrategy !== "content";
+}
+
+function shouldWaitForDesktopContentMeasurement(input: {
+  desktopWidthStrategy: DesktopWidthStrategy;
+  isOpen: boolean;
+  isMobile: boolean;
+  hasChildren: boolean;
+  desktopContentWidth: number | null;
+}): boolean {
+  return (
+    input.desktopWidthStrategy === "content" &&
+    input.isOpen &&
+    !input.isMobile &&
+    !input.hasChildren &&
+    input.desktopContentWidth === null
+  );
+}
+
 function runIfSelected(keepOpenOnSelect: boolean, handleClose: () => void) {
   if (!keepOpenOnSelect) {
     handleClose();
@@ -808,38 +872,78 @@ function buildFloatingMiddleware(input: FloatingMiddlewareInput) {
 }
 
 interface DesktopContainerStyleInput {
+  desktopWidthStrategy: DesktopWidthStrategy;
+  desktopContentWidth: number | null;
+  shouldWaitForDesktopContentWidth: boolean;
   desktopMinWidth: number | undefined;
   referenceWidth: number | null;
   desktopFixedHeight: number | undefined;
   desktopPositionStyle: DesktopPositionResult["desktopPositionStyle"];
   shouldHideDesktopContent: boolean;
+  availableWidth: number | undefined;
   availableHeight: number | undefined;
+}
+
+function shouldHideDesktopContainer(input: {
+  shouldHideDesktopContent: boolean;
+  shouldWaitForDesktopContentWidth: boolean;
+}): boolean {
+  return input.shouldHideDesktopContent || input.shouldWaitForDesktopContentWidth;
+}
+
+function clampDesktopWidth(width: number, minWidth: number, maxWidth: number) {
+  return Math.min(Math.max(width, minWidth), maxWidth);
 }
 
 function buildDesktopContainerStyle(input: DesktopContainerStyleInput) {
   const {
+    desktopWidthStrategy,
+    desktopContentWidth,
+    shouldWaitForDesktopContentWidth,
     desktopMinWidth,
     referenceWidth,
     desktopFixedHeight,
     desktopPositionStyle,
     shouldHideDesktopContent,
+    availableWidth,
     availableHeight,
   } = input;
+  const shouldHideContainer = shouldHideDesktopContainer({
+    shouldHideDesktopContent,
+    shouldWaitForDesktopContentWidth,
+  });
   const fixedHeightStyle =
     desktopFixedHeight != null
       ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
       : null;
-  const hiddenStyle = shouldHideDesktopContent ? { opacity: 0 } : null;
+  const hiddenStyle = shouldHideContainer ? { opacity: 0 } : null;
   const availableHeightStyle =
     typeof availableHeight === "number"
       ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
       : null;
+  const desktopMaxWidth =
+    desktopWidthStrategy === "content"
+      ? Math.max(availableWidth ?? DEFAULT_DESKTOP_POPOVER_MAX_WIDTH, desktopMinWidth ?? 0)
+      : Math.max(DEFAULT_DESKTOP_POPOVER_MAX_WIDTH, desktopMinWidth ?? 0);
+  const anchorMinWidth = desktopMinWidth ?? referenceWidth ?? DEFAULT_DESKTOP_POPOVER_MIN_WIDTH;
+  const contentWidth =
+    desktopWidthStrategy === "content" && desktopContentWidth !== null
+      ? {
+          width: clampDesktopWidth(
+            Math.max(desktopContentWidth, referenceWidth ?? 0),
+            desktopMinWidth ?? referenceWidth ?? 0,
+            desktopMaxWidth,
+          ),
+        }
+      : {
+          minWidth: anchorMinWidth,
+        };
   return [
     styles.desktopContainer,
     {
       position: "absolute" as const,
-      minWidth: desktopMinWidth ?? referenceWidth ?? 200,
-      maxWidth: Math.max(400, desktopMinWidth ?? 0),
+      ...contentWidth,
+      maxWidth: desktopMaxWidth,
     },
     fixedHeightStyle,
     desktopPositionStyle,
@@ -1008,6 +1112,15 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
   );
 }
 
+interface DesktopContentMeasurementProps {
+  desktopWidthStrategy: DesktopWidthStrategy;
+  isOpen: boolean;
+  isMobile: boolean;
+  hasChildren: boolean;
+  options: ComboboxOption[];
+  onLayout: (event: LayoutChangeEvent) => void;
+}
+
 interface DesktopBodyProps {
   isOpen: boolean;
   handleClose: () => void;
@@ -1015,6 +1128,7 @@ interface DesktopBodyProps {
   shouldUseDesktopFade: boolean;
   desktopContainerStyle: unknown;
   handleDesktopContentLayout: (event: LayoutChangeEvent) => void;
+  contentMeasurementProps: DesktopContentMeasurementProps;
   stickyHeader: ReactNode;
   searchable: boolean;
   searchPlaceholder: string;
@@ -1121,6 +1235,63 @@ function DesktopComboboxOptionsBody(props: {
   );
 }
 
+function DesktopContentWidthMeasurement(
+  props: DesktopContentMeasurementProps,
+): ReactElement | null {
+  if (
+    props.desktopWidthStrategy !== "content" ||
+    !props.isOpen ||
+    props.isMobile ||
+    props.hasChildren
+  ) {
+    return null;
+  }
+
+  return (
+    <View
+      collapsable={false}
+      pointerEvents="none"
+      style={styles.desktopContentWidthMeasurement}
+      onLayout={props.onLayout}
+    >
+      {props.options.map((option) => (
+        <DesktopContentWidthMeasurementItem key={option.id} option={option} />
+      ))}
+    </View>
+  );
+}
+
+function DesktopContentWidthMeasurementItem({ option }: { option: ComboboxOption }): ReactElement {
+  const hasLeadingSlot = option.kind === "directory" || option.kind === "file";
+  const itemStyle = option.description
+    ? styles.desktopContentWidthMeasurementItemWithDescription
+    : styles.desktopContentWidthMeasurementItem;
+  const contentStyle = option.description
+    ? styles.desktopContentWidthMeasurementItemContentInline
+    : styles.desktopContentWidthMeasurementItemContent;
+  const labelStyle = option.description
+    ? styles.desktopContentWidthMeasurementLabelWithDescription
+    : styles.desktopContentWidthMeasurementLabel;
+  return (
+    <View style={itemStyle}>
+      {hasLeadingSlot ? <View style={styles.comboboxItemLeadingSlot} /> : null}
+      <View style={contentStyle}>
+        <Text numberOfLines={1} style={labelStyle}>
+          {option.label}
+        </Text>
+        {option.description ? (
+          <Text numberOfLines={1} style={styles.desktopContentWidthMeasurementDescription}>
+            {option.description}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.comboboxItemTrailingContainer}>
+        <View style={styles.comboboxItemTrailingSlot} />
+      </View>
+    </View>
+  );
+}
+
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
   return (
     <Modal
@@ -1131,6 +1302,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
     >
       <View ref={props.refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
         <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
+        <DesktopContentWidthMeasurement {...props.contentMeasurementProps} />
         <Animated.View
           testID="combobox-desktop-container"
           entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
@@ -1192,6 +1364,8 @@ export function Combobox({
   onOpenChange,
   desktopPlacement = "top-start",
   desktopPreventInitialFlash = true,
+  desktopWidthStrategy = "anchor",
+  desktopContentMeasureOptions,
   desktopMinWidth,
   desktopFixedHeight,
   stickyHeader,
@@ -1217,6 +1391,9 @@ export function Combobox({
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const desktopOptionsScrollRef = useRef<ScrollView>(null);
   const [desktopContentWidth, setDesktopContentWidth] = useState<number | null>(null);
+  const [measuredDesktopContentWidth, setMeasuredDesktopContentWidth] = useState<number | null>(
+    null,
+  );
 
   const [internalOpen, setInternalOpen] = useState(false);
   const { isControlled, isOpen } = resolveControlledOpen(open, internalOpen);
@@ -1266,6 +1443,12 @@ export function Combobox({
     setReferenceLeft,
     setReferenceWidth,
   });
+
+  useEffect(() => {
+    if (shouldResetDesktopContentWidth({ desktopWidthStrategy, isOpen, isMobile })) {
+      setMeasuredDesktopContentWidth(null);
+    }
+  }, [desktopWidthStrategy, isMobile, isOpen]);
 
   useAnchorMeasure(isOpen, isMobile, anchorRef, searchQuery, windowHeight, {
     setReferenceLeft,
@@ -1374,6 +1557,11 @@ export function Combobox({
     [isOpen, pinDesktopOptionsToBottom],
   );
 
+  const handleDesktopContentWidthLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = Math.ceil(event.nativeEvent.layout.width);
+    setMeasuredDesktopContentWidth((current) => (current === nextWidth ? current : nextWidth));
+  }, []);
+
   useDesktopOptionsPinToBottom(isOpen, orderedVisibleOptions, pinDesktopOptionsToBottom);
 
   useDesktopFloatingUpdate(isOpen, isMobile, orderedVisibleOptions.length, searchQuery, update);
@@ -1427,22 +1615,40 @@ export function Combobox({
     [theme.colors.palette.zinc],
   );
 
+  const effectiveSearchPlaceholder = searchPlaceholder ?? placeholder;
+  const hasChildren = Boolean(children);
+  const shouldWaitForDesktopContentWidth = shouldWaitForDesktopContentMeasurement({
+    desktopWidthStrategy,
+    isOpen,
+    isMobile,
+    hasChildren,
+    desktopContentWidth: measuredDesktopContentWidth,
+  });
+
   const desktopContainerStyle = useMemo(
     () =>
       buildDesktopContainerStyle({
+        desktopWidthStrategy,
+        desktopContentWidth: measuredDesktopContentWidth,
+        shouldWaitForDesktopContentWidth,
         desktopMinWidth,
         referenceWidth,
         desktopFixedHeight,
         desktopPositionStyle,
         shouldHideDesktopContent,
+        availableWidth: availableSize?.width,
         availableHeight: availableSize?.height,
       }),
     [
+      desktopWidthStrategy,
+      measuredDesktopContentWidth,
+      shouldWaitForDesktopContentWidth,
       desktopMinWidth,
       referenceWidth,
       desktopFixedHeight,
       desktopPositionStyle,
       shouldHideDesktopContent,
+      availableSize?.width,
       availableSize?.height,
     ],
   );
@@ -1452,8 +1658,27 @@ export function Combobox({
     [],
   );
 
-  const effectiveSearchPlaceholder = searchPlaceholder ?? placeholder;
-  const hasChildren = Boolean(children);
+  const contentMeasurementProps = useMemo(
+    () =>
+      buildDesktopContentMeasurementProps({
+        desktopWidthStrategy,
+        isOpen,
+        isMobile,
+        hasChildren,
+        desktopContentMeasureOptions,
+        orderedVisibleOptions,
+        handleDesktopContentWidthLayout,
+      }),
+    [
+      desktopWidthStrategy,
+      isOpen,
+      isMobile,
+      hasChildren,
+      desktopContentMeasureOptions,
+      orderedVisibleOptions,
+      handleDesktopContentWidthLayout,
+    ],
+  );
 
   if (isMobile) {
     return (
@@ -1494,6 +1719,7 @@ export function Combobox({
       shouldUseDesktopFade={shouldUseDesktopFade}
       desktopContainerStyle={desktopContainerStyle}
       handleDesktopContentLayout={handleDesktopContentLayout}
+      contentMeasurementProps={contentMeasurementProps}
       stickyHeader={stickyHeader}
       searchable={searchable}
       searchPlaceholder={effectiveSearchPlaceholder}
@@ -1624,6 +1850,69 @@ const styles = StyleSheet.create((theme) => ({
   },
   desktopOverlay: {
     flex: 1,
+  },
+  desktopContentWidthMeasurement: {
+    position: "absolute",
+    left: -10000,
+    top: -10000,
+    opacity: 0,
+    alignItems: "flex-start",
+  },
+  desktopContentWidthMeasurementItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 36,
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    alignSelf: "flex-start",
+    ...(IS_WEB
+      ? {}
+      : {
+          marginHorizontal: theme.spacing[1],
+          marginBottom: theme.spacing[1],
+        }),
+  },
+  desktopContentWidthMeasurementItemWithDescription: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 36,
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    alignSelf: "flex-start",
+    ...(IS_WEB
+      ? {}
+      : {
+          marginHorizontal: theme.spacing[1],
+          marginBottom: theme.spacing[1],
+        }),
+  },
+  desktopContentWidthMeasurementItemContent: {
+    flex: 0,
+    flexShrink: 0,
+  },
+  desktopContentWidthMeasurementItemContentInline: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: theme.spacing[2],
+    flex: 0,
+    flexShrink: 0,
+  },
+  desktopContentWidthMeasurementLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    flexShrink: 0,
+  },
+  desktopContentWidthMeasurementLabelWithDescription: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    flexShrink: 0,
+  },
+  desktopContentWidthMeasurementDescription: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 0,
   },
   desktopBackdrop: {
     position: "absolute",
