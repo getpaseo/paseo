@@ -2987,9 +2987,10 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       await this.client.request("thread/resume", params);
     } catch (error) {
-      this.logger.warn({ error }, "Failed to resume Codex thread, starting new thread");
-      this.currentThreadId = null;
-      await this.ensureThread();
+      const threadId = this.currentThreadId;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
+      throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
     }
   }
 

@@ -35,6 +35,7 @@ interface CollaborationModeRecord {
 }
 
 interface CodexSessionTestAccess {
+  ensureThreadLoaded(): Promise<void>;
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
   handleNotification(method: string, params: unknown): void;
   loadPersistedHistory(): Promise<void>;
@@ -376,6 +377,80 @@ describe("Codex app-server provider", () => {
         }),
       },
     });
+  });
+
+  test("resumeSession does not replace a persisted Codex thread when app-server resume fails", async () => {
+    const threadRequests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        return Promise.reject(new Error("no rollout found for thread id archived-thread-id"));
+      },
+      "thread/start": () => {
+        threadRequests.push("thread/start");
+        return { thread: { id: "replacement-empty-thread-id" } };
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+      getUserSavedConfig: () => {
+        threadRequests.push("getUserSavedConfig");
+        return { config: {} };
+      },
+      "config/read": () => {
+        threadRequests.push("config/read");
+        return { config: {} };
+      },
+      "model/list": () => {
+        threadRequests.push("model/list");
+        return {
+          data: [{ id: "gpt-5.4", isDefault: true, defaultReasoningEffort: "medium" }],
+        };
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    castInternals<{ goalsEnabledPromise: Promise<boolean> | null }>(provider).goalsEnabledPromise =
+      Promise.resolve(false);
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => appServer.child;
+
+    const outcome = await Promise.race([
+      provider
+        .resumeSession({
+          sessionId: "archived-thread-id",
+          metadata: {
+            cwd: "/tmp/codex-question-test",
+            modeId: "auto",
+            model: "gpt-5.4",
+          },
+        })
+        .then(
+          () => "resolved" as const,
+          (error) => {
+            expect(error).toBeInstanceOf(Error);
+            expect((error as Error).message).toContain(
+              "no rollout found for thread id archived-thread-id",
+            );
+            return "rejected" as const;
+          },
+        ),
+      new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 500)),
+    ]);
+
+    if (outcome === "timed_out") {
+      appServer.child.kill("SIGTERM");
+      throw new Error(`resumeSession timed out; thread requests: ${threadRequests.join(", ")}`);
+    }
+
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
+    expect(outcome).toBe("rejected");
+    appServer.assertNoErrors();
   });
 
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
@@ -1131,6 +1206,37 @@ describe("Codex app-server provider", () => {
           text: "History loaded.",
         },
       },
+    ]);
+  });
+
+  test("does not replace a persisted Codex thread when app-server resume fails", async () => {
+    const session = createSession({ thinkingOptionId: "medium" });
+    session.currentThreadId = "archived-thread-id";
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: [] };
+        }
+        if (method === "thread/resume") {
+          throw new Error("no rollout found for thread id archived-thread-id");
+        }
+        if (method === "thread/start") {
+          return { thread: { id: "replacement-empty-thread-id" } };
+        }
+        return {};
+      }),
+    };
+
+    await expect(asInternals(session).ensureThreadLoaded()).rejects.toThrow(
+      "no rollout found for thread id archived-thread-id",
+    );
+
+    expect(session.currentThreadId).toBe("archived-thread-id");
+    expect(requests).toEqual([
+      { method: "thread/loaded/list", params: {} },
+      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
     ]);
   });
 
