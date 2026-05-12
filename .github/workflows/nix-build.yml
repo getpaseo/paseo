@@ -75,5 +75,5 @@ jobs:
           git config user.name "paseo-ai[bot]"
           git config user.email "266920839+paseo-ai[bot]@users.noreply.github.com"
           git add package-lock.json nix/npm-deps.hash
-          git commit -m "fix: update lockfile signatures and Nix hash"
+          git commit -m "fix: update lockfile signatures and Nix hash [skip ci]"
           git push
