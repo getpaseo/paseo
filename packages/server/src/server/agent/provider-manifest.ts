@@ -11,6 +11,7 @@ export interface AgentModeVisuals {
 
 export type AgentProviderModeDefinition = Omit<AgentMode, "icon" | "colorTier"> &
   AgentModeVisuals & {
+    // Marks the provider's most-permissioned no-prompt mode. Selecting it means tools run without approval; the runtime mechanism is provider-specific.
     isUnattended?: boolean;
   };
 
@@ -96,9 +97,9 @@ const COPILOT_MODES: AgentProviderModeDefinition[] = [
     colorTier: "planning",
   },
   {
-    id: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
-    label: "Autopilot",
-    description: "Autonomous mode that runs until task completion without user interaction",
+    id: "allow-all",
+    label: "Allow All",
+    description: "Automatically approves all Copilot tool, path, and URL requests.",
     icon: "ShieldOff",
     colorTier: "dangerous",
     isUnattended: true,
