@@ -67,7 +67,13 @@ function createStubTurnDetection(id: string): TurnDetectionProvider {
 }
 
 function createSpeechConfig(providers: PaseoSpeechConfig["providers"]): PaseoSpeechConfig {
-  return { providers };
+  return {
+    providers,
+    sttLanguages: {
+      dictation: "en",
+      voice: "en",
+    },
+  };
 }
 
 describe("createSpeechService readiness", () => {

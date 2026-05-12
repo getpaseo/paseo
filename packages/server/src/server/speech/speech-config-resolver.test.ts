@@ -51,6 +51,10 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
     expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "en",
+      voice: "en",
+    });
   });
 
   test("resolves feature-scoped local model env vars", () => {
@@ -71,6 +75,8 @@ describe("resolveSpeechConfig", () => {
       PASEO_VOICE_LOCAL_TTS_MODEL: "kitten",
       PASEO_VOICE_LOCAL_TTS_SPEAKER_ID: "5",
       PASEO_VOICE_LOCAL_TTS_SPEED: "1.35",
+      PASEO_DICTATION_LANGUAGE: "es",
+      PASEO_VOICE_LANGUAGE: "pt",
       PASEO_LOCAL_MODELS_DIR: "/tmp/models",
       OPENAI_API_KEY: "env-key",
       PASEO_VOICE_STT_PROVIDER: "openai",
@@ -119,8 +125,43 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local?.models.voiceTts).toBe("kitten-nano-en-v0_1-fp16");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(5);
     expect(result.speech.local?.models.voiceTtsSpeed).toBe(1.35);
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "es",
+      voice: "pt",
+    });
     expect(result.openai?.apiKey).toBe("env-key");
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
+  });
+
+  test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          stt: {
+            language: "fr",
+          },
+        },
+        voiceMode: {
+          stt: {
+            language: "de",
+          },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {
+        PASEO_DICTATION_LANGUAGE: "es",
+        PASEO_VOICE_LANGUAGE: "  ",
+      } as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "es",
+      voice: "es",
+    });
   });
 
   test("ignores deprecated shared local model env vars", () => {

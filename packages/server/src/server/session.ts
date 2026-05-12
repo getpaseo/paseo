@@ -546,6 +546,7 @@ export interface SessionOptions {
   daemonConfigStore: DaemonConfigStore;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
+  sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
@@ -572,6 +573,7 @@ export interface SessionOptions {
   dictation?: {
     finalTimeoutMs?: number;
     stt?: Resolvable<SpeechToTextProvider | null>;
+    sttLanguage?: string;
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
@@ -783,6 +785,7 @@ export class Session {
   private registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
   private unregisterVoiceCallerContext?: (agentId: string) => void;
   private getSpeechReadiness?: () => SpeechReadinessSnapshot;
+  private readonly sttLanguage: string;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
@@ -814,6 +817,7 @@ export class Session {
       daemonConfigStore,
       mcpBaseUrl,
       stt,
+      sttLanguage,
       tts,
       terminalManager,
       providerSnapshotManager,
@@ -875,6 +879,7 @@ export class Session {
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.sttLanguage = sttLanguage ?? "en";
     this.subscribeToOptionalManagers();
     this.bindVoiceBridges({ voice, voiceBridge, dictation });
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
@@ -890,7 +895,7 @@ export class Session {
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
-    this.initializePerSessionManagers({ tts, stt, dictation });
+    this.initializePerSessionManagers({ tts, stt, sttLanguage, dictation });
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
@@ -1191,16 +1196,20 @@ export class Session {
   private initializePerSessionManagers(params: {
     tts: SessionOptions["tts"];
     stt: SessionOptions["stt"];
+    sttLanguage: SessionOptions["sttLanguage"];
     dictation: SessionOptions["dictation"];
   }): void {
-    const { tts, stt, dictation } = params;
+    const { tts, stt, sttLanguage, dictation } = params;
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
-    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt);
+    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt, {
+      language: sttLanguage,
+    });
     this.dictationStreamManager = new DictationStreamManager({
       logger: this.sessionLogger,
       sessionId: this.sessionId,
       emit: (msg) => this.handleDictationManagerMessage(msg),
       stt: dictation?.stt ?? null,
+      language: dictation?.sttLanguage,
       finalTimeoutMs: dictation?.finalTimeoutMs,
     });
   }
@@ -2765,6 +2774,7 @@ export class Session {
       logger: this.sessionLogger.child({ component: "voice-turn-controller" }),
       turnDetection,
       stt,
+      sttLanguage: this.sttLanguage,
       callbacks: {
         onSpeechStarted: async () => {
           this.sessionLogger.debug("Voice VAD speech_started");

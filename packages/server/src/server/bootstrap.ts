@@ -195,8 +195,14 @@ function summarizeAgentMcpDebugBody(body: unknown): Record<string, unknown> {
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
 export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 
+export interface PaseoSpeechSttLanguages {
+  dictation: string;
+  voice: string;
+}
+
 export interface PaseoSpeechConfig {
   providers: RequestedSpeechProviders;
+  sttLanguages?: PaseoSpeechSttLanguages;
   local?: PaseoLocalSpeechConfig;
 }
 

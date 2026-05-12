@@ -94,6 +94,7 @@ export function createVoiceTurnController(params: {
   logger: Logger;
   turnDetection: TurnDetectionProvider;
   stt: SpeechToTextProvider;
+  sttLanguage?: string;
   callbacks: VoiceTurnControllerCallbacks;
 }): VoiceTurnController {
   const detector = params.turnDetection.createSession({
@@ -319,7 +320,7 @@ export function createVoiceTurnController(params: {
   function createSttSession(): StreamingTranscriptionSession {
     const session = params.stt.createSession({
       logger: params.logger.child({ component: "stt" }),
-      language: "en",
+      language: params.sttLanguage ?? "en",
     });
     session.on("transcript", handleSttTranscript);
     session.on("committed", ({ segmentId }) => {

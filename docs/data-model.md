@@ -157,8 +157,8 @@ Single file, validated with `PersistedConfigSchema`.
     providers: Record<providerId, ProviderOverride>
   },
   features: {
-    dictation: { enabled, stt: { provider, model, confidenceThreshold } },
-    voiceMode: { enabled, llm, stt, turnDetection, tts: { provider, model, voice, speakerId, speed } }
+    dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
+    voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
   },
   log: {
     level, format,

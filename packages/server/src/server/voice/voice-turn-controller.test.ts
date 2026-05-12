@@ -81,10 +81,14 @@ function createFakeTurnDetectionProvider(session: FakeTurnDetectionSession): Tur
   };
 }
 
-function createFakeSttProvider(sessions: FakeSttSession[]): SpeechToTextProvider {
+function createFakeSttProvider(
+  sessions: FakeSttSession[],
+  captureLanguage?: (language: string | undefined) => void,
+): SpeechToTextProvider {
   return {
     id: "local",
-    createSession() {
+    createSession(params) {
+      captureLanguage?.(params.language);
       const session = new FakeSttSession();
       sessions.push(session);
       return session;
@@ -98,10 +102,13 @@ async function settleSerialQueue(): Promise<void> {
   await Promise.resolve();
 }
 
-function createControllerHarness() {
+function createControllerHarness(options?: { sttLanguage?: string }) {
   const detector = new FakeTurnDetectionSession();
   const sttSessions: FakeSttSession[] = [];
-  const stt = createFakeSttProvider(sttSessions);
+  let lastSttLanguage: string | undefined;
+  const stt = createFakeSttProvider(sttSessions, (language) => {
+    lastSttLanguage = language;
+  });
   const onSpeechStarted = vi.fn(async () => {});
   const onSpeechStopped = vi.fn(async () => {});
   const onPartialTranscript = vi.fn(
@@ -123,6 +130,7 @@ function createControllerHarness() {
     logger: pino({ level: "silent" }),
     turnDetection: createFakeTurnDetectionProvider(detector),
     stt,
+    sttLanguage: options?.sttLanguage,
     callbacks: {
       onSpeechStarted,
       onSpeechStopped,
@@ -136,6 +144,7 @@ function createControllerHarness() {
     controller,
     detector,
     sttSessions,
+    getLastSttLanguage: () => lastSttLanguage,
     onSpeechStarted,
     onSpeechStopped,
     onPartialTranscript,
@@ -145,6 +154,16 @@ function createControllerHarness() {
 }
 
 describe("voice turn controller", () => {
+  it("passes configured language to streaming STT", async () => {
+    const harness = createControllerHarness({ sttLanguage: "pt" });
+
+    await harness.controller.start();
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+
+    expect(harness.getLastSttLanguage()).toBe("pt");
+  });
+
   it("forwards audio to the detector and streaming STT without submitting buffered utterances", async () => {
     const harness = createControllerHarness();
 
