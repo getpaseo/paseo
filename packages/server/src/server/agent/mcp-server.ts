@@ -1858,6 +1858,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         resolveDefaultBranch: mcpInput.resolveDefaultBranch,
       });
       const { worktree } = createdWorktree;
+      await options.workspaceGitService?.listWorktrees?.(repoRoot, {
+        force: true,
+        reason: "mcp:create-worktree",
+      });
 
       return {
         content: [],
@@ -1887,7 +1891,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ cwd, worktreePath, worktreeSlug }) => {
-      const repoRoot = resolveScopedCwd(cwd, { required: true });
+      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
       if (!worktreePath && !worktreeSlug) {
         throw new Error("worktreePath or worktreeSlug is required");
       }
@@ -1912,6 +1916,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!options.emitSessionMessage) {
         throw new Error("Session message emitter is required to archive worktrees");
       }
+      const repoRoot = await options.workspaceGitService.resolveRepoRoot(resolvedCwd);
 
       const targetPath =
         worktreePath ??
@@ -1948,6 +1953,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           requestId: "mcp:archive_worktree",
         },
       );
+      await options.workspaceGitService.listWorktrees(repoRoot, {
+        force: true,
+        reason: "mcp:archive-worktree",
+      });
 
       return {
         content: [],
