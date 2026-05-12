@@ -117,7 +117,7 @@ describe("supervisor durable logging", () => {
     );
 
     expect(logFile).toEqual({
-      path: path.join(paseoHome, "logs", "daemon.log"),
+      path: path.resolve(paseoHome, "logs", "daemon.log"),
       rotate: { maxSize: "25m", maxFiles: 4 },
     });
   });
