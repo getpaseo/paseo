@@ -226,7 +226,13 @@ interface ACPAgentClientOptions {
   defaultModes?: AgentMode[];
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  providerModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPProviderModeWriteResult>;
+  beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
   thinkingOptionWriter?: (
     connection: ClientSideConnection,
     sessionId: string,
@@ -245,7 +251,13 @@ interface ACPAgentSessionOptions {
   defaultModes: AgentMode[];
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  providerModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPProviderModeWriteResult>;
+  beforeModeWriter?: (context: ACPProviderModeWriterContext) => Promise<ACPBeforeModeWriteResult>;
   thinkingOptionWriter?: (
     connection: ClientSideConnection,
     sessionId: string,
@@ -335,6 +347,26 @@ interface ACPModelSelection {
   configOption: SelectConfigOption | null;
   configChoice: SelectConfigChoice | null;
   hasAvailableModels: boolean;
+}
+
+export interface ACPProviderModeWriterContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  requestedModeId: string;
+  currentModeId: string | null;
+  selection: ACPModeSelection;
+  configOptions: SessionConfigOption[];
+  logger: Logger;
+}
+
+export interface ACPProviderModeWriteResult {
+  handled: boolean;
+  currentModeId?: string;
+  configOptions?: SessionConfigOption[];
+}
+
+export interface ACPBeforeModeWriteResult {
+  configOptions?: SessionConfigOption[];
 }
 
 export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undefined {
@@ -465,7 +497,17 @@ export class ACPAgentClient implements AgentClient {
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
   ) => SessionStateResponse;
+  private readonly configOptionsTransformer?: (
+    configOptions: SessionConfigOption[],
+  ) => SessionConfigOption[];
+  private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly providerModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPProviderModeWriteResult>;
+  private readonly beforeModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPBeforeModeWriteResult>;
   private readonly thinkingOptionWriter?: (
     connection: ClientSideConnection,
     sessionId: string,
@@ -483,7 +525,11 @@ export class ACPAgentClient implements AgentClient {
     this.defaultModes = options.defaultModes ?? [];
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
+    this.configOptionsTransformer = options.configOptionsTransformer;
+    this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.providerModeWriter = options.providerModeWriter;
+    this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
@@ -504,7 +550,11 @@ export class ACPAgentClient implements AgentClient {
         defaultModes: this.defaultModes,
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
+        configOptionsTransformer: this.configOptionsTransformer,
+        modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
+        providerModeWriter: this.providerModeWriter,
+        beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
         capabilities: this.capabilities,
         launchEnv: launchContext?.env,
@@ -545,7 +595,11 @@ export class ACPAgentClient implements AgentClient {
       defaultModes: this.defaultModes,
       modelTransformer: this.modelTransformer,
       sessionResponseTransformer: this.sessionResponseTransformer,
+      configOptionsTransformer: this.configOptionsTransformer,
+      modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
+      providerModeWriter: this.providerModeWriter,
+      beforeModeWriter: this.beforeModeWriter,
       thinkingOptionWriter: this.thinkingOptionWriter,
       capabilities: this.capabilities,
       handle,
@@ -747,7 +801,16 @@ export class ACPAgentClient implements AgentClient {
   }
 
   protected transformSessionResponse(response: SessionStateResponse): SessionStateResponse {
-    return this.sessionResponseTransformer ? this.sessionResponseTransformer(response) : response;
+    const transformed = this.sessionResponseTransformer
+      ? this.sessionResponseTransformer(response)
+      : response;
+    if (!this.configOptionsTransformer || !transformed.configOptions) {
+      return transformed;
+    }
+    return {
+      ...transformed,
+      configOptions: this.configOptionsTransformer(transformed.configOptions),
+    };
   }
 }
 
@@ -763,7 +826,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
   ) => SessionStateResponse;
+  private readonly configOptionsTransformer?: (
+    configOptions: SessionConfigOption[],
+  ) => SessionConfigOption[];
+  private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly providerModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPProviderModeWriteResult>;
+  private readonly beforeModeWriter?: (
+    context: ACPProviderModeWriterContext,
+  ) => Promise<ACPBeforeModeWriteResult>;
   private readonly thinkingOptionWriter?: (
     connection: ClientSideConnection,
     sessionId: string,
@@ -814,7 +887,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.defaultModes = options.defaultModes;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
+    this.configOptionsTransformer = options.configOptionsTransformer;
+    this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.providerModeWriter = options.providerModeWriter;
+    this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.availableModes = options.defaultModes;
     this.launchEnv = options.launchEnv;
@@ -1068,6 +1145,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("ACP session not initialized");
     }
 
+    const context = this.createProviderModeWriterContext(modeId, selection);
+    const providerResult = this.providerModeWriter
+      ? await this.providerModeWriter(context)
+      : { handled: false };
+    if (providerResult.handled) {
+      this.currentMode = providerResult.currentModeId ?? modeId;
+      if (providerResult.configOptions) {
+        this.configOptions = this.transformConfigOptions(providerResult.configOptions);
+      }
+      this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+      this.pushEvent({
+        type: "mode_changed",
+        provider: this.provider,
+        currentModeId: this.currentMode,
+        availableModes: [...this.availableModes],
+      });
+      return;
+    }
+
     if (selection.hasAvailableModes) {
       if (!selection.availableMode) {
         this.warnInvalidSelection(
@@ -1078,7 +1174,32 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
         return;
       }
+    } else {
+      const modeOption = selection.configOption;
+      if (!modeOption) {
+        throw new Error(`${this.provider} does not expose ACP mode switching`);
+      }
+      if (!selection.configChoice) {
+        this.warnInvalidSelection(
+          modeId,
+          `is not valid ${this.provider} mode config option. Available options: ${flattenSelectOptions(
+            modeOption.options,
+          )
+            .map((option) => option.value)
+            .join(", ")}`,
+        );
+        return;
+      }
+    }
 
+    if (this.beforeModeWriter) {
+      const beforeResult = await this.beforeModeWriter(context);
+      if (beforeResult?.configOptions) {
+        this.configOptions = this.transformConfigOptions(beforeResult.configOptions);
+      }
+    }
+
+    if (selection.hasAvailableModes) {
       await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
       this.currentMode = modeId;
       this.pushEvent({
@@ -1093,17 +1214,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const modeOption = selection.configOption;
     if (!modeOption) {
       throw new Error(`${this.provider} does not expose ACP mode switching`);
-    }
-    if (!selection.configChoice) {
-      this.warnInvalidSelection(
-        modeId,
-        `is not valid ${this.provider} mode config option. Available options: ${flattenSelectOptions(
-          modeOption.options,
-        )
-          .map((option) => option.value)
-          .join(", ")}`,
-      );
-      return;
     }
 
     const response = await this.connection.setSessionConfigOption({
@@ -1125,6 +1235,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       currentModeId: this.currentMode,
       availableModes: [...this.availableModes],
     });
+  }
+
+  private createProviderModeWriterContext(
+    requestedModeId: string,
+    selection: ACPModeSelection,
+  ): ACPProviderModeWriterContext {
+    if (!this.connection || !this.sessionId) {
+      throw new Error("ACP session not initialized");
+    }
+    return {
+      connection: this.connection,
+      sessionId: this.sessionId,
+      requestedModeId,
+      currentModeId: this.currentMode,
+      selection,
+      configOptions: this.configOptions,
+      logger: this.logger,
+    };
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -1281,9 +1409,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     requestedValue: string;
     label: string;
   }): string {
-    this.configOptions = response.configOptions;
+    this.configOptions = this.transformConfigOptions(response.configOptions);
     const responseOption = findSelectConfigOption({
-      configOptions: response.configOptions,
+      configOptions: this.configOptions,
       category,
       id: configId,
     });
@@ -1409,7 +1537,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    // Match Zed acp.rs:3189-3220 — pure pass-through. Accepted UX regression: Copilot Autopilot will now prompt the user for every tool request.
+    // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
     const requestId = randomUUID();
     let toolSnapshot =
       this.toolCalls.get(params.toolCall.toolCallId) ??
@@ -1622,7 +1750,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       ? this.sessionResponseTransformer(response)
       : response;
 
-    this.configOptions = transformed.configOptions ?? [];
+    this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
     this.availableModes = modeInfo.modes;
@@ -1633,6 +1761,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       transformed.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
     this.thinkingOptionId =
       deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
+  }
+
+  private transformConfigOptions(configOptions: SessionConfigOption[]): SessionConfigOption[] {
+    return this.configOptionsTransformer
+      ? this.configOptionsTransformer(configOptions)
+      : configOptions;
+  }
+
+  private transformModeId(modeId: string): string | null {
+    return this.modeIdTransformer ? this.modeIdTransformer(modeId) : modeId;
   }
 
   private async applyConfiguredOverrides(): Promise<void> {
@@ -1772,11 +1910,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
-    this.currentMode = update.currentModeId;
+    this.currentMode = this.transformModeId(update.currentModeId);
   }
 
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
-    this.configOptions = update.configOptions;
+    this.configOptions = this.transformConfigOptions(update.configOptions);
     const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
     const nextMode = modeInfo.currentModeId;
     const nextModel = deriveCurrentConfigValue(this.configOptions, "model");

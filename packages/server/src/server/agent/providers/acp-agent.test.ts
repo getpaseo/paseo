@@ -21,6 +21,15 @@ import {
   resolveACPModeSelection,
   resolveACPModelSelection,
 } from "./acp-agent.js";
+import {
+  COPILOT_ALLOW_ALL_MODE_ID,
+  COPILOT_MODES,
+  beforeCopilotModeWriter,
+  transformCopilotConfigOptions,
+  transformCopilotModeId,
+  transformCopilotSessionResponse,
+  writeCopilotProviderMode,
+} from "./copilot-acp-agent.js";
 import { transformPiModels } from "./pi-direct-agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -137,6 +146,73 @@ function selectConfigOption(
     type: "select",
     currentValue,
     options: values.map((value) => ({ value, name: value })),
+  };
+}
+
+function createCopilotSessionWithConfig(modeId?: string | null): ACPAgentSession {
+  return new ACPAgentSession(
+    {
+      provider: "copilot",
+      cwd: "/tmp/paseo-acp-test",
+      modeId: modeId ?? undefined,
+    },
+    {
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      defaultModes: COPILOT_MODES,
+      sessionResponseTransformer: transformCopilotSessionResponse,
+      configOptionsTransformer: transformCopilotConfigOptions,
+      modeIdTransformer: transformCopilotModeId,
+      providerModeWriter: writeCopilotProviderMode,
+      beforeModeWriter: beforeCopilotModeWriter,
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+    },
+  );
+}
+
+function copilotModeConfigOption(currentValue: string): SessionConfigOption {
+  return {
+    id: "mode",
+    name: "Mode",
+    category: "mode",
+    type: "select",
+    currentValue,
+    options: [
+      {
+        value: "https://agentclientprotocol.com/protocol/session-modes#agent",
+        name: "Agent",
+      },
+      {
+        value: "https://agentclientprotocol.com/protocol/session-modes#plan",
+        name: "Plan",
+      },
+      {
+        value: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+        name: "Autopilot",
+      },
+    ],
+  };
+}
+
+function copilotAllowAllConfigOption(currentValue: "on" | "off"): SessionConfigOption {
+  return {
+    id: "allow_all",
+    name: "Allow All",
+    category: "permissions",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "on", name: "On" },
+      { value: "off", name: "Off" },
+    ],
   };
 }
 
@@ -796,12 +872,10 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
-  test("passes Copilot Autopilot ACP permission requests through to the user", async () => {
-    // Zed parity: Copilot Autopilot no longer auto-approves ACP permission requests,
-    // so the accepted UX regression is that every tool request reaches the user UI.
+  test("passes generic ACP permission requests through to the user", async () => {
     const session = createSessionWithConfig({
-      provider: "copilot",
-      modeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+      provider: "cursor-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
     });
     const events: Array<{ type: string; request?: { id: string } }> = [];
     const permissionOptions: PermissionOption[] = [
@@ -834,6 +908,96 @@ describe("ACPAgentSession Zed parity", () => {
     await expect(permission).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow-once" },
     });
+  });
+
+  test("maps Copilot Allow All mode to allow_all ACP config on session start", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("on"),
+      ],
+    }));
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig(COPILOT_ALLOW_ALL_MODE_ID);
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentMode: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("off"),
+      ],
+      connection: { setSessionConfigOption, setSessionMode },
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    await internals.applyConfiguredOverrides();
+    unsubscribe();
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "allow_all",
+      value: "on",
+    });
+    expect(setSessionMode).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
+    expect(events.some((event) => event.type === "permission_requested")).toBe(false);
+  });
+
+  test("switching Copilot away from Allow All turns allow_all off before setting the ACP mode", async () => {
+    const setSessionConfigOption = vi.fn(async (input: { value: string }) => ({
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption(input.value === "on" ? "on" : "off"),
+      ],
+    }));
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig(COPILOT_ALLOW_ALL_MODE_ID);
+    prepareConfiguredOverrideSession(session, {
+      currentMode: COPILOT_ALLOW_ALL_MODE_ID,
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption(COPILOT_ALLOW_ALL_MODE_ID),
+        copilotAllowAllConfigOption("on"),
+      ],
+      connection: { setSessionConfigOption, setSessionMode },
+    });
+
+    await session.setMode("https://agentclientprotocol.com/protocol/session-modes#agent");
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "allow_all",
+      value: "off",
+    });
+    expect(setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+  });
+
+  test("trusts Copilot allow_all config updates as the current mode source", async () => {
+    const session = createCopilotSessionWithConfig();
+    const internals = asInternals<ACPSessionInternals>(session);
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "config_option_update",
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("on"),
+      ],
+    });
+
+    expect(events).toMatchObject([
+      {
+        type: "mode_changed",
+        provider: "copilot",
+        currentModeId: COPILOT_ALLOW_ALL_MODE_ID,
+        availableModes: expect.arrayContaining([
+          expect.objectContaining({ id: COPILOT_ALLOW_ALL_MODE_ID, label: "Allow All" }),
+        ]),
+      },
+    ]);
+    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
   });
 });
 
