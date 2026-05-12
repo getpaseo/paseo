@@ -64,6 +64,39 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("unwraps pwsh wrapper strings for commandExecution on Windows", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "commandExecution",
+      id: "codex-call-wrapper-pwsh-string",
+      status: "running",
+      command:
+        '"C:\\Users\\example\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe" -NoLogo -NoProfile -Command "echo hello"',
+      cwd: "C:\\repo",
+    });
+
+    expect(item?.detail).toEqual({
+      type: "shell",
+      command: "echo hello",
+      cwd: "C:\\repo",
+    });
+  });
+
+  it("unwraps cmd wrapper arrays for commandExecution on Windows", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "commandExecution",
+      id: "codex-call-wrapper-cmd-array",
+      status: "running",
+      command: ["cmd.exe", "/c", "echo hello"],
+      cwd: "C:\\repo",
+    });
+
+    expect(item?.detail).toEqual({
+      type: "shell",
+      command: "echo hello",
+      cwd: "C:\\repo",
+    });
+  });
+
   it("keeps only command output body when commandExecution output is wrapped in shell envelope", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "commandExecution",

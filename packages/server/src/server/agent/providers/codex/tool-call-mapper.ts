@@ -200,21 +200,48 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
   const trimmed = command.trim();
-  const wrapperMatch = trimmed.match(/^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/);
-  if (!wrapperMatch) {
+  const unixWrapperMatch = trimmed.match(/^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/);
+  if (unixWrapperMatch) {
+    const candidate = unixWrapperMatch[1]?.trim() ?? "";
+    if (!candidate) {
+      return trimmed;
+    }
+    return stripMatchingEdgeQuotes(candidate);
+  }
+  const windowsWrapperMatch = trimmed.match(
+    /^(?:"[^"]*\\)?(?:pwsh|powershell|cmd)(?:\.exe)?"?\s+((?:-[A-Za-z]+(?:\s+[^-\s][^\s]*)?\s+)*)((?:-Command|-c|\/c)\s+[\s\S]+)$/i,
+  );
+  if (!windowsWrapperMatch) {
     return trimmed;
   }
-  const candidate = wrapperMatch[1]?.trim() ?? "";
+  const wrappedCommand = windowsWrapperMatch[2]?.trim() ?? "";
+  if (!wrappedCommand) {
+    return trimmed;
+  }
+  const commandMatch = wrappedCommand.match(/^(?:-Command|-c|\/c)\s+([\s\S]+)$/i);
+  if (!commandMatch) {
+    return trimmed;
+  }
+  const candidate = commandMatch[1]?.trim() ?? "";
   if (!candidate) {
     return trimmed;
   }
+  return stripMatchingEdgeQuotes(candidate);
+}
+
+function stripMatchingEdgeQuotes(value: string): string {
   if (
-    (candidate.startsWith('"') && candidate.endsWith('"')) ||
-    (candidate.startsWith("'") && candidate.endsWith("'"))
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
   ) {
-    return candidate.slice(1, -1);
+    return value.slice(1, -1);
   }
-  return candidate;
+  return value;
+}
+
+function isWindowsShellCommand(command: string): boolean {
+  const normalized = command.replace(/^["']|["']$/g, "");
+  return /(?:^|\\)(?:pwsh|powershell|cmd)(?:\.exe)?$/i.test(normalized);
 }
 
 function normalizeCommandExecutionCommand(value: unknown): string | undefined {
@@ -235,6 +262,14 @@ function normalizeCommandExecutionCommand(value: unknown): string | undefined {
   if (parts.length >= 3 && (parts[1] === "-lc" || parts[1] === "-c")) {
     const unwrapped = parts[2]?.trim();
     return unwrapped && unwrapped.length > 0 ? unwrapped : undefined;
+  }
+  if (
+    parts.length >= 3 &&
+    isWindowsShellCommand(parts[0] ?? "") &&
+    /^(-command|-c|\/c)$/i.test(parts[1] ?? "")
+  ) {
+    const unwrapped = parts.slice(2).join(" ").trim();
+    return unwrapped.length > 0 ? stripMatchingEdgeQuotes(unwrapped) : undefined;
   }
   return parts.join(" ");
 }
