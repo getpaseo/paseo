@@ -37,6 +37,11 @@ permissions:
 
 jobs:
   build:
+    # Skip fork PRs: this workflow executes scripts/update-nix.sh and
+    # scripts/fix-lockfile.mjs from the checked-out tree. A fork could
+    # edit those to run arbitrary code on the runner. Same-repo PRs and
+    # main pushes still run.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v1
