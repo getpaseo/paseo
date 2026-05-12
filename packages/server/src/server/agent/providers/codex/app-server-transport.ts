@@ -234,6 +234,7 @@ export class CodexAppServerClient {
 
       if (isJsonRpcRequest(raw)) {
         const request = raw;
+        this.traceRawEvent(request);
         const handler = this.requestHandlers.get(request.method);
         try {
           const result = handler ? await handler(request.params) : {};
@@ -249,20 +250,24 @@ export class CodexAppServerClient {
     }
 
     if (isJsonRpcNotification(raw)) {
-      const traceContext = this.getTraceContext();
-      this.logger.trace(
-        {
-          provider: "codex",
-          agentId: traceContext.agentId,
-          sessionId: traceContext.sessionId ?? readProviderSessionId(raw.params),
-          turnId: traceContext.turnId ?? readProviderTurnId(raw.params),
-          method: raw.method,
-          params: raw.params,
-          rawEvent: raw,
-        },
-        "provider.codex.raw_event",
-      );
+      this.traceRawEvent(raw);
       this.notificationHandler?.(raw.method, raw.params);
     }
+  }
+
+  private traceRawEvent(raw: JsonRpcRequest | JsonRpcNotification): void {
+    const traceContext = this.getTraceContext();
+    this.logger.trace(
+      {
+        provider: "codex",
+        agentId: traceContext.agentId,
+        sessionId: traceContext.sessionId ?? readProviderSessionId(raw.params),
+        turnId: traceContext.turnId ?? readProviderTurnId(raw.params),
+        method: raw.method,
+        params: raw.params,
+        rawEvent: raw,
+      },
+      "provider.codex.raw_event",
+    );
   }
 }
