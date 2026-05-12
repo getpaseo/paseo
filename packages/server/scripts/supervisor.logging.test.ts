@@ -88,29 +88,12 @@ async function runSupervisorFixture(options: {
 }
 
 describe("supervisor durable logging", () => {
-  test("resolves production rotation defaults", () => {
-    const logFile = resolveSupervisorLogFile(
-      "/tmp/paseo-home",
-      {},
-      { PASEO_NODE_ENV: "production" },
-    );
+  test("resolves rotation defaults", () => {
+    const logFile = resolveSupervisorLogFile("/tmp/paseo-home", {}, {});
 
     expect(logFile).toEqual({
       path: "/tmp/paseo-home/daemon.log",
       rotate: { maxSize: "10m", maxFiles: 3 },
-    });
-  });
-
-  test("resolves development rotation defaults", () => {
-    const logFile = resolveSupervisorLogFile(
-      "/tmp/paseo-home",
-      {},
-      { PASEO_NODE_ENV: "development" },
-    );
-
-    expect(logFile).toEqual({
-      path: "/tmp/paseo-home/daemon.log",
-      rotate: { maxSize: "100m", maxFiles: 10 },
     });
   });
 
@@ -126,7 +109,6 @@ describe("supervisor durable logging", () => {
         },
       },
       {
-        PASEO_NODE_ENV: "development",
         PASEO_LOG_ROTATE_SIZE: "200m",
         PASEO_LOG_ROTATE_COUNT: "12",
       },
@@ -143,7 +125,6 @@ describe("supervisor durable logging", () => {
       "/tmp/paseo-home",
       {},
       {
-        PASEO_NODE_ENV: "production",
         PASEO_LOG_ROTATE_SIZE: "50m",
         PASEO_LOG_ROTATE_COUNT: "8",
       },

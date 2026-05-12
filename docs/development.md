@@ -46,8 +46,7 @@ session, and agent-manager traces for stuck-state debugging.
 The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `$PASEO_HOME/config.json` win first. Without persisted config, the optional
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
-defaults. Production defaults are `10m` x `3` files; `PASEO_NODE_ENV=development`
-defaults are `100m` x `10` files.
+defaults. The default rotation is `10m` x `3` files everywhere.
 
 ## paseo.json service scripts
 

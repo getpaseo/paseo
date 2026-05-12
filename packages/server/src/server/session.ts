@@ -895,7 +895,7 @@ export class Session {
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
-    this.sessionLogger.trace({ traceKind: "session_lifecycle" }, "Session created");
+    this.sessionLogger.trace({}, "agent.session.lifecycle.created");
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -1017,10 +1017,7 @@ export class Session {
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
     const snapshot = this.agentManager.getAgent(agentId);
     if (!snapshot) {
-      this.sessionLogger.trace(
-        { agentId, traceKind: "session_interrupt" },
-        "interruptAgentIfRunning: agent not found",
-      );
+      this.sessionLogger.trace({ agentId }, "agent.session.interrupt.not_found");
       throw new Error(`Agent ${agentId} not found`);
     }
 
@@ -1030,11 +1027,10 @@ export class Session {
         {
           agentId,
           provider: snapshot.provider,
-          traceKind: "session_interrupt",
           lifecycle: snapshot.lifecycle,
           hasInFlightRun,
         },
-        "interruptAgentIfRunning: skipping because agent is not running",
+        "agent.session.interrupt.skip_not_running",
       );
       return;
     }
@@ -1076,11 +1072,10 @@ export class Session {
     this.sessionLogger.trace(
       {
         agentId,
-        traceKind: "session_start_stream",
         promptType: typeof prompt === "string" ? "string" : "structured",
         hasRunOptions: Boolean(runOptions),
       },
-      "startAgentStream: requested",
+      "agent.session.start_stream.request",
     );
     let iterator: AsyncGenerator<AgentStreamEvent>;
     try {
@@ -1089,8 +1084,8 @@ export class Session {
         ? this.agentManager.replaceAgentRun(agentId, prompt, runOptions)
         : this.agentManager.streamAgent(agentId, prompt, runOptions);
       this.sessionLogger.trace(
-        { agentId, traceKind: "session_start_stream", shouldReplace },
-        "startAgentStream: agent iterator returned",
+        { agentId, shouldReplace },
+        "agent.session.start_stream.iterator_returned",
       );
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to start agent run");
@@ -1102,15 +1097,9 @@ export class Session {
         for await (const _ of iterator) {
           // Events are forwarded via the session's AgentManager subscription.
         }
-        this.sessionLogger.trace(
-          { agentId, traceKind: "session_iterator_drained" },
-          "startAgentStream: iterator drained",
-        );
+        this.sessionLogger.trace({ agentId }, "agent.session.iterator.drained");
       } catch (error) {
-        this.sessionLogger.trace(
-          { agentId, traceKind: "session_iterator_error", err: error },
-          "startAgentStream: iterator threw",
-        );
+        this.sessionLogger.trace({ agentId, err: error }, "agent.session.iterator.error");
         this.handleAgentRunError(agentId, error, "Agent stream failed");
       }
     })();
@@ -1151,10 +1140,7 @@ export class Session {
 
       this.agentTools = (await this.agentMcpClient.tools()) as ToolSet;
       const agentToolCount = Object.keys(this.agentTools ?? {}).length;
-      this.sessionLogger.trace(
-        { traceKind: "session_mcp_init", agentToolCount },
-        `Agent MCP initialized with ${agentToolCount} tools`,
-      );
+      this.sessionLogger.trace({ agentToolCount }, "agent.session.mcp_init");
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to initialize Agent MCP");
     }
@@ -1232,10 +1218,9 @@ export class Session {
               provider: event.agent.provider,
               sessionId: event.agent.persistence?.sessionId ?? undefined,
               turnId: event.agent.activeForegroundTurnId ?? undefined,
-              traceKind: "session_forward",
               lifecycle: event.agent.lifecycle,
             },
-            "Session forwarding agent update",
+            "agent.session.forward_update",
           );
           void this.forwardAgentUpdate(event.agent);
           return;
@@ -1291,13 +1276,12 @@ export class Session {
           {
             agentId: event.agentId,
             provider: event.event.provider,
-            turnId: (event.event as { turnId?: string }).turnId,
-            traceKind: "session_forward",
+            turnId: agentStreamEventTurnId(event.event),
             seq: event.seq,
             epoch: event.epoch,
             event: event.event,
           },
-          "Session forwarding agent stream",
+          "agent.session.forward_stream",
         );
 
         const payload = {
@@ -1652,11 +1636,10 @@ export class Session {
     try {
       this.sessionLogger.trace(
         {
-          traceKind: "session_inbound",
           messageType: msg.type,
           payloadBytes: JSON.stringify(msg).length,
         },
-        "inbound message",
+        "agent.session.inbound",
       );
       try {
         await this.dispatchInboundMessage(msg);
@@ -7225,11 +7208,10 @@ export class Session {
       this.sessionLogger.trace(
         {
           agentId,
-          traceKind: "session_send_agent_message",
           messageId: msg.messageId,
           textPrefix: msg.text.slice(0, 80),
         },
-        "send_agent_message_request: dispatching shared sendPromptToAgent",
+        "agent.session.send_agent_message",
       );
       let dispatchResult: { outOfBand: boolean };
       try {
@@ -8015,11 +7997,10 @@ export class Session {
   private emit(msg: SessionOutboundMessage): void {
     this.sessionLogger.trace(
       {
-        traceKind: "session_outbound",
         messageType: msg.type,
         payloadBytes: JSON.stringify(msg).length,
       },
-      "outbound message",
+      "agent.session.outbound",
     );
     if (
       msg.type === "audio_output" &&
@@ -8087,7 +8068,7 @@ export class Session {
    * Clean up session resources
    */
   public async cleanup(): Promise<void> {
-    this.sessionLogger.trace({ traceKind: "session_lifecycle" }, "Cleaning up");
+    this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
@@ -8706,6 +8687,10 @@ function isValidPullRequestTimelineIdentity(options: {
     return false;
   }
   return isValidGitHubRepoSegment(options.repoOwner) && isValidGitHubRepoSegment(options.repoName);
+}
+
+function agentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
+  return "turnId" in event ? event.turnId : undefined;
 }
 
 function isValidGitHubRepoSegment(value: string): boolean {

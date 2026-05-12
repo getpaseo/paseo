@@ -265,6 +265,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   handle?: AgentPersistenceHandle;
+  agentId?: string;
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
@@ -560,6 +561,7 @@ export class ACPAgentClient implements AgentClient {
         beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
         capabilities: this.capabilities,
+        agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -606,6 +608,7 @@ export class ACPAgentClient implements AgentClient {
       thinkingOptionWriter: this.thinkingOptionWriter,
       capabilities: this.capabilities,
       handle,
+      agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -845,6 +848,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
@@ -897,6 +901,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.availableModes = options.defaultModes;
+    this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
     this.initialHandle = options.handle;
     this.config = { ...config, provider: options.provider };
@@ -1572,13 +1577,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async sessionUpdate(params: SessionNotification): Promise<void> {
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: this.provider,
         sessionId: params.sessionId,
-        traceKind: "provider_raw_event",
         rawEvent: params,
       },
-      "ACP session notification received",
+      "provider.acp.session_notification",
     );
     if (params.sessionId !== this.sessionId) {
       return;
@@ -1587,15 +1591,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const events = this.translateSessionUpdate(params.update);
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: this.provider,
         sessionId: this.sessionId,
         turnId: this.activeForegroundTurnId ?? undefined,
-        traceKind: "provider_translated_event",
         rawEvent: params,
         events,
       },
-      "ACP session notification translated",
+      "provider.acp.event_translated",
     );
     if (this.replayingHistory) {
       for (const event of events) {
@@ -2029,14 +2032,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private pushEvent(event: AgentStreamEvent): void {
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: this.provider,
         sessionId: this.sessionId,
         turnId: eventTurnId(event) ?? this.activeForegroundTurnId ?? undefined,
-        traceKind: "provider_emit_event",
         event,
       },
-      "ACP event emitted",
+      "provider.acp.event_emit",
     );
     for (const subscriber of this.subscribers) {
       subscriber(event);
@@ -2680,7 +2682,7 @@ function stringifyUnknown(value: unknown): string | undefined {
 }
 
 function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return (event as { turnId?: string }).turnId;
+  return "turnId" in event ? event.turnId : undefined;
 }
 
 function coerceSessionConfigMetadata(

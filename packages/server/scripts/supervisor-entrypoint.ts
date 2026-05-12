@@ -9,15 +9,13 @@ import {
 } from "../src/server/pid-lock.js";
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
-import { resolvePaseoNodeEnv } from "../src/server/paseo-env.js";
+import { parseOptionalPositiveIntegerEnv } from "../src/server/paseo-env.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
-const DEFAULT_PROD_LOG_ROTATE_SIZE = "10m";
-const DEFAULT_PROD_LOG_ROTATE_MAX_FILES = 3;
-const DEFAULT_DEV_LOG_ROTATE_SIZE = "100m";
-const DEFAULT_DEV_LOG_ROTATE_MAX_FILES = 10;
+const DEFAULT_LOG_ROTATE_SIZE = "10m";
+const DEFAULT_LOG_ROTATE_MAX_FILES = 3;
 
 interface DaemonRunnerConfig {
   devMode: boolean;
@@ -87,13 +85,8 @@ export function resolveSupervisorLogFile(
 ) {
   const configuredFile = persistedConfig.log?.file;
   const configuredPath = configuredFile?.path;
-  const isDev = resolvePaseoNodeEnv(env) === "development";
-  const defaultRotateSize = isDev ? DEFAULT_DEV_LOG_ROTATE_SIZE : DEFAULT_PROD_LOG_ROTATE_SIZE;
-  const defaultRotateMaxFiles = isDev
-    ? DEFAULT_DEV_LOG_ROTATE_MAX_FILES
-    : DEFAULT_PROD_LOG_ROTATE_MAX_FILES;
   const envRotateSize = env.PASEO_LOG_ROTATE_SIZE?.trim();
-  const envRotateMaxFiles = parsePositiveIntegerEnv(env.PASEO_LOG_ROTATE_COUNT);
+  const envRotateMaxFiles = parseOptionalPositiveIntegerEnv(env.PASEO_LOG_ROTATE_COUNT);
   let logPath = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
   if (configuredPath) {
     logPath = path.isAbsolute(configuredPath)
@@ -104,19 +97,11 @@ export function resolveSupervisorLogFile(
   return {
     path: logPath,
     rotate: {
-      maxSize: configuredFile?.rotate?.maxSize ?? envRotateSize ?? defaultRotateSize,
-      maxFiles: configuredFile?.rotate?.maxFiles ?? envRotateMaxFiles ?? defaultRotateMaxFiles,
+      maxSize: configuredFile?.rotate?.maxSize ?? envRotateSize ?? DEFAULT_LOG_ROTATE_SIZE,
+      maxFiles:
+        configuredFile?.rotate?.maxFiles ?? envRotateMaxFiles ?? DEFAULT_LOG_ROTATE_MAX_FILES,
     },
   };
-}
-
-function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function main(): Promise<void> {

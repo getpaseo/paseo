@@ -287,7 +287,11 @@ function toTerminalTurnEvent(event: AgentStreamEvent): TerminalTurnEvent | null 
 }
 
 function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return (event as { turnId?: string }).turnId;
+  return "turnId" in event ? event.turnId : undefined;
+}
+
+function normalizeTraceTag(tag: string): string {
+  return tag.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
 function isOpenCodeNotFoundError(error: unknown): boolean {
@@ -1008,7 +1012,7 @@ export class OpenCodeAgentClient implements AgentClient {
         new Map(this.modelContextWindows),
         acquisition.release,
         options?.persistSession,
-        launchContext?.env,
+        launchContext?.agentId,
       );
     } catch (error) {
       acquisition.release();
@@ -1051,7 +1055,7 @@ export class OpenCodeAgentClient implements AgentClient {
         new Map(this.modelContextWindows),
         acquisition.release,
         undefined,
-        launchContext?.env,
+        launchContext?.agentId,
       );
     } catch (error) {
       acquisition.release();
@@ -1281,6 +1285,11 @@ export interface OpenCodeEventTranslationState {
   pendingChildToolPartsBySessionId?: Map<string, OpenCodeToolPartEventPart[]>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
+}
+
+interface OpenCodeTraceData {
+  turnId?: string;
+  [key: string]: unknown;
 }
 
 type OpenCodeToolPartEventPart = Extract<
@@ -2211,12 +2220,12 @@ class OpenCodeAgentSession implements AgentSession {
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
     releaseServer?: () => void,
     persistSession = true,
-    private readonly launchEnv?: Record<string, string>,
+    private readonly agentId?: string,
   ) {
     this.config = config;
     this.client = client;
     this.sessionId = sessionId;
-    this.logger = logger.child({ agentId: this.launchEnv?.PASEO_AGENT_ID });
+    this.logger = logger.child({ agentId: this.agentId });
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
     this.releaseServer = releaseServer ?? null;
@@ -2650,13 +2659,12 @@ class OpenCodeAgentSession implements AgentSession {
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
     this.traceOpenCode("event.raw", {
       turnId,
-      traceKind: "provider_raw_event",
       n: eventCount,
       type: event?.type,
       rawType: readOpenCodeRecord(rawEvent)?.type,
       directory: readOpenCodeRecord(rawEvent)?.directory,
       rawEvent,
-      properties: event ? (event as { properties?: unknown }).properties : undefined,
+      properties: event?.properties,
     });
     if (!event) {
       return true;
@@ -2675,7 +2683,6 @@ class OpenCodeAgentSession implements AgentSession {
     const translated = await this.translateEvent(event);
     this.traceOpenCode("event.translated", {
       turnId,
-      traceKind: "provider_translated_event",
       n: eventCount,
       count: translated.length,
       types: translated.map((t) => t.type),
@@ -2808,7 +2815,6 @@ class OpenCodeAgentSession implements AgentSession {
     const tagged = turnId ? { ...event, turnId } : event;
     this.traceOpenCode("provider.emit", {
       turnId: eventTurnId(tagged),
-      traceKind: "provider_emit_event",
       event: tagged,
     });
     for (const callback of this.subscribers) {
@@ -2824,21 +2830,16 @@ class OpenCodeAgentSession implements AgentSession {
     return `opencode-turn-${this.nextTurnOrdinal++}`;
   }
 
-  private traceOpenCode(tag: string, data: Record<string, unknown> = {}): void {
+  private traceOpenCode(tag: string, data: OpenCodeTraceData = {}): void {
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: "opencode",
         sessionId: this.sessionId,
-        turnId:
-          typeof data.turnId === "string"
-            ? data.turnId
-            : (this.activeForegroundTurnId ?? undefined),
-        traceKind: typeof data.traceKind === "string" ? data.traceKind : "provider_control_event",
-        tag,
+        turnId: data.turnId ?? this.activeForegroundTurnId ?? undefined,
         ...data,
       },
-      "OpenCode trace event",
+      `provider.opencode.${normalizeTraceTag(tag)}`,
     );
   }
 

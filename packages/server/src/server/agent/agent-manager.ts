@@ -1008,12 +1008,11 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: agent.activeForegroundTurnId ?? undefined,
-        traceKind: "manager_close",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         pendingPermissions: agent.pendingPermissions.size,
       },
-      "closeAgent: start",
+      "agent.manager.close.start",
     );
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     await agent.session.close();
@@ -1025,9 +1024,8 @@ export class AgentManager {
         agentId,
         provider: closedAgent.provider,
         sessionId: closedAgent.persistence?.sessionId ?? undefined,
-        traceKind: "manager_close",
       },
-      "closeAgent: completed",
+      "agent.manager.close.complete",
     );
   }
 
@@ -1485,14 +1483,13 @@ export class AgentManager {
         provider: existingAgent.provider,
         sessionId: existingAgent.persistence?.sessionId ?? undefined,
         turnId: existingAgent.activeForegroundTurnId ?? undefined,
-        traceKind: "manager_stream_start",
         lifecycle: existingAgent.lifecycle,
         activeForegroundTurnId: existingAgent.activeForegroundTurnId,
         hasPendingForegroundRun: this.foregroundRuns.hasPendingRun(agentId),
         promptType: typeof prompt === "string" ? "string" : "structured",
         hasRunOptions: Boolean(options),
       },
-      "streamAgent: requested",
+      "agent.manager.stream.request",
     );
     if (existingAgent.activeForegroundTurnId || this.foregroundRuns.hasPendingRun(agentId)) {
       this.logger.trace(
@@ -1501,11 +1498,10 @@ export class AgentManager {
           provider: existingAgent.provider,
           sessionId: existingAgent.persistence?.sessionId ?? undefined,
           turnId: existingAgent.activeForegroundTurnId ?? undefined,
-          traceKind: "manager_stream_reject",
           lifecycle: existingAgent.lifecycle,
           hasPendingForegroundRun: this.foregroundRuns.hasPendingRun(agentId),
         },
-        "streamAgent: rejected because a foreground run is already in flight",
+        "agent.manager.stream.reject",
       );
       throw new Error(`Agent ${agentId} already has an active run`);
     }
@@ -1545,11 +1541,10 @@ export class AgentManager {
           provider: agent.provider,
           sessionId: agent.persistence?.sessionId ?? undefined,
           turnId,
-          traceKind: "manager_stream_started",
           lifecycle: agent.lifecycle,
           activeForegroundTurnId: agent.activeForegroundTurnId,
         },
-        "streamAgent: started",
+        "agent.manager.stream.start",
       );
 
       turnStream = this.foregroundRuns.createTurnStream(turnId);
@@ -1604,12 +1599,11 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: mutableAgent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_finalize",
         lifecycle: mutableAgent.lifecycle,
         terminalError,
         pendingReplacement: mutableAgent.pendingReplacement,
       },
-      "finalizeForegroundTurn: applying terminal state",
+      "agent.manager.finalize",
     );
     if (!shouldHoldBusyForReplacement) {
       this.touchUpdatedAt(mutableAgent);
@@ -2405,10 +2399,9 @@ export class AgentManager {
         provider: event.provider,
         sessionId: this.agents.get(agentId)?.persistence?.sessionId ?? undefined,
         turnId: readEventTurnId(event),
-        traceKind: "manager_enqueue",
         event,
       },
-      "AgentManager queued session event",
+      "agent.manager.enqueue",
     );
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
     const next = previous
@@ -2427,10 +2420,9 @@ export class AgentManager {
             provider: event.provider,
             sessionId: current.persistence?.sessionId ?? undefined,
             turnId: readEventTurnId(event),
-            traceKind: "manager_dequeue",
             event,
           },
-          "AgentManager processing session event",
+          "agent.manager.dequeue",
         );
         await this.dispatchSessionEvent(current, event);
         return;
@@ -2455,7 +2447,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
-    const turnId = (event as { turnId?: string }).turnId;
+    const turnId = readEventTurnId(event);
     const matchingWaiters = this.foregroundRuns.getMatchingWaiters(agent, turnId);
     this.logger.trace(
       {
@@ -2463,11 +2455,10 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_dispatch_session_event",
         matchingWaiterCount: matchingWaiters.length,
         event,
       },
-      "AgentManager dispatching session event",
+      "agent.manager.dispatch_session_event",
     );
 
     const shouldNotifyWaiters = await this.handleStreamEvent(agent, event);
@@ -2485,12 +2476,11 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_waiter_notify",
         notifiedWaiterCount: matchingWaiters.length,
         terminal: isTurnTerminalEvent(event),
         event,
       },
-      "AgentManager notified foreground waiters",
+      "agent.manager.notify_waiters",
     );
   }
 
@@ -2604,7 +2594,7 @@ export class AgentManager {
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {
-    const turnId = (event as { turnId?: string }).turnId;
+    const turnId = readEventTurnId(event);
     if (turnId == null) {
       return;
     }
@@ -2621,10 +2611,9 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_waiter_notify",
         event,
       },
-      "AgentManager notified foreground waiters for coalesced event",
+      "agent.manager.notify_waiters.coalesced",
     );
   }
 
@@ -2633,7 +2622,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
-    const eventTurnId = (event as { turnId?: string }).turnId;
+    const eventTurnId = readEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
@@ -2693,13 +2682,12 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_handle_event_start",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         isForegroundEvent,
         event,
       },
-      "AgentManager handling stream event",
+      "agent.manager.handle_stream_event.start",
     );
   }
 
@@ -2714,10 +2702,9 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_coalescer_buffered",
         event,
       },
-      "AgentManager buffered stream event for coalescing",
+      "agent.manager.coalescer.buffer",
     );
   }
 
@@ -2733,14 +2720,13 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        traceKind: "manager_handle_event_end",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         shouldDispatchEvent: flags.shouldDispatchEvent,
         shouldNotifyWaiters: flags.shouldNotifyWaiters,
         event,
       },
-      "AgentManager handled stream event",
+      "agent.manager.handle_stream_event.end",
     );
   }
 
@@ -2903,12 +2889,11 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: eventTurnId,
-        traceKind: "manager_turn_completed",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         eventTurnId,
       },
-      "handleStreamEvent: turn_completed",
+      "agent.manager.turn.completed",
     );
     agent.lastUsage = event.usage;
     agent.lastError = undefined;
@@ -2938,7 +2923,6 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: eventTurnId,
-        traceKind: "manager_turn_failed",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         eventTurnId,
@@ -2982,12 +2966,11 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: eventTurnId,
-        traceKind: "manager_turn_canceled",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         eventTurnId,
       },
-      "handleStreamEvent: turn_canceled",
+      "agent.manager.turn.canceled",
     );
     if (!isForegroundEvent && !agent.pendingReplacement) {
       agent.lifecycle = "idle";
@@ -3011,12 +2994,11 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: eventTurnId,
-        traceKind: "manager_turn_started",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         eventTurnId,
       },
-      "handleStreamEvent: turn_started",
+      "agent.manager.turn.started",
     );
     if (!isForegroundEvent) {
       agent.lifecycle = "running";
@@ -3168,13 +3150,12 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId: agent.activeForegroundTurnId ?? undefined,
-        traceKind: "manager_state_emit",
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         pendingPermissions: agent.pendingPermissions.size,
         persist: options?.persist !== false,
       },
-      "AgentManager emitting agent state",
+      "agent.manager.emit_state",
     );
 
     this.dispatch({
@@ -3311,11 +3292,10 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent?.persistence?.sessionId ?? undefined,
         turnId: readEventTurnId(event),
-        traceKind: "manager_stream_dispatch",
         metadata,
         event,
       },
-      "AgentManager dispatching stream event",
+      "agent.manager.dispatch_stream",
     );
     this.dispatch({ type: "agent_stream", agentId, event, ...metadata });
   }
@@ -3412,6 +3392,7 @@ export class AgentManager {
 
   private buildLaunchContext(agentId: string): AgentLaunchContext {
     return {
+      agentId,
       env: {
         PASEO_AGENT_ID: agentId,
       },
@@ -3503,5 +3484,5 @@ export class AgentManager {
 }
 
 function readEventTurnId(event: AgentStreamEvent): string | undefined {
-  return (event as { turnId?: string }).turnId;
+  return "turnId" in event ? event.turnId : undefined;
 }

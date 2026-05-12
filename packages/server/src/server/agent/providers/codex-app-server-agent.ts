@@ -2653,12 +2653,12 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
-    private readonly launchEnv?: Record<string, string>,
+    private readonly agentId?: string,
   ) {
     this.logger = logger.child({
       module: "agent",
       provider: CODEX_PROVIDER,
-      agentId: this.launchEnv?.PASEO_AGENT_ID,
+      agentId: this.agentId,
     });
     if (config.modeId === undefined) {
       throw new Error("Codex agent requires modeId to be specified");
@@ -2736,14 +2736,13 @@ class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       this.logger.trace(
         {
-          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          agentId: this.agentId,
           provider: CODEX_PROVIDER,
           sessionId: this.currentThreadId,
           turnId: this.activeForegroundTurnId ?? undefined,
-          traceKind: "provider_metadata_load",
           error,
         },
-        "Failed to load collaboration modes",
+        "provider.codex.metadata.collaboration_modes_failed",
       );
       this.collaborationModes = [];
     }
@@ -2778,14 +2777,13 @@ class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       this.logger.trace(
         {
-          agentId: this.launchEnv?.PASEO_AGENT_ID,
+          agentId: this.agentId,
           provider: CODEX_PROVIDER,
           sessionId: this.currentThreadId,
           turnId: this.activeForegroundTurnId ?? undefined,
-          traceKind: "provider_metadata_load",
           error,
         },
-        "Failed to load skills list",
+        "provider.codex.metadata.skills_failed",
       );
       this.cachedSkills = [];
     }
@@ -3684,14 +3682,13 @@ class CodexAppServerAgentSession implements AgentSession {
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: CODEX_PROVIDER,
         sessionId: this.currentThreadId,
         turnId: eventTurnId(tagged),
-        traceKind: "provider_emit_event",
         event: tagged,
       },
-      "Codex event emitted",
+      "provider.codex.event_emit",
     );
     for (const callback of this.subscribers) {
       try {
@@ -3772,16 +3769,15 @@ class CodexAppServerAgentSession implements AgentSession {
   ): void {
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: CODEX_PROVIDER,
         sessionId: this.currentThreadId,
         turnId: this.activeForegroundTurnId ?? undefined,
-        traceKind: "provider_parsed_event",
         method,
         params,
         parsed,
       },
-      "Codex app-server notification parsed",
+      "provider.codex.event_parsed",
     );
   }
 
@@ -4379,15 +4375,14 @@ class CodexAppServerAgentSession implements AgentSession {
     this.warnedUnknownNotificationMethods.add(method);
     this.logger.trace(
       {
-        agentId: this.launchEnv?.PASEO_AGENT_ID,
+        agentId: this.agentId,
         provider: CODEX_PROVIDER,
         sessionId: this.currentThreadId,
         turnId: this.activeForegroundTurnId ?? undefined,
-        traceKind: "provider_unhandled_event",
         method,
         params,
       },
-      "Unhandled Codex app-server notification method",
+      "provider.codex.event_unhandled",
     );
   }
 
@@ -4669,11 +4664,10 @@ export class CodexAppServerAgentClient implements AgentClient {
           this.logger.trace(
             {
               provider: CODEX_PROVIDER,
-              traceKind: "provider_config",
               versionOutput,
               enabled,
             },
-            "Resolved codex goals feature gate",
+            "provider.codex.config.goals_resolved",
           );
           return enabled;
         } catch (error) {
@@ -4687,7 +4681,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean },
+    options?: { goalsEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
@@ -4696,13 +4690,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
     this.logger.trace(
       {
-        agentId: launchEnv?.PASEO_AGENT_ID,
+        agentId: options?.agentId,
         provider: CODEX_PROVIDER,
-        traceKind: "provider_spawn",
         launchPrefix,
         goalsEnabled: options?.goalsEnabled === true,
       },
-      "Spawning Codex app server",
+      "provider.codex.spawn",
     );
     const child = spawnProcess(launchPrefix.command, args, {
       detached: process.platform !== "win32",
@@ -4734,11 +4727,12 @@ export class CodexAppServerAgentClient implements AgentClient {
       sessionConfig,
       null,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () =>
+        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
-      launchContext?.env,
+      launchContext?.agentId,
     );
     await session.connect();
     return session;
@@ -4761,11 +4755,12 @@ export class CodexAppServerAgentClient implements AgentClient {
       merged,
       handle,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () =>
+        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
       this.sessionDeps(),
       false,
       goalsEnabled,
-      launchContext?.env,
+      launchContext?.agentId,
     );
     await session.connect();
     return session;
@@ -5040,7 +5035,7 @@ function resolveSkillDescription(skill: Record<string, unknown>): string {
 }
 
 function eventTurnId(event: AgentStreamEvent): string | undefined {
-  return (event as { turnId?: string }).turnId;
+  return "turnId" in event ? event.turnId : undefined;
 }
 
 export const __codexAppServerInternals = {

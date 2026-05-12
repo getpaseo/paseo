@@ -476,6 +476,7 @@ export interface AgentSessionConfig {
 }
 
 export interface AgentLaunchContext {
+  agentId?: string;
   env?: Record<string, string>;
 }
 
