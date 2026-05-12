@@ -38,8 +38,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/create-github-app-token@v1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
