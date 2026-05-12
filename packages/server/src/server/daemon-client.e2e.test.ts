@@ -151,7 +151,7 @@ function waitForSignal<T>(
 
 class NonPersistentReloadSession implements AgentSession {
   readonly provider = "claude" as const;
-  readonly id = null;
+  readonly id: string | null;
   readonly capabilities = {
     supportsStreaming: false,
     supportsSessionPersistence: true,
@@ -161,7 +161,12 @@ class NonPersistentReloadSession implements AgentSession {
     supportsToolInvocations: false,
   } as const;
 
-  constructor(private readonly onClose: () => void) {}
+  constructor(
+    private readonly onClose: () => void,
+    id: string | null = null,
+  ) {
+    this.id = id;
+  }
 
   async run(): Promise<AgentRunResult> {
     return {
@@ -256,6 +261,37 @@ class NonPersistentReloadClient implements AgentClient {
 
   async listModels() {
     return [];
+  }
+}
+
+class FailingResumeSession extends NonPersistentReloadSession {
+  constructor(onClose: () => void) {
+    super(onClose, "failing-resume-session");
+  }
+
+  describePersistence(): AgentPersistenceHandle | null {
+    return {
+      provider: "claude",
+      sessionId: this.id,
+      metadata: { cwd: process.cwd() },
+    };
+  }
+}
+
+class FailingResumeClient extends NonPersistentReloadClient {
+  async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+    this.createSessionCalls += 1;
+    return new FailingResumeSession(() => {
+      this.closeCalls += 1;
+    });
+  }
+
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    _overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeSessionCalls += 1;
+    throw new Error("resume exploded");
   }
 }
 
@@ -476,6 +512,36 @@ test("refresh_agent rebuilds a live agent even when it has no persistence handle
     expect(client.createSessionCalls).toBe(2);
     expect(client.resumeSessionCalls).toBe(0);
     expect(client.closeCalls).toBe(1);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("refresh_agent rejects when persisted session resume fails", async () => {
+  const cwd = tmpCwd();
+  const client = new FailingResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: {
+      claude: client,
+    },
+  });
+
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "claude",
+        cwd,
+      },
+    });
+    await localCtx.client.archiveAgent(created.id);
+
+    await expect(localCtx.client.refreshAgent(created.id)).rejects.toMatchObject({
+      name: "DaemonRpcError",
+      code: "agent_refresh_failed",
+      requestType: "refresh_agent_request",
+    });
+    expect(client.resumeSessionCalls).toBe(1);
   } finally {
     await localCtx.cleanup();
     rmSync(cwd, { recursive: true, force: true });
