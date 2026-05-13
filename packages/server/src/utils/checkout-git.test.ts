@@ -1269,6 +1269,14 @@ const x = 1;
     await pushCurrentBranch(repoDir);
 
     execFileSync("git", ["--git-dir", remoteDir, "show-ref", "--verify", "refs/heads/feature"]);
+    const upstream = execFileSync(
+      "git",
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      { cwd: repoDir },
+    )
+      .toString()
+      .trim();
+    expect(upstream).toBe("origin/feature");
   });
 
   it("lists merged local and remote branch suggestions with provenance", async () => {

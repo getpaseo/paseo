@@ -85,6 +85,15 @@ function createGitRepoWithDevBranch(): { tempDir: string; repoDir: string; paseo
   return { tempDir, repoDir, paseoHome };
 }
 
+function createGitRepoWithOriginMain(): { tempDir: string; repoDir: string; paseoHome: string } {
+  const { tempDir, repoDir, paseoHome } = createGitRepo();
+  const remoteDir = path.join(tempDir, "origin.git");
+  execFileSync("git", ["clone", "--bare", repoDir, remoteDir], { stdio: "pipe" });
+  execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
+  return { tempDir, repoDir, paseoHome };
+}
+
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string; paseoHome: string } {
   const { tempDir, repoDir, paseoHome } = createGitRepo();
   const featureBranch = "feature/review-pr";
@@ -165,6 +174,14 @@ function createForkGitHubPrRemoteRepo(): {
   return { tempDir, repoDir, headRemoteDir, paseoHome };
 }
 
+function getBranchUpstream(cwd: string): string | null {
+  const result = spawnSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], {
+    cwd,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
 describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
   describe("createWorktreeCore", () => {
     const cleanupPaths: string[] = [];
@@ -197,6 +214,30 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.created).toBe(true);
       expect(result.worktree.branchName).toBe("legacy-rpc");
       expect(existsSync(result.worktree.worktreePath)).toBe(true);
+    });
+
+    test("creates branch-off worktrees from origin main without tracking origin main", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginMain();
+      cleanupPaths.push(tempDir);
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "no-upstream-feature",
+          action: "branch-off",
+          refName: "main",
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps(),
+      );
+
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "main",
+        branchName: "no-upstream-feature",
+      });
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
     });
 
     test("creates a branch-off worktree with a mnemonic slug when no slug is supplied", async () => {
