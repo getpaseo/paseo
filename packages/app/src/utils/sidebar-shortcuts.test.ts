@@ -25,6 +25,8 @@ function workspace(input: {
     statusBucket: "done",
     archivingAt: null,
     diffStat: null,
+    archiveHasUncommittedChanges: null,
+    archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
   };

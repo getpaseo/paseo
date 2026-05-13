@@ -20,6 +20,8 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     name: "paseo",
     statusBucket: "done",
     diffStat: null,
+    archiveHasUncommittedChanges: null,
+    archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
     ...overrides,

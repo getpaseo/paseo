@@ -11,6 +11,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
+import { confirmRiskyWorktreeArchive } from "@/git/worktree-archive-warning";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -168,6 +169,11 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     serverId,
     cwd,
     enabled: isGit,
+  });
+  const baseRefLabel = useMemo(() => formatBaseRefLabel(baseRef), [baseRef]);
+  const branchLabel = resolveBranchLabel({
+    currentBranch: gitStatus?.currentBranch,
+    notGit,
   });
 
   // Ship default persistence
@@ -389,31 +395,59 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       });
   }, [baseRef, cwd, runMergeFromBase, serverId, toast, toastActionError, toastActionSuccess]);
 
-  const handleArchiveWorktree = useCallback(() => {
+  const archiveWorktreeAfterConfirmation = useCallback(async () => {
     const worktreePath = status?.cwd;
     if (!worktreePath) {
       toast.error("Worktree path unavailable");
       return;
     }
+
     const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
+    const workspaceList = Array.from(workspaces?.values() ?? []);
+    const workspace = workspaceList.find(
+      (candidate) => candidate.workspaceDirectory === worktreePath,
+    );
+    const confirmed = await confirmRiskyWorktreeArchive({
+      worktreeName: workspace?.name ?? branchLabel,
+      isDirty: gitStatus?.isDirty,
+      aheadOfOrigin: gitStatus?.aheadOfOrigin,
+      diffStat: workspace?.diffStat ?? null,
+    });
+    if (!confirmed) {
+      return;
+    }
+
     const archivedWorkspaceId =
       resolveWorkspaceIdByExecutionDirectory({
-        workspaces: workspaces?.values(),
+        workspaces: workspaceList,
         workspaceDirectory: worktreePath,
       }) ?? worktreePath;
     router.replace(
       buildWorkspaceArchiveRedirectRoute({
         serverId,
         archivedWorkspaceId,
-        workspaces: workspaces?.values() ?? [],
+        workspaces: workspaceList,
       }) as Href,
     );
     void runArchiveWorktree({ serverId, cwd, worktreePath }).catch((err) => {
       toastActionError(err, "Failed to archive worktree");
     });
-  }, [cwd, runArchiveWorktree, serverId, status, toast, toastActionError]);
+  }, [
+    branchLabel,
+    cwd,
+    gitStatus?.aheadOfOrigin,
+    gitStatus?.isDirty,
+    runArchiveWorktree,
+    serverId,
+    status?.cwd,
+    toast,
+    toastActionError,
+  ]);
 
-  const baseRefLabel = useMemo(() => formatBaseRefLabel(baseRef), [baseRef]);
+  const handleArchiveWorktree = useCallback(() => {
+    void archiveWorktreeAfterConfirmation();
+  }, [archiveWorktreeAfterConfirmation]);
+
   const derived = deriveGitActionsState({
     isGit,
     status,
@@ -436,11 +470,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     isOnBaseBranch,
     shouldPromoteArchive,
   } = derived;
-
-  const branchLabel = resolveBranchLabel({
-    currentBranch: gitStatus?.currentBranch,
-    notGit,
-  });
 
   const handlePrAction = useCallback(() => {
     if (prStatus?.url) {
