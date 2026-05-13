@@ -147,7 +147,7 @@ const lightSemanticColors = {
   surfaceSidebarHover: "#e9e9ec", // Sidebar hover (darker in light mode)
   surfaceWorkspace: "#ffffff", // Workspace main background
   userMessageBubble: "#e4e4e7",
-  userMessageBubbleBorder: "#e4e4e7",
+  userMessageBubbleBorder: "#d4d4d8",
 
   // Text
   foreground: "#1a1a1e",
@@ -266,8 +266,8 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebar: tint.surfaceSidebar,
     surfaceSidebarHover: tint.surfaceSidebarHover,
     surfaceWorkspace: tint.surface1,
-    userMessageBubble: tint.surface3,
-    userMessageBubbleBorder: tint.border,
+    userMessageBubble: tint.surface2,
+    userMessageBubbleBorder: tint.surface3,
 
     foreground: "#fafafa",
     foregroundMuted: tint.foregroundMuted,
@@ -377,6 +377,11 @@ const midnightDarkColors = buildDarkSemanticColors({
   accentBright: "#7eaaeb",
   destructive: "#c44a52", // red with a hint of cool lean against the blue tint
 });
+const midnightSemanticColors = {
+  ...midnightDarkColors,
+  userMessageBubble: "#2a2d3a",
+  userMessageBubbleBorder: "#4a5674",
+} as const;
 
 // Claude — warm neutral with subtle orange undertone
 const claudeDarkColors = buildDarkSemanticColors({
@@ -396,6 +401,11 @@ const claudeDarkColors = buildDarkSemanticColors({
   accentBright: "#e89a7f",
   destructive: "#cf513e", // warm orange-red, hue ~10 — sits with the Claude orange accent
 });
+const claudeSemanticColors = {
+  ...claudeDarkColors,
+  userMessageBubble: "#35312e",
+  userMessageBubbleBorder: "#5b4d45",
+} as const;
 
 // Ghostty — blue-tinted dark based on Ghostty default background
 const ghosttyDarkColors = buildDarkSemanticColors({
@@ -415,6 +425,11 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   accentBright: "#b4d0fc",
   destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
 });
+const ghosttySemanticColors = {
+  ...ghosttyDarkColors,
+  userMessageBubble: "#404655",
+  userMessageBubbleBorder: "#586177",
+} as const;
 
 export const SPACING = {
   0: 0,
@@ -530,9 +545,9 @@ function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColor
 
 export const darkTheme = buildDarkTheme(paseoDarkColors);
 export const darkZincTheme = buildDarkTheme(zincDarkColors);
-export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
-export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
-export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
+export const darkMidnightTheme = buildDarkTheme(midnightSemanticColors);
+export const darkClaudeTheme = buildDarkTheme(claudeSemanticColors);
+export const darkGhosttyTheme = buildDarkTheme(ghosttySemanticColors);
 
 export const lightTheme = {
   colorScheme: "light" as const,
