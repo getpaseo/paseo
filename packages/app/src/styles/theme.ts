@@ -147,7 +147,7 @@ const lightSemanticColors = {
   surfaceSidebarHover: "#e9e9ec", // Sidebar hover (darker in light mode)
   surfaceWorkspace: "#ffffff", // Workspace main background
   userMessageBubble: "#e4e4e7",
-  userMessageBubbleBorder: "#d4d4d8",
+  userMessageBubbleBorder: "#aaabb5",
 
   // Text
   foreground: "#1a1a1e",
@@ -339,6 +339,11 @@ const paseoDarkColors = buildDarkSemanticColors({
   accentBright: "#7ccba0",
   destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
 });
+const paseoSemanticColors = {
+  ...paseoDarkColors,
+  userMessageBubble: "#363938",
+  userMessageBubbleBorder: "#5b605f",
+} as const;
 
 // Zinc — neutral gray, no tint
 const zincDarkColors = buildDarkSemanticColors({
@@ -358,6 +363,11 @@ const zincDarkColors = buildDarkSemanticColors({
   accentBright: "#7ccba0",
   destructive: "#c44a4a", // neutral red, hue 0 — clearly red without screaming
 });
+const zincSemanticColors = {
+  ...zincDarkColors,
+  userMessageBubble: "#2f3138",
+  userMessageBubbleBorder: "#5b606d",
+} as const;
 
 // Midnight — subtle blue tint
 const midnightDarkColors = buildDarkSemanticColors({
@@ -379,8 +389,8 @@ const midnightDarkColors = buildDarkSemanticColors({
 });
 const midnightSemanticColors = {
   ...midnightDarkColors,
-  userMessageBubble: "#2a2d3a",
-  userMessageBubbleBorder: "#4a5674",
+  userMessageBubble: "#293243",
+  userMessageBubbleBorder: "#485b82",
 } as const;
 
 // Claude — warm neutral with subtle orange undertone
@@ -403,8 +413,8 @@ const claudeDarkColors = buildDarkSemanticColors({
 });
 const claudeSemanticColors = {
   ...claudeDarkColors,
-  userMessageBubble: "#35312e",
-  userMessageBubbleBorder: "#5b4d45",
+  userMessageBubble: "#3a302c",
+  userMessageBubbleBorder: "#6a564b",
 } as const;
 
 // Ghostty — blue-tinted dark based on Ghostty default background
@@ -427,8 +437,8 @@ const ghosttyDarkColors = buildDarkSemanticColors({
 });
 const ghosttySemanticColors = {
   ...ghosttyDarkColors,
-  userMessageBubble: "#404655",
-  userMessageBubbleBorder: "#586177",
+  userMessageBubble: "#3b4351",
+  userMessageBubbleBorder: "#60718f",
 } as const;
 
 export const SPACING = {
@@ -543,8 +553,8 @@ function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColor
   } as const;
 }
 
-export const darkTheme = buildDarkTheme(paseoDarkColors);
-export const darkZincTheme = buildDarkTheme(zincDarkColors);
+export const darkTheme = buildDarkTheme(paseoSemanticColors);
+export const darkZincTheme = buildDarkTheme(zincSemanticColors);
 export const darkMidnightTheme = buildDarkTheme(midnightSemanticColors);
 export const darkClaudeTheme = buildDarkTheme(claudeSemanticColors);
 export const darkGhosttyTheme = buildDarkTheme(ghosttySemanticColors);
