@@ -1534,11 +1534,14 @@ function threadItemToTimeline(
   switch (normalizedType) {
     case "userMessage":
       return mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
-    case "agentMessage":
+    case "agentMessage": {
+      const messageId = nonEmptyString(normalizedItem.id);
       return {
         type: "assistant_message",
         text: typeof normalizedItem.text === "string" ? normalizedItem.text : "",
+        ...(messageId ? { messageId } : {}),
       };
+    }
     case "plan":
       return mapCodexThreadPlanItem(normalizedItem);
     case "reasoning":
@@ -4073,6 +4076,7 @@ class CodexAppServerAgentSession implements AgentSession {
       if (subAgentCallId) {
         this.upsertSubAgentChildItem(subAgentCallId, parsed.itemId, {
           type: "assistant_message",
+          messageId: parsed.itemId,
           text,
         });
         this.emitSubAgentActivityUpdate(subAgentCallId, "running");
@@ -4084,6 +4088,7 @@ class CodexAppServerAgentSession implements AgentSession {
         provider: CODEX_PROVIDER,
         item: {
           type: "assistant_message",
+          messageId: parsed.itemId,
           text:
             isFirstDeltaForItem && this.pendingAssistantMessageBoundary
               ? `${ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN}${parsed.delta}`
@@ -4443,7 +4448,14 @@ class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({
       type: "timeline",
       provider: CODEX_PROVIDER,
-      item: { type: timelineItem.type, text: suffix },
+      item:
+        timelineItem.type === "assistant_message"
+          ? {
+              type: timelineItem.type,
+              text: suffix,
+              ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
+            }
+          : { type: timelineItem.type, text: suffix },
     });
   }
 

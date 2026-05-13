@@ -1315,6 +1315,66 @@ describe("Codex app-server provider", () => {
         item: {
           type: "assistant_message",
           text: "History loaded.",
+          messageId: "message-history",
+        },
+      },
+    ]);
+  });
+
+  test("preserves Codex app-server assistant item ids in persisted history", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "agentMessage",
+                    id: "before-tool-message",
+                    text: "I checked the workspace.",
+                  },
+                  {
+                    type: "agentMessage",
+                    id: "after-tool-message",
+                    text: "The tests are green.",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "I checked the workspace.",
+          messageId: "before-tool-message",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "The tests are green.",
+          messageId: "after-tool-message",
         },
       },
     ]);
@@ -1768,13 +1828,13 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "test-turn",
-        item: { type: "assistant_message", text: "Hel" },
+        item: { type: "assistant_message", text: "Hel", messageId: "assistant-item-1" },
       },
       {
         type: "timeline",
         provider: "codex",
         turnId: "test-turn",
-        item: { type: "assistant_message", text: "lo" },
+        item: { type: "assistant_message", text: "lo", messageId: "assistant-item-1" },
       },
     ]);
   });
@@ -1805,19 +1865,19 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "test-turn",
-        item: { type: "assistant_message", text: "Hel" },
+        item: { type: "assistant_message", text: "Hel", messageId: "assistant-item-2" },
       },
       {
         type: "timeline",
         provider: "codex",
         turnId: "test-turn",
-        item: { type: "assistant_message", text: "lo" },
+        item: { type: "assistant_message", text: "lo", messageId: "assistant-item-2" },
       },
       {
         type: "timeline",
         provider: "codex",
         turnId: "test-turn",
-        item: { type: "assistant_message", text: "!" },
+        item: { type: "assistant_message", text: "!", messageId: "assistant-item-2" },
       },
     ]);
   });
@@ -1852,6 +1912,7 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
+          messageId: "assistant-item-3",
           text: "I’m in the waiting phase now. The next read is intentionally delayed so we get meaningful CI state instead of churn.",
         },
       },
@@ -1861,6 +1922,7 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
+          messageId: "assistant-item-4",
           text: "\n\n---\n\nCI is still cooking. I’m staying on the current run rather than jumping around, because the first red job will tell us exactly whether anything else needs work.",
         },
       },

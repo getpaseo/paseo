@@ -39,6 +39,59 @@ describe("projectTimelineRows", () => {
     expect(projected[0]?.collapsed).toContain("assistant_merge");
   });
 
+  test("merges adjacent assistant chunks with the same message id in projected mode", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message", text: "Hel", messageId: "msg-1" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: { type: "assistant_message", text: "lo", messageId: "msg-1" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "Hello",
+      messageId: "msg-1",
+    });
+  });
+
+  test("keeps adjacent assistant chunks with different message ids separate in projected mode", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message", text: "First answer.", messageId: "msg-1" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: { type: "assistant_message", text: "Second answer.", messageId: "msg-2" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "First answer.",
+      messageId: "msg-1",
+    });
+    expect(projected[1]?.item).toEqual({
+      type: "assistant_message",
+      text: "Second answer.",
+      messageId: "msg-2",
+    });
+  });
+
   test("merges adjacent reasoning chunks in projected mode", () => {
     const rows: AgentTimelineRow[] = [
       {

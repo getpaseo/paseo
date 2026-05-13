@@ -210,6 +210,13 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       { type: "assistant_message" }
     >;
     const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
+    if (
+      entryAssistant.messageId !== undefined &&
+      previousAssistant.messageId !== entryAssistant.messageId
+    ) {
+      output.push(entry);
+      continue;
+    }
 
     const collapsedKinds = new Set<TimelineProjectionKind>([
       ...previous.collapsed,
@@ -222,6 +229,7 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       item: {
         type: "assistant_message",
         text: `${previousAssistant.text}${entryAssistant.text}`,
+        ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
       },
       seqEnd: entry.seqEnd,
       sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),

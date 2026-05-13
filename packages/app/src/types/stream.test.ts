@@ -18,11 +18,12 @@ type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 function assistantTimeline(
   text: string,
   provider: AgentProvider = "claude",
+  messageId?: string,
 ): AgentStreamEventPayload {
   return {
     type: "timeline",
     provider,
-    item: { type: "assistant_message", text },
+    item: { type: "assistant_message", text, ...(messageId ? { messageId } : {}) },
   };
 }
 
@@ -310,6 +311,65 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(JSON.stringify(first), JSON.stringify(second));
     const assistantMessage = first.find((item) => item.kind === "assistant_message");
     assert.strictEqual(assistantMessage?.text, "Hello world");
+  });
+
+  it("keeps adjacent assistant timeline items separate when message ids differ", () => {
+    const state = hydrateStreamState([
+      {
+        event: assistantTimeline("First answer.", "codex", "msg-first"),
+        timestamp: new Date("2025-01-01T10:01:00Z"),
+      },
+      {
+        event: assistantTimeline("Second answer.", "codex", "msg-second"),
+        timestamp: new Date("2025-01-01T10:01:01Z"),
+      },
+    ]);
+
+    assert.deepStrictEqual(
+      state.map((item) => (item.kind === "assistant_message" ? item.text : item.kind)),
+      ["First answer.", "Second answer."],
+    );
+    assert.deepStrictEqual(
+      state.map((item) => (item.kind === "assistant_message" ? item.messageId : null)),
+      ["msg-first", "msg-second"],
+    );
+  });
+
+  it("merges adjacent assistant deltas when message ids match", () => {
+    const state = hydrateStreamState([
+      {
+        event: assistantTimeline("Hel", "codex", "msg-same"),
+        timestamp: new Date("2025-01-01T10:02:00Z"),
+      },
+      {
+        event: assistantTimeline("lo", "codex", "msg-same"),
+        timestamp: new Date("2025-01-01T10:02:01Z"),
+      },
+    ]);
+
+    assert.strictEqual(state.length, 1);
+    assert.strictEqual(state[0]?.kind, "assistant_message");
+    if (state[0]?.kind === "assistant_message") {
+      assert.strictEqual(state[0].text, "Hello");
+      assert.strictEqual(state[0].id, "msg-same");
+      assert.strictEqual(state[0].messageId, "msg-same");
+    }
+  });
+
+  it("preserves old assistant merge behavior when message ids are absent", () => {
+    const state = hydrateStreamState([
+      {
+        event: assistantTimeline("Hel", "codex"),
+        timestamp: new Date("2025-01-01T10:03:00Z"),
+      },
+      {
+        event: assistantTimeline("lo", "codex"),
+        timestamp: new Date("2025-01-01T10:03:01Z"),
+      },
+    ]);
+
+    assert.strictEqual(state.length, 1);
+    assert.strictEqual(state[0]?.kind === "assistant_message" ? state[0].text : null, "Hello");
   });
 
   it("merges running and completed events by callId", () => {

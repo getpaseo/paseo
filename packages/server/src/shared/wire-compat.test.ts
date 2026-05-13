@@ -194,6 +194,29 @@ async function emitTimelineResponse(
 }
 
 describe("wire compatibility", () => {
+  test("assistant timeline message ids are optional on the wire", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "assistant_message",
+        text: "old daemon shape",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      text: "old daemon shape",
+    });
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "assistant_message",
+        text: "new daemon shape",
+        messageId: "msg-1",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      text: "new daemon shape",
+      messageId: "msg-1",
+    });
+  });
+
   test("downgrades reasoning_merge for clients that do not declare the capability", async () => {
     const response = await emitTimelineResponse();
 

@@ -66,6 +66,7 @@ export interface UserMessageItem {
 export interface AssistantMessageItem {
   kind: "assistant_message";
   id: string;
+  messageId?: string;
   text: string;
   timestamp: Date;
   blockGroupId?: string;
@@ -227,6 +228,7 @@ function appendAssistantMessage(
   text: string,
   timestamp: Date,
   source: StreamUpdateSource,
+  messageId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -234,7 +236,11 @@ function appendAssistantMessage(
   }
 
   const last = state[state.length - 1];
-  if (last && last.kind === "assistant_message") {
+  const shouldAppendToLast =
+    last &&
+    last.kind === "assistant_message" &&
+    (messageId === undefined || last.messageId === messageId);
+  if (shouldAppendToLast) {
     const updated: AssistantMessageItem = {
       ...last,
       text: `${last.text}${chunk}`,
@@ -249,7 +255,8 @@ function appendAssistantMessage(
   if (
     source === "live" &&
     last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message"
+    secondLast?.kind === "assistant_message" &&
+    (messageId === undefined || secondLast.messageId === messageId)
   ) {
     const updated: AssistantMessageItem = {
       ...secondLast,
@@ -264,9 +271,11 @@ function appendAssistantMessage(
   }
 
   const idSeed = chunk.trim() || chunk;
+  const entryId = messageId ?? createUniqueTimelineId(state, "assistant", idSeed, timestamp);
   const item: AssistantMessageItem = {
     kind: "assistant_message",
-    id: createUniqueTimelineId(state, "assistant", idSeed, timestamp),
+    id: entryId,
+    ...(messageId ? { messageId } : {}),
     text: chunk,
     timestamp,
   };
@@ -647,7 +656,9 @@ function reduceTimelineEvent(
     case "user_message":
       return finalizeActiveThoughts(appendUserMessage(state, item.text, timestamp, item.messageId));
     case "assistant_message":
-      return finalizeActiveThoughts(appendAssistantMessage(state, item.text, timestamp, source));
+      return finalizeActiveThoughts(
+        appendAssistantMessage(state, item.text, timestamp, source, item.messageId),
+      );
     case "reasoning":
       return appendThought(state, item.text, timestamp);
     case "tool_call":
@@ -993,7 +1004,14 @@ export function applyStreamEvent(params: {
 
   if (incomingKind === "assistant_message" && nextHead.length === 0) {
     const tailAssistant = nextTail.at(-1);
-    if (tailAssistant?.kind === "assistant_message") {
+    const incomingMessageId =
+      event.type === "timeline" && event.item.type === "assistant_message"
+        ? event.item.messageId
+        : undefined;
+    const shouldContinueTailAssistant =
+      tailAssistant?.kind === "assistant_message" &&
+      (incomingMessageId === undefined || tailAssistant.messageId === incomingMessageId);
+    if (shouldContinueTailAssistant) {
       nextTail = nextTail.slice(0, -1);
       nextHead = [tailAssistant];
       changedTail = true;
