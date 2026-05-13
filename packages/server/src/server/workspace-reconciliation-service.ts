@@ -10,6 +10,15 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 
+function deriveWorkspaceKindFromMetadata(metadata: {
+  projectKind: "git" | "directory";
+  isWorktree: boolean;
+}): PersistedWorkspaceRecord["kind"] {
+  if (metadata.projectKind !== "git") return "directory";
+  if (metadata.isWorktree) return "worktree";
+  return "local_checkout";
+}
+
 export type ReconciliationChange =
   | { kind: "workspace_archived"; workspaceId: string; directory: string; reason: string }
   | { kind: "project_archived"; projectId: string; directory: string; reason: string }
@@ -23,7 +32,7 @@ export type ReconciliationChange =
       kind: "workspace_updated";
       workspaceId: string;
       directory: string;
-      fields: Partial<Pick<PersistedWorkspaceRecord, "displayName">>;
+      fields: Partial<Pick<PersistedWorkspaceRecord, "displayName" | "kind">>;
     };
 
 export interface ReconciliationResult {
@@ -222,20 +231,35 @@ export class WorkspaceReconciliationService {
         const wsDirName = workspace.cwd.split(/[\\/]/).findLast(Boolean) ?? workspace.cwd;
         const wsGit = await this.readWorkspaceGitMetadata(workspace.cwd, wsDirName);
 
+        const expectedKind = deriveWorkspaceKindFromMetadata(wsGit);
+
+        const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "displayName" | "kind">> =
+          {};
+
         if (wsGit.projectKind === "git" && workspace.displayName !== wsGit.workspaceDisplayName) {
-          const timestamp = new Date().toISOString();
-          await this.workspaceRegistry.upsert({
-            ...workspace,
-            displayName: wsGit.workspaceDisplayName,
-            updatedAt: timestamp,
-          });
-          changes.push({
-            kind: "workspace_updated",
-            workspaceId: workspace.workspaceId,
-            directory: workspace.cwd,
-            fields: { displayName: wsGit.workspaceDisplayName },
-          });
+          workspaceUpdates.displayName = wsGit.workspaceDisplayName;
         }
+
+        if (workspace.kind !== expectedKind) {
+          workspaceUpdates.kind = expectedKind;
+        }
+
+        if (Object.keys(workspaceUpdates).length === 0) {
+          return;
+        }
+
+        const timestamp = new Date().toISOString();
+        await this.workspaceRegistry.upsert({
+          ...workspace,
+          ...workspaceUpdates,
+          updatedAt: timestamp,
+        });
+        changes.push({
+          kind: "workspace_updated",
+          workspaceId: workspace.workspaceId,
+          directory: workspace.cwd,
+          fields: workspaceUpdates,
+        });
       }),
     );
   }

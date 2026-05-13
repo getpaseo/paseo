@@ -114,6 +114,15 @@ function createWorkspaceGitServiceStub(
   };
 }
 
+function initGitRepoInDir(dir: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+}
+
 function createTempGitRepo(prefix: string): string {
   const raw = mkdtempSync(path.join(tmpdir(), prefix));
   const dir = realpathSync(raw);
@@ -252,19 +261,7 @@ describe("WorkspaceReconciliationService", () => {
       }),
     );
 
-    // Initialize as git repo
-    execFileSync("git", ["init", "-b", "main"], { cwd: resolved, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "test@test.com"], {
-      cwd: resolved,
-      stdio: "ignore",
-    });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: resolved, stdio: "ignore" });
-    execFileSync("git", ["config", "commit.gpgsign", "false"], {
-      cwd: resolved,
-      stdio: "ignore",
-    });
-    execFileSync("git", ["add", "."], { cwd: resolved, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: resolved, stdio: "ignore" });
+    initGitRepoInDir(resolved);
 
     const service = new WorkspaceReconciliationService({
       projectRegistry,
@@ -284,6 +281,59 @@ describe("WorkspaceReconciliationService", () => {
     const projUpdate = result.changesApplied.find((c) => c.kind === "project_updated");
     expect(projUpdate).toBeDefined();
     expect(projects.get("p1")!.kind).toBe("git");
+  });
+
+  test("updates workspace kind when a directory becomes a git repo", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "reconcile-ws-kind-"));
+    const resolved = realpathSync(dir);
+    tempDirs.push(resolved);
+    writeFileSync(path.join(resolved, "README.md"), "# Test\n");
+
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: resolved,
+        kind: "non_git",
+        displayName: path.basename(resolved),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: resolved,
+        kind: "directory",
+        displayName: path.basename(resolved),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    initGitRepoInDir(resolved);
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [resolved]: {
+          projectKind: "git",
+          projectDisplayName: path.basename(resolved),
+          workspaceDisplayName: "main",
+        },
+      }),
+    });
+
+    await service.runOnce();
+
+    expect(projects.get("p1")!.kind).toBe("git");
+    expect(workspaces.get("w1")!.kind).toBe("local_checkout");
   });
 
   test("updates project display name when git remote changes", async () => {
