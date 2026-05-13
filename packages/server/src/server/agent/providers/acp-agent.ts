@@ -11,6 +11,7 @@ import {
   ClientSideConnection,
   PROTOCOL_VERSION,
   type AgentCapabilities as ACPAgentCapabilities,
+  type Error as ACPError,
   type AnyMessage,
   type Client as ACPClient,
   type ClientCapabilities as ACPClientCapabilities,
@@ -107,15 +108,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
-function stringifyDiagnosticValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+function isACPError(value: unknown): value is ACPError {
+  return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
 }
 
 function summarizeACPRequestError(error: unknown): {
@@ -123,32 +117,22 @@ function summarizeACPRequestError(error: unknown): {
   code?: string;
   diagnostic?: string;
 } {
+  // Promise rejections are untyped, but the ACP SDK rejects JSON-RPC failures as response.error.
+  if (isACPError(error)) {
+    const code = String(error.code);
+    const data = error.data === undefined ? "" : ` | data=${JSON.stringify(error.data)}`;
+    return {
+      message: error.message,
+      code,
+      diagnostic: `${error.message} | code=${code}${data}`,
+    };
+  }
+
   if (error instanceof Error) {
     return { message: error.message };
   }
 
-  if (!isRecord(error)) {
-    return { message: String(error) };
-  }
-
-  const message =
-    typeof error.message === "string" ? error.message : stringifyDiagnosticValue(error);
-  const code =
-    typeof error.code === "number" || typeof error.code === "string"
-      ? String(error.code)
-      : undefined;
-  const details: string[] = [];
-  if (code) {
-    details.push(`code=${code}`);
-  }
-  if ("data" in error) {
-    details.push(`data=${stringifyDiagnosticValue(error.data)}`);
-  }
-  return {
-    message,
-    code,
-    diagnostic: details.length > 0 ? [message, ...details].join(" | ") : undefined,
-  };
+  return { message: String(error) };
 }
 
 function resolveTerminalCommand(
