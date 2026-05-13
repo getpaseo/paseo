@@ -3,8 +3,14 @@ import type { Logger } from "pino";
 
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import { execCommand } from "../../../utils/spawn.js";
+import type { AgentProvider } from "../agent-sdk-types.js";
 import { createProviderEnvSpec } from "../provider-launch-config.js";
-import { ACPAgentClient, type SessionStateResponse } from "./acp-agent.js";
+import {
+  ACPAgentClient,
+  deriveModelDefinitionsFromACP,
+  deriveModesFromACP,
+  type SessionStateResponse,
+} from "./acp-agent.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -127,11 +133,12 @@ export class GenericACPAgentClient extends ACPAgentClient {
           "ACP session/new",
         );
         sessionValue = response.sessionId ? `ok (${response.sessionId})` : "ok";
+        const transformed = this.transformSessionResponse(response);
         return {
           status: formatDiagnosticStatus(true),
           initialize: initializeValue,
           session: sessionValue,
-          ...summarizeSessionState(this.transformSessionResponse(response)),
+          ...summarizeSessionState(this.provider, transformed),
         };
       } finally {
         await this.closeProbe(probe);
@@ -247,14 +254,15 @@ function isAgentInfo(value: unknown): value is { name: string; version?: string 
 }
 
 function summarizeSessionState(
+  provider: AgentProvider,
   response: SessionStateResponse,
 ): Pick<ACPDiagnosticProbeResult, "models" | "modes"> {
-  const models = response.models?.availableModels ?? [];
-  const modes = response.modes?.availableModes ?? [];
+  const models = deriveModelDefinitionsFromACP(provider, response.models, response.configOptions);
+  const { modes } = deriveModesFromACP([], response.modes, response.configOptions);
   return {
     models: `${models.length}`,
     modes:
-      modes.length > 0 ? modes.map((mode) => mode.name || mode.id).join(", ") : "none reported",
+      modes.length > 0 ? modes.map((mode) => mode.label || mode.id).join(", ") : "none reported",
   };
 }
 

@@ -76,6 +76,63 @@ describe("GenericACPAgentClient diagnostics", () => {
     expect(diagnostic).toContain("Status: Available");
   });
 
+  test("counts models and modes exposed as ACP config options", async () => {
+    class ConfigOptionGenericACPAgentClient extends GenericACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          initialize: {
+            protocolVersion: 1,
+            agentInfo: { name: "Devin", version: "2026.5.6" },
+            agentCapabilities: {},
+          },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              models: null,
+              modes: null,
+              configOptions: [
+                {
+                  id: "mode",
+                  name: "Session Mode",
+                  category: "mode",
+                  type: "select",
+                  currentValue: "ask",
+                  options: [
+                    { value: "accept-edits", name: "Code" },
+                    { value: "ask", name: "Ask" },
+                  ],
+                },
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "swe-1-6-slow",
+                  options: [{ value: "swe-1-6-slow", name: "SWE-1.6 Slow" }],
+                },
+              ],
+            }),
+          },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new ConfigOptionGenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, "acp"],
+      providerId: "devin",
+      label: "Devin",
+    });
+
+    const { diagnostic } = await client.getDiagnostic();
+
+    expect(diagnostic).toContain("Models: 1");
+    expect(diagnostic).toContain("Modes: Code, Ask");
+  });
+
   test("reports ACP probe failures instead of falling back to no diagnostic", async () => {
     class FailingGenericACPAgentClient extends GenericACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
