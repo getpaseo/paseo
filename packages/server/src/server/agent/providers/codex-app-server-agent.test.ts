@@ -1290,6 +1290,10 @@ describe("Codex app-server provider", () => {
                     id: "message-history",
                     text: "History loaded.",
                   },
+                  {
+                    type: "contextCompaction",
+                    id: "compact-history",
+                  },
                 ],
               },
             ],
@@ -1316,6 +1320,14 @@ describe("Codex app-server provider", () => {
           type: "assistant_message",
           text: "History loaded.",
           messageId: "message-history",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "compaction",
+          status: "completed",
         },
       },
     ]);
@@ -1375,6 +1387,116 @@ describe("Codex app-server provider", () => {
           type: "assistant_message",
           text: "The tests are green.",
           messageId: "after-tool-message",
+        },
+      },
+    ]);
+  });
+
+  test("emits Codex context compaction markers from live thread items", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "contextCompaction",
+        id: "compact-live",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "contextCompaction",
+        id: "compact-live",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "compaction",
+          status: "loading",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "compaction",
+          status: "completed",
+        },
+      },
+    ]);
+  });
+
+  test("emits and dedupes Codex thread/compacted notifications", () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "legacy-compact-turn",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "contextCompaction",
+        id: "legacy-compact-item",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "legacy-compact-turn",
+        item: {
+          type: "compaction",
+          status: "completed",
+        },
+      },
+    ]);
+  });
+
+  test("emits consecutive Codex thread/compacted notifications", () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "legacy-compact-turn-1",
+    });
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "legacy-compact-turn-2",
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "legacy-compact-turn-1",
+        item: {
+          type: "compaction",
+          status: "completed",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "legacy-compact-turn-2",
+        item: {
+          type: "compaction",
+          status: "completed",
         },
       },
     ]);
@@ -1445,6 +1567,77 @@ describe("Codex app-server provider", () => {
         item: {
           type: "assistant_message",
           text: "Goal set: ship feature\n\n",
+        },
+      },
+    ]);
+  });
+
+  test("lists /compact and sends Codex compaction out of band", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: ["test-thread"] };
+        }
+        if (method === "skills/list") {
+          return { data: [] };
+        }
+        return {};
+      }),
+    };
+
+    await expect(session.listCommands?.()).resolves.toContainEqual({
+      name: "compact",
+      description: "Summarize conversation to prevent hitting the context limit",
+      argumentHint: "",
+    });
+
+    const handler = session.tryHandleOutOfBand?.("/compact");
+    expect(handler).not.toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await handler?.run({ emit: (event) => events.push(event) });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "contextCompaction",
+        id: "manual-compact",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "contextCompaction",
+        id: "manual-compact",
+      },
+    });
+
+    expect(requests).toContainEqual({
+      method: "thread/compact/start",
+      params: { threadId: "test-thread" },
+    });
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "compaction",
+          status: "loading",
+          trigger: "manual",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: "manual",
         },
       },
     ]);

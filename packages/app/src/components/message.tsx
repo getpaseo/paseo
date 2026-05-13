@@ -92,6 +92,7 @@ import {
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
+import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
 import type { DaemonClient } from "@server/client/daemon-client";
@@ -1978,6 +1979,7 @@ export const ActivityLog = memo(function ActivityLog({
 
 interface CompactionMarkerProps {
   status: "loading" | "completed";
+  trigger?: "auto" | "manual";
   preTokens?: number;
 }
 
@@ -2008,12 +2010,10 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
 
 export const CompactionMarker = memo(function CompactionMarker({
   status,
+  trigger,
   preTokens,
 }: CompactionMarkerProps) {
-  let label: string;
-  if (status === "loading") label = "Compacting...";
-  else if (preTokens) label = `Context compacted (${Math.round(preTokens / 1000)}K tokens)`;
-  else label = "Context compacted";
+  const label = getCompactionMarkerLabel({ status, trigger, preTokens });
 
   return (
     <View style={compactionStylesheet.container}>

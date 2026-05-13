@@ -540,7 +540,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return <TodoListCard items={item.items} />;
 
           case "compaction":
-            return <CompactionMarker status={item.status} preTokens={item.preTokens} />;
+            return (
+              <CompactionMarker
+                status={item.status}
+                trigger={item.trigger}
+                preTokens={item.preTokens}
+              />
+            );
 
           default:
             return null;

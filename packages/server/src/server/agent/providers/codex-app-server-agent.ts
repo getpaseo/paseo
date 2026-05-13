@@ -98,6 +98,7 @@ const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
   "webSearch",
   "collabAgentToolCall",
 ]);
+const CODEX_CONTEXT_COMPACTION_TYPE = "contextCompaction";
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
   "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.";
 
@@ -1546,6 +1547,11 @@ function threadItemToTimeline(
       return mapCodexThreadPlanItem(normalizedItem);
     case "reasoning":
       return mapCodexThreadReasoningItem(normalizedItem);
+    case CODEX_CONTEXT_COMPACTION_TYPE:
+      return {
+        type: "compaction",
+        status: "completed",
+      };
     default:
       return null;
   }
@@ -1726,6 +1732,13 @@ const ItemLifecycleNotificationSchema = z
         type: z.string().optional(),
       })
       .passthrough(),
+  })
+  .passthrough();
+
+const ContextCompactedNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    turnId: z.string().optional(),
   })
   .passthrough();
 
@@ -1958,6 +1971,7 @@ type ParsedCodexNotification =
       itemId: string;
       delta: string | null;
     }
+  | { kind: "context_compacted"; threadId: string; turnId: string | null }
   | { kind: "invalid_payload"; method: string; params: unknown }
   | { kind: "unknown_method"; method: string; params: unknown };
 
@@ -2050,6 +2064,22 @@ const CodexNotificationSchema = z.union([
       }),
     ),
   z.object({ method: z.literal("thread/tokenUsage/updated"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({ method: z.literal("thread/compacted"), params: ContextCompactedNotificationSchema })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "context_compacted",
+        threadId: params.threadId,
+        turnId: params.turnId ?? null,
+      }),
+    ),
+  z.object({ method: z.literal("thread/compacted"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -2679,6 +2709,12 @@ class CodexAppServerAgentSession implements AgentSession {
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
+  private pendingManualCompactionStarts = 0;
+  private compactionTriggerByItemId = new Map<string, "auto" | "manual">();
+  // Codex can report one completed compaction through both channels:
+  // `thread/compacted` and a completed `contextCompaction` item.
+  private unpairedCompactionNotificationCompletions = 0;
+  private unpairedCompactionItemCompletions = 0;
   private connected = false;
   private collaborationModes: Array<{
     name: string;
@@ -3610,7 +3646,13 @@ class CodexAppServerAgentSession implements AgentSession {
       appServerSkills.length === 0
         ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
         : [];
-    const builtin: AgentSlashCommand[] = [];
+    const builtin: AgentSlashCommand[] = [
+      {
+        name: "compact",
+        description: "Summarize conversation to prevent hitting the context limit",
+        argumentHint: "",
+      },
+    ];
     if (this.goalsEnabled) {
       builtin.push({
         name: "goal",
@@ -3626,10 +3668,26 @@ class CodexAppServerAgentSession implements AgentSession {
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
   ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
-    if (!this.goalsEnabled) return null;
     if (typeof prompt !== "string") return null;
     const parsed = this.parseSlashCommandInput(prompt);
-    if (!parsed || parsed.commandName !== "goal") return null;
+    if (!parsed) return null;
+
+    if (parsed.commandName === "compact") {
+      return {
+        run: async ({ emit }) => {
+          const error = await this.executeCompactCommand();
+          if (error) {
+            emit({
+              type: "timeline",
+              provider: CODEX_PROVIDER,
+              item: { type: "assistant_message", text: formatOutOfBandStatusMessage(error) },
+            });
+          }
+        },
+      };
+    }
+
+    if (!this.goalsEnabled || parsed.commandName !== "goal") return null;
 
     const subcommand = parseGoalSubcommand(parsed.args);
     return {
@@ -3642,6 +3700,33 @@ class CodexAppServerAgentSession implements AgentSession {
         });
       },
     };
+  }
+
+  private async executeCompactCommand(): Promise<string | null> {
+    try {
+      await this.connect();
+      if (this.currentThreadId) {
+        await this.ensureThreadLoaded();
+      } else {
+        await this.ensureThread();
+      }
+      if (!this.client || !this.currentThreadId) {
+        throw new Error("Codex thread is not available");
+      }
+      this.pendingManualCompactionStarts += 1;
+      try {
+        await this.client.request("thread/compact/start", {
+          threadId: this.currentThreadId,
+        });
+      } catch (error) {
+        this.pendingManualCompactionStarts = Math.max(0, this.pendingManualCompactionStarts - 1);
+        throw error;
+      }
+      return null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      return `Failed to compact context: ${message}`;
+    }
   }
 
   private async executeGoalSubcommand(subcommand: GoalSubcommand): Promise<string> {
@@ -3874,6 +3959,9 @@ class CodexAppServerAgentSession implements AgentSession {
         return;
       case "token_usage_updated":
         this.handleTokenUsageUpdatedNotification(parsed);
+        return;
+      case "context_compacted":
+        this.handleContextCompactedNotification(parsed);
         return;
       case "agent_message_delta":
       case "reasoning_delta":
@@ -4201,6 +4289,8 @@ class CodexAppServerAgentSession implements AgentSession {
     this.pendingFileChangeOutputDeltas.clear();
     this.pendingAssistantMessageBoundary = false;
     this.warnedIncompleteEditToolCallIds.clear();
+    this.unpairedCompactionNotificationCompletions = 0;
+    this.unpairedCompactionItemCompletions = 0;
   }
 
   private handlePlanUpdatedNotification(
@@ -4238,6 +4328,65 @@ class CodexAppServerAgentSession implements AgentSession {
         usage: this.latestUsage,
       });
     }
+  }
+
+  private resolveContextCompactionTrigger(itemId?: string): "auto" | "manual" | undefined {
+    if (itemId) {
+      const known = this.compactionTriggerByItemId.get(itemId);
+      if (known) {
+        return known;
+      }
+    }
+    if (this.pendingManualCompactionStarts > 0) {
+      this.pendingManualCompactionStarts -= 1;
+      return "manual";
+    }
+    return undefined;
+  }
+
+  private createContextCompactionTimelineItem(
+    status: "loading" | "completed",
+    itemId?: string,
+  ): Extract<AgentTimelineItem, { type: "compaction" }> {
+    const trigger = this.resolveContextCompactionTrigger(itemId);
+    if (itemId && trigger) {
+      if (status === "loading") {
+        this.compactionTriggerByItemId.set(itemId, trigger);
+      } else {
+        this.compactionTriggerByItemId.delete(itemId);
+      }
+    }
+    return {
+      type: "compaction",
+      status,
+      ...(trigger ? { trigger } : {}),
+    };
+  }
+
+  private isContextCompactionItem(item: { type?: string; [key: string]: unknown }): boolean {
+    return (
+      normalizeCodexThreadItemType(typeof item.type === "string" ? item.type : undefined) ===
+      CODEX_CONTEXT_COMPACTION_TYPE
+    );
+  }
+
+  private handleContextCompactedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "context_compacted" }>,
+  ): void {
+    if (parsed.threadId !== this.currentThreadId) {
+      return;
+    }
+    if (this.unpairedCompactionItemCompletions > 0) {
+      this.unpairedCompactionItemCompletions -= 1;
+      return;
+    }
+    this.unpairedCompactionNotificationCompletions += 1;
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: this.createContextCompactionTimelineItem("completed"),
+      ...(parsed.turnId ? { turnId: parsed.turnId } : {}),
+    });
   }
 
   private handleExecCommandStartedNotification(
@@ -4355,6 +4504,19 @@ class CodexAppServerAgentSession implements AgentSession {
     // and canonical `item/*`. We render only the canonical channel to avoid
     // duplicated assistant/reasoning rows.
     if (parsed.source === "codex_event") {
+      return;
+    }
+    if (this.isContextCompactionItem(parsed.item)) {
+      if (this.unpairedCompactionNotificationCompletions > 0) {
+        this.unpairedCompactionNotificationCompletions -= 1;
+        return;
+      }
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("completed", parsed.item.id),
+      });
+      this.unpairedCompactionItemCompletions += 1;
       return;
     }
     const timelineItem = threadItemToTimeline(parsed.item, {
@@ -4485,6 +4647,14 @@ class CodexAppServerAgentSession implements AgentSession {
     parsed: Extract<ParsedCodexNotification, { kind: "item_started" }>,
   ): void {
     if (parsed.source === "codex_event") {
+      return;
+    }
+    if (this.isContextCompactionItem(parsed.item)) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("loading", parsed.item.id),
+      });
       return;
     }
     const timelineItem = threadItemToTimeline(parsed.item, {
