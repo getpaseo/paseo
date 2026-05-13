@@ -1086,12 +1086,7 @@ describe("GitHubService", () => {
       headRef: "feature/pr-pane",
     });
 
-    expect(runner.calls[0]?.args).toEqual([
-      "pr",
-      "view",
-      "--json",
-      CURRENT_PR_STATUS_FIELDS,
-    ]);
+    expect(runner.calls[0]?.args).toEqual(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS]);
     expect(status).toEqual({
       number: 42,
       repoOwner: "acme",
@@ -1125,7 +1120,9 @@ describe("GitHubService", () => {
 
   it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {
     const runner = createScriptedRunner([
-      { error: statusCheckRollupPermissionError(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS]) },
+      {
+        error: statusCheckRollupPermissionError(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS]),
+      },
       currentPullRequestJson({
         headRefName: "feature/pr-pane",
         reviewDecision: "APPROVED",
@@ -1235,12 +1232,7 @@ describe("GitHubService", () => {
       headRefName: "feature/fork",
     });
     expect(runner.calls.map((call) => call.args)).toEqual([
-      [
-        "pr",
-        "view",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
       [
         "pr",
@@ -1405,12 +1397,7 @@ describe("GitHubService", () => {
       }),
     ).resolves.toBeNull();
     expect(calls.map((call) => call.args)).toEqual([
-      [
-        "pr",
-        "view",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
     ]);
   });
@@ -1466,12 +1453,7 @@ describe("GitHubService", () => {
       headRefName: "main",
     });
     expect(runner.calls.map((call) => call.args)).toEqual([
-      [
-        "pr",
-        "view",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-      ],
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       [
         "pr",
         "list",

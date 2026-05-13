@@ -1319,15 +1319,7 @@ function isStatusCheckRollupPermissionError(error: unknown): boolean {
   if (!(error instanceof GitHubCommandError)) {
     return false;
   }
-  const text = error.stderr.toLowerCase();
-  if (text.includes("statuscheckrollup")) {
-    return true;
-  }
-  return (
-    text.includes("resource not accessible by personal access token") ||
-    text.includes("requires one of the following scopes") ||
-    text.includes("insufficient permission")
-  );
+  return error.stderr.toLowerCase().includes("statuscheckrollup");
 }
 
 async function resolveCurrentPullRequestView(options: {
@@ -1410,14 +1402,7 @@ async function listCurrentPullRequestCandidates(options: {
   if (options.repo) {
     args.push("--repo", options.repo);
   }
-  args.push(
-    "--state",
-    "all",
-    "--head",
-    options.headRef,
-    "--limit",
-    "10",
-  );
+  args.push("--state", "all", "--head", options.headRef, "--limit", "10");
   try {
     const stdout = await runCurrentPullRequestStatusCommand({
       cwd: options.cwd,
