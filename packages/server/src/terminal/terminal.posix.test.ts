@@ -20,7 +20,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 
 const hasZsh = existsSync("/bin/zsh");
 
@@ -216,6 +216,13 @@ function lastNonEmptyLineIsPrompt(state: ReturnType<TerminalSession["getState"]>
   return last === "$";
 }
 
+function removeZshShellIntegrationRuntimeDir(): void {
+  rmSync(join(tmpdir(), `${userInfo().username || "unknown"}-paseo-zsh`), {
+    recursive: true,
+    force: true,
+  });
+}
+
 describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
   it("sets zsh wrapper env when spawning zsh", () => {
     const resolvedEnv = buildTerminalEnvironment({
@@ -231,6 +238,27 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
     expect(resolvedEnv.ZDOTDIR).not.toBe("/tmp/paseo-zdotdir");
     expect(existsSync(join(resolvedEnv.ZDOTDIR, ".zshenv"))).toBe(true);
     expect(existsSync(join(resolvedEnv.ZDOTDIR, "paseo-integration.zsh"))).toBe(true);
+  });
+
+  it("reuses zsh shell integration copied from read-only source files", () => {
+    const integrationSourceDir = mkdtempSync(join(tmpdir(), "paseo-zsh-readonly-source-"));
+    const tmpHome = mkdtempSync(join(tmpdir(), "paseo-zsh-readonly-home-"));
+    temporaryDirs.push(integrationSourceDir, tmpHome);
+    cpSync(resolveZshShellIntegrationDir(), integrationSourceDir, { recursive: true });
+    chmodSync(join(integrationSourceDir, ".zshenv"), 0o444);
+    chmodSync(join(integrationSourceDir, "paseo-integration.zsh"), 0o444);
+    removeZshShellIntegrationRuntimeDir();
+
+    const buildEnvironment = () =>
+      buildTerminalEnvironment({
+        shell: "/bin/zsh",
+        env: { HOME: tmpHome },
+        zshShellIntegrationDir: integrationSourceDir,
+      });
+
+    buildEnvironment();
+
+    expect(buildEnvironment).not.toThrow();
   });
 
   describe("send input", () => {

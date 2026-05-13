@@ -1,12 +1,13 @@
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
+import { writePrivateFileAtomicSync } from "../server/private-files.js";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
 
 const { Terminal } = xterm;
@@ -202,10 +203,13 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
   const runtimeDir = resolveZshShellIntegrationRuntimeDir();
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   chmodSync(runtimeDir, 0o700);
-  copyFileSync(join(readableSourceDir, ".zshenv"), join(runtimeDir, ".zshenv"));
-  copyFileSync(
-    join(readableSourceDir, "paseo-integration.zsh"),
+  writePrivateFileAtomicSync(
+    join(runtimeDir, ".zshenv"),
+    readFileSync(join(readableSourceDir, ".zshenv")),
+  );
+  writePrivateFileAtomicSync(
     join(runtimeDir, "paseo-integration.zsh"),
+    readFileSync(join(readableSourceDir, "paseo-integration.zsh")),
   );
   return runtimeDir;
 }
