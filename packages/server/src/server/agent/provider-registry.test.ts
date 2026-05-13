@@ -560,9 +560,9 @@ test("extension inherits base override — override claude command, zai extends 
 
 describe("model merging", () => {
   test("profile models replace runtime models", async () => {
-    mockState.runtimeModels.set("claude", [
+    mockState.runtimeModels.set("codex", [
       {
-        provider: "claude",
+        provider: "codex",
         id: "runtime-pro",
         label: "Runtime Pro",
       },
@@ -570,7 +570,7 @@ describe("model merging", () => {
 
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: {
+        codex: {
           models: [
             {
               id: "profile-fast",
@@ -581,7 +581,7 @@ describe("model merging", () => {
       },
     });
 
-    const models = await registry.claude.fetchModels({
+    const models = await registry.codex.fetchModels({
       cwd: "/tmp/registry-models",
       force: false,
     });
@@ -590,14 +590,14 @@ describe("model merging", () => {
   });
 
   test("profile models exclude runtime models entirely", async () => {
-    mockState.runtimeModels.set("claude", [
+    mockState.runtimeModels.set("codex", [
       {
-        provider: "claude",
+        provider: "codex",
         id: "shared-model",
         label: "Runtime Label",
       },
       {
-        provider: "claude",
+        provider: "codex",
         id: "runtime-only",
         label: "Runtime Only",
       },
@@ -605,7 +605,7 @@ describe("model merging", () => {
 
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: {
+        codex: {
           models: [
             {
               id: "shared-model",
@@ -616,14 +616,14 @@ describe("model merging", () => {
       },
     });
 
-    const models = await registry.claude.fetchModels({
+    const models = await registry.codex.fetchModels({
       cwd: "/tmp/registry-models",
       force: false,
     });
 
     expect(models).toEqual([
       {
-        provider: "claude",
+        provider: "codex",
         id: "shared-model",
         label: "Profile Label",
       },
@@ -631,9 +631,9 @@ describe("model merging", () => {
   });
 
   test("profile isDefault preserved without runtime models", async () => {
-    mockState.runtimeModels.set("claude", [
+    mockState.runtimeModels.set("codex", [
       {
-        provider: "claude",
+        provider: "codex",
         id: "runtime-default",
         label: "Runtime Default",
         isDefault: true,
@@ -642,7 +642,7 @@ describe("model merging", () => {
 
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: {
+        codex: {
           models: [
             {
               id: "profile-default",
@@ -654,14 +654,14 @@ describe("model merging", () => {
       },
     });
 
-    const models = await registry.claude.fetchModels({
+    const models = await registry.codex.fetchModels({
       cwd: "/tmp/registry-models",
       force: false,
     });
 
     expect(models).toEqual([
       {
-        provider: "claude",
+        provider: "codex",
         id: "profile-default",
         label: "Profile Default",
         isDefault: true,
@@ -710,10 +710,65 @@ describe("model merging", () => {
     ]);
   });
 
-  test("additional models merge onto profile replacement models", async () => {
+  test("built-in Claude profile models append to runtime models", async () => {
     mockState.runtimeModels.set("claude", [
       {
         provider: "claude",
+        id: "runtime-model",
+        label: "Runtime Model",
+      },
+      {
+        provider: "claude",
+        id: "shared-model",
+        label: "Runtime Label",
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            {
+              id: "shared-model",
+              label: "Profile Label",
+            },
+            {
+              id: "profile-model",
+              label: "Profile Model",
+            },
+          ],
+        },
+      },
+    });
+
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "runtime-model",
+        label: "Runtime Model",
+      },
+      {
+        provider: "claude",
+        id: "shared-model",
+        label: "Profile Label",
+      },
+      {
+        provider: "claude",
+        id: "profile-model",
+        label: "Profile Model",
+      },
+    ]);
+  });
+
+  test("additional models merge onto profile replacement models", async () => {
+    mockState.runtimeModels.set("codex", [
+      {
+        provider: "codex",
         id: "runtime-pro",
         label: "Runtime Pro",
       },
@@ -721,7 +776,7 @@ describe("model merging", () => {
 
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: {
+        codex: {
           models: [
             {
               id: "profile-curated",
@@ -738,7 +793,7 @@ describe("model merging", () => {
       },
     });
 
-    const models = await registry.claude.fetchModels({
+    const models = await registry.codex.fetchModels({
       cwd: "/tmp/registry-models",
       force: false,
     });
@@ -883,9 +938,9 @@ describe("model merging", () => {
   });
 
   test("built-in createClient().listModels() honors profile model replacement (issue #579)", async () => {
-    mockState.runtimeModels.set("claude", [
+    mockState.runtimeModels.set("codex", [
       {
-        provider: "claude",
+        provider: "codex",
         id: "runtime-default",
         label: "Runtime Default",
         isDefault: true,
@@ -894,7 +949,7 @@ describe("model merging", () => {
 
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: {
+        codex: {
           models: [
             {
               id: "profile-fast",
@@ -906,7 +961,7 @@ describe("model merging", () => {
       },
     });
 
-    const client = registry.claude.createClient(logger);
+    const client = registry.codex.createClient(logger);
     const models = await client.listModels({
       cwd: "/tmp/registry-models",
       force: false,

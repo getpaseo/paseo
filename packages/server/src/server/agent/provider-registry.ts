@@ -89,6 +89,7 @@ interface ResolvedProvider {
   runtimeSettings?: ProviderRuntimeSettings;
   profileModels: ProviderProfileModel[];
   additionalModels: ProviderProfileModel[];
+  profileModelsAreAdditive: boolean;
   enabled: boolean;
   derivedFromProviderId: string | null;
   createBaseClient: (logger: Logger) => AgentClient;
@@ -254,23 +255,36 @@ function mergeModels(
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
   runtimeModels: AgentModelDefinition[],
+  options?: { profileModelsAreAdditive?: boolean },
 ): AgentModelDefinition[] {
-  const baseModels =
-    profileModels.length === 0
-      ? runtimeModels.map((model) => mapModel(provider, model))
-      : profileModels.map((model) => ({
-          ...model,
-          provider,
-        }));
+  const baseModels = runtimeModels.map((model) => mapModel(provider, model));
+  if (profileModels.length > 0 && options?.profileModelsAreAdditive !== true) {
+    return mergeModelAdditions(
+      provider,
+      profileModels.map((model) => ({
+        ...model,
+        provider,
+      })),
+      additionalModels,
+    );
+  }
 
-  if (additionalModels.length === 0) {
+  return mergeModelAdditions(provider, baseModels, [...profileModels, ...additionalModels]);
+}
+
+function mergeModelAdditions(
+  provider: AgentProvider,
+  baseModels: AgentModelDefinition[],
+  modelAdditions: ProviderProfileModel[],
+): AgentModelDefinition[] {
+  if (modelAdditions.length === 0) {
     return baseModels;
   }
 
   const mergedModels = [...baseModels];
   let hasAdditionalDefault = false;
 
-  for (const model of additionalModels) {
+  for (const model of modelAdditions) {
     const additionalModel = {
       ...model,
       provider,
@@ -294,7 +308,7 @@ function mergeModels(
   }
 
   const additionalDefaultIds = new Set(
-    additionalModels.filter((model) => model.isDefault === true).map((model) => model.id),
+    modelAdditions.filter((model) => model.isDefault === true).map((model) => model.id),
   );
 
   return mergedModels.map((model) =>
@@ -339,6 +353,7 @@ function wrapClientProvider(
   inner: AgentClient,
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
+  profileModelsAreAdditive: boolean,
 ): AgentClient {
   const listPersistedAgents = inner.listPersistedAgents?.bind(inner);
 
@@ -374,7 +389,9 @@ function wrapClientProvider(
         ),
       ),
     listModels: async (options) =>
-      mergeModels(provider, profileModels, additionalModels, await inner.listModels(options)),
+      mergeModels(provider, profileModels, additionalModels, await inner.listModels(options), {
+        profileModelsAreAdditive,
+      }),
     listModes: inner.listModes?.bind(inner),
     listPersistedAgents: listPersistedAgents
       ? async (options?: ListPersistedAgentsOptions) =>
@@ -406,6 +423,9 @@ function createRegistryEntry(
         resolved.profileModels,
         resolved.additionalModels,
         await modelClient.listModels(options),
+        {
+          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+        },
       ),
     fetchModes: async (options: ListModesOptions) => {
       const modes = modelClient.listModes
@@ -435,7 +455,13 @@ function createResolvedProviderClient(
   if (inner.provider === provider && !hasModelOverrides) {
     return inner;
   }
-  return wrapClientProvider(provider, inner, resolved.profileModels, resolved.additionalModels);
+  return wrapClientProvider(
+    provider,
+    inner,
+    resolved.profileModels,
+    resolved.additionalModels,
+    resolved.profileModelsAreAdditive,
+  );
 }
 
 function buildResolvedBuiltinProviders(
@@ -463,6 +489,7 @@ function buildResolvedBuiltinProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
+      profileModelsAreAdditive: definition.id === "claude",
       enabled: override?.enabled !== false,
       derivedFromProviderId: null,
       createBaseClient: (logger) =>
@@ -510,6 +537,7 @@ function addDerivedProviders(
         runtimeSettings: toRuntimeSettings(override),
         profileModels: override.models ?? [],
         additionalModels: override.additionalModels ?? [],
+        profileModelsAreAdditive: false,
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         createBaseClient: (logger) =>
@@ -544,6 +572,7 @@ function addDerivedProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
       additionalModels: override.additionalModels ?? [],
+      profileModelsAreAdditive: false,
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
       createBaseClient: (logger) =>

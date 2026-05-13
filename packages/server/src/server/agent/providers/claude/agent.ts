@@ -29,7 +29,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./task-notification-tool-call.js";
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import { getClaudeModelsWithSettings, normalizeClaudeRuntimeModelId } from "./models.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import {
@@ -1259,8 +1259,8 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    // Claude exposes a static catalog here; cwd/force are intentionally irrelevant.
-    return getClaudeModels();
+    // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
+    return await getClaudeModelsWithSettings(this.logger);
   }
 
   async listPersistedAgents(
