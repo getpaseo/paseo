@@ -423,8 +423,17 @@ async function attachEncryptedSocket(
   try {
     const relayTransport = createRelayTransportAdapter(socket, logger);
     const emitter = new EventEmitter();
+    const pendingMessages: Array<string | ArrayBuffer> = [];
+    let attached = false;
+    const emitMessage = (data: string | ArrayBuffer) => {
+      if (attached) {
+        emitter.emit("message", data);
+        return;
+      }
+      pendingMessages.push(data);
+    };
     const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
-      onmessage: (data) => emitter.emit("message", data),
+      onmessage: emitMessage,
       onclose: (code, reason) => emitter.emit("close", code, reason),
       onerror: (error) => {
         logger.warn({ err: error }, "relay_e2ee_error");
@@ -433,6 +442,11 @@ async function attachEncryptedSocket(
     });
     const encryptedSocket = createEncryptedSocket(channel, emitter);
     await attachSocket(encryptedSocket, metadata);
+    attached = true;
+    for (const message of pendingMessages) {
+      emitter.emit("message", message);
+    }
+    pendingMessages.length = 0;
   } catch (error) {
     logger.warn({ err: error }, "relay_e2ee_handshake_failed");
     try {

@@ -302,6 +302,58 @@ function makeProbeMap(
 }
 
 describe("HostRuntimeController", () => {
+  it("replaces the active relay client when re-pairing changes the daemon public key", async () => {
+    const oldRelay: HostConnection = {
+      id: "relay:wss:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_old",
+    };
+    const newRelay: HostConnection = {
+      ...oldRelay,
+      daemonPublicKeyB64: "pk_new",
+    };
+    const createdClients: Array<{ client: FakeDaemonClient; connection: HostConnection }> = [];
+    const controller = new HostRuntimeController({
+      host: makeHost({
+        connections: [oldRelay],
+        preferredConnectionId: oldRelay.id,
+      }),
+      deps: {
+        createClient: ({ connection }) => {
+          const client = new FakeDaemonClient();
+          createdClients.push({ client, connection });
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async ({ host, connection }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await (
+      controller as unknown as {
+        switchToConnection: (input: { connectionId: string }) => Promise<void>;
+      }
+    ).switchToConnection({ connectionId: oldRelay.id });
+    expect(controller.getSnapshot().client).toBe(createdClients[0]?.client);
+
+    await controller.updateHost(
+      makeHost({
+        connections: [newRelay],
+        preferredConnectionId: newRelay.id,
+      }),
+    );
+
+    expect(createdClients.map((entry) => entry.connection)).toEqual([oldRelay, newRelay]);
+    expect(createdClients[0]?.client.closeCalls).toBe(1);
+    expect(controller.getSnapshot().client).toBe(createdClients[1]?.client);
+  });
+
   it("keeps known hosts in connecting when a created client reports idle during connect", async () => {
     const host = makeHost({
       connections: [
