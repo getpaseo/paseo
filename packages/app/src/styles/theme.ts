@@ -146,6 +146,8 @@ const lightSemanticColors = {
   surfaceSidebar: "#f4f4f5", // Sidebar background (darker than main)
   surfaceSidebarHover: "#e9e9ec", // Sidebar hover (darker in light mode)
   surfaceWorkspace: "#ffffff", // Workspace main background
+  userMessageBubble: "#e4e4e7",
+  userMessageBubbleBorder: "#e4e4e7",
 
   // Text
   foreground: "#1a1a1e",
@@ -264,6 +266,8 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebar: tint.surfaceSidebar,
     surfaceSidebarHover: tint.surfaceSidebarHover,
     surfaceWorkspace: tint.surface1,
+    userMessageBubble: tint.surface3,
+    userMessageBubbleBorder: tint.border,
 
     foreground: "#fafafa",
     foregroundMuted: tint.foregroundMuted,
