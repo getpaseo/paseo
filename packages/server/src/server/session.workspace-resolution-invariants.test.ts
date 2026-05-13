@@ -30,6 +30,7 @@ function createHarness(input: {
   workspaces?: PersistedWorkspaceRecord[];
   projects?: PersistedProjectRecord[];
   gitRoots?: string[];
+  remoteUrl?: string | null;
 }): Harness {
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
   const projects = new Map<string, PersistedProjectRecord>();
@@ -65,7 +66,7 @@ function createHarness(input: {
         cwd,
         isGit: true,
         currentBranch: "main",
-        remoteUrl: null,
+        remoteUrl: input.remoteUrl ?? null,
         worktreeRoot: root,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
@@ -476,4 +477,32 @@ test("S13: subfolder of an archived git repo opens as a directory workspace", as
   const resp = getOpenResponse(h.emitted, "req-1");
   expect(resp?.error).toBeNull();
   expect(resp?.workspace?.workspaceKind).toBe("directory");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S14. Two independent local clones of the same remote are separate projects.
+//      They may both be on `main`, but opening one must not make the other
+//      inherit the same sidebar project identity.
+// ─────────────────────────────────────────────────────────────────────────────
+test("S14: same-remote sibling checkouts open as separate projects", async () => {
+  const first = path.join(PROJECTS, "repo-one");
+  const second = path.join(PROJECTS, "repo-two");
+  const h = createHarness({
+    gitRoots: [first, second],
+    remoteUrl: "https://github.com/acme/repo.git",
+  });
+
+  await openProject(h.session, first, "req-first");
+  await openProject(h.session, second, "req-second");
+
+  const firstResp = getOpenResponse(h.emitted, "req-first");
+  const secondResp = getOpenResponse(h.emitted, "req-second");
+  expect(firstResp?.error).toBeNull();
+  expect(secondResp?.error).toBeNull();
+  expect(firstResp?.workspace?.projectId).toBe(first);
+  expect(secondResp?.workspace?.projectId).toBe(second);
+  expect(firstResp?.workspace?.projectDisplayName).toBe("repo-one");
+  expect(secondResp?.workspace?.projectDisplayName).toBe("repo-two");
+  expect(h.projects.size).toBe(2);
+  expect(h.workspaces.size).toBe(2);
 });

@@ -103,7 +103,7 @@ describe("deriveWorkspaceId", () => {
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       }),
-    ).toBe("/tmp/repo");
+    ).toBe(normalizeWorkspaceId("/tmp/repo"));
   });
 
   test("falls back to normalized cwd when git worktree root contains multiple lines", () => {
@@ -140,6 +140,32 @@ describe("deriveWorkspaceId", () => {
 });
 
 describe("git worktree grouping", () => {
+  test("keeps independent local checkouts with the same remote as separate projects", () => {
+    const membership = classifyDirectoryForProjectMembership({
+      cwd: "/tmp/projects/repo-copy",
+      checkout: {
+        cwd: "/tmp/projects/repo-copy",
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: "/tmp/projects/repo-copy",
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+
+    expect(membership).toMatchObject({
+      cwd: normalizeWorkspaceId("/tmp/projects/repo-copy"),
+      workspaceId: normalizeWorkspaceId("/tmp/projects/repo-copy"),
+      workspaceKind: "local_checkout",
+      workspaceDisplayName: "main",
+      projectKey: normalizeWorkspaceId("/tmp/projects/repo-copy"),
+      projectName: "repo-copy",
+      projectRootPath: normalizeWorkspaceId("/tmp/projects/repo-copy"),
+      projectKind: "git",
+    });
+  });
+
   test("classifies plain git worktrees for project membership from git facts", () => {
     const membership = classifyDirectoryForProjectMembership({
       cwd: "/tmp/repo-feature",
@@ -156,7 +182,7 @@ describe("git worktree grouping", () => {
 
     expect(membership).toMatchObject({
       cwd: normalizeWorkspaceId("/tmp/repo-feature"),
-      workspaceId: "/tmp/repo-feature",
+      workspaceId: normalizeWorkspaceId("/tmp/repo-feature"),
       workspaceKind: "worktree",
       workspaceDisplayName: "feature/plain",
       projectKey: "remote:github.com/acme/repo",

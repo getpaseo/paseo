@@ -34,7 +34,7 @@ export function normalizeWorkspaceId(cwd: string): string {
 
 export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
-  return worktreeRoot ?? normalizeWorkspaceId(cwd);
+  return normalizeWorkspaceId(worktreeRoot ?? cwd);
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
@@ -89,13 +89,12 @@ export function deriveProjectGroupingKey(options: {
   remoteUrl: string | null;
   mainRepoRoot: string | null;
 }): string {
-  const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
-  if (remoteKey) {
-    return remoteKey;
-  }
-
   const mainRepoRoot = options.mainRepoRoot?.trim();
   if (mainRepoRoot) {
+    const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
+    if (remoteKey) {
+      return remoteKey;
+    }
     return mainRepoRoot;
   }
 
@@ -243,8 +242,9 @@ export function classifyDirectoryForProjectMembership(input: {
     cwd: normalizedCwd,
   };
 
+  const workspaceRoot = deriveWorkspaceId(normalizedCwd, checkout);
   const projectKey = deriveProjectGroupingKey({
-    cwd: checkout.worktreeRoot ?? normalizedCwd,
+    cwd: workspaceRoot,
     remoteUrl: checkout.remoteUrl,
     mainRepoRoot: checkout.mainRepoRoot,
   });
