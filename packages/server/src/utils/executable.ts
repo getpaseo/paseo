@@ -126,11 +126,12 @@ export async function findExecutable(
   }
 
   const candidates = await enumerateCandidates(trimmed);
-  const probeResults = await Promise.all(
-    candidates.map((candidate) => probeExecutable(candidate, probeTimeoutMs)),
-  );
-  const firstMatch = probeResults.findIndex((result) => result);
-  return firstMatch === -1 ? null : candidates[firstMatch];
+  for (const candidate of candidates) {
+    if (await probeExecutable(candidate, probeTimeoutMs)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 export async function isCommandAvailable(command: string): Promise<boolean> {
