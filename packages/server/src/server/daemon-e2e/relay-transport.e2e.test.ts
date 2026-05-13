@@ -10,6 +10,14 @@ import { Buffer } from "node:buffer";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
+import {
+  deriveSharedKey,
+  decrypt,
+  encrypt,
+  exportPublicKey,
+  generateKeyPair,
+  importPublicKey,
+} from "@getpaseo/relay";
 import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
 import { ConnectionOfferSchema } from "../../shared/connection-offer.js";
 import { WSOutboundMessageSchema } from "../../shared/messages.js";
@@ -25,7 +33,7 @@ function createCapturingLogger() {
       cb();
     },
   });
-  const logger = pino({ level: "info" }, stream);
+  const logger = pino({ level: "debug" }, stream);
   return { logger, lines };
 }
 
@@ -63,6 +71,23 @@ function decodeOfferFromFragmentUrl(url: string): {
   const json = Buffer.from(encoded, "base64url").toString("utf8");
   const offer = ConnectionOfferSchema.parse(JSON.parse(json));
   return { serverId: offer.serverId, daemonPublicKeyB64: offer.daemonPublicKeyB64 };
+}
+
+function encodeCiphertext(ciphertext: ArrayBuffer): string {
+  return Buffer.from(new Uint8Array(ciphertext)).toString("base64");
+}
+
+function decodeCiphertext(text: string): ArrayBuffer {
+  const buffer = Buffer.from(text, "base64");
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+}
+
+function parseEncryptedJson(sharedKey: Uint8Array, text: string): unknown {
+  const plaintext = decrypt(sharedKey, decodeCiphertext(text));
+  if (typeof plaintext !== "string") {
+    throw new Error("Expected encrypted relay frame to contain UTF-8 JSON");
+  }
+  return JSON.parse(plaintext);
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -142,8 +167,10 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 (shouldRunRelayE2e ? describe : describe.skip)("Relay transport (E2EE) - daemon E2E", () => {
   let relayPort: number;
   let relayProcess: ChildProcess | null = null;
+  let relayStdoutLines: string[] = [];
 
   const startRelay = async () => {
+    relayStdoutLines = [];
     relayPort = await getAvailablePort();
     const relayDir = path.resolve(process.cwd(), "../relay");
     relayProcess = spawn(
@@ -173,6 +200,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
         .split("\n")
         .filter((l) => l.trim());
       for (const line of lines) {
+        relayStdoutLines.push(line);
         // eslint-disable-next-line no-console
         console.log(`[relay] ${line}`);
       }
@@ -366,6 +394,22 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       );
       expect(handshakeFailures.length).toBe(0);
 
+      // Protocol pings (RFC 6455 control frames) are auto-answered at the Cloudflare edge
+      // without waking the hibernated relay Durable Object. After 12s, the keepalive interval
+      // (10s) must have fired at least once and received a pong. If this assertion fails, the
+      // daemon may have regressed to app-level JSON pings (which wake the DO and cost CPU).
+      const pongLines = lines.filter((l) => l.includes("relay_control_pong_received"));
+      expect(pongLines.length).toBeGreaterThan(0);
+      const staleLines = lines.filter((l) => l.includes("relay_control_stale_terminating"));
+      expect(staleLines.length).toBe(0);
+      // Guard against the dual-ping regression: if a JSON {type:"ping"} reaches the DO during
+      // the idle window, the DO logs `legacy_json_ping_received`. The current daemon code must
+      // not send JSON pings on the control socket — only protocol pings via socket.ping().
+      const legacyPingLines = relayStdoutLines.filter((l) =>
+        l.includes("legacy_json_ping_received"),
+      );
+      expect(legacyPingLines.length).toBe(0);
+
       const ws = new WebSocket(
         buildRelayWebSocketUrl({
           endpoint: `127.0.0.1:${relayPort}`,
@@ -448,6 +492,146 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       });
 
       expect(received).toEqual({ type: "pong" });
+    } catch (err) {
+      const tail = lines.slice(-50).join("");
+      // eslint-disable-next-line no-console
+      console.error("daemon logs (tail):\n", tail);
+      throw err;
+    } finally {
+      await daemon.close();
+      await stopRelay();
+    }
+  }, 90000);
+
+  test("daemon accepts a relay client that pipelines app hello after E2EE hello", async () => {
+    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+    const { logger, lines } = createCapturingLogger();
+    await startRelay();
+
+    const daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      logger,
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+    });
+
+    try {
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
+      const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+      const clientKeyPair = generateKeyPair();
+      const sharedKey = deriveSharedKey(
+        clientKeyPair.secretKey,
+        importPublicKey(daemonPublicKeyB64),
+      );
+
+      const ws = new WebSocket(
+        buildRelayWebSocketUrl({
+          endpoint: `127.0.0.1:${relayPort}`,
+          useTls: false,
+          serverId,
+          role: "client",
+        }),
+      );
+
+      const received = await new Promise<unknown>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error("timed out waiting for server_info"));
+        }, 20000);
+
+        const settleResolve = (value: unknown) => {
+          clearTimeout(timeout);
+          resolve(value);
+          ws.close();
+        };
+        const settleReject = (reason: unknown) => {
+          clearTimeout(timeout);
+          reject(reason);
+          ws.close();
+        };
+
+        ws.on("open", () => {
+          ws.send(
+            JSON.stringify({
+              type: "e2ee_hello",
+              key: exportPublicKey(clientKeyPair.publicKey),
+            }),
+          );
+          ws.send(
+            encodeCiphertext(
+              encrypt(
+                sharedKey,
+                JSON.stringify({
+                  type: "hello",
+                  clientId: "cid_relay_pipelined_hello",
+                  clientType: "cli",
+                  protocolVersion: 1,
+                }),
+              ),
+            ),
+          );
+        });
+
+        ws.on("message", (data) => {
+          try {
+            const text = typeof data === "string" ? data : data.toString();
+            const maybePlaintext = JSON.parse(text) as unknown;
+            if (
+              maybePlaintext &&
+              typeof maybePlaintext === "object" &&
+              "type" in maybePlaintext &&
+              maybePlaintext.type === "e2ee_ready"
+            ) {
+              return;
+            }
+          } catch {
+            // encrypted frame; parse below
+          }
+
+          try {
+            const parsed = WSOutboundMessageSchema.parse(
+              parseEncryptedJson(sharedKey, data.toString()),
+            );
+            if (
+              parsed.type === "session" &&
+              parsed.message.type === "status" &&
+              parsed.message.payload?.status === "server_info"
+            ) {
+              settleResolve({
+                type: parsed.type,
+                message: {
+                  type: parsed.message.type,
+                  payload: { status: parsed.message.payload.status },
+                },
+              });
+            }
+          } catch (error) {
+            settleReject(error);
+          }
+        });
+
+        ws.on("close", (code, reason) => {
+          settleReject(new Error(`relay client closed before server_info: ${code} ${reason}`));
+        });
+        ws.on("error", (err) => {
+          settleReject(err);
+        });
+      });
+
+      expect(received).toEqual({
+        type: "session",
+        message: {
+          type: "status",
+          payload: { status: "server_info" },
+        },
+      });
     } catch (err) {
       const tail = lines.slice(-50).join("");
       // eslint-disable-next-line no-console

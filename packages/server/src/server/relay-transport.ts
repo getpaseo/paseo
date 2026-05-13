@@ -35,8 +35,9 @@ interface RelaySocketLike {
 
 interface RelayWebSocketLike extends RelaySocketLike {
   terminate: () => void;
+  ping: () => void;
   on: (
-    event: "open" | "message" | "close" | "error",
+    event: "open" | "message" | "close" | "error" | "pong",
     listener: (...args: unknown[]) => void,
   ) => void;
 }
@@ -228,7 +229,9 @@ export function startRelayTransport({
         const now = Date.now();
         const staleForMs = now - controlLastSeenAt;
         // If the control socket is half-open or silently dropped, ws may never emit "close".
-        // Use app-level ping/pong to detect staleness and force a reconnect.
+        // Use a WebSocket protocol ping to detect staleness and force a reconnect.
+        // Cloudflare's runtime auto-responds to protocol pings at the edge without waking the
+        // hibernated relay Durable Object, so this keepalive does not incur DO CPU billing.
         if (staleForMs > CONTROL_STALE_TIMEOUT_MS) {
           relayLogger.warn(
             { url, staleForMs, connectionId, staleTimeoutMs: CONTROL_STALE_TIMEOUT_MS },
@@ -243,7 +246,7 @@ export function startRelayTransport({
         }
 
         try {
-          socket.send(JSON.stringify({ type: "ping", ts: now }));
+          socket.ping();
         } catch (error) {
           relayLogger.warn({ err: error, connectionId }, "relay_control_ping_send_failed");
           try {
@@ -254,7 +257,7 @@ export function startRelayTransport({
         }
       }, CONTROL_PING_INTERVAL_MS);
       try {
-        socket.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+        socket.ping();
       } catch (error) {
         relayLogger.warn({ err: error, connectionId }, "relay_control_ping_send_failed");
         try {
@@ -288,6 +291,12 @@ export function startRelayTransport({
       if (controlWs !== socket) return;
       relayLogger.warn({ err, connectionId }, "relay_error");
       // close event will schedule reconnect
+    });
+
+    socket.on("pong", () => {
+      if (controlWs !== socket) return;
+      controlLastSeenAt = Date.now();
+      relayLogger.debug({ connectionId }, "relay_control_pong_received");
     });
 
     socket.on("message", (data) => {
@@ -423,8 +432,17 @@ async function attachEncryptedSocket(
   try {
     const relayTransport = createRelayTransportAdapter(socket, logger);
     const emitter = new EventEmitter();
+    const pendingMessages: Array<string | ArrayBuffer> = [];
+    let attached = false;
+    const emitMessage = (data: string | ArrayBuffer) => {
+      if (attached) {
+        emitter.emit("message", data);
+        return;
+      }
+      pendingMessages.push(data);
+    };
     const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
-      onmessage: (data) => emitter.emit("message", data),
+      onmessage: emitMessage,
       onclose: (code, reason) => emitter.emit("close", code, reason),
       onerror: (error) => {
         logger.warn({ err: error }, "relay_e2ee_error");
@@ -433,6 +451,11 @@ async function attachEncryptedSocket(
     });
     const encryptedSocket = createEncryptedSocket(channel, emitter);
     await attachSocket(encryptedSocket, metadata);
+    attached = true;
+    for (const message of pendingMessages) {
+      emitter.emit("message", message);
+    }
+    pendingMessages.length = 0;
   } catch (error) {
     logger.warn({ err: error }, "relay_e2ee_handshake_failed");
     try {

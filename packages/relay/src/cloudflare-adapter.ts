@@ -192,11 +192,18 @@ export class RelayDurableObject {
     }
   }
 
+  // COMPAT(relay-json-ping): Old daemons (< v0.1.76) send JSON {type:"ping"} on the control
+  // socket and rely on a JSON {type:"pong"} reply to keep controlLastSeenAt fresh. New daemons
+  // use WebSocket protocol pings (auto-answered at the edge, DO stays hibernated). Remove this
+  // handler once the supported-daemon floor is >= v0.1.76 (target: 2026-11-13).
   private handleControlKeepalive(ws: WebSocket, message: string): void {
     try {
       const parsed: unknown = JSON.parse(message);
       const parsedRecord = isRecord(parsed) ? parsed : null;
       if (parsedRecord?.type !== "ping") return;
+      // Logged so the daemon-side e2e idle test can assert no JSON ping reached the DO
+      // (which would indicate a regression to app-level pings that wake the DO).
+      console.log("[Relay DO] legacy_json_ping_received");
       try {
         ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
       } catch {

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentMode } from "./agent-sdk-types.js";
 
 export type AgentModeColorTier = "safe" | "moderate" | "dangerous" | "planning";
-export type AgentModeIcon = "ShieldCheck" | "ShieldAlert" | "ShieldOff";
+export type AgentModeIcon = "ShieldCheck" | "ShieldAlert" | "ShieldOff" | "ShieldQuestionMark";
 
 export interface AgentModeVisuals {
   icon: AgentModeIcon;
@@ -40,6 +40,13 @@ const CLAUDE_MODES: AgentProviderModeDefinition[] = [
     colorTier: "safe",
   },
   {
+    id: "auto",
+    label: "Auto mode",
+    description: "Uses a model classifier to review permission prompts automatically",
+    icon: "ShieldQuestionMark",
+    colorTier: "moderate",
+  },
+  {
     id: "acceptEdits",
     label: "Accept File Edits",
     description: "Automatically approves edit-focused tools without prompting",
@@ -69,6 +76,14 @@ const CODEX_MODES: AgentProviderModeDefinition[] = [
     label: "Default Permissions",
     description: "Edit files and run commands with Codex's default approval flow.",
     icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "auto-review",
+    label: "Auto-review",
+    description:
+      "Same workspace-write permissions as Default, but eligible `on-request` approvals are routed through the auto-reviewer subagent.",
+    icon: "ShieldQuestionMark",
     colorTier: "moderate",
   },
   {

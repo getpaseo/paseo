@@ -602,8 +602,20 @@ export class HostRuntimeController {
   }
 
   async updateHost(host: HostProfile): Promise<void> {
+    const activeConnectionId = this.snapshot.activeConnectionId;
+    const previousActiveConnection = findConnectionById(this.host, activeConnectionId);
     this.host = host;
     this.trackConnectionFirstSeen();
+    const nextActiveConnection = findConnectionById(this.host, activeConnectionId);
+    if (
+      activeConnectionId &&
+      previousActiveConnection &&
+      nextActiveConnection &&
+      !equal(previousActiveConnection, nextActiveConnection)
+    ) {
+      this.connectionLastProbedAt.delete(activeConnectionId);
+      await this.switchToConnection({ connectionId: activeConnectionId });
+    }
     await this.runProbeCycleNow();
   }
 

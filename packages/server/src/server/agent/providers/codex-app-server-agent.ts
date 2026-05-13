@@ -105,6 +105,7 @@ const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
 // `--enable goals` at launch, so we gate by version and silently skip the flag
 // (and the /goal slash command) when the binary is too old.
 const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
+const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115, 0];
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -162,6 +163,12 @@ const CODEX_MODES: AgentMode[] = [
     description: "Edit files and run commands with Codex's default approval flow.",
   },
   {
+    id: "auto-review",
+    label: "Auto-review",
+    description:
+      "Same workspace-write permissions as Default, but eligible `on-request` approvals are routed through the auto-reviewer subagent.",
+  },
+  {
     id: "full-access",
     label: "Full Access",
     description: "Edit files, run commands, and access the network without additional prompts.",
@@ -191,10 +198,14 @@ interface CodexAppServerAgentDeps {
   ) => CodexAppServerClientLike;
 }
 
-const MODE_PRESETS: Record<
-  string,
-  { approvalPolicy: string; sandbox: string; networkAccess?: boolean }
-> = {
+interface CodexModePreset {
+  approvalPolicy: string;
+  sandbox: string;
+  networkAccess?: boolean;
+  approvalsReviewer?: "auto_review";
+}
+
+const MODE_PRESETS: Record<string, CodexModePreset> = {
   "read-only": {
     approvalPolicy: "on-request",
     sandbox: "read-only",
@@ -203,12 +214,42 @@ const MODE_PRESETS: Record<
     approvalPolicy: "on-request",
     sandbox: "workspace-write",
   },
+  "auto-review": {
+    approvalPolicy: "on-request",
+    sandbox: "workspace-write",
+    approvalsReviewer: "auto_review",
+  },
   "full-access": {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
     networkAccess: true,
   },
 };
+
+function isAutoReviewReviewer(value: string | undefined): boolean {
+  return value === "auto_review" || value === "guardian_subagent";
+}
+
+function applyApprovalsReviewerParam(
+  params: Record<string, unknown>,
+  preset: CodexModePreset,
+): void {
+  if (preset.approvalsReviewer) {
+    params.approvalsReviewer = preset.approvalsReviewer;
+  }
+}
+
+function shouldPromoteThreadResponseToAutoReview(params: {
+  approvalsReviewer: string | undefined;
+  approvalPolicy: string;
+  sandbox: string;
+}): boolean {
+  return (
+    isAutoReviewReviewer(params.approvalsReviewer) &&
+    params.approvalPolicy === "on-request" &&
+    params.sandbox === "workspace-write"
+  );
+}
 
 function validateCodexMode(modeId: string): void {
   if (!(modeId in MODE_PRESETS)) {
@@ -2658,6 +2699,7 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
+    private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
   ) {
     this.logger = logger.child({
@@ -3126,6 +3168,7 @@ class CodexAppServerAgentSession implements AgentSession {
           : preset.networkAccess,
       ),
     };
+    applyApprovalsReviewerParam(params, preset);
 
     if (this.config.model) {
       params.model = this.config.model;
@@ -3212,7 +3255,10 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
-    return CODEX_MODES;
+    if (this.autoReviewEnabled) {
+      return CODEX_MODES;
+    }
+    return CODEX_MODES.filter((mode) => mode.id !== "auto-review");
   }
 
   async getCurrentMode(): Promise<string | null> {
@@ -3642,7 +3688,7 @@ class CodexAppServerAgentSession implements AgentSession {
     const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
     const sandbox = this.config.sandboxMode ?? preset.sandbox;
     const innerConfig = this.buildCodexInnerConfig();
-    const rawResponse = await this.client.request("thread/start", {
+    const params: Record<string, unknown> = {
       model,
       cwd: this.config.cwd ?? null,
       approvalPolicy,
@@ -3652,12 +3698,26 @@ class CodexAppServerAgentSession implements AgentSession {
         : {}),
       ...(innerConfig ? { config: innerConfig } : {}),
       ...(this.ephemeral ? { ephemeral: true } : {}),
-    });
+    };
+    applyApprovalsReviewerParam(params, preset);
+    const rawResponse = await this.client.request("thread/start", params);
     const response = toObjectRecord(rawResponse);
     const threadRecord = toObjectRecord(response?.thread);
     const threadId = typeof threadRecord?.id === "string" ? threadRecord.id : undefined;
     if (!threadId) {
       throw new Error("Codex app-server did not return thread id");
+    }
+    const responseApprovalsReviewer =
+      typeof response?.approvalsReviewer === "string" ? response.approvalsReviewer : undefined;
+    if (
+      shouldPromoteThreadResponseToAutoReview({
+        approvalsReviewer: responseApprovalsReviewer,
+        approvalPolicy,
+        sandbox,
+      })
+    ) {
+      this.currentMode = "auto-review";
+      this.cachedRuntimeInfo = null;
     }
     this.currentThreadId = threadId;
   }
@@ -4651,6 +4711,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
+  private autoReviewEnabledPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -4691,6 +4752,31 @@ export class CodexAppServerAgentClient implements AgentClient {
       })();
     }
     return this.goalsEnabledPromise;
+  }
+
+  private resolveAutoReviewEnabled(): Promise<boolean> {
+    if (!this.autoReviewEnabledPromise) {
+      this.autoReviewEnabledPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
+          this.logger.trace(
+            {
+              provider: CODEX_PROVIDER,
+              versionOutput,
+              enabled,
+            },
+            "provider.codex.config.auto_review_resolved",
+          );
+          return enabled;
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
+          return false;
+        }
+      })();
+    }
+    return this.autoReviewEnabledPromise;
   }
 
   private async spawnAppServer(
@@ -4737,6 +4823,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
+    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
@@ -4746,6 +4833,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
+      autoReviewEnabled,
       launchContext?.agentId,
     );
     await session.connect();
@@ -4765,6 +4853,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
+    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
@@ -4774,6 +4863,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.sessionDeps(),
       false,
       goalsEnabled,
+      autoReviewEnabled,
       launchContext?.agentId,
     );
     await session.connect();

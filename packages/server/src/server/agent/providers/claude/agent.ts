@@ -197,6 +197,11 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Prompts for permission the first time a tool is used",
   },
   {
+    id: "auto",
+    label: "Auto mode",
+    description: "Uses a model classifier to review permission prompts automatically",
+  },
+  {
     id: "acceptEdits",
     label: "Accept File Edits",
     description: "Automatically approves edit-focused tools without prompting",
@@ -658,6 +663,41 @@ function isMcpServersRecord(value: unknown): value is Record<string, McpServerCo
 
 function isPermissionMode(value: string | undefined): value is PermissionMode {
   return typeof value === "string" && VALID_CLAUDE_MODES.has(value);
+}
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized !== undefined &&
+    normalized.length > 0 &&
+    normalized !== "0" &&
+    normalized !== "false" &&
+    normalized !== "no" &&
+    normalized !== "off"
+  );
+}
+
+function detectIneligibleAutoModeTransport(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
+  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK)) {
+    return "Bedrock";
+  }
+  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_VERTEX)) {
+    return "Vertex";
+  }
+  return null;
+}
+
+function assertClaudeAutoModeEligible(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
+  if (mode !== "auto") {
+    return;
+  }
+  const transport = detectIneligibleAutoModeTransport(env);
+  if (transport === null) {
+    return;
+  }
+  throw new Error(
+    `Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses ${transport}. Select another permission mode or unset the ${transport === "Bedrock" ? "CLAUDE_CODE_USE_BEDROCK" : "CLAUDE_CODE_USE_VERTEX"} environment variable.`,
+  );
 }
 
 function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
@@ -1735,6 +1775,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
+    assertClaudeAutoModeEligible(normalized, this.buildSdkEnv(this.config.extra?.claude));
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -2261,11 +2302,8 @@ class ClaudeAgentSession implements AgentSession {
       .join("\n\n");
   }
 
-  private async buildOptions(): Promise<ClaudeOptions> {
-    const { thinking, effort } = this.resolveThinkingConfig();
-    const appendedSystemPrompt = this.buildAppendedSystemPrompt();
-    const extraClaudeOptions = this.config.extra?.claude;
-    const sdkEnv = createProviderEnv({
+  private buildSdkEnv(extraClaudeOptions: Partial<ClaudeOptions> | undefined): NodeJS.ProcessEnv {
+    return createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
       overlays: [
@@ -2278,6 +2316,14 @@ class ClaudeAgentSession implements AgentSession {
         this.launchEnv,
       ],
     });
+  }
+
+  private async buildOptions(): Promise<ClaudeOptions> {
+    const { thinking, effort } = this.resolveThinkingConfig();
+    const appendedSystemPrompt = this.buildAppendedSystemPrompt();
+    const extraClaudeOptions = this.config.extra?.claude;
+    const sdkEnv = this.buildSdkEnv(extraClaudeOptions);
+    assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(

@@ -140,6 +140,14 @@ function extractStringLogArgs(calls: unknown[][]): string[] {
   return calls.flatMap((args) => args.filter((arg): arg is string => typeof arg === "string"));
 }
 
+function restoreEnvValue(key: string, previousValue: string | undefined): void {
+  if (previousValue === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = previousValue;
+}
+
 async function collectUntilTerminal(
   stream: AsyncGenerator<AgentStreamEvent>,
 ): Promise<AgentStreamEvent[]> {
@@ -163,6 +171,112 @@ beforeEach(() => {
 
 afterEach(() => {
   sdkQueryFactory.mockReset();
+});
+
+test("exposes and applies auto permission mode", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+
+  const session = await createSession();
+
+  try {
+    await expect(session.getAvailableModes()).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          id: "auto",
+          label: "Auto mode",
+          description: "Uses a model classifier to review permission prompts automatically",
+        },
+      ]),
+    );
+
+    await session.setMode("auto");
+
+    expect(queryMock.setPermissionMode).toHaveBeenCalledWith("auto");
+    expect(await session.getCurrentMode()).toBe("auto");
+  } finally {
+    await session.close();
+  }
+});
+
+test("rejects auto mode when Claude Code uses Bedrock", async () => {
+  const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
+  process.env.CLAUDE_CODE_USE_BEDROCK = "1";
+
+  const session = await createSession();
+
+  try {
+    await expect(session.setMode("auto")).rejects.toThrow(
+      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Bedrock",
+    );
+    expect(sdkQueryFactory).not.toHaveBeenCalled();
+  } finally {
+    restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
+    await session.close();
+  }
+});
+
+test("allows launch env to disable inherited Bedrock transport for auto mode", async () => {
+  const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
+  process.env.CLAUDE_CODE_USE_BEDROCK = "1";
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession(
+    {
+      provider: "claude",
+      cwd: process.cwd(),
+    },
+    { env: { CLAUDE_CODE_USE_BEDROCK: "0" } },
+  );
+
+  try {
+    await session.setMode("auto");
+
+    expect(queryMock.setPermissionMode).toHaveBeenCalledWith("auto");
+    expect(await session.getCurrentMode()).toBe("auto");
+  } finally {
+    restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
+    await session.close();
+  }
+});
+
+test("fails an auto mode turn when Claude Code uses Vertex", async () => {
+  const previousVertex = process.env.CLAUDE_CODE_USE_VERTEX;
+  process.env.CLAUDE_CODE_USE_VERTEX = "true";
+  sdkQueryFactory.mockImplementation(() => {
+    throw new Error("query should not start");
+  });
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    modeId: "auto",
+  });
+
+  try {
+    const events = await collectUntilTerminal(streamSession(session, "hello"));
+    const failure = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
+        event.type === "turn_failed",
+    );
+
+    expect(failure?.error).toContain(
+      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Vertex",
+    );
+    expect(sdkQueryFactory).not.toHaveBeenCalled();
+  } finally {
+    restoreEnvValue("CLAUDE_CODE_USE_VERTEX", previousVertex);
+    await session.close();
+  }
 });
 
 test("logs redacted query summary and never leaks sentinel secrets", async () => {

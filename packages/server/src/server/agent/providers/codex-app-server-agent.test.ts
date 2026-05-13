@@ -73,7 +73,7 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { goalsEnabled?: boolean } = {},
+  options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean } = {},
 ): CodexTestSession {
   const session = new __codexAppServerInternals.CodexAppServerAgentSession(
     createConfig(configOverrides),
@@ -85,6 +85,7 @@ function createSession(
     {},
     false,
     options.goalsEnabled === true,
+    options.autoReviewEnabled === true,
   ) as CodexTestSession;
   session.connected = true;
   session.currentThreadId = "test-thread";
@@ -199,6 +200,116 @@ function capturedThreadStartConfig(records: CapturedFakeCodexRecord[]): unknown 
 }
 
 describe("Codex app-server provider", () => {
+  test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
+    const session = createSession({}, { autoReviewEnabled: true });
+
+    await expect(session.getAvailableModes()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "auto-review",
+          label: "Auto-review",
+        }),
+      ]),
+    );
+  });
+
+  test("getAvailableModes excludes auto-review when the Codex version is too old", async () => {
+    const session = createSession({}, { autoReviewEnabled: false });
+
+    await expect(session.getAvailableModes()).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "auto-review" })]),
+    );
+  });
+
+  test("setMode auto-review sends approvalsReviewer to thread/start", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession(
+      { modeId: "auto", thinkingOptionId: "medium" },
+      { autoReviewEnabled: true },
+    );
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "auto-review-thread" } };
+        }
+        if (method === "turn/start") {
+          return {};
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await session.setMode("auto-review");
+    await session.startTurn("trigger thread creation");
+
+    const startCall = requests.find((req) => req.method === "thread/start");
+    expect(startCall?.params).toMatchObject({
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      approvalsReviewer: "auto_review",
+    });
+  });
+
+  test.each(["auto_review", "guardian_subagent"])(
+    "parses %s thread/start response as auto-review mode",
+    async (approvalsReviewer) => {
+      const session = createSession(
+        { modeId: "auto", thinkingOptionId: "medium" },
+        { autoReviewEnabled: true },
+      );
+      session.currentThreadId = null;
+      session.activeForegroundTurnId = null;
+      session.client = {
+        request: vi.fn(async (method: string) => {
+          if (method === "thread/start") {
+            return {
+              thread: { id: "auto-review-thread" },
+              approvalPolicy: "on-request",
+              sandbox: { type: "workspaceWrite", networkAccess: false },
+              approvalsReviewer,
+            };
+          }
+          if (method === "turn/start") {
+            return {};
+          }
+          throw new Error(`Unexpected request: ${method}`);
+        }),
+      };
+
+      await session.startTurn("trigger thread creation");
+
+      await expect(session.getCurrentMode()).resolves.toBe("auto-review");
+    },
+  );
+
+  test("turn/start forwards approvalsReviewer while in auto-review mode", async () => {
+    const session = createSession({ modeId: "auto-review" }, { autoReviewEnabled: true });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("needs approval");
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+      }),
+    );
+  });
+
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const fakeClient: CodexClientLike = {
