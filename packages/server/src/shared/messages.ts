@@ -110,6 +110,7 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
+    autoArchiveAfterMerge: z.boolean().default(false),
   })
   .passthrough();
 
@@ -119,6 +120,7 @@ export const MutableDaemonConfigPatchSchema = z
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
+    autoArchiveAfterMerge: z.boolean().optional(),
   })
   .partial()
   .passthrough();

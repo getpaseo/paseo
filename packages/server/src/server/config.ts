@@ -246,6 +246,7 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
@@ -266,7 +267,7 @@ export function loadConfig(
   const persisted = loadPersistedConfig(paseoHome);
 
   const listen = resolveListenAddress(env, options?.cli, persisted);
-  const { mcpEnabled, mcpInjectIntoAgents, hostnames, appBaseUrl } =
+  const { mcpEnabled, mcpInjectIntoAgents, autoArchiveAfterMerge, hostnames, appBaseUrl } =
     resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
   const relay = resolveRelayConfig({
@@ -294,6 +295,7 @@ export function loadConfig(
     hostnames,
     mcpEnabled,
     mcpInjectIntoAgents,
+    autoArchiveAfterMerge,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),

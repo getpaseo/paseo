@@ -248,6 +248,30 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("onSnapshotUpdated emits only for observed workspace snapshots and can unsubscribe", async () => {
+    const service = createService();
+    const snapshotListener = vi.fn();
+    const snapshotSubscription = service.onSnapshotUpdated(snapshotListener);
+
+    await service.getSnapshot(REPO_CWD, { force: true, reason: "unobserved" });
+
+    expect(snapshotListener).not.toHaveBeenCalled();
+
+    const workspaceSubscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await service.getSnapshot(REPO_CWD, { force: true, reason: "observed" });
+
+    expect(snapshotListener).toHaveBeenCalledTimes(1);
+    expect(snapshotListener).toHaveBeenCalledWith(createSnapshot(REPO_CWD));
+
+    snapshotSubscription.unsubscribe();
+    await service.getSnapshot(REPO_CWD, { force: true, reason: "after-unsubscribe" });
+
+    expect(snapshotListener).toHaveBeenCalledTimes(1);
+
+    workspaceSubscription.unsubscribe();
+    service.dispose();
+  });
+
   test("getSnapshot populates github pull request state in the runtime snapshot", async () => {
     const getPullRequestStatus = vi.fn(async () =>
       createPullRequestStatusResult({

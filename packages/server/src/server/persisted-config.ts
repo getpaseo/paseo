@@ -250,6 +250,7 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
+        autoArchiveAfterMerge: z.boolean().optional(),
         cors: z
           .object({
             allowedOrigins: z.array(z.string()).optional(),

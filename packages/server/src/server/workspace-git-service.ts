@@ -105,6 +105,7 @@ export interface WorkspaceGitService {
     listener: WorkspaceGitListener,
   ): WorkspaceGitSubscription;
 
+  onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload>;
   getSnapshot(
@@ -153,6 +154,7 @@ export interface WorkspaceGitService {
 }
 
 export type WorkspaceGitListener = (snapshot: WorkspaceGitRuntimeSnapshot) => void;
+export type WorkspaceGitSnapshotUpdatedListener = (snapshot: WorkspaceGitRuntimeSnapshot) => void;
 
 export interface WorkspaceGitSubscription {
   unsubscribe: () => void;
@@ -329,6 +331,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
   private readonly deps: WorkspaceGitServiceDependencies;
+  private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
   private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
@@ -362,7 +365,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
   >();
-
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
@@ -387,6 +389,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return {
       unsubscribe: () => {
         this.removeWorkspaceListener(cwd, listener);
+      },
+    };
+  }
+
+  onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription {
+    this.snapshotUpdatedListeners.add(listener);
+    return {
+      unsubscribe: () => {
+        this.snapshotUpdatedListeners.delete(listener);
       },
     };
   }
@@ -660,6 +671,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     this.workingTreeWatchTargets.clear();
     this.workingTreeWatchSetups.clear();
+    this.snapshotUpdatedListeners.clear();
   }
 
   private ensureWorkspaceTarget(cwd: string): WorkspaceGitTarget {
@@ -1537,11 +1549,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.latestFingerprint = fingerprint;
-    if (!options?.notify) {
+    if (!options?.notify || target.listeners.size === 0) {
       return;
     }
     for (const listener of target.listeners) {
       listener(snapshot);
+    }
+    for (const listener of this.snapshotUpdatedListeners) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, cwd: snapshot.cwd },
+          "Workspace git snapshot listener threw",
+        );
+      }
     }
   }
 
