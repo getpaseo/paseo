@@ -201,6 +201,9 @@ export class RelayDurableObject {
       const parsed: unknown = JSON.parse(message);
       const parsedRecord = isRecord(parsed) ? parsed : null;
       if (parsedRecord?.type !== "ping") return;
+      // Logged so the daemon-side e2e idle test can assert no JSON ping reached the DO
+      // (which would indicate a regression to app-level pings that wake the DO).
+      console.log("[Relay DO] legacy_json_ping_received");
       try {
         ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
       } catch {

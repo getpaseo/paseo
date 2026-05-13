@@ -167,8 +167,10 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 (shouldRunRelayE2e ? describe : describe.skip)("Relay transport (E2EE) - daemon E2E", () => {
   let relayPort: number;
   let relayProcess: ChildProcess | null = null;
+  let relayStdoutLines: string[] = [];
 
   const startRelay = async () => {
+    relayStdoutLines = [];
     relayPort = await getAvailablePort();
     const relayDir = path.resolve(process.cwd(), "../relay");
     relayProcess = spawn(
@@ -198,6 +200,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
         .split("\n")
         .filter((l) => l.trim());
       for (const line of lines) {
+        relayStdoutLines.push(line);
         // eslint-disable-next-line no-console
         console.log(`[relay] ${line}`);
       }
@@ -399,6 +402,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       expect(pongLines.length).toBeGreaterThan(0);
       const staleLines = lines.filter((l) => l.includes("relay_control_stale_terminating"));
       expect(staleLines.length).toBe(0);
+      // Guard against the dual-ping regression: if a JSON {type:"ping"} reaches the DO during
+      // the idle window, the DO logs `legacy_json_ping_received`. The current daemon code must
+      // not send JSON pings on the control socket — only protocol pings via socket.ping().
+      const legacyPingLines = relayStdoutLines.filter((l) =>
+        l.includes("legacy_json_ping_received"),
+      );
+      expect(legacyPingLines.length).toBe(0);
 
       const ws = new WebSocket(
         buildRelayWebSocketUrl({
