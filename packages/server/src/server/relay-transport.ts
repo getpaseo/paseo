@@ -296,6 +296,7 @@ export function startRelayTransport({
     socket.on("pong", () => {
       if (controlWs !== socket) return;
       controlLastSeenAt = Date.now();
+      relayLogger.debug({ connectionId }, "relay_control_pong_received");
     });
 
     socket.on("message", (data) => {

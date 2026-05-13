@@ -33,7 +33,7 @@ function createCapturingLogger() {
       cb();
     },
   });
-  const logger = pino({ level: "info" }, stream);
+  const logger = pino({ level: "debug" }, stream);
   return { logger, lines };
 }
 
@@ -390,6 +390,15 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
         line.includes("relay_e2ee_handshake_failed"),
       );
       expect(handshakeFailures.length).toBe(0);
+
+      // Protocol pings (RFC 6455 control frames) are auto-answered at the Cloudflare edge
+      // without waking the hibernated relay Durable Object. After 12s, the keepalive interval
+      // (10s) must have fired at least once and received a pong. If this assertion fails, the
+      // daemon may have regressed to app-level JSON pings (which wake the DO and cost CPU).
+      const pongLines = lines.filter((l) => l.includes("relay_control_pong_received"));
+      expect(pongLines.length).toBeGreaterThan(0);
+      const staleLines = lines.filter((l) => l.includes("relay_control_stale_terminating"));
+      expect(staleLines.length).toBe(0);
 
       const ws = new WebSocket(
         buildRelayWebSocketUrl({
