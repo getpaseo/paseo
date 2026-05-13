@@ -11,6 +11,7 @@ import type {
   AgentLaunchContext,
   AgentSession,
   AgentSessionConfig,
+  AgentSlashCommand,
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
 import {
@@ -197,6 +198,63 @@ function capturedThreadStartConfig(records: CapturedFakeCodexRecord[]): unknown 
   const threadStart = records.find((record) => record.method === "thread/start");
   const params = threadStart?.params as Record<string, unknown> | undefined;
   return params?.config;
+}
+
+async function listCommandsFromFakeCodex(skills: unknown[]): Promise<AgentSlashCommand[]> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "codex-command-list-"));
+  const fakeCodexPath = path.join(tempDir, "fake-codex.cjs");
+  writeFileSync(
+    fakeCodexPath,
+    `
+let buffer = "";
+
+function resultFor(method) {
+  if (method === "initialize") return {};
+  if (method === "collaborationMode/list") return { data: [] };
+  if (method === "skills/list") {
+    return {
+      data: [
+        {
+          cwd: "/tmp/codex-question-test",
+          skills: ${JSON.stringify(skills)},
+          errors: [],
+        },
+      ],
+    };
+  }
+  throw new Error("Unexpected Codex request: " + method);
+}
+
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (;;) {
+    const newlineIndex = buffer.indexOf("\\n");
+    if (newlineIndex === -1) break;
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (typeof message.id !== "number") continue;
+    try {
+      process.stdout.write(JSON.stringify({ id: message.id, result: resultFor(message.method) }) + "\\n");
+    } catch (error) {
+      process.stdout.write(JSON.stringify({ id: message.id, error: { message: error.message } }) + "\\n");
+    }
+  }
+});
+`,
+  );
+
+  const client = new CodexAppServerAgentClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, fakeCodexPath] },
+  });
+  const session = await client.createSession(createConfig());
+  try {
+    return await session.listCommands();
+  } finally {
+    await session.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 describe("Codex app-server provider", () => {
@@ -822,6 +880,29 @@ describe("Codex app-server provider", () => {
         ],
       }),
     );
+  });
+
+  test("deduplicates Codex skill slash commands returned from multiple skill roots", async () => {
+    const commands = await listCommandsFromFakeCodex([
+      {
+        name: "paseo",
+        description: "Shared orchestration skill.",
+        path: "/Users/test/.agents/skills/paseo/SKILL.md",
+      },
+      {
+        name: "paseo",
+        description: "Shared orchestration skill.",
+        path: "/Users/test/.codex/skills/paseo/SKILL.md",
+      },
+    ]);
+
+    expect(commands.filter((command) => command.name === "paseo")).toEqual([
+      {
+        name: "paseo",
+        description: "Shared orchestration skill.",
+        argumentHint: "",
+      },
+    ]);
   });
 
   test("maps image prompt blocks to Codex localImage input", async () => {

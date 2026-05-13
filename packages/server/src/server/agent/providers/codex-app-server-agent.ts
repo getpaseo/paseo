@@ -2816,7 +2816,7 @@ class CodexAppServerAgentSession implements AgentSession {
         }),
       );
       const entries = Array.isArray(response?.data) ? response.data : [];
-      const skills: Array<{ name: string; description: string; path: string }> = [];
+      const skillsByName = new Map<string, { name: string; description: string; path: string }>();
       for (const entry of entries) {
         const entryRecord = toObjectRecord(entry);
         const list = Array.isArray(entryRecord?.skills) ? entryRecord.skills : [];
@@ -2824,14 +2824,16 @@ class CodexAppServerAgentSession implements AgentSession {
           const skillRecord = toObjectRecord(skill);
           if (typeof skillRecord?.name !== "string" || typeof skillRecord?.path !== "string")
             continue;
-          skills.push({
-            name: skillRecord.name,
-            description: resolveSkillDescription(skillRecord),
-            path: skillRecord.path,
-          });
+          if (!skillsByName.has(skillRecord.name)) {
+            skillsByName.set(skillRecord.name, {
+              name: skillRecord.name,
+              description: resolveSkillDescription(skillRecord),
+              path: skillRecord.path,
+            });
+          }
         }
       }
-      this.cachedSkills = skills;
+      this.cachedSkills = Array.from(skillsByName.values());
     } catch (error) {
       this.logger.trace(
         {
