@@ -65,6 +65,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { applyPiSessionRecoveryPolicy } from "./pi-session-recovery-policy.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: ThinkingLevel = "medium";
@@ -116,6 +117,7 @@ export type PiDirectSessionAdapter = Pick<
   PiAgentSession,
   | "abort"
   | "agent"
+  | "compact"
   | "dispose"
   | "extensionRunner"
   | "getSessionStats"
@@ -1095,6 +1097,19 @@ export class PiDirectAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt);
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+
+    try {
+      await applyPiSessionRecoveryPolicy(this.session);
+    } catch (error) {
+      this.activeTurnId = null;
+      this.emit({
+        type: "turn_failed",
+        provider: PI_PROVIDER,
+        turnId,
+        error: toDiagnosticErrorMessage(error),
+      });
+      return { turnId };
+    }
 
     void this.session
       .prompt(payload.text, payload.images ? { images: payload.images } : undefined)

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 import pino from "pino";
 
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -13,12 +13,46 @@ import {
   type PiDirectSessionAdapter,
 } from "./pi-direct-agent.js";
 
-function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
+function createPiAssistantErrorMessage(errorMessage: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "openai-responses",
+    provider: "github-copilot",
+    model: "gpt-5.4",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "error",
+    errorMessage,
+    timestamp: Date.now(),
+  };
+}
+
+function createPiSession(
+  prompt: () => Promise<void>,
+  options: {
+    compact?: () => Promise<void>;
+    messages?: PiDirectSessionAdapter["messages"];
+    errorMessage?: string | null;
+  } = {},
+): PiDirectSessionAdapter {
   return {
     sessionId: "pi-session-1",
     thinkingLevel: "medium",
     model: undefined,
-    messages: [],
+    messages: options.messages ?? [],
     extensionRunner: undefined,
     promptTemplates: [],
     resourceLoader: {
@@ -27,7 +61,7 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
     agent: {
       state: {
         systemPrompt: "",
-        errorMessage: null,
+        errorMessage: options.errorMessage ?? null,
       },
     },
     sessionManager: {
@@ -36,6 +70,7 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
     },
     subscribe: vi.fn(),
     prompt,
+    compact: options.compact ?? vi.fn(async () => undefined),
     abort: vi.fn(),
     dispose: vi.fn(),
     getSessionStats: vi.fn(() => ({})),
@@ -93,6 +128,61 @@ describe("PiDirectAgentSession", () => {
         reason: "Request was aborted.",
       },
     ]);
+  });
+
+  test("compacts stale Copilot 413 sessions before prompting again", async () => {
+    const callOrder: string[] = [];
+    const sdkSession = createPiSession(
+      vi.fn(async () => {
+        callOrder.push("prompt");
+      }),
+      {
+        messages: [createPiAssistantErrorMessage("413 failed to parse request")],
+        errorMessage: "413 failed to parse request",
+        compact: vi.fn(async () => {
+          callOrder.push("compact");
+        }),
+      },
+    );
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      { find: vi.fn(), getAll: vi.fn(() => []) },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+
+    await session.startTurn("continue");
+
+    expect(sdkSession.compact).toHaveBeenCalledTimes(1);
+    expect(sdkSession.prompt).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(["compact", "prompt"]);
+  });
+
+  test("does not compact other Pi errors before prompting", async () => {
+    const sdkSession = createPiSession(
+      vi.fn(async () => undefined),
+      {
+        messages: [createPiAssistantErrorMessage("413 unrelated provider error")],
+        compact: vi.fn(async () => {
+          throw new Error("should not compact");
+        }),
+      },
+    );
+    const session = new PiDirectAgentSession(
+      createPiRuntime(sdkSession),
+      { find: vi.fn(), getAll: vi.fn(() => []) },
+      {
+        provider: "pi",
+        cwd: "/tmp/paseo-pi-test",
+      },
+    );
+
+    await session.startTurn("continue");
+
+    expect(sdkSession.compact).not.toHaveBeenCalled();
+    expect(sdkSession.prompt).toHaveBeenCalledTimes(1);
   });
 
   test("setModel creates a minimal model for new ids under a known provider", async () => {
