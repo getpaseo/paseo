@@ -472,6 +472,7 @@ function SidebarFooter({
         searchable={false}
         title="Switch host"
         searchPlaceholder="Search hosts..."
+        desktopMinWidth={280}
         open={isHostPickerOpen}
         onOpenChange={setIsHostPickerOpen}
         anchorRef={hostTriggerRef}
