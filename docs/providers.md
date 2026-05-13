@@ -18,6 +18,16 @@ Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`
 
 ---
 
+## Provider Snapshot Refresh Contract
+
+The daemon keeps one global provider snapshot, keyed to the home directory, for settings, selectors, and old model/mode list requests. Snapshot reads may probe providers only while the snapshot is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until the user forces a refresh from settings/provider management.
+
+Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.
+
+Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery; warm reads and registry replacement must not; explicit full or targeted refreshes must.
+
+---
+
 ## ACP Provider Checklist
 
 ### 1. Create the provider class

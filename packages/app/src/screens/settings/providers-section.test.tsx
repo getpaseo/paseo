@@ -347,6 +347,26 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
+    expect(refreshMock).not.toHaveBeenCalled();
     expect(container?.querySelector('[data-testid="provider-diagnostic-sheet"]')).toBeNull();
+  });
+
+  it("forces a provider snapshot refresh from the settings refresh action", async () => {
+    snapshotState.entries = [claudeEntry];
+    configState.config = makeConfig();
+
+    render();
+
+    const refreshButton = container?.querySelector<HTMLElement>(
+      '[role="button"][aria-label="Refresh providers"]',
+    );
+    expect(refreshButton).not.toBeNull();
+
+    await act(async () => {
+      refreshButton?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+    expect(patchConfigMock).not.toHaveBeenCalled();
   });
 });
