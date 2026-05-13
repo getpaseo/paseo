@@ -31,6 +31,7 @@ class FakeRelayWebSocket {
   readyState = FakeRelayWebSocket.CONNECTING;
   sent: Array<string | Uint8Array | ArrayBuffer> = [];
   terminateCalls = 0;
+  pingCalls = 0;
   private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
   constructor(readonly url: string) {}
@@ -67,6 +68,13 @@ class FakeRelayWebSocket {
     this.sent.push(data);
   }
 
+  ping() {
+    if (this.readyState !== FakeRelayWebSocket.OPEN) {
+      throw new Error(`WebSocket not open (readyState=${this.readyState})`);
+    }
+    this.pingCalls += 1;
+  }
+
   open() {
     this.readyState = FakeRelayWebSocket.OPEN;
     this.emit("open");
@@ -74,6 +82,10 @@ class FakeRelayWebSocket {
 
   message(data: unknown) {
     this.emit("message", data);
+  }
+
+  pong() {
+    this.emit("pong");
   }
 
   private off(event: string, listener: (...args: unknown[]) => void) {
@@ -135,9 +147,9 @@ describe("relay-transport control lifecycle", () => {
 
     control.open();
     expect(hasLogMessage(logger, "info", "relay_control_connected")).toBe(false);
-    expect(control.sent.length).toBeGreaterThan(0);
+    expect(control.pingCalls).toBeGreaterThan(0);
 
-    control.message(JSON.stringify({ type: "pong", ts: Date.now() }));
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }));
     expect(hasLogMessage(logger, "info", "relay_control_connected")).toBe(true);
   });
 
@@ -180,7 +192,7 @@ describe("relay-transport control lifecycle", () => {
 
     const control = relay.sockets[0];
     control.open();
-    control.message(JSON.stringify({ type: "pong", ts: Date.now() }));
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }));
     logger.messages.length = 0;
 
     vi.advanceTimersByTime(40_000);
@@ -208,7 +220,7 @@ describe("relay-transport control lifecycle", () => {
 
     const control = relay.sockets[0];
     control.open();
-    control.message(JSON.stringify({ type: "pong", ts: Date.now() }));
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }));
     control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }));
 
     const dataSocket = relay.sockets[1];
@@ -240,7 +252,7 @@ describe("relay-transport control lifecycle", () => {
 
     const control = relay.sockets[0];
     control.open();
-    control.message(JSON.stringify({ type: "pong", ts: Date.now() }));
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }));
     control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }));
 
     expect(relay.sockets[0]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
