@@ -380,6 +380,41 @@ describe("ClaudeAgentClient.listModels", () => {
 describe("ClaudeAgentClient binary resolution", () => {
   const logger = createTestLogger();
 
+  test("loads user, project, and local Claude settings", async () => {
+    const queryReturn = vi.fn();
+    queryReturn.mockResolvedValue(undefined);
+    const queryFactory = vi.fn(() => ({
+      close: vi.fn(),
+      return: queryReturn,
+    }));
+
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    await expect(
+      (
+        session as unknown as {
+          ensureQuery(): Promise<unknown>;
+        }
+      ).ensureQuery(),
+    ).resolves.toBeDefined();
+
+    expect(queryFactory.mock.calls[0]?.[0].options.settingSources).toEqual([
+      "user",
+      "project",
+      "local",
+    ]);
+
+    await session.close();
+  });
+
   test("uses the replace-command override binary when claude is not on PATH", async () => {
     const customClaudePath = "/path/to/custom-claude";
     vi.spyOn(executableUtils, "findExecutable").mockImplementation(async (name: string) => {

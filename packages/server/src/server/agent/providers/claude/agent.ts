@@ -83,7 +83,11 @@ import { execCommand } from "../../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../../orchestrator-instructions.js";
 
 const fsPromises = promises;
-const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = ["user", "project"];
+const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
+  "user",
+  "project",
+  "local",
+];
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
