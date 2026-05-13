@@ -1,7 +1,13 @@
 import { type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type {
+import {
+  AgentSideConnection,
+  ClientSideConnection,
+  PROTOCOL_VERSION,
+  RequestError,
+  ndJsonStream,
+  type Agent,
   PermissionOption,
   PromptResponse,
   RequestPermissionRequest,
@@ -1574,5 +1580,80 @@ describe("ACPAgentSession", () => {
       error: "prompt failed",
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("startTurn preserves JSON-RPC error details from a real ACP prompt response", async () => {
+    const session = createSession();
+    const clientToAgent = new TransformStream();
+    const agentToClient = new TransformStream();
+    const upstreamMessage =
+      "Authentication failed: Please authenticate to continue. Run `/login` to log in.";
+    const upstreamData = {
+      cause: "auth_required",
+      errorMessage: "Please authenticate to continue. Run `/login` to log in.",
+    };
+    const agent: Agent = {
+      async initialize() {
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: {},
+          authMethods: [{ id: "windsurf-api-key", name: "API Key" }],
+        };
+      },
+      async newSession() {
+        return { sessionId: "session-1" };
+      },
+      async prompt() {
+        throw new RequestError(-32000, upstreamMessage, upstreamData);
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    await connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: "Paseo test", version: "dev" },
+    });
+    expect(agentConnection.signal.aborted).toBe(false);
+    const sessionResponse = await connection.newSession({
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [],
+    });
+    const turnFailed = new Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_failed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = sessionResponse.sessionId;
+    asInternals<ACPSessionInternals>(session).connection = connection;
+
+    await session.startTurn("hello");
+
+    await expect(turnFailed).resolves.toMatchObject({
+      error: expect.stringContaining(upstreamMessage),
+      code: "-32000",
+      diagnostic: expect.stringContaining("auth_required"),
+    });
+    await expect(turnFailed).resolves.toMatchObject({
+      error: expect.not.stringContaining("[object Object]"),
+    });
   });
 });

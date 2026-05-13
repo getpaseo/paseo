@@ -4195,6 +4195,8 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
 
   await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("Provider execution failed");
 
+  expect(manager.getAgent(agent.id)?.lastError).toBe("Provider execution failed");
+
   const systemError = manager
     .getTimeline(agent.id)
     .find(

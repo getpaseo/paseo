@@ -107,6 +107,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
+function stringifyDiagnosticValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function summarizeACPRequestError(error: unknown): {
+  message: string;
+  code?: string;
+  diagnostic?: string;
+} {
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+
+  if (!isRecord(error)) {
+    return { message: String(error) };
+  }
+
+  const message =
+    typeof error.message === "string" ? error.message : stringifyDiagnosticValue(error);
+  const code =
+    typeof error.code === "number" || typeof error.code === "string"
+      ? String(error.code)
+      : undefined;
+  const details: string[] = [];
+  if (code) {
+    details.push(`code=${code}`);
+  }
+  if ("data" in error) {
+    details.push(`data=${stringifyDiagnosticValue(error.data)}`);
+  }
+  return {
+    message,
+    code,
+    diagnostic: details.length > 0 ? [message, ...details].join(" | ") : undefined,
+  };
+}
+
 function resolveTerminalCommand(
   command: string,
   args?: string[],
@@ -1045,12 +1089,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       })
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const summary = summarizeACPRequestError(error);
         this.finishTurn({
           type: "turn_failed",
           provider: this.provider,
-          error: message,
-          diagnostic: this.collectDiagnostic(message),
+          error: summary.message,
+          code: summary.code,
+          diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
           turnId,
         });
       });
