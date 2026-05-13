@@ -30,14 +30,17 @@ function isDiffMetadataLine(line: string): boolean {
   return DIFF_METADATA_PREFIXES.some((prefix) => line.startsWith(prefix));
 }
 
+// Git's default patch headers use a/path and b/path, while diff.noprefix emits
+// plain paths. Normalize both forms so parsed hunks match checkout file entries.
+function stripDiffPathPrefix(path: string): string {
+  return path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path;
+}
+
 function extractDiffPath(firstLine: string): string {
-  const pathMatch = firstLine.match(/a\/(.*?) b\//);
+  const pathMatch = firstLine.match(/^(\S+)\s+(\S+)$/);
   if (pathMatch) {
-    return pathMatch[1];
-  }
-  const newFileMatch = firstLine.match(/b\/(.+)$/);
-  if (newFileMatch) {
-    return newFileMatch[1];
+    const [, oldPath, newPath] = pathMatch;
+    return stripDiffPathPrefix(newPath === "/dev/null" ? oldPath : newPath);
   }
   return "unknown";
 }

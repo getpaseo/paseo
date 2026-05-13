@@ -39,11 +39,18 @@ interface ParseAndHighlightDiffOptions {
 /**
  * Parse a unified diff into structured data
  */
+// Git's default patch headers use a/path and b/path, while diff.noprefix emits
+// plain paths. Normalize both forms so parsed hunks match checkout file entries.
+function stripDiffPathPrefix(path: string): string {
+  return path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path;
+}
+
 function extractPathFromDiffHeader(firstLine: string): string {
-  const pathMatch = firstLine.match(/a\/(.*?) b\//);
-  if (pathMatch) return pathMatch[1];
-  const newFileMatch = firstLine.match(/b\/(.+)$/);
-  if (newFileMatch) return newFileMatch[1];
+  const pathMatch = firstLine.match(/^(\S+)\s+(\S+)$/);
+  if (pathMatch) {
+    const [, oldPath, newPath] = pathMatch;
+    return stripDiffPathPrefix(newPath === "/dev/null" ? oldPath : newPath);
+  }
   return "unknown";
 }
 

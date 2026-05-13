@@ -185,6 +185,18 @@ describe("parseDiff", () => {
     expect(hunk.lines[3].content).toBe("const bar = 3;");
   });
 
+  it("parses no-prefix git diff headers", () => {
+    const files = parseDiff(
+      SIMPLE_DIFF.replace("a/example.ts b/example.ts", "example.ts example.ts"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("example.ts");
+    expect(files[0].additions).toBe(1);
+    expect(files[0].deletions).toBe(1);
+    expect(files[0].hunks).toHaveLength(1);
+  });
+
   it("parses a diff with multiple hunks", () => {
     const files = parseDiff(MULTI_HUNK_DIFF);
 
