@@ -20,25 +20,29 @@ Returns `{ branchName, worktreePath }`. Pass `cwd` to target a specific repo.
 
 ## Agents
 
-**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `cwd` (often a `worktreePath`), `background` (default `false` — blocks until completion or permission), `notifyOnFinish`, `features`. Returns `{ agentId, … }`.
+**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `cwd` (often a `worktreePath`), `background` (default `false` — blocks until completion or permission), `notifyOnFinish`, `settings`. Returns `{ agentId, … }`.
 
-Provider features are provider-specific. For Codex fast mode, pass `features: { "fast_mode": true }` when creating the agent.
+Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }` when creating the agent.
 
 Compose: call `create_worktree` first, then `create_agent` with `cwd` set to the returned `worktreePath`.
 
 **`send_agent_prompt`** — `{ agentId, prompt }`. Blocks by default; pass `background: true` to fire-and-forget.
 
-**`set_agent_feature`** — `{ agentId, featureId, value }`. Use for provider-specific toggles on an existing agent, for example `{ agentId, featureId: "fast_mode", value: true }` for Codex.
+**`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
 **`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`.
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
 
-## Provider features
+## Provider discovery
 
-**`list_provider_features`** — query provider-specific features before setting them. Required: `provider`, `cwd`. Optional: `model`, `modeId`, `thinkingOptionId`, `featureValues`.
+**`list_providers`** — compact provider availability and modes.
 
-Only set feature IDs returned by `list_provider_features`. For Codex fast mode, look for `fast_mode` and pass `features: { "fast_mode": true }` to `create_agent`.
+**`list_models`** — full model list for one provider. Use only when you need model IDs or thinking options; the list can be large.
+
+**`inspect_provider`** — compact provider capability and feature inspection. Required: `provider`; pass `cwd` when you are not in an agent-scoped session. Optional: `settings` with draft `model`, `modeId`, `thinkingOptionId`, and `features`.
+
+Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look for `fast_mode` and pass `settings: { features: { "fast_mode": true } }` to `create_agent` or `update_agent`.
 
 ## Heartbeats
 

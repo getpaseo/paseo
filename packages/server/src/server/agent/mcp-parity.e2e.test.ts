@@ -154,7 +154,7 @@ async function createTopLevelAgent(args?: Partial<StructuredContent>): Promise<s
     title: "Parity agent",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
-    mode: "bypassPermissions",
+    settings: { modeId: "bypassPermissions" },
     background: true,
     ...args,
   });
@@ -240,7 +240,7 @@ beforeAll(async () => {
     title: "MCP parity parent",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
-    mode: "bypassPermissions",
+    settings: { modeId: "bypassPermissions" },
     background: true,
   });
   parentAgentId = str(parentPayload.agentId);
@@ -339,7 +339,7 @@ describe("Suite A: Core Fixes", () => {
   test("create_agent accepts provider features over MCP", async () => {
     let agentId: string | null = null;
     try {
-      agentId = await createTopLevelAgent({ features: { test_feature: true } });
+      agentId = await createTopLevelAgent({ settings: { features: { test_feature: true } } });
       const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
@@ -356,7 +356,7 @@ describe("Suite A: Core Fixes", () => {
     try {
       agentId = await createChildAgent({
         provider: "claude/claude-test-model",
-        features: { test_feature: true },
+        settings: { features: { test_feature: true } },
       });
       const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
@@ -369,14 +369,13 @@ describe("Suite A: Core Fixes", () => {
     }
   });
 
-  test("set_agent_feature updates provider features over MCP", async () => {
+  test("update_agent updates provider features over MCP", async () => {
     let agentId: string | null = null;
     try {
-      agentId = await createTopLevelAgent({ features: { test_feature: false } });
-      const updated = await callToolStructured(topLevelClient, "set_agent_feature", {
+      agentId = await createTopLevelAgent({ settings: { features: { test_feature: false } } });
+      const updated = await callToolStructured(topLevelClient, "update_agent", {
         agentId,
-        featureId: "test_feature",
-        value: true,
+        settings: { features: { test_feature: true } },
       });
       expect(updated.success).toBe(true);
       const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
@@ -390,15 +389,18 @@ describe("Suite A: Core Fixes", () => {
     }
   });
 
-  test("list_provider_features returns draft provider features over MCP", async () => {
-    const payload = await callToolStructured(topLevelClient, "list_provider_features", {
+  test("inspect_provider returns draft provider features over MCP", async () => {
+    const payload = await callToolStructured(topLevelClient, "inspect_provider", {
       provider: "claude",
       cwd: parentAgentCwd,
-      model: "claude-test-model",
-      featureValues: { test_feature: true },
+      settings: {
+        model: "claude-test-model",
+        features: { test_feature: true },
+      },
     });
 
     expect(payload.provider).toBe("claude");
+    expect(payload.selectedModel).toBe("claude-test-model");
     expect(recordArr(payload.features)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
