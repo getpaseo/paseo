@@ -755,6 +755,45 @@ describe("model merging", () => {
     ]);
   });
 
+  test("profile thinking option default is normalized onto the model", async () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          models: [
+            {
+              id: "profile-default",
+              label: "Profile Default",
+              isDefault: true,
+              thinkingOptions: [
+                { id: "off", label: "Off" },
+                { id: "max", label: "Max", isDefault: true },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    const models = await registry.codex.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "codex",
+        id: "profile-default",
+        label: "Profile Default",
+        isDefault: true,
+        thinkingOptions: [
+          { id: "off", label: "Off" },
+          { id: "max", label: "Max", isDefault: true },
+        ],
+        defaultThinkingOptionId: "max",
+      },
+    ]);
+  });
+
   test("additional models append to runtime models", async () => {
     mockState.runtimeModels.set("claude", [
       {

@@ -14,6 +14,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
+import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
   AgentProviderRuntimeSettingsMap,
@@ -263,11 +264,11 @@ function mapPersistedAgentDescriptor(
   };
 }
 
-function mapModel(provider: AgentProvider, model: AgentModelDefinition): AgentModelDefinition {
-  return {
-    ...model,
-    provider,
-  };
+function mapModel(
+  provider: AgentProvider,
+  model: AgentModelDefinition | ProviderProfileModel,
+): AgentModelDefinition {
+  return normalizeAgentModelDefinition({ ...model, provider });
 }
 
 function mergeModels(
@@ -281,10 +282,7 @@ function mergeModels(
   if (profileModels.length > 0 && options?.profileModelsAreAdditive !== true) {
     return mergeModelAdditions(
       provider,
-      profileModels.map((model) => ({
-        ...model,
-        provider,
-      })),
+      profileModels.map((model) => mapModel(provider, model)),
       additionalModels,
     );
   }
@@ -305,10 +303,7 @@ function mergeModelAdditions(
   let hasAdditionalDefault = false;
 
   for (const model of modelAdditions) {
-    const additionalModel = {
-      ...model,
-      provider,
-    };
+    const additionalModel = mapModel(provider, model);
     hasAdditionalDefault ||= additionalModel.isDefault === true;
 
     const existingIndex = mergedModels.findIndex((candidate) => candidate.id === model.id);

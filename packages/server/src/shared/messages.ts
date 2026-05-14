@@ -3,7 +3,10 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
 import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
-import { TOOL_CALL_ICON_NAMES } from "../server/agent/agent-sdk-types.js";
+import {
+  normalizeAgentModelDefinition,
+  TOOL_CALL_ICON_NAMES,
+} from "../server/agent/agent-sdk-types.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -194,16 +197,18 @@ export const AgentFeatureSchema = z.discriminatedUnion("type", [
   AgentFeatureSelectSchema,
 ]);
 
-const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
-  provider: AgentProviderSchema,
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
-  thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
-  defaultThinkingOptionId: z.string().optional(),
-});
+const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z
+  .object({
+    provider: AgentProviderSchema,
+    id: z.string(),
+    label: z.string(),
+    description: z.string().optional(),
+    isDefault: z.boolean().optional(),
+    metadata: z.record(z.unknown()).optional(),
+    thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
+    defaultThinkingOptionId: z.string().optional(),
+  })
+  .transform(normalizeAgentModelDefinition);
 
 export const ProviderSnapshotEntrySchema = z.object({
   provider: AgentProviderSchema,
