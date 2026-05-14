@@ -378,6 +378,22 @@ const x = 1;
     expect(divergedStatus.behindOfOrigin).toBe(1);
   });
 
+  it("does not report the full branch history as ahead when the current branch remote is gone", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+    execFileSync("git", ["push", "-u", "origin", "feature"], { cwd: repoDir });
+    execFileSync("git", ["push", "origin", "--delete", "feature"], { cwd: repoDir });
+    execFileSync("git", ["fetch", "--prune", "origin"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.aheadOfOrigin).toBeNull();
+  });
+
   it("does not report incoming additions when the base branch is behind its remote", async () => {
     const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
     commitFile(cloneDir, "file.txt", "remote one\nremote two\n", "remote update");

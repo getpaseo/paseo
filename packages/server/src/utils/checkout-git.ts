@@ -1241,14 +1241,19 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
   if (!currentBranch) {
     return null;
   }
+  const trackedOriginBranch = await getTrackedOriginBranch(cwd, currentBranch);
+  const originBranch = trackedOriginBranch ?? currentBranch;
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `origin/${currentBranch}..${currentBranch}`],
+      ["rev-list", "--count", `origin/${originBranch}..${currentBranch}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV },
     );
     const count = Number.parseInt(stdout.trim(), 10);
     return Number.isNaN(count) ? null : count;
   } catch {
+    if (trackedOriginBranch) {
+      return null;
+    }
     try {
       const { stdout } = await runGitCommand(["rev-list", "--count", currentBranch], {
         cwd,
@@ -1260,6 +1265,16 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
       return null;
     }
   }
+}
+
+async function getTrackedOriginBranch(cwd: string, currentBranch: string): Promise<string | null> {
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
+  if (remoteName !== "origin") {
+    return null;
+  }
+
+  const mergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`);
+  return parseBranchMergeHeadRef(mergeRef);
 }
 
 async function getBehindOfOrigin(cwd: string, currentBranch: string): Promise<number | null> {
