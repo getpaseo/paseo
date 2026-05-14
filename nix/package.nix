@@ -88,46 +88,24 @@ buildNpmPackage rec {
   installPhase = ''
     runHook preInstall
 
+    # Compute the daemon's runtime closure by static module-graph tracing
+    # (@vercel/nft from supervisor-entrypoint.js, cli/dist/index.js, and the
+    # forked terminal-worker-process.js) plus an explicit list of non-JS
+    # assets read at runtime. The trace script is the single source of
+    # truth for what the daemon needs at $out — auditable in plain JS, no
+    # npm hoisting / .bin / workspace-symlink footguns.
     mkdir -p $out/lib/paseo
+    node scripts/trace-daemon.mjs > daemon-files.txt
 
-    # Copy root package metadata
+    while IFS= read -r path; do
+      [ -z "$path" ] && continue
+      mkdir -p "$out/lib/paseo/$(dirname "$path")"
+      cp -a "$path" "$out/lib/paseo/$path"
+    done < daemon-files.txt
+
+    # Root package.json lets node resolve the workspace layout when the
+    # CLI/server bin starts from $out.
     cp package.json $out/lib/paseo/
-
-    # Copy node_modules (preserving workspace symlinks)
-    cp -a node_modules $out/lib/paseo/
-
-    # Auto-detect which @getpaseo/* packages were built by build:daemon
-    # (they'll have a dist/ directory). Copy those and remove the rest.
-    for link in $out/lib/paseo/node_modules/@getpaseo/*; do
-      name=$(basename "$link")
-      if [ -d "packages/$name/dist" ]; then
-        mkdir -p "$out/lib/paseo/packages/$name"
-        cp "packages/$name/package.json" "$out/lib/paseo/packages/$name/"
-        cp -a "packages/$name/dist" "$out/lib/paseo/packages/$name/"
-        if [ -d "packages/$name/node_modules" ]; then
-          cp -a "packages/$name/node_modules" "$out/lib/paseo/packages/$name/"
-        fi
-      else
-        rm -f "$link"
-      fi
-    done
-
-    # Copy CLI bin entry
-    mkdir -p $out/lib/paseo/packages/cli/bin
-    cp packages/cli/bin/paseo $out/lib/paseo/packages/cli/bin/
-
-    # Copy extra server files referenced at runtime
-    for f in agent-prompt.md .env.example; do
-      if [ -f packages/server/$f ]; then
-        cp packages/server/$f $out/lib/paseo/packages/server/
-      fi
-    done
-
-    # Copy server scripts (including supervisor-entrypoint) needed by CLI
-    if [ -d packages/server/dist/scripts ]; then
-      mkdir -p $out/lib/paseo/packages/server/dist/scripts
-      cp -a packages/server/dist/scripts/* $out/lib/paseo/packages/server/dist/scripts/
-    fi
 
     # Create wrapper for the server entry point (for systemd / direct use)
     mkdir -p $out/bin
