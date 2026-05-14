@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyAssistantFileLink,
   normalizeInlinePathTarget,
   parseAssistantFileLink,
   parseFileProtocolUrl,
@@ -70,7 +71,143 @@ describe("parseFileProtocolUrl", () => {
   });
 });
 
+describe("classifyAssistantFileLink", () => {
+  it("keeps explicit external URLs out of file parsing", () => {
+    expect(
+      classifyAssistantFileLink("http://dumm.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      kind: "external",
+      raw: "http://dumm.md",
+    });
+    expect(classifyAssistantFileLink("mailto:test@example.com")).toEqual({
+      kind: "external",
+      raw: "mailto:test@example.com",
+    });
+  });
+
+  it("classifies bare workspace candidates separately from direct relative files", () => {
+    expect(
+      classifyAssistantFileLink("dumm.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      kind: "ambiguousFileCandidate",
+      target: {
+        raw: "dumm.md",
+        path: "/Users/test/project/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
+
+    expect(
+      classifyAssistantFileLink("message-renderer.tsx", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      kind: "ambiguousFileCandidate",
+      target: {
+        raw: "message-renderer.tsx",
+        path: "/Users/test/project/message-renderer.tsx",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
+
+    expect(
+      classifyAssistantFileLink("src/components/message.tsx#L33", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      kind: "directFile",
+      target: {
+        raw: "src/components/message.tsx#L33",
+        path: "/Users/test/project/src/components/message.tsx",
+        lineStart: 33,
+        lineEnd: undefined,
+      },
+    });
+  });
+
+  it("does not classify normal bare domains as file candidates", () => {
+    expect(
+      classifyAssistantFileLink("google.com", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+    expect(
+      classifyAssistantFileLink("example.com", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+    expect(
+      classifyAssistantFileLink("openai.com/path", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("parseAssistantFileLink", () => {
+  it("resolves bare markdown filenames against the active workspace", () => {
+    expect(
+      parseAssistantFileLink("dumm.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "dumm.md",
+      path: "/Users/test/project/dumm.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
+  it("resolves bare source filenames with line suffixes against the active workspace", () => {
+    expect(
+      parseAssistantFileLink("file.ts:12", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "file.ts:12",
+      path: "/Users/test/project/file.ts",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("rejects bare domains and domain-like paths", () => {
+    expect(
+      parseAssistantFileLink("google.com", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+    expect(
+      parseAssistantFileLink("google.com:80", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+    expect(
+      parseAssistantFileLink("openai.com/path", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+  });
+
+  it("resolves relative paths against the active workspace", () => {
+    expect(
+      parseAssistantFileLink("src/components/message.tsx#L33", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "src/components/message.tsx#L33",
+      path: "/Users/test/project/src/components/message.tsx",
+      lineStart: 33,
+      lineEnd: undefined,
+    });
+  });
+
   it("parses absolute POSIX hrefs inside the active workspace", () => {
     expect(
       parseAssistantFileLink("/Users/test/project/src/app.tsx#L33", {
@@ -146,6 +283,11 @@ describe("parseAssistantFileLink", () => {
 
   it("rejects external URLs", () => {
     expect(parseAssistantFileLink("https://example.com/Users/test/project/src/app.tsx")).toBeNull();
+    expect(
+      parseAssistantFileLink("http://dumm.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
   });
 
   it("rejects invalid line fragments", () => {

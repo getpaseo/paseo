@@ -227,6 +227,47 @@ describe("searchWorkspaceEntries", () => {
     expect(filesOnly).toEqual([{ path: "README.md", kind: "file" }]);
   });
 
+  it("supports fuzzy basename queries for nested workspace files", async () => {
+    writeFileSync(path.join(workspaceDir, "src", "components", "message-renderer.tsx"), "");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "msgrndr",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results).toEqual([
+      {
+        path: "src/components/message-renderer.tsx",
+        kind: "file",
+      },
+    ]);
+  });
+
+  it("ranks fuzzy basename matches after exact, prefix, and substring matches", async () => {
+    writeFileSync(path.join(workspaceDir, "src", "components", "msgrndr"), "");
+    writeFileSync(path.join(workspaceDir, "src", "components", "msgrndr-panel.tsx"), "");
+    writeFileSync(path.join(workspaceDir, "src", "components", "use-msgrndr.ts"), "");
+    writeFileSync(path.join(workspaceDir, "src", "components", "message-renderer.tsx"), "");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "msgrndr",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results.map((entry) => entry.path)).toEqual([
+      "src/components/msgrndr",
+      "src/components/msgrndr-panel.tsx",
+      "src/components/use-msgrndr.ts",
+      "src/components/message-renderer.tsx",
+    ]);
+  });
+
   // POSIX-only: creates and follows a symlink escape fixture.
   it.skipIf(isWindows)(
     "supports path-style queries and does not escape cwd through symlinks",

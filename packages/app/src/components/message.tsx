@@ -68,13 +68,11 @@ import type { AgentAttachment } from "@server/shared/messages";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
-import {
-  parseAssistantFileLink,
-  parseInlinePathToken,
-  type InlinePathTarget,
-} from "@/utils/inline-path";
+import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { type AssistantFileLinkSource } from "@/utils/assistant-file-link-resolver";
+import { useAssistantFileLinkResolver } from "@/hooks/use-assistant-file-link-resolver";
+import type { ToastApi } from "@/components/toast-host";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import {
   getAssistantImageLoadStateFromMetadata,
@@ -545,6 +543,7 @@ interface AssistantMessageProps {
   workspaceRoot?: string;
   serverId?: string;
   client?: DaemonClient | null;
+  toast?: ToastApi | null;
   disableOuterSpacing?: boolean;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
 }
@@ -877,19 +876,26 @@ function InlinePathChip({ content, parsed, onPress }: InlinePathChipProps) {
 }
 
 function MarkdownLink({
-  href,
+  source,
   style,
   onPress,
+  onPrefetch,
   children,
 }: {
-  href: string;
+  source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
-  onPress: (url: string) => void;
+  onPress: (source: AssistantFileLinkSource) => void;
+  onPrefetch: (source: AssistantFileLinkSource) => void;
   children: ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
-  const handlePress = useCallback(() => onPress(href), [onPress, href]);
-  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const href = source.href;
+  const handlePress = useCallback(() => onPress(source), [onPress, source]);
+  const handlePrefetch = useCallback(() => onPrefetch(source), [onPrefetch, source]);
+  const handleHoverIn = useCallback(() => {
+    setHovered(true);
+    handlePrefetch();
+  }, [handlePrefetch]);
   const handleHoverOut = useCallback(() => setHovered(false), []);
   const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
     () => [style, hovered && { textDecorationLine: "underline" as const }],
@@ -913,6 +919,7 @@ function MarkdownLink({
       <Pressable
         accessibilityRole="link"
         onPress={handlePress}
+        onFocus={handlePrefetch}
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >
@@ -941,11 +948,13 @@ function getInlineCodeAutoLinkUrl(
     return null;
   }
 
-  const matches: Array<{
-    index: number;
-    lastIndex: number;
-    url: string;
-  }> | null = markdownParser.linkify.match(trimmed);
+  const matches:
+    | {
+        index: number;
+        lastIndex: number;
+        url: string;
+      }[]
+    | null = markdownParser.linkify.match(trimmed);
   if (!matches || matches.length !== 1) {
     return null;
   }
@@ -956,6 +965,40 @@ function getInlineCodeAutoLinkUrl(
   }
 
   return match.url;
+}
+
+function getInlineCodeAutoLinkSource(input: {
+  href: string;
+  content: string;
+}): AssistantFileLinkSource {
+  return {
+    href: input.href,
+    text: input.content,
+    markup: "linkify",
+    sourceInfo: "auto",
+  };
+}
+
+interface AssistantMarkdownAstNode extends ASTNode {
+  sourceInfo?: string;
+}
+
+function getMarkdownLinkSource(node: AssistantMarkdownAstNode): AssistantFileLinkSource {
+  return {
+    href: typeof node.attributes?.href === "string" ? node.attributes.href : "",
+    text: getMarkdownNodeText(node),
+    markup: node.markup,
+    sourceInfo: node.sourceInfo,
+    sourceType: node.sourceType,
+  };
+}
+
+function getMarkdownNodeText(node: ASTNode): string {
+  if (!node.children.length) {
+    return node.content ?? "";
+  }
+
+  return node.children.map(getMarkdownNodeText).join("");
 }
 
 function nodeHasParentType(parent: unknown, type: string): boolean {
@@ -1394,20 +1437,22 @@ function MarkdownInheritedText({
 }
 
 interface MarkdownInheritedCodeLinkProps {
-  href: string;
+  source: AssistantFileLinkSource;
   inheritedStyles: TextStyle;
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
-  onPress: (url: string) => boolean;
+  onPress: (source: AssistantFileLinkSource) => void;
+  onPrefetch: (source: AssistantFileLinkSource) => void;
   children: ReactNode;
 }
 
 function MarkdownInheritedCodeLink({
-  href,
+  source,
   inheritedStyles,
   codeInlineStyle,
   linkStyle,
   onPress,
+  onPrefetch,
   children,
 }: MarkdownInheritedCodeLinkProps) {
   const style = useMemo(
@@ -1415,7 +1460,7 @@ function MarkdownInheritedCodeLink({
     [inheritedStyles, codeInlineStyle, linkStyle],
   );
   return (
-    <MarkdownLink href={href} style={style} onPress={onPress}>
+    <MarkdownLink source={source} style={style} onPress={onPress} onPrefetch={onPrefetch}>
       {children}
     </MarkdownLink>
   );
@@ -1452,6 +1497,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   workspaceRoot,
   serverId,
   client,
+  toast,
   disableOuterSpacing,
   spacing = "default",
 }: AssistantMessageProps) {
@@ -1472,20 +1518,34 @@ export const AssistantMessage = memo(function AssistantMessage({
     return parser;
   }, []);
 
-  const handleLinkPress = useCallback(
-    (url: string) => {
-      const fileTarget = onInlinePathPress ? parseAssistantFileLink(url, { workspaceRoot }) : null;
-      if (fileTarget) {
-        onInlinePathPress?.(fileTarget);
-        return false;
-      }
+  const fileLinkResolver = useAssistantFileLinkResolver({
+    client,
+    serverId,
+    workspaceRoot,
+    onOpenWorkspaceFile: onInlinePathPress,
+    toast,
+  });
 
-      void openExternalUrl(url);
+  const handleLinkPress = useCallback(
+    (source: AssistantFileLinkSource) => {
+      fileLinkResolver.open({ source });
+    },
+    [fileLinkResolver],
+  );
+  const handleLinkPrefetch = useCallback(
+    (source: AssistantFileLinkSource) => {
+      fileLinkResolver.prefetch({ source });
+    },
+    [fileLinkResolver],
+  );
+  const handleMarkdownLinkPress = useCallback(
+    (url: string) => {
+      fileLinkResolver.open({ source: { href: url } });
       // react-native-markdown-display opens the link itself when this returns true.
       // We already handled it above, so return false to avoid duplicate opens.
       return false;
     },
-    [onInlinePathPress, workspaceRoot],
+    [fileLinkResolver],
   );
 
   const markdownRules = useMemo<RenderRules>(() => {
@@ -1575,14 +1635,19 @@ export const AssistantMessage = memo(function AssistantMessage({
 
         const inlineCodeLinkUrl = getInlineCodeAutoLinkUrl(markdownParser, content);
         if (inlineCodeLinkUrl) {
+          const source = getInlineCodeAutoLinkSource({
+            href: inlineCodeLinkUrl,
+            content,
+          });
           return (
             <MarkdownInheritedCodeLink
               key={node.key}
-              href={inlineCodeLinkUrl}
+              source={source}
               inheritedStyles={inheritedStyles}
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
+              onPrefetch={handleLinkPrefetch}
             >
               {content}
             </MarkdownInheritedCodeLink>
@@ -1651,9 +1716,10 @@ export const AssistantMessage = memo(function AssistantMessage({
       link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownLink
           key={node.key}
-          href={typeof node.attributes?.href === "string" ? node.attributes.href : ""}
+          source={getMarkdownLinkSource(node)}
           style={styles.link}
           onPress={handleLinkPress}
+          onPrefetch={handleLinkPrefetch}
         >
           {Children.map(children, (child) => {
             if (!isValidElement(child)) return child;
@@ -1692,7 +1758,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, handleLinkPress, markdownParser, onInlinePathPress, serverId, workspaceRoot]);
+  }, [
+    client,
+    handleLinkPrefetch,
+    handleLinkPress,
+    markdownParser,
+    onInlinePathPress,
+    serverId,
+    workspaceRoot,
+  ]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(
@@ -1724,7 +1798,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             text={block}
             rules={markdownRules}
             parser={markdownParser}
-            onLinkPress={handleLinkPress}
+            onLinkPress={handleMarkdownLinkPress}
           />
         </AssistantMessageBlockContainer>
       ))}

@@ -9,10 +9,81 @@ export interface InlinePathTarget {
 
 const FILE_PROTOCOL = "file:";
 const INLINE_LINE_FRAGMENT = /^L([0-9]+)(?:-L?([0-9]+))?$/i;
+const ASSISTANT_FILE_EXTENSIONS = new Set([
+  "astro",
+  "bash",
+  "c",
+  "cc",
+  "cjs",
+  "cpp",
+  "cs",
+  "css",
+  "cts",
+  "cxx",
+  "env",
+  "fish",
+  "go",
+  "gql",
+  "gradle",
+  "graphql",
+  "h",
+  "hpp",
+  "htm",
+  "html",
+  "ini",
+  "java",
+  "js",
+  "json",
+  "jsonc",
+  "jsx",
+  "kt",
+  "kts",
+  "less",
+  "lock",
+  "lua",
+  "md",
+  "mdx",
+  "mjs",
+  "mts",
+  "php",
+  "proto",
+  "py",
+  "rb",
+  "rs",
+  "sass",
+  "scss",
+  "sh",
+  "sql",
+  "svelte",
+  "swift",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "vue",
+  "xml",
+  "yaml",
+  "yml",
+  "zsh",
+]);
 
 export interface AssistantHrefParseOptions {
   workspaceRoot?: string;
 }
+
+export type AssistantFileLinkClassification =
+  | {
+      kind: "external";
+      raw: string;
+    }
+  | {
+      kind: "directFile";
+      target: InlinePathTarget;
+    }
+  | {
+      kind: "ambiguousFileCandidate";
+      target: InlinePathTarget;
+    };
 
 export interface NormalizedInlinePathTarget {
   directory: string;
@@ -172,6 +243,41 @@ function parseAssistantInlinePathLink(
   };
 }
 
+export function classifyAssistantFileLink(
+  value: string,
+  options: AssistantHrefParseOptions = {},
+): AssistantFileLinkClassification | null {
+  const raw = value ?? "";
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (isExternalHref(trimmed)) {
+    return {
+      kind: "external",
+      raw,
+    };
+  }
+
+  const target = parseAssistantFileLink(trimmed, options);
+  if (!target) {
+    return null;
+  }
+
+  if (isAmbiguousWorkspaceCandidate(trimmed, target, options.workspaceRoot)) {
+    return {
+      kind: "ambiguousFileCandidate",
+      target,
+    };
+  }
+
+  return {
+    kind: "directFile",
+    target,
+  };
+}
+
 export function parseAssistantFileLink(
   value: string,
   options: AssistantHrefParseOptions = {},
@@ -186,7 +292,7 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  if (trimmed.includes("://")) {
+  if (isExternalHref(trimmed)) {
     return null;
   }
 
@@ -214,6 +320,13 @@ export function parseAssistantFileLink(
       path: normalizedPath,
       ...lines,
     };
+  }
+
+  const relativeTarget = parseWorkspaceRelativeFileLink(trimmed, {
+    workspaceRoot: options.workspaceRoot,
+  });
+  if (relativeTarget) {
+    return relativeTarget;
   }
 
   if (!isAbsolutePath(trimmed)) {
@@ -245,6 +358,91 @@ export function parseAssistantFileLink(
     raw: value,
     path: normalizedPath,
     ...lines,
+  };
+}
+
+export function isFileLookingAssistantToken(value: string): boolean {
+  const normalized = normalizePathToken(value);
+  if (!normalized || normalized.includes("?") || normalized.includes("://")) {
+    return false;
+  }
+
+  const path = getHeuristicLocalPath(normalized);
+  if (!path) {
+    return false;
+  }
+
+  return isPlausibleAssistantLocalPath(path);
+}
+
+function parseWorkspaceRelativeFileLink(
+  value: string,
+  options: AssistantHrefParseOptions,
+): InlinePathTarget | null {
+  const workspaceRoot = normalizePathInput(options.workspaceRoot);
+  if (!workspaceRoot) {
+    return null;
+  }
+
+  const parsed = parseLocalPathParts(value);
+  if (!parsed || isAbsolutePath(parsed.path)) {
+    return null;
+  }
+
+  const normalizedPath = resolveRelativePathUnderRoot(parsed.path, workspaceRoot);
+  if (!normalizedPath) {
+    return null;
+  }
+
+  return {
+    raw: value,
+    path: normalizedPath,
+    ...parsed.lines,
+  };
+}
+
+function parseLocalPathParts(
+  value: string,
+): { path: string; lines: Pick<InlinePathTarget, "lineStart" | "lineEnd"> } | null {
+  const normalized = normalizePathToken(value);
+  if (!normalized || normalized.includes("?")) {
+    return null;
+  }
+
+  const hashIndex = normalized.indexOf("#");
+  const beforeHash = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
+  const hash = hashIndex >= 0 ? normalized.slice(hashIndex) : "";
+  const fragmentLines = parseLineFragment(hash);
+  if (!fragmentLines) {
+    return null;
+  }
+
+  const inlinePathTarget = parseInlinePathToken(beforeHash);
+  if (inlinePathTarget) {
+    if (!isPlausibleAssistantLocalPath(inlinePathTarget.path)) {
+      return null;
+    }
+
+    return {
+      path: inlinePathTarget.path,
+      lines: {
+        lineStart: inlinePathTarget.lineStart,
+        lineEnd: inlinePathTarget.lineEnd,
+      },
+    };
+  }
+
+  if (!beforeHash || beforeHash.includes(":")) {
+    return null;
+  }
+
+  if (!isPlausibleAssistantLocalPath(beforeHash)) {
+    return null;
+  }
+
+  return {
+    path: beforeHash,
+    lines: fragmentLines,
   };
 }
 
@@ -306,6 +504,130 @@ function isAllowedAbsolutePath(pathValue: string, workspaceRoot?: string): boole
   const comparePrefix = compareWorkspaceRoot === "/" ? "/" : `${compareWorkspaceRoot}/`;
 
   return comparePath === compareWorkspaceRoot || comparePath.startsWith(comparePrefix);
+}
+
+function isExternalHref(value: string): boolean {
+  if (value.includes("://")) {
+    return !value.toLowerCase().startsWith(`${FILE_PROTOCOL}//`);
+  }
+
+  const inlinePathTarget = parseInlinePathToken(value);
+  if (inlinePathTarget) {
+    return false;
+  }
+
+  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !/^[A-Za-z]:[\\/]/.test(value);
+}
+
+function isAmbiguousWorkspaceCandidate(
+  value: string,
+  target: InlinePathTarget,
+  workspaceRoot?: string,
+): boolean {
+  const normalizedWorkspaceRoot = normalizePathInput(workspaceRoot);
+  if (!normalizedWorkspaceRoot || !isAllowedAbsolutePath(target.path, normalizedWorkspaceRoot)) {
+    return false;
+  }
+
+  const parsed = parseLocalPathParts(value);
+  if (!parsed || isAbsolutePath(parsed.path)) {
+    return false;
+  }
+
+  return !parsed.path.includes("/");
+}
+
+function getHeuristicLocalPath(value: string): string | null {
+  const hashIndex = value.indexOf("#");
+  const beforeHash = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
+  const hash = hashIndex >= 0 ? value.slice(hashIndex) : "";
+  if (!parseLineFragment(hash)) {
+    return null;
+  }
+
+  const inlinePathTarget = parseInlinePathToken(beforeHash);
+  if (inlinePathTarget) {
+    return inlinePathTarget.path;
+  }
+
+  if (!beforeHash || beforeHash.includes(":")) {
+    return null;
+  }
+
+  return beforeHash;
+}
+
+function isPlausibleAssistantLocalPath(pathValue: string): boolean {
+  const normalized = normalizePathToken(pathValue);
+  if (!normalized) {
+    return false;
+  }
+
+  if (isAbsolutePath(normalized)) {
+    return true;
+  }
+
+  const explicitRelative =
+    normalized.startsWith("./") || normalized.startsWith("../") || normalized.startsWith("~/");
+  if (explicitRelative) {
+    return true;
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  const firstSegment = segments[0];
+  if (!firstSegment) {
+    return false;
+  }
+
+  if (segments.length > 1) {
+    return !isDomainLikePathSegment(firstSegment);
+  }
+
+  if (firstSegment.startsWith(".") && firstSegment.length > 1) {
+    return true;
+  }
+
+  const lastDot = firstSegment.lastIndexOf(".");
+  if (lastDot < 0) {
+    return true;
+  }
+
+  const extension = firstSegment.slice(lastDot + 1).toLowerCase();
+  return ASSISTANT_FILE_EXTENSIONS.has(extension);
+}
+
+function isDomainLikePathSegment(segment: string): boolean {
+  return /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(segment);
+}
+
+function resolveRelativePathUnderRoot(pathValue: string, workspaceRoot: string): string | null {
+  const normalizedPath = normalizePathToken(pathValue);
+  if (!normalizedPath || isAbsolutePath(normalizedPath)) {
+    return null;
+  }
+
+  const root = workspaceRoot.replace(/\/+$/, "") || "/";
+  const pathSegments = normalizedPath.split("/");
+  const resolvedSegments: string[] = [];
+  for (const segment of pathSegments) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (resolvedSegments.length === 0) {
+        return null;
+      }
+      resolvedSegments.pop();
+      continue;
+    }
+    resolvedSegments.push(segment);
+  }
+
+  if (resolvedSegments.length === 0) {
+    return root;
+  }
+
+  return root === "/" ? `/${resolvedSegments.join("/")}` : `${root}/${resolvedSegments.join("/")}`;
 }
 
 function normalizeFileUrlPath(pathname: string): string | null {

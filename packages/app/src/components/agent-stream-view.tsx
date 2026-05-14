@@ -418,11 +418,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             workspaceRoot={workspaceRoot}
             serverId={serverId}
             client={client}
+            toast={toast}
             spacing={spacing}
           />
         );
       },
-      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client],
+      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client, toast],
     );
 
     const renderThoughtItem = useCallback(
