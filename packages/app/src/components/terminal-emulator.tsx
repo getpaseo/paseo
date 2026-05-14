@@ -115,6 +115,7 @@ interface TerminalEmulatorProps {
   streamKey: string;
   testId?: string;
   xtermTheme?: ITheme;
+  scrollbackLines: number;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
@@ -186,6 +187,7 @@ export default function TerminalEmulator({
     foreground: "#e6e6e6",
     cursor: "#e6e6e6",
   },
+  scrollbackLines,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
@@ -424,6 +426,7 @@ export default function TerminalEmulator({
       root,
       host,
       initialSnapshot: initialSnapshotRef.current,
+      scrollback: scrollbackLines,
       theme: mountedThemeRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
@@ -435,7 +438,7 @@ export default function TerminalEmulator({
         runtimeRef.current = null;
       }
     };
-  }, [streamKey]);
+  }, [scrollbackLines, streamKey]);
 
   useEffect(() => {
     runtimeRef.current?.setCallbacks({

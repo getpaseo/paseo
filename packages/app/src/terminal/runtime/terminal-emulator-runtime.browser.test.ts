@@ -82,6 +82,7 @@ function createTerminalHost(input: { width: number; height: number }): MountedTe
     root,
     host,
     initialSnapshot: null,
+    scrollback: 10_000,
     theme: {
       background: "#0b0b0b",
       foreground: "#e6e6e6",

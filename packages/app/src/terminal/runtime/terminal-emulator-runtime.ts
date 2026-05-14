@@ -22,6 +22,7 @@ export interface TerminalEmulatorRuntimeMountInput {
   root: HTMLDivElement;
   host: HTMLDivElement;
   initialSnapshot: TerminalState | null;
+  scrollback: number;
   theme: ITheme;
 }
 
@@ -168,7 +169,7 @@ export class TerminalEmulatorRuntime {
       overviewRuler: {
         width: 8,
       },
-      scrollback: 10_000,
+      scrollback: input.scrollback,
       theme: withOverviewRulerBorderHidden(input.theme),
     });
     const fitAddon = new FitAddon();

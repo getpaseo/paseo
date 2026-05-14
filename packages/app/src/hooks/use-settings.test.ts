@@ -87,6 +87,7 @@ describe("use-settings", () => {
       manageBuiltInDaemon: true,
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
+      terminalScrollbackLines: 10_000,
       releaseChannel: "stable",
     });
   });
@@ -130,6 +131,7 @@ describe("use-settings", () => {
       theme: "dark",
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
+      terminalScrollbackLines: 10_000,
     });
     expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
       mod.APP_SETTINGS_KEY,
@@ -169,6 +171,7 @@ describe("use-settings", () => {
       theme: "light",
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
+      terminalScrollbackLines: 10_000,
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
     });
@@ -188,8 +191,37 @@ describe("use-settings", () => {
       theme: "light",
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
+      terminalScrollbackLines: 10_000,
       manageBuiltInDaemon: true,
       releaseChannel: "stable",
     });
+  });
+
+  it("loads configured terminal scrollback lines from app settings", async () => {
+    asyncStorageMock.getItem.mockResolvedValue(
+      JSON.stringify({
+        terminalScrollbackLines: 42_000,
+      }),
+    );
+
+    const mod = await import("./use-settings");
+    const result = await mod.loadAppSettingsFromStorage();
+
+    expect(result.terminalScrollbackLines).toBe(42_000);
+  });
+
+  it("normalizes terminal scrollback lines from storage", async () => {
+    asyncStorageMock.getItem.mockResolvedValue(
+      JSON.stringify({
+        terminalScrollbackLines: 1_000_000.9,
+      }),
+    );
+
+    const mod = await import("./use-settings");
+    const result = await mod.loadAppSettingsFromStorage();
+
+    expect(result.terminalScrollbackLines).toBe(1_000_000);
+    expect(mod.parseTerminalScrollbackLines("-10")).toBe(0);
+    expect(mod.parseTerminalScrollbackLines("abc")).toBeNull();
   });
 });

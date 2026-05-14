@@ -21,11 +21,15 @@ export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
+export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
+export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
+export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
 
 export interface AppSettings {
   theme: ThemeName | "auto";
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
+  terminalScrollbackLines: number;
 }
 
 export interface Settings extends AppSettings {
@@ -37,6 +41,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
+  terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -246,6 +251,10 @@ function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
   ) {
     result.serviceUrlBehavior = stored.serviceUrlBehavior;
   }
+  const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
+  if (terminalScrollbackLines !== null) {
+    result.terminalScrollbackLines = terminalScrollbackLines;
+  }
   return result;
 }
 
@@ -255,6 +264,22 @@ function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<App
     result.theme = legacy.theme;
   }
   return result;
+}
+
+export function parseTerminalScrollbackLines(value: unknown): number | null {
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return Math.min(
+    MAX_TERMINAL_SCROLLBACK_LINES,
+    Math.max(MIN_TERMINAL_SCROLLBACK_LINES, Math.floor(numericValue)),
+  );
 }
 
 async function loadLegacyDesktopSettingsFromStorage(): Promise<{

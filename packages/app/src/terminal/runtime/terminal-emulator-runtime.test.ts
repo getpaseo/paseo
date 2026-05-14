@@ -49,9 +49,29 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
+const terminalConstructorOptions = vi.hoisted(() => ({
+  values: [] as unknown[],
+}));
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class Terminal {
+    rows = 24;
+    cols = 80;
+    unicode = { activeVersion: "" };
+    parser = {
+      registerCsiHandler: () => undefined,
+    };
+    constructor(options: unknown) {
+      terminalConstructorOptions.values.push(options);
+    }
+    loadAddon(): void {}
+    open(): void {}
+    onData(): { dispose: () => void } {
+      return { dispose: () => undefined };
+    }
+    attachCustomKeyEventHandler(): void {}
     dispose(): void {}
+    refresh(): void {}
   },
 }));
 
@@ -118,6 +138,7 @@ describe("terminal-emulator-runtime", () => {
     (globalThis as { window?: { __paseoTerminal?: unknown } }).window = {
       __paseoTerminal: undefined,
     };
+    terminalConstructorOptions.values = [];
   });
 
   afterEach(() => {
@@ -159,6 +180,46 @@ describe("terminal-emulator-runtime", () => {
 
     writeCallbacks[1]?.();
     expect(committed).toEqual(["first", "clear", "second"]);
+  });
+
+  it("passes configured scrollback to xterm", () => {
+    const originalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    const originalRequestAnimationFrame = (
+      globalThis as { requestAnimationFrame?: unknown }
+    ).requestAnimationFrame;
+    const originalCancelAnimationFrame = (
+      globalThis as { cancelAnimationFrame?: unknown }
+    ).cancelAnimationFrame;
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class ResizeObserver {
+      observe(): void {}
+      disconnect(): void {}
+    };
+    (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame = () => 1;
+    (globalThis as { cancelAnimationFrame?: unknown }).cancelAnimationFrame = () => undefined;
+    const runtime = new TerminalEmulatorRuntime();
+    const root = document.createElement("div");
+    const host = document.createElement("div");
+
+    try {
+      runtime.mount({
+        root,
+        host,
+        initialSnapshot: null,
+        scrollback: 42_000,
+        theme: {},
+      });
+    } finally {
+      runtime.unmount();
+      (globalThis as { ResizeObserver?: unknown }).ResizeObserver = originalResizeObserver;
+      (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame =
+        originalRequestAnimationFrame;
+      (globalThis as { cancelAnimationFrame?: unknown }).cancelAnimationFrame =
+        originalCancelAnimationFrame;
+    }
+
+    expect(terminalConstructorOptions.values).toEqual([
+      expect.objectContaining({ scrollback: 42_000 }),
+    ]);
   });
 
   it("falls back to timeout commit when xterm write callback does not fire", () => {

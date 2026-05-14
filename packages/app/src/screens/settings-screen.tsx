@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
   type PressableStateCallbackType,
 } from "react-native";
@@ -37,6 +38,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import {
   useAppSettings,
   useSettings,
+  parseTerminalScrollbackLines,
   type AppSettings,
   type SendBehavior,
   type ServiceUrlBehavior,
@@ -209,6 +211,7 @@ interface GeneralSectionProps {
   handleThemeChange: (theme: AppSettings["theme"]) => void;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
+  handleTerminalScrollbackLinesChange: (lines: number) => void;
 }
 
 interface ThemeMenuItemProps {
@@ -267,10 +270,35 @@ function GeneralSection({
   handleThemeChange,
   handleSendBehaviorChange,
   handleServiceUrlBehaviorChange,
+  handleTerminalScrollbackLinesChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
   const iconSize = theme.iconSize.md;
   const iconColor = theme.colors.foregroundMuted;
+  const [terminalScrollbackValue, setTerminalScrollbackValue] = useState(
+    String(settings.terminalScrollbackLines),
+  );
+
+  const handleTerminalScrollbackChangeText = useCallback((value: string) => {
+    setTerminalScrollbackValue(value.replace(/[^\d]/g, ""));
+  }, []);
+
+  const commitTerminalScrollback = useCallback(() => {
+    const parsed = parseTerminalScrollbackLines(terminalScrollbackValue);
+    const nextValue = parsed ?? settings.terminalScrollbackLines;
+    setTerminalScrollbackValue(String(nextValue));
+    if (nextValue !== settings.terminalScrollbackLines) {
+      handleTerminalScrollbackLinesChange(nextValue);
+    }
+  }, [
+    handleTerminalScrollbackLinesChange,
+    settings.terminalScrollbackLines,
+    terminalScrollbackValue,
+  ]);
+
+  useEffect(() => {
+    setTerminalScrollbackValue(String(settings.terminalScrollbackLines));
+  }, [settings.terminalScrollbackLines]);
 
   return (
     <SettingsSection title="General">
@@ -350,6 +378,23 @@ function GeneralSection({
             </DropdownMenu>
           </View>
         ) : null}
+        <View style={ROW_WITH_BORDER_STYLE}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>Terminal scrollback</Text>
+            <Text style={settingsStyles.rowHint}>Lines kept in the built-in terminal buffer</Text>
+          </View>
+          <TextInput
+            value={terminalScrollbackValue}
+            onChangeText={handleTerminalScrollbackChangeText}
+            onBlur={commitTerminalScrollback}
+            onSubmitEditing={commitTerminalScrollback}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            selectTextOnFocus
+            style={styles.terminalScrollbackInput}
+            accessibilityLabel="Terminal scrollback lines"
+          />
+        </View>
       </View>
     </SettingsSection>
   );
@@ -850,6 +895,13 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     [updateSettings],
   );
 
+  const handleTerminalScrollbackLinesChange = useCallback(
+    (terminalScrollbackLines: number) => {
+      void updateSettings({ terminalScrollbackLines });
+    },
+    [updateSettings],
+  );
+
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1031,6 +1083,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               handleThemeChange={handleThemeChange}
               handleSendBehaviorChange={handleSendBehaviorChange}
               handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
+              handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
             />
           );
         case "shortcuts":
@@ -1232,6 +1285,19 @@ const styles = StyleSheet.create((theme) => ({
   themeTriggerText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+  },
+  terminalScrollbackInput: {
+    width: 112,
+    minHeight: 36,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "right",
   },
   placeholder: {
     flex: 1,
