@@ -88,4 +88,36 @@ describe("external CLI", () => {
       localDaemon: "running",
     });
   });
+
+  it("bounds captured stdout from text commands", async () => {
+    const suffix = "daemon still running\n";
+    const largeOutput = `${"x".repeat(512 * 1024)}${suffix}`;
+    mockExternalCliOutput({ stdout: largeOutput });
+
+    const output = await runExternalCliTextCommand(["daemon", "status"]);
+
+    expect(output.length).toBeLessThanOrEqual(64 * 1024);
+    expect(output.endsWith(suffix.trimEnd())).toBe(true);
+  });
+
+  it("bounds captured stderr in failure messages", async () => {
+    const suffix = "fatal: daemon exploded\n";
+    mockExternalCliOutput({
+      stdout: "",
+      stderr: `${"x".repeat(512 * 1024)}${suffix}`,
+      exitCode: 1,
+    });
+
+    await runExternalCliTextCommand(["daemon", "status"]).then(
+      () => {
+        throw new Error("Expected external CLI command to fail");
+      },
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        expect(message).toContain(`output truncated to the last ${64 * 1024} chars`);
+        expect(message).toContain(suffix.trimEnd());
+        expect(message.length).toBeLessThan(70 * 1024);
+      },
+    );
+  });
 });
