@@ -36,7 +36,7 @@
           paseo = paseo;
         }
         // nixpkgs.lib.optionalAttrs isLinux {
-          desktop = pkgs.callPackage ./nix/desktop-package.nix { };
+          desktop = pkgs.callPackage ./nix/desktop-package.nix { inherit paseo; };
         }
       );
 

@@ -9,10 +9,11 @@
   makeDesktopItem,
   electron,
   libuv,
-  # Shares the daemon's npm-deps hash — same package-lock.json, same fetcher.
-  # Override via `.override { npmDepsHash = "..."; }` if your nixpkgs computes a
-  # different value.
-  npmDepsHash ? lib.fileContents ./npm-deps.hash,
+  # Reuse the daemon's prebuilt npm-deps FOD. Same lockfile, same content —
+  # without this, the desktop drv produces a separately-named store path
+  # (`paseo-desktop-<v>-npm-deps`) and refetches the entire registry. Override
+  # the upstream hash via `paseo.override { npmDepsHash = "..."; }`.
+  paseo,
 }:
 
 buildNpmPackage rec {
@@ -21,7 +22,8 @@ buildNpmPackage rec {
 
   src = lib.cleanSourceWith {
     src = ./..;
-    filter = path: type:
+    filter =
+      path: type:
       let
         baseName = builtins.baseNameOf path;
         relPath = lib.removePrefix (toString ./..) path;
@@ -42,7 +44,7 @@ buildNpmPackage rec {
   };
 
   nodejs = nodejs_22;
-  inherit npmDepsHash;
+  inherit (paseo) npmDeps;
 
   # Prevent onnxruntime-node's install script from running during automatic
   # npm rebuild. We manually rebuild only node-pty in buildPhase.
