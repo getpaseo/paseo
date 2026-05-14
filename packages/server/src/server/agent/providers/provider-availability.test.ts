@@ -9,10 +9,7 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 
 import { ClaudeAgentClient } from "./claude/agent.js";
-import {
-  __codexAppServerInternals,
-  CodexAppServerAgentClient,
-} from "./codex-app-server-agent.js";
+import { __codexAppServerInternals, CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
 const originalEnv = {
