@@ -1173,10 +1173,13 @@ function ProjectHeaderRow({
       return;
     }
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, { displayName }) as Href,
+      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
+        displayName,
+        projectId: project.projectKey,
+      }) as Href,
     );
     onWorkspacePress?.();
-  }, [displayName, onWorkspacePress, project.iconWorkingDir, serverId]);
+  }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
   const _mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const _toast = useToast();
 

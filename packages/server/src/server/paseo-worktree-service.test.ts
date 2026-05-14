@@ -66,6 +66,40 @@ test("creates a worktree and registers it in the source workspace project withou
   ]);
 });
 
+test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: "remote:github.com/acme/repo",
+    rootPath: repoDir,
+    displayName: "acme/repo",
+  });
+  const existingWorktree = createPersistedWorkspaceRecordForTest({
+    workspaceId: path.join(tempDir, "existing-worktree"),
+    projectId: sourceProject.projectId,
+    cwd: path.join(tempDir, "existing-worktree"),
+    kind: "worktree",
+    displayName: "existing-worktree",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(existingWorktree.workspaceId, existingWorktree);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      projectId: sourceProject.projectId,
+      worktreeSlug: "second-worktree",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
+  expect(Array.from(deps.projects.keys()).sort()).toEqual(["remote:github.com/acme/repo"]);
+});
+
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
 test.skipIf(isPlatform("win32"))(
   "reuses an existing worktree and still upserts the workspace",

@@ -105,6 +105,7 @@ import {
   shutdownProviders,
 } from "./agent/provider-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -528,6 +529,26 @@ export async function createPaseoDaemon(
     logger,
   });
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
+  const workspaceReconciliation = new WorkspaceReconciliationService({
+    projectRegistry,
+    workspaceRegistry,
+    logger,
+    workspaceGitService,
+  });
+  void (async () => {
+    try {
+      const result = await workspaceReconciliation.runOnce();
+      logger.info(
+        {
+          elapsed: elapsed(),
+          changeCount: result.changesApplied.length,
+        },
+        "Workspace registries reconciled",
+      );
+    } catch (error) {
+      logger.error({ err: error }, "Background workspace reconciliation failed");
+    }
+  })();
   await chatService.initialize();
   logger.info({ elapsed: elapsed() }, "Chat service initialized");
   const checkoutDiffManager = new CheckoutDiffManager({

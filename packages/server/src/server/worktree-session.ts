@@ -512,6 +512,7 @@ export async function handleCreatePaseoWorktreeRequest(
   try {
     const createdWorktree = await dependencies.createPaseoWorktreeWorkflow({
       cwd: request.cwd,
+      projectId: request.projectId,
       worktreeSlug: request.worktreeSlug,
       firstAgentContext: normalizeFirstAgentContext(request),
       refName: request.refName,

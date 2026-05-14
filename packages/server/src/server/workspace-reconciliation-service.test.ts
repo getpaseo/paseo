@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type pino from "pino";
@@ -334,6 +334,117 @@ describe("WorkspaceReconciliationService", () => {
 
     expect(projects.get("p1")!.kind).toBe("git");
     expect(workspaces.get("w1")!.kind).toBe("local_checkout");
+  });
+
+  test("moves workspaces from a path-keyed duplicate project to the existing remote-keyed project", async () => {
+    const repoDir = createTempGitRepo("reconcile-duplicate-project-");
+    tempDirs.push(repoDir);
+    const canonicalWorktreeDir = path.join(repoDir, ".paseo", "worktrees", "focused-bat");
+    const duplicateWorktreeDir = path.join(repoDir, ".paseo", "worktrees", "gigantic-blowfish");
+    mkdirSync(canonicalWorktreeDir, { recursive: true });
+    mkdirSync(duplicateWorktreeDir, { recursive: true });
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "remote:github.com/blank-dot-page/editor",
+      createPersistedProjectRecord({
+        projectId: "remote:github.com/blank-dot-page/editor",
+        rootPath: repoDir,
+        kind: "git",
+        displayName: "blank-dot-page/editor",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    projects.set(
+      repoDir,
+      createPersistedProjectRecord({
+        projectId: repoDir,
+        rootPath: repoDir,
+        kind: "git",
+        displayName: "editor",
+        customName: "Editor",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "focused-bat",
+      createPersistedWorkspaceRecord({
+        workspaceId: "focused-bat",
+        projectId: "remote:github.com/blank-dot-page/editor",
+        cwd: canonicalWorktreeDir,
+        kind: "worktree",
+        displayName: "update-og-image",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "gigantic-blowfish",
+      createPersistedWorkspaceRecord({
+        workspaceId: "gigantic-blowfish",
+        projectId: repoDir,
+        cwd: duplicateWorktreeDir,
+        kind: "worktree",
+        displayName: "markdown-view",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [repoDir]: {
+          projectKind: "git",
+          projectDisplayName: "blank-dot-page/editor",
+          workspaceDisplayName: "main",
+          gitRemote: "git@github.com:blank-dot-page/editor.git",
+        },
+        [canonicalWorktreeDir]: {
+          projectKind: "git",
+          projectDisplayName: "blank-dot-page/editor",
+          workspaceDisplayName: "update-og-image",
+          gitRemote: "git@github.com:blank-dot-page/editor.git",
+        },
+        [duplicateWorktreeDir]: {
+          projectKind: "git",
+          projectDisplayName: "blank-dot-page/editor",
+          workspaceDisplayName: "markdown-view",
+          gitRemote: "git@github.com:blank-dot-page/editor.git",
+        },
+      }),
+    });
+
+    const result = await service.runOnce();
+
+    expect(result.changesApplied).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "workspace_updated",
+          workspaceId: "gigantic-blowfish",
+          fields: { projectId: "remote:github.com/blank-dot-page/editor" },
+        }),
+        expect.objectContaining({
+          kind: "project_updated",
+          projectId: "remote:github.com/blank-dot-page/editor",
+          fields: { customName: "Editor" },
+        }),
+        expect.objectContaining({
+          kind: "project_archived",
+          projectId: repoDir,
+          reason: "no_active_workspaces",
+        }),
+      ]),
+    );
+    expect(workspaces.get("gigantic-blowfish")!.projectId).toBe(
+      "remote:github.com/blank-dot-page/editor",
+    );
+    expect(projects.get("remote:github.com/blank-dot-page/editor")!.customName).toBe("Editor");
+    expect(projects.get(repoDir)!.archivedAt).toBeTruthy();
   });
 
   test("updates project display name when git remote changes", async () => {

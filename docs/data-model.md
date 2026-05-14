@@ -362,6 +362,11 @@ Array of project records.
 | `updatedAt`   | `string` (ISO 8601)         |                                          |
 | `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable |
 
+Active git projects are unique by normalized `rootPath`. Startup reconciliation repairs older bad
+states by moving workspaces from duplicate path-keyed projects onto the canonical project,
+preferring remote-keyed project IDs such as `remote:github.com/owner/repo`, then archiving the
+emptied duplicate.
+
 ---
 
 ## 7. Workspace Registry

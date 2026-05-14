@@ -24,5 +24,6 @@ export function buildWorkspaceArchiveRedirectRoute(input: {
 
   return buildHostNewWorkspaceRoute(input.serverId, sourceDirectory, {
     displayName: archivedWorkspace.projectDisplayName,
+    projectId: archivedWorkspace.projectId,
   });
 }

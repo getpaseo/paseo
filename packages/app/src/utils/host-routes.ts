@@ -358,7 +358,7 @@ export function buildHostOpenProjectRoute(serverId: string) {
 export function buildHostNewWorkspaceRoute(
   serverId: string,
   sourceDirectory: string,
-  options?: { displayName?: string },
+  options?: { displayName?: string; projectId?: string },
 ) {
   const base = buildHostRootRoute(serverId);
   if (base === "/") {
@@ -368,6 +368,9 @@ export function buildHostNewWorkspaceRoute(
   params.set("dir", sourceDirectory);
   if (options?.displayName) {
     params.set("name", options.displayName);
+  }
+  if (options?.projectId) {
+    params.set("projectId", options.projectId);
   }
   return `${base}/new?${params.toString()}` as const;
 }

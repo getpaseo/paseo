@@ -872,6 +872,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   const createPromise = client.createPaseoWorktree(
     {
       cwd: "/tmp/project",
+      projectId: "remote:github.com/acme/project",
       worktreeSlug: "review-pr-123",
       refName: "feature/worktree-base-ref",
       action: "checkout",
@@ -885,6 +886,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   expect(request).toEqual({
     type: "create_paseo_worktree_request",
     cwd: "/tmp/project",
+    projectId: "remote:github.com/acme/project",
     worktreeSlug: "review-pr-123",
     refName: "feature/worktree-base-ref",
     action: "checkout",

@@ -57,6 +57,7 @@ function resolveCheckoutRequest(
 interface NewWorkspaceScreenProps {
   serverId: string;
   sourceDirectory: string;
+  projectId?: string;
   displayName?: string;
 }
 
@@ -496,6 +497,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory,
+  projectId,
   displayName: displayNameProp,
 }: NewWorkspaceScreenProps) {
   const { theme } = useUnistyles();
@@ -711,6 +713,7 @@ export function NewWorkspaceScreen({
 
       return {
         cwd: input.cwd,
+        ...(projectId ? { projectId } : {}),
         worktreeSlug: createNameId(),
         ...(hasFirstAgentContext
           ? {
@@ -723,7 +726,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem],
+    [currentBranch, projectId, selectedItem],
   );
 
   const ensureWorkspace = useCallback(
