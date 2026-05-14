@@ -6,6 +6,7 @@ build/
 dist/
 .next/
 out/
+result
 
 # Environment variables
 .env
