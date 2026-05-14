@@ -710,7 +710,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     );
   });
 
-  test("fails a turn when OpenCode retry status does not recover", async () => {
+  test("keeps a turn active while OpenCode is retrying", async () => {
     vi.useFakeTimers();
     const retryStream: AsyncIterable<unknown> = {
       [Symbol.asyncIterator]: () => {
@@ -746,6 +746,8 @@ describe("OpenCode adapter startTurn error handling", () => {
         event: vi.fn().mockResolvedValue({ stream: retryStream }),
       },
       session: {
+        abort: vi.fn().mockResolvedValue({ error: null }),
+        update: vi.fn().mockResolvedValue({ error: null }),
         promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
       },
     } as never;
@@ -761,15 +763,24 @@ describe("OpenCode adapter startTurn error handling", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    await session.startTurn("hello");
-    await vi.advanceTimersByTimeAsync(10_000);
+    try {
+      await session.startTurn("hello");
+      await vi.advanceTimersByTimeAsync(10_000);
 
-    const failed = events.find((event) => event.type === "turn_failed");
-    expect(failed).toMatchObject({
-      type: "turn_failed",
-      error: expect.stringContaining("model does not exist"),
-    });
-    vi.useRealTimers();
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "error",
+          message: "Provider retry (attempt 1): model does not exist",
+        },
+        turnId: "opencode-turn-0",
+      });
+      expect(events.some((event) => event.type === "turn_failed")).toBe(false);
+      await session.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("deletes provider session on close when persistence is disabled", async () => {

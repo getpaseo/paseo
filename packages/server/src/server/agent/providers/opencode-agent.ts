@@ -76,7 +76,6 @@ const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_STORAGE_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
-const OPENCODE_RETRY_STATUS_FAILURE_MS = 10_000;
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -2229,7 +2228,6 @@ class OpenCodeAgentSession implements AgentSession {
   private releaseServer: (() => void) | null;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
-  private retryFailureTimer: ReturnType<typeof setTimeout> | null = null;
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
@@ -2372,7 +2370,6 @@ class OpenCodeAgentSession implements AgentSession {
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
     this.pendingChildToolPartsBySessionId.clear();
-    this.clearRetryFailureTimer();
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
@@ -2700,8 +2697,6 @@ class OpenCodeAgentSession implements AgentSession {
       });
       return false;
     }
-
-    this.armRetryFailureTimerForStatus(event, turnId);
     const translated = await this.translateEvent(event);
     this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
@@ -2753,7 +2748,6 @@ class OpenCodeAgentSession implements AgentSession {
     } else {
       this.runningToolCalls.clear();
     }
-    this.clearRetryFailureTimer();
     this.activeForegroundTurnId = null;
     // Abort the SSE connection so the SDK tears down the underlying fetch.
     this.abortController?.abort();
@@ -2767,44 +2761,6 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.runningToolCalls.delete(item.callId);
-  }
-
-  private armRetryFailureTimerForStatus(event: OpenCodeEvent, turnId: string): void {
-    if (this.retryFailureTimer || event.type !== "session.status") {
-      return;
-    }
-    if (event.properties.sessionID !== this.sessionId || event.properties.status.type !== "retry") {
-      return;
-    }
-
-    const retry = event.properties.status;
-    const message = typeof retry.message === "string" ? retry.message.trim() : "";
-    const error = message
-      ? `OpenCode provider retry did not recover: ${message}`
-      : "OpenCode provider retry did not recover";
-
-    this.retryFailureTimer = setTimeout(() => {
-      this.retryFailureTimer = null;
-      if (this.activeForegroundTurnId !== turnId) {
-        return;
-      }
-      this.finishForegroundTurn(
-        {
-          type: "turn_failed",
-          provider: "opencode",
-          error,
-        },
-        turnId,
-      );
-    }, OPENCODE_RETRY_STATUS_FAILURE_MS);
-  }
-
-  private clearRetryFailureTimer(): void {
-    if (!this.retryFailureTimer) {
-      return;
-    }
-    clearTimeout(this.retryFailureTimer);
-    this.retryFailureTimer = null;
   }
 
   private synthesizeInterruptedToolCalls(turnId: string): void {
