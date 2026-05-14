@@ -146,7 +146,7 @@ const lightSemanticColors = {
   surfaceSidebar: "#f4f4f5", // Sidebar background (darker than main)
   surfaceSidebarHover: "#e9e9ec", // Sidebar hover (darker in light mode)
   surfaceWorkspace: "#ffffff", // Workspace main background
-  userMessageBubble: "#e4e4e7",
+  userMessageBubble: "#f4f4f5",
   userMessageBubbleBorder: "#aaabb5",
 
   // Text
