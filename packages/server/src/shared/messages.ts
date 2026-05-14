@@ -741,8 +741,8 @@ export const UpdateAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-export const RenameProjectRequestMessageSchema = z.object({
-  type: z.literal("rename_project_request"),
+export const ProjectRenameRequestSchema = z.object({
+  type: z.literal("project.rename.request"),
   projectId: z.string(),
   // Null or empty string clears the override and reverts to the derived name.
   customName: z.string().nullable(),
@@ -1211,7 +1211,7 @@ export const UpdateAgentResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
-export const RenameProjectResponsePayloadSchema = z.object({
+export const ProjectRenameResponsePayloadSchema = z.object({
   requestId: z.string(),
   projectId: z.string(),
   accepted: z.boolean(),
@@ -1219,9 +1219,9 @@ export const RenameProjectResponsePayloadSchema = z.object({
   error: z.string().nullable(),
 });
 
-export const RenameProjectResponseMessageSchema = z.object({
-  type: z.literal("rename_project_response"),
-  payload: RenameProjectResponsePayloadSchema,
+export const ProjectRenameResponseSchema = z.object({
+  type: z.literal("project.rename.response"),
+  payload: ProjectRenameResponsePayloadSchema,
 });
 
 export const SetVoiceModeResponseMessageSchema = z.object({
@@ -1743,7 +1743,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveAgentRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
-  RenameProjectRequestMessageSchema,
+  ProjectRenameRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -3418,7 +3418,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
-  RenameProjectResponseMessageSchema,
+  ProjectRenameResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
@@ -3554,8 +3554,8 @@ export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseM
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
-export type RenameProjectResponseMessage = z.infer<typeof RenameProjectResponseMessageSchema>;
-export type RenameProjectResponsePayload = z.infer<typeof RenameProjectResponsePayloadSchema>;
+export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
+export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
 export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
@@ -3667,7 +3667,7 @@ export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
-export type RenameProjectRequestMessage = z.infer<typeof RenameProjectRequestMessageSchema>;
+export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;

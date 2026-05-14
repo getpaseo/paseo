@@ -1925,11 +1925,11 @@ export class DaemonClient {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "rename_project_request",
+        type: "project.rename.request",
         projectId,
         customName,
       },
-      responseType: "rename_project_response",
+      responseType: "project.rename.response",
       timeout: 10000,
     });
     if (!payload.accepted) {

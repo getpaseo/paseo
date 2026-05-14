@@ -4395,7 +4395,7 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
   );
 });
 
-test("rename_project_request stores customName and emits an updated workspace descriptor", async () => {
+test("project.rename.request stores customName and emits an updated workspace descriptor", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
@@ -4439,13 +4439,13 @@ test("rename_project_request stores customName and emits an updated workspace de
   };
 
   await session.handleMessage({
-    type: "rename_project_request",
+    type: "project.rename.request",
     projectId: project.projectId,
     customName: "  My Fork  ",
     requestId: "req-rename-1",
   });
 
-  const response = findByType(emitted, "rename_project_response");
+  const response = findByType(emitted, "project.rename.response");
   expect(response?.payload).toEqual({
     requestId: "req-rename-1",
     projectId: project.projectId,
@@ -4467,7 +4467,7 @@ test("rename_project_request stores customName and emits an updated workspace de
   });
 });
 
-test("rename_project_request with whitespace-only customName clears the override", async () => {
+test("project.rename.request with whitespace-only customName clears the override", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
@@ -4493,13 +4493,13 @@ test("rename_project_request with whitespace-only customName clears the override
   session.workspaceRegistry.list = async () => [];
 
   await session.handleMessage({
-    type: "rename_project_request",
+    type: "project.rename.request",
     projectId: project.projectId,
     customName: "   ",
     requestId: "req-rename-clear",
   });
 
-  const response = findByType(emitted, "rename_project_response");
+  const response = findByType(emitted, "project.rename.response");
   expect(response?.payload).toEqual({
     requestId: "req-rename-clear",
     projectId: project.projectId,
@@ -4510,7 +4510,7 @@ test("rename_project_request with whitespace-only customName clears the override
   expect(projects.get(project.projectId)?.customName).toBeNull();
 });
 
-test("rename_project_request returns accepted=false when project is not found", async () => {
+test("project.rename.request returns accepted=false when project is not found", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
@@ -4518,13 +4518,13 @@ test("rename_project_request returns accepted=false when project is not found", 
   session.projectRegistry.get = async () => null;
 
   await session.handleMessage({
-    type: "rename_project_request",
+    type: "project.rename.request",
     projectId: "does-not-exist",
     customName: "X",
     requestId: "req-rename-missing",
   });
 
-  const response = findByType(emitted, "rename_project_response");
+  const response = findByType(emitted, "project.rename.response");
   expect(response?.payload).toMatchObject({
     requestId: "req-rename-missing",
     projectId: "does-not-exist",

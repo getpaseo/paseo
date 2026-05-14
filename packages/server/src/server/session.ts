@@ -1793,8 +1793,8 @@ export class Session {
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
-      case "rename_project_request":
-        return this.handleRenameProjectRequest(msg.projectId, msg.customName, msg.requestId);
+      case "project.rename.request":
+        return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2482,21 +2482,21 @@ export class Session {
     }
   }
 
-  private async handleRenameProjectRequest(
+  private async handleProjectRenameRequest(
     projectId: string,
     customName: string | null,
     requestId: string,
   ): Promise<void> {
     this.sessionLogger.info(
       { projectId, requestId, hasCustomName: typeof customName === "string" },
-      "session: rename_project_request",
+      "session: project.rename.request",
     );
 
     try {
       const existing = await this.projectRegistry.get(projectId);
       if (!existing) {
         this.emit({
-          type: "rename_project_response",
+          type: "project.rename.response",
           payload: {
             requestId,
             projectId,
@@ -2518,7 +2518,7 @@ export class Session {
       });
 
       this.emit({
-        type: "rename_project_response",
+        type: "project.rename.response",
         payload: {
           requestId,
           projectId,
@@ -2542,7 +2542,7 @@ export class Session {
     } catch (error) {
       this.sessionLogger.error(
         { err: error, projectId, requestId },
-        "session: rename_project_request error",
+        "session: project.rename.request error",
       );
       this.emit({
         type: "activity_log",
@@ -2554,7 +2554,7 @@ export class Session {
         },
       });
       this.emit({
-        type: "rename_project_response",
+        type: "project.rename.response",
         payload: {
           requestId,
           projectId,
