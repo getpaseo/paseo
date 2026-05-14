@@ -11,6 +11,7 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -697,11 +698,11 @@ async function collectOpenCodePersistedAgentsFromSdk(
   options?: ListPersistedAgentsOptions,
 ): Promise<PersistedAgentDescriptor[]> {
   const limit = options?.limit ?? OPENCODE_PERSISTED_SESSION_LIMIT;
+  const sessionListLimit = options?.cwd ? Math.max(limit, OPENCODE_PERSISTED_SESSION_LIMIT) : limit;
   const response = await client.experimental.session.list({
-    ...(options?.cwd ? { directory: options.cwd } : {}),
     archived: true,
     roots: true,
-    limit,
+    limit: sessionListLimit,
   });
 
   if (response.error) {
@@ -709,8 +710,9 @@ async function collectOpenCodePersistedAgentsFromSdk(
   }
 
   const sessions = response.data ?? [];
+  const matchesCwd = options?.cwd ? createPathEquivalenceMatcher(options.cwd) : null;
   const candidates = sessions
-    .filter((session) => !options?.cwd || session.directory === options.cwd)
+    .filter((session) => !matchesCwd || matchesCwd(session.directory))
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
     .slice(0, limit);
 

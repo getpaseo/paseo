@@ -53,6 +53,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
@@ -737,7 +738,8 @@ function filterCodexThreadsByCwd(
   // falls back to process.cwd() if the field is missing, so we only match
   // here when the row genuinely carries a cwd string — otherwise threads
   // with no cwd would falsely match the daemon's own cwd.
-  return threads.filter((thread) => typeof thread.cwd === "string" && thread.cwd === cwd);
+  const matchesCwd = createPathEquivalenceMatcher(cwd);
+  return threads.filter((thread) => typeof thread.cwd === "string" && matchesCwd(thread.cwd));
 }
 
 function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {

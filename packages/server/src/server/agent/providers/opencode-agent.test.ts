@@ -1283,10 +1283,49 @@ describe("OpenCode persisted sessions", () => {
     ]);
     expect(runtime.clientCreations).toEqual([{ baseUrl: runtime.server.url, directory: cwd }]);
     expect(openCodeClient.calls.experimentalSessionList).toEqual([
-      { directory: cwd, archived: true, roots: true, limit: 1 },
+      { archived: true, roots: true, limit: 200 },
     ]);
     expect(openCodeClient.calls.sessionMessages).toEqual([
       { sessionID: "ses_new", directory: cwd },
+    ]);
+  });
+
+  test("listPersistedAgents matches Windows cwd paths with forward slashes", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    const requestedCwd = "C:/Users/Administrator/GhostFactory";
+    const storedCwd = "C:\\Users\\Administrator\\GhostFactory";
+
+    openCodeClient.experimentalSessionListResponse = {
+      data: [
+        {
+          id: "ses_windows",
+          directory: storedCwd,
+          title: "Windows session",
+          time: { created: 2000, updated: 3000 },
+        },
+        {
+          id: "ses_other",
+          directory: "C:\\Users\\Administrator\\OtherProject",
+          title: "Other cwd",
+          time: { created: 4000, updated: 4000 },
+        },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const descriptors = await client.listPersistedAgents({ cwd: requestedCwd, limit: 1 });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      provider: "opencode",
+      sessionId: "ses_windows",
+      cwd: storedCwd,
+      title: "Windows session",
+    });
+    expect(openCodeClient.calls.experimentalSessionList).toEqual([
+      { archived: true, roots: true, limit: 200 },
     ]);
   });
 });
