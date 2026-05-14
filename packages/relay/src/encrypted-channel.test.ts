@@ -35,6 +35,10 @@ function createMockTransportPair(): [Transport, Transport] {
   return [transportA, transportB];
 }
 
+async function waitForAsyncDelivery(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
 describe("EncryptedChannel", () => {
   it("establishes encrypted channel between daemon and client", async () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
@@ -96,7 +100,7 @@ describe("EncryptedChannel", () => {
     await clientChannel.send("Second message from client");
 
     // Wait for async delivery
-    await new Promise((r) => setTimeout(r, 50));
+    await waitForAsyncDelivery();
 
     expect(daemonMessages).toEqual(["Hello from client", "Second message from client"]);
     expect(clientMessages).toEqual(["Hello from daemon"]);
@@ -193,5 +197,76 @@ describe("EncryptedChannel", () => {
     }, 0);
 
     await expect(daemonChannelPromise).rejects.toThrow("Invalid hello message");
+  });
+
+  it("accepts duplicate hello from the same client without re-keying", async () => {
+    const [daemonTransport, clientTransport] = createMockTransportPair();
+
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
+    const daemonMessages: (string | ArrayBuffer)[] = [];
+
+    let clientOpenedResolve: (() => void) | null = null;
+    const clientOpened = new Promise<void>((resolve) => {
+      clientOpenedResolve = resolve;
+    });
+
+    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
+      onmessage: (data) => daemonMessages.push(data),
+    });
+
+    const clientChannel = await createClientChannel(clientTransport, daemonPubKeyB64, {
+      onopen: () => clientOpenedResolve?.(),
+    });
+
+    await daemonChannelPromise;
+    await clientOpened;
+
+    const firstHello = (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([data]) => typeof data === "string" && data.includes('"type":"e2ee_hello"'),
+    )?.[0];
+    expect(typeof firstHello).toBe("string");
+
+    daemonTransport.onmessage?.(firstHello as string);
+    await waitForAsyncDelivery();
+
+    expect(daemonTransport.close).not.toHaveBeenCalled();
+
+    await clientChannel.send("still encrypted with original key");
+    await waitForAsyncDelivery();
+
+    expect(daemonMessages).toEqual(["still encrypted with original key"]);
+  });
+
+  it("closes an open daemon channel when a different client key sends hello", async () => {
+    const [daemonTransport, clientTransport] = createMockTransportPair();
+
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
+
+    let clientOpenedResolve: (() => void) | null = null;
+    const clientOpened = new Promise<void>((resolve) => {
+      clientOpenedResolve = resolve;
+    });
+
+    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair);
+
+    await createClientChannel(clientTransport, daemonPubKeyB64, {
+      onopen: () => clientOpenedResolve?.(),
+    });
+
+    await daemonChannelPromise;
+    await clientOpened;
+
+    const attackerKeyPair = generateKeyPair();
+    const attackerHello = JSON.stringify({
+      type: "e2ee_hello",
+      key: exportPublicKey(attackerKeyPair.publicKey),
+    });
+
+    daemonTransport.onmessage?.(attackerHello);
+    await waitForAsyncDelivery();
+
+    expect(daemonTransport.close).toHaveBeenCalledWith(1008, "E2EE re-handshake key mismatch");
   });
 });
