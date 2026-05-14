@@ -267,12 +267,12 @@ function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<App
 }
 
 export function parseTerminalScrollbackLines(value: unknown): number | null {
-  const numericValue =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && value.trim().length > 0
-        ? Number(value)
-        : NaN;
+  let numericValue = NaN;
+  if (typeof value === "number") {
+    numericValue = value;
+  } else if (typeof value === "string" && value.trim().length > 0) {
+    numericValue = Number(value);
+  }
   if (!Number.isFinite(numericValue)) {
     return null;
   }
