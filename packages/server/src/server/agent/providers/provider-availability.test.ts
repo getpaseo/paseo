@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -9,10 +9,14 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 
 import { ClaudeAgentClient } from "./claude/agent.js";
-import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
+import {
+  __codexAppServerInternals,
+  CodexAppServerAgentClient,
+} from "./codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
 const originalEnv = {
+  LOCALAPPDATA: process.env.LOCALAPPDATA,
   PATH: process.env.PATH,
   PATHEXT: process.env.PATHEXT,
 };
@@ -31,7 +35,19 @@ function isolatePathTo(dir: string): void {
   }
 }
 
+function isolateCodexDefaultDiscoveryTo(dir: string): void {
+  isolatePathTo(dir);
+  if (process.platform === "win32") {
+    process.env.LOCALAPPDATA = dir;
+  }
+}
+
 afterEach(() => {
+  if (originalEnv.LOCALAPPDATA === undefined) {
+    delete process.env.LOCALAPPDATA;
+  } else {
+    process.env.LOCALAPPDATA = originalEnv.LOCALAPPDATA;
+  }
   process.env.PATH = originalEnv.PATH;
   process.env.PATHEXT = originalEnv.PATHEXT;
   for (const dir of tempDirs.splice(0)) {
@@ -42,10 +58,49 @@ afterEach(() => {
 describe("default provider availability", () => {
   test("Codex reports unavailable when the default command cannot be resolved", async () => {
     const binDir = makeTempDir("provider-availability-codex-");
-    isolatePathTo(binDir);
+    isolateCodexDefaultDiscoveryTo(binDir);
     const client = new CodexAppServerAgentClient(createTestLogger());
 
     await expect(client.isAvailable()).resolves.toBe(false);
+  });
+
+  test("Codex reports available from a Microsoft Store install path when PATH misses codex", async () => {
+    const originalPlatform = process.platform;
+    const originalLocalAppData = process.env.LOCALAPPDATA;
+    const root = makeTempDir("provider-availability-codex-store-");
+    const emptyPathDir = join(root, "empty-path");
+    const codexBinDir = join(
+      root,
+      "Packages",
+      "OpenAI.Codex_abc123",
+      "LocalCache",
+      "Local",
+      "OpenAI",
+      "Codex",
+      "bin",
+    );
+    const codexExe = join(codexBinDir, "codex.exe");
+    mkdirSync(emptyPathDir, { recursive: true });
+    mkdirSync(codexBinDir, { recursive: true });
+    copyFileSync(process.execPath, codexExe);
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+    process.env.LOCALAPPDATA = root;
+    isolatePathTo(emptyPathDir);
+    process.env.PATHEXT = ".EXE";
+
+    try {
+      const client = new CodexAppServerAgentClient(createTestLogger());
+
+      await expect(__codexAppServerInternals.findDefaultCodexBinary()).resolves.toBe(codexExe);
+      await expect(client.isAvailable()).resolves.toBe(true);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+      if (originalLocalAppData === undefined) {
+        delete process.env.LOCALAPPDATA;
+      } else {
+        process.env.LOCALAPPDATA = originalLocalAppData;
+      }
+    }
   });
 
   test("Claude reports unavailable when the default command cannot be resolved", async () => {
@@ -66,7 +121,7 @@ describe("default provider availability", () => {
 
   test("AgentManager reports Codex unavailable without throwing", async () => {
     const binDir = makeTempDir("provider-availability-manager-bin-");
-    isolatePathTo(binDir);
+    isolateCodexDefaultDiscoveryTo(binDir);
     const workdir = makeTempDir("provider-availability-manager-work-");
     const storage = new AgentStorage(join(workdir, "agents"), createTestLogger());
     const manager = new AgentManager({
@@ -88,7 +143,7 @@ describe("default provider availability", () => {
 
   test("resumeAgentFromPersistence stops before provider spawn when Codex is unavailable", async () => {
     const binDir = makeTempDir("provider-availability-resume-bin-");
-    isolatePathTo(binDir);
+    isolateCodexDefaultDiscoveryTo(binDir);
     const workdir = makeTempDir("provider-availability-resume-work-");
     const storage = new AgentStorage(join(workdir, "agents"), createTestLogger());
     const manager = new AgentManager({

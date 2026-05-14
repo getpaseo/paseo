@@ -52,7 +52,7 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { findExecutable, isCommandAvailable, probeExecutable } from "../../../utils/executable.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
@@ -375,8 +375,61 @@ function mergeCodexConfiguredDefaults(
   };
 }
 
+function codexMicrosoftStorePackageRoot(): string | null {
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) {
+    return null;
+  }
+  return path.join(localAppData, "Packages");
+}
+
+async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
+  if (process.platform !== "win32") {
+    return null;
+  }
+
+  const packageRoot = codexMicrosoftStorePackageRoot();
+  if (!packageRoot) {
+    return null;
+  }
+
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(packageRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const codexPackages = entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("OpenAI.Codex_"))
+    .map((entry) => entry.name)
+    .sort();
+
+  for (const packageName of codexPackages) {
+    const candidate = path.join(
+      packageRoot,
+      packageName,
+      "LocalCache",
+      "Local",
+      "OpenAI",
+      "Codex",
+      "bin",
+      "codex.exe",
+    );
+    if (await probeExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+async function findDefaultCodexBinary(): Promise<string | null> {
+  return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
+}
+
 async function resolveCodexBinary(): Promise<string> {
-  const found = await findExecutable("codex");
+  const found = await findDefaultCodexBinary();
   if (found) {
     return found;
   }
@@ -5299,13 +5352,13 @@ export class CodexAppServerAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return await isCommandAvailable("codex");
+    return (await findDefaultCodexBinary()) !== null;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const available = await this.isAvailable();
-      const resolvedBinary = await findExecutable("codex");
+      const resolvedBinary = await findDefaultCodexBinary();
       const entries: Array<{ label: string; value: string }> = [
         {
           label: "Binary",
@@ -5448,6 +5501,8 @@ export const __codexAppServerInternals = {
   CodexAppServerClient,
   codexModelSupportsFastMode,
   CodexAppServerAgentSession,
+  findCodexMicrosoftStoreBinary,
+  findDefaultCodexBinary,
   formatCodexQuestionPrompts,
   mapCodexQuestionRequestToToolCall,
   mapCodexPatchNotificationToToolCall,
