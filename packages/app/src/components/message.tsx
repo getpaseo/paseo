@@ -66,7 +66,7 @@ import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { ToolCallDetail, ToolCallImage } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
@@ -3038,6 +3038,7 @@ interface ToolCallProps {
   error?: unknown;
   status: "executing" | "running" | "completed" | "failed" | "canceled";
   detail?: ToolCallDetail;
+  images?: ToolCallImage[];
   cwd?: string;
   metadata?: Record<string, unknown>;
   isLastInSequence?: boolean;
@@ -3054,6 +3055,7 @@ export const ToolCall = memo(function ToolCall({
   error,
   status,
   detail,
+  images,
   cwd,
   metadata,
   isLastInSequence = false,
@@ -3108,6 +3110,7 @@ export const ToolCall = memo(function ToolCall({
         displayName: presentation.displayName,
         summary: presentation.summary,
         detail: effectiveDetail,
+        images,
         errorText: presentation.errorText,
         icon: presentation.icon,
         showLoadingSkeleton: presentation.isLoadingDetails,
@@ -3124,6 +3127,7 @@ export const ToolCall = memo(function ToolCall({
     presentation.icon,
     presentation.isLoadingDetails,
     effectiveDetail,
+    images,
   ]);
 
   useEffect(() => {
@@ -3159,12 +3163,13 @@ export const ToolCall = memo(function ToolCall({
     return (
       <ToolCallDetailsContent
         detail={effectiveDetail}
+        images={images}
         errorText={presentation.errorText}
         maxHeight={400}
         showLoadingSkeleton={presentation.isLoadingDetails}
       />
     );
-  }, [isMobile, effectiveDetail, presentation.errorText, presentation.isLoadingDetails]);
+  }, [isMobile, effectiveDetail, images, presentation.errorText, presentation.isLoadingDetails]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
     return (
@@ -3203,6 +3208,7 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.error !== next.error) return false;
   if (previous.status !== next.status) return false;
   if (previous.detail !== next.detail) return false;
+  if (previous.images !== next.images) return false;
   if (previous.cwd !== next.cwd) return false;
   if (previous.metadata !== next.metadata) return false;
   if (previous.isLastInSequence !== next.isLastInSequence) return false;

@@ -285,6 +285,13 @@ export type ToolCallDetail =
       output: unknown;
     };
 
+export interface ToolCallImage {
+  /** Base64-encoded image data without any `data:` URI prefix. */
+  data: string;
+  /** IANA media type, e.g. "image/png" or "image/jpeg". */
+  mimeType: string;
+}
+
 interface ToolCallBase {
   [key: string]: unknown;
   type: "tool_call";
@@ -292,6 +299,7 @@ interface ToolCallBase {
   name: string;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
+  images?: ToolCallImage[];
 }
 
 type ToolCallRunningTimelineItem = ToolCallBase & {

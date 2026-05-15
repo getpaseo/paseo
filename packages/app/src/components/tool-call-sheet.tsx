@@ -9,7 +9,7 @@ import {
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { X } from "lucide-react-native";
-import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { ToolCallDetail, ToolCallImage } from "@getpaseo/protocol/agent-types";
 import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
@@ -23,6 +23,7 @@ export interface ToolCallSheetData {
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
+  images?: ToolCallImage[];
   errorText?: string;
   icon: ToolCallIconComponent;
   showLoadingSkeleton?: boolean;
@@ -139,7 +140,7 @@ interface ToolCallSheetContentProps {
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const { theme } = useUnistyles();
-  const { displayName, detail, errorText, icon: IconComponent, showLoadingSkeleton } = data;
+  const { displayName, detail, images, errorText, icon: IconComponent, showLoadingSkeleton } = data;
 
   return (
     <View style={styles.container}>
@@ -160,6 +161,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
       <BottomSheetScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <ToolCallDetailsContent
           detail={detail}
+          images={images}
           errorText={errorText}
           fillAvailableHeight
           showLoadingSkeleton={showLoadingSkeleton}

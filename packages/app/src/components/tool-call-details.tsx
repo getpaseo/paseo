@@ -9,7 +9,8 @@ import {
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
-import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { ToolCallDetail, ToolCallImage } from "@getpaseo/protocol/agent-types";
+import { ToolCallImages } from "./tool-call-images";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
@@ -28,6 +29,7 @@ const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 interface ToolCallDetailsContentProps {
   detail?: ToolCallDetail;
+  images?: ToolCallImage[];
   errorText?: string;
   maxHeight?: number;
   fillAvailableHeight?: boolean;
@@ -651,17 +653,23 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles): ReactNod
 
 function buildDetailSections(
   detail: ToolCallDetail | undefined,
+  images: ToolCallImage[] | undefined,
   diffLines: DiffLine[] | undefined,
   ds: DetailStyles,
 ): ReactNode[] {
-  if (!detail) return [];
+  const prefix: ReactNode[] =
+    images && images.length > 0 ? [<ToolCallImages key="images" images={images} />] : [];
+
+  if (!detail) return prefix;
   if (detail.type === "shell") {
     return [
+      ...prefix,
       <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
     ];
   }
   if (detail.type === "worktree_setup") {
     return [
+      ...prefix,
       <WorktreeSetupDetailSection
         key="worktree-setup"
         log={detail.log}
@@ -673,6 +681,7 @@ function buildDetailSections(
   }
   if (detail.type === "sub_agent") {
     return [
+      ...prefix,
       <SubAgentDetailSection
         key="sub-agent"
         log={detail.log}
@@ -684,10 +693,11 @@ function buildDetailSections(
     ];
   }
   if (detail.type === "edit") {
-    return [<EditDetailSection key="edit" diffLines={diffLines} ds={ds} />];
+    return [...prefix, <EditDetailSection key="edit" diffLines={diffLines} ds={ds} />];
   }
   if (detail.type === "write") {
     return [
+      ...prefix,
       <View key="write" style={ds.sectionFillStyle}>
         {detail.content ? (
           <ScrollableTextSection
@@ -701,8 +711,9 @@ function buildDetailSections(
     ];
   }
   if (detail.type === "read") {
-    if (!detail.content) return [];
+    if (!detail.content) return prefix;
     return [
+      ...prefix,
       <ScrollableTextSection
         key="read"
         content={detail.content}
@@ -713,19 +724,22 @@ function buildDetailSections(
     ];
   }
   if (detail.type === "search") {
-    return buildSearchSections(detail, ds);
+    return [...prefix, ...buildSearchSections(detail, ds)];
   }
   if (detail.type === "fetch") {
-    return [<FetchDetailSection key="fetch" url={detail.url} result={detail.result} ds={ds} />];
+    return [
+      ...prefix,
+      <FetchDetailSection key="fetch" url={detail.url} result={detail.result} ds={ds} />,
+    ];
   }
   if (detail.type === "plain_text") {
-    if (!detail.text) return [];
-    return [<PlainTextSection key="plain-text" text={detail.text} />];
+    if (!detail.text) return prefix;
+    return [...prefix, <PlainTextSection key="plain-text" text={detail.text} />];
   }
   if (detail.type === "unknown") {
-    return buildUnknownSections(detail, ds);
+    return [...prefix, ...buildUnknownSections(detail, ds)];
   }
-  return [];
+  return prefix;
 }
 
 function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }) {
@@ -767,6 +781,7 @@ export function ToolCallDetailsContent({ ...props }: ToolCallDetailsContentProps
 
 function ToolCallDetailsContentInner({
   detail,
+  images,
   errorText,
   maxHeight,
   fillAvailableHeight = false,
@@ -776,7 +791,7 @@ function ToolCallDetailsContentInner({
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds);
+  const sections: ReactNode[] = buildDetailSections(detail, images, diffLines, ds);
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);

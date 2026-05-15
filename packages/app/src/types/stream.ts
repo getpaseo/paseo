@@ -1,4 +1,8 @@
-import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentProvider,
+  ToolCallDetail,
+  ToolCallImage,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
@@ -114,6 +118,7 @@ export interface AgentToolCallData {
   error: unknown;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
+  images?: ToolCallImage[];
 }
 
 export type ToolCallPayload =
@@ -541,6 +546,7 @@ export function mergeAgentToolCallItem(
       : null;
   const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
   const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
+  const mergedImages = data.images ?? existing.payload.data.images;
 
   return {
     ...existing,
@@ -554,6 +560,7 @@ export function mergeAgentToolCallItem(
         error: mergedError,
         detail: mergedDetail,
         metadata: mergedMetadata,
+        images: mergedImages,
       },
     },
   };
@@ -580,7 +587,8 @@ function appendAgentToolCall(
       merged.payload.data.status === existing.payload.data.status &&
       merged.payload.data.error === existing.payload.data.error &&
       merged.payload.data.detail === existing.payload.data.detail &&
-      merged.payload.data.metadata === existing.payload.data.metadata
+      merged.payload.data.metadata === existing.payload.data.metadata &&
+      merged.payload.data.images === existing.payload.data.images
     ) {
       return state;
     }
@@ -706,6 +714,7 @@ function reduceTimelineToolCall(
       error: item.error,
       detail: item.detail,
       metadata: item.metadata,
+      images: item.images,
     },
     timestamp,
   );

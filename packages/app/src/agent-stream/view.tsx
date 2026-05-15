@@ -509,6 +509,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               error={data.error}
               status={data.status}
               detail={data.detail}
+              images={data.images}
               cwd={agent.cwd}
               metadata={data.metadata}
               isLastInSequence={layoutItem.isLastInToolSequence}

@@ -53,6 +53,7 @@ function canonicalToolTimeline(params: {
   error?: unknown;
   metadata?: Record<string, unknown>;
   detail?: ToolCallDetail;
+  images?: { data: string; mimeType: string }[];
 }): AgentStreamEventPayload {
   const detail: ToolCallDetail = params.detail ?? {
     type: "unknown",
@@ -67,6 +68,7 @@ function canonicalToolTimeline(params: {
     status: params.status,
     detail,
     metadata: params.metadata,
+    ...(params.images ? { images: params.images } : {}),
   };
 
   const item =
@@ -305,6 +307,102 @@ describe("stream reducer tool call idempotency", () => {
     );
 
     assert.notStrictEqual(nextState, initialState);
+  });
+
+  it("attaches images from a completed event to a previously running tool call", () => {
+    const callId = "images-arrive-on-completed";
+    const images = [{ data: "AAAA", mimeType: "image/png" }];
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "Read",
+        status: "running",
+      }),
+      new Date("2025-01-01T13:00:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "Read",
+        status: "completed",
+        images,
+      }),
+      new Date("2025-01-01T13:00:01Z"),
+    );
+
+    const call = findToolByCallId(nextState, callId);
+    assert.ok(call, "expected tool call in state");
+    assert.deepStrictEqual(call.payload.data.images, images);
+  });
+
+  it("preserves images across a subsequent event that omits them", () => {
+    const callId = "images-survive-omitted-update";
+    const images = [{ data: "BBBB", mimeType: "image/jpeg" }];
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "Read",
+        status: "completed",
+        images,
+      }),
+      new Date("2025-01-01T13:10:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "Read",
+        status: "completed",
+        metadata: { extra: 1 },
+      }),
+      new Date("2025-01-01T13:10:01Z"),
+    );
+
+    const call = findToolByCallId(nextState, callId);
+    assert.ok(call, "expected tool call in state");
+    assert.deepStrictEqual(call.payload.data.images, images);
+  });
+
+  it("replaces images when a subsequent completed event provides a new array", () => {
+    const callId = "images-replaced-on-completed-replay";
+    const initialImages = [{ data: "AAAA", mimeType: "image/png" }];
+    const replacementImages = [{ data: "BBBB", mimeType: "image/jpeg" }];
+    const initialState = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "Read",
+        status: "completed",
+        images: initialImages,
+      }),
+      new Date("2025-01-01T13:20:00Z"),
+    );
+
+    const nextState = reduceStreamUpdate(
+      initialState,
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "Read",
+        status: "completed",
+        images: replacementImages,
+      }),
+      new Date("2025-01-01T13:20:01Z"),
+    );
+
+    const call = findToolByCallId(nextState, callId);
+    assert.ok(call, "expected tool call in state");
+    assert.deepStrictEqual(call.payload.data.images, replacementImages);
   });
 });
 
