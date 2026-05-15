@@ -1159,14 +1159,21 @@ export function retargetTabInLayout(
     };
   }
 
+  const nextTabId =
+    currentTab?.target.kind === "draft"
+      ? input.tabId
+      : buildDeterministicWorkspaceTabId(input.target);
+
   return {
-    // Preserve the existing tab id so draft->entity transitions keep the same
-    // React key during the first render. Reconciliation can canonicalize later.
-    tabId: input.tabId,
+    // Preserve draft-origin tab ids so draft->entity transitions keep the same
+    // React key during the first render. Non-draft retargets must take the new
+    // target identity immediately so local tab state cannot masquerade as the
+    // previous agent/terminal/file.
+    tabId: nextTabId,
     layout: {
       root: replaceTabInTree(layout.root, {
         tabId: input.tabId,
-        nextTabId: input.tabId,
+        nextTabId,
         target: input.target,
       }),
       focusedPaneId: layout.focusedPaneId,

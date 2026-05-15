@@ -589,6 +589,32 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("retargetTab gives a non-draft tab the new target identity", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    const agentTabId = store.openTabFocused(workspaceKey, {
+      kind: "agent",
+      agentId: "agent-retarget",
+    });
+    const nextTabId = store.retargetTab(workspaceKey, agentTabId!, {
+      kind: "draft",
+      draftId: "draft-from-agent",
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    expect(agentTabId).toBe("agent_agent-retarget");
+    expect(nextTabId).toBe("draft-from-agent");
+    expect(findPaneById(layout.root, "main")?.tabIds).toEqual(["draft-from-agent"]);
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "draft-from-agent",
+        target: { kind: "draft", draftId: "draft-from-agent" },
+        createdAt: expect.any(Number),
+      },
+    ]);
+  });
+
   it("retargetTab closes a draft tab and focuses the existing canonical target tab", () => {
     useWorkspaceLayoutIds("55555555-5555-5555-5555-555555555555");
     const workspaceKey = createWorkspaceKey();

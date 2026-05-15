@@ -51,6 +51,8 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
 import { type Agent, useSessionStore } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
 import { SubagentsSection, useArchiveSubagent, useSubagentsForParent } from "@/subagents";
 import type { PendingPermission } from "@/types/shared";
@@ -1258,8 +1260,11 @@ function ActiveAgentComposer({
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const paneContext = usePaneContext();
-  const { workspaceId, retargetCurrentTab } = paneContext;
+  const { workspaceId, tabId, retargetCurrentTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();
+  const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
+  const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
+  const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
   const subagentRows = useSubagentsForParent({
     serverId,
     parentAgentId: agentId,
@@ -1314,17 +1319,35 @@ function ActiveAgentComposer({
         throw new Error("Agent not found");
       }
 
+      const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+      if (workspaceKey) {
+        unpinWorkspaceAgent(workspaceKey, agentId);
+        hideWorkspaceAgent(workspaceKey, agentId);
+      }
+
       if (command.kind === "replace-agent-with-draft") {
         retargetCurrentTab({
           kind: "draft",
           draftId: generateDraftId(),
           setup: buildDraftAgentSetup(agent),
         });
+      } else if (workspaceKey) {
+        closeWorkspaceTab(workspaceKey, tabId);
       }
 
       await archiveAgent({ serverId, agentId });
     },
-    [agentId, archiveAgent, retargetCurrentTab, serverId],
+    [
+      agentId,
+      archiveAgent,
+      closeWorkspaceTab,
+      hideWorkspaceAgent,
+      retargetCurrentTab,
+      serverId,
+      tabId,
+      unpinWorkspaceAgent,
+      workspaceId,
+    ],
   );
 
   const inputAreaStyle = useMemo(
