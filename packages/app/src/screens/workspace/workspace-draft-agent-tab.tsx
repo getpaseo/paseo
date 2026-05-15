@@ -19,6 +19,7 @@ import type { Agent } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
+import type { OpenFileDisposition } from "@/utils/inline-path";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
@@ -278,7 +279,7 @@ interface WorkspaceDraftAgentTabProps {
   draftId: string;
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
-  onOpenWorkspaceFile: (input: { filePath: string }) => void;
+  onOpenWorkspaceFile: (input: { filePath: string; disposition: OpenFileDisposition }) => void;
   onOpenImportSheet?: () => void;
 }
 

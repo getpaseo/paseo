@@ -7,6 +7,8 @@ export interface InlinePathTarget {
   lineEnd?: number;
 }
 
+export type OpenFileDisposition = "main" | "side";
+
 const FILE_PROTOCOL = "file:";
 const INLINE_LINE_FRAGMENT = /^L([0-9]+)(?:-L?([0-9]+))?$/i;
 const ASSISTANT_FILE_EXTENSIONS = new Set([

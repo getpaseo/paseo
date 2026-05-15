@@ -72,6 +72,7 @@ import {
   classifyAssistantFileLink,
   parseInlinePathToken,
   type InlinePathTarget,
+  type OpenFileDisposition,
 } from "@/utils/inline-path";
 import { getMarkdownListMarker, getMarkdownNextSiblingType } from "@/utils/markdown-list";
 import { type AssistantFileLinkSource } from "@/utils/assistant-file-link-resolver";
@@ -715,8 +716,7 @@ export const LiveElapsed = memo(function LiveElapsed({
 interface AssistantMessageProps {
   message: string;
   timestamp: number;
-  onInlinePathPress?: (target: InlinePathTarget) => void;
-  onInlinePathPressInSide?: (target: InlinePathTarget) => void;
+  onInlinePathPress?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   workspaceRoot?: string;
   serverId?: string;
   client?: DaemonClient | null;
@@ -1012,22 +1012,20 @@ function MarkdownLink({
   source,
   style,
   onPress,
-  onPressInSide,
   onPrefetch,
   workspaceRoot,
   children,
 }: {
   source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
-  onPress: (source: AssistantFileLinkSource) => void;
-  onPressInSide: (source: AssistantFileLinkSource) => void;
+  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
   onPrefetch: (source: AssistantFileLinkSource) => void;
   workspaceRoot?: string;
   children: ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
   const href = source.href;
-  const handlePress = useCallback(() => onPress(source), [onPress, source]);
+  const handlePress = useCallback(() => onPress(source, "main"), [onPress, source]);
   const handleAnchorClickCapture = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault();
@@ -1035,9 +1033,9 @@ function MarkdownLink({
         return;
       }
       event.stopPropagation();
-      onPressInSide(source);
+      onPress(source, "side");
     },
-    [onPressInSide, source],
+    [onPress, source],
   );
   const handlePrefetch = useCallback(() => onPrefetch(source), [onPrefetch, source]);
   const handleHoverIn = useCallback(() => {
@@ -1146,7 +1144,7 @@ function FileLinkHoverTooltip({ filePath, children }: { filePath: string; childr
       <TooltipTrigger asChild>
         <View style={FILE_LINK_TOOLTIP_TRIGGER_STYLE}>{children}</View>
       </TooltipTrigger>
-      <TooltipContent side="top" align="start">
+      <TooltipContent side="top" align="start" maxWidth={520}>
         <View style={fileLinkTooltipStyles.body}>
           <Text selectable={false} style={fileLinkTooltipStyles.path}>
             {filePath}
@@ -1154,7 +1152,7 @@ function FileLinkHoverTooltip({ filePath, children }: { filePath: string; childr
           <View style={fileLinkTooltipStyles.hintRow}>
             <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
             <Text selectable={false} style={fileLinkTooltipStyles.hintText}>
-              + click opens in a side pane
+              click for side pane
             </Text>
           </View>
         </View>
@@ -1169,7 +1167,6 @@ const fileLinkTooltipStyles = StyleSheet.create((theme) => ({
   },
   path: {
     color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
   },
@@ -1695,8 +1692,7 @@ interface MarkdownInheritedCodeLinkProps {
   inheritedStyles: TextStyle;
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
-  onPress: (source: AssistantFileLinkSource) => void;
-  onPressInSide: (source: AssistantFileLinkSource) => void;
+  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
   onPrefetch: (source: AssistantFileLinkSource) => void;
   workspaceRoot?: string;
   children: ReactNode;
@@ -1708,7 +1704,6 @@ function MarkdownInheritedCodeLink({
   codeInlineStyle,
   linkStyle,
   onPress,
-  onPressInSide,
   onPrefetch,
   workspaceRoot,
   children,
@@ -1722,7 +1717,6 @@ function MarkdownInheritedCodeLink({
       source={source}
       style={style}
       onPress={onPress}
-      onPressInSide={onPressInSide}
       onPrefetch={onPrefetch}
       workspaceRoot={workspaceRoot}
     >
@@ -1736,8 +1730,7 @@ interface MarkdownInlinePathCodeLinkProps {
   inheritedStyles: TextStyle;
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
-  onPress: (source: AssistantFileLinkSource) => void;
-  onPressInSide: (source: AssistantFileLinkSource) => void;
+  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
   onPrefetch: (source: AssistantFileLinkSource) => void;
   workspaceRoot?: string;
 }
@@ -1748,7 +1741,6 @@ function MarkdownInlinePathCodeLink({
   codeInlineStyle,
   linkStyle,
   onPress,
-  onPressInSide,
   onPrefetch,
   workspaceRoot,
 }: MarkdownInlinePathCodeLinkProps) {
@@ -1768,7 +1760,6 @@ function MarkdownInlinePathCodeLink({
       codeInlineStyle={codeInlineStyle}
       linkStyle={linkStyle}
       onPress={onPress}
-      onPressInSide={onPressInSide}
       onPrefetch={onPrefetch}
       workspaceRoot={workspaceRoot}
     >
@@ -1841,7 +1832,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp: _timestamp,
   onInlinePathPress,
-  onInlinePathPressInSide,
   workspaceRoot,
   serverId,
   client,
@@ -1866,19 +1856,12 @@ export const AssistantMessage = memo(function AssistantMessage({
     serverId,
     workspaceRoot,
     onOpenWorkspaceFile: onInlinePathPress,
-    onOpenWorkspaceFileInSide: onInlinePathPressInSide,
     toast,
   });
 
   const handleLinkPress = useCallback(
-    (source: AssistantFileLinkSource) => {
-      fileLinkResolver.open({ source });
-    },
-    [fileLinkResolver],
-  );
-  const handleLinkPressInSide = useCallback(
-    (source: AssistantFileLinkSource) => {
-      fileLinkResolver.open({ source, openDisposition: "side" });
+    (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => {
+      fileLinkResolver.open({ source, disposition });
     },
     [fileLinkResolver],
   );
@@ -1890,7 +1873,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
   const handleMarkdownLinkPress = useCallback(
     (url: string) => {
-      fileLinkResolver.open({ source: { href: url } });
+      fileLinkResolver.open({ source: { href: url }, disposition: "main" });
       // react-native-markdown-display opens the link itself when this returns true.
       // We already handled it above, so return false to avoid duplicate opens.
       return false;
@@ -1981,7 +1964,6 @@ export const AssistantMessage = memo(function AssistantMessage({
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
-              onPressInSide={handleLinkPressInSide}
               onPrefetch={handleLinkPrefetch}
               workspaceRoot={workspaceRoot}
             />
@@ -2002,7 +1984,6 @@ export const AssistantMessage = memo(function AssistantMessage({
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
-              onPressInSide={handleLinkPressInSide}
               onPrefetch={handleLinkPrefetch}
               workspaceRoot={workspaceRoot}
             >
@@ -2084,7 +2065,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           source={getMarkdownLinkSource(node)}
           style={styles.link}
           onPress={handleLinkPress}
-          onPressInSide={handleLinkPressInSide}
           onPrefetch={handleLinkPrefetch}
           workspaceRoot={workspaceRoot}
         >
@@ -2129,10 +2109,8 @@ export const AssistantMessage = memo(function AssistantMessage({
     client,
     handleLinkPrefetch,
     handleLinkPress,
-    handleLinkPressInSide,
     markdownParser,
     onInlinePathPress,
-    onInlinePathPressInSide,
     serverId,
     workspaceRoot,
   ]);

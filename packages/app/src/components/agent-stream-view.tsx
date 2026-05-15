@@ -74,7 +74,7 @@ import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
-import { normalizeInlinePathTarget } from "@/utils/inline-path";
+import { normalizeInlinePathTarget, type OpenFileDisposition } from "@/utils/inline-path";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -242,8 +242,7 @@ export interface AgentStreamViewProps {
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
-  onOpenWorkspaceFile?: (input: { filePath: string }) => void;
-  onOpenWorkspaceFileInSide?: (input: { filePath: string }) => void;
+  onOpenWorkspaceFile?: (input: { filePath: string; disposition: OpenFileDisposition }) => void;
 }
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
@@ -260,7 +259,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       isAuthoritativeHistoryReady = true,
       toast,
       onOpenWorkspaceFile,
-      onOpenWorkspaceFileInSide,
     },
     ref,
   ) {
@@ -306,13 +304,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     });
     const openWorkspaceFile = useStableEvent(function openWorkspaceFile(input: {
       filePath: string;
+      disposition: OpenFileDisposition;
     }) {
       onOpenWorkspaceFile?.(input);
-    });
-    const openWorkspaceFileInSide = useStableEvent(function openWorkspaceFileInSide(input: {
-      filePath: string;
-    }) {
-      onOpenWorkspaceFileInSide?.(input);
     });
     // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
     // tracked in react-native-reanimated#8422.
@@ -330,7 +324,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [agentId]);
 
     const handleInlinePathPress = useCallback(
-      (target: InlinePathTarget, side: boolean = false) => {
+      (target: InlinePathTarget, disposition: OpenFileDisposition) => {
         if (!target.path) {
           return;
         }
@@ -341,13 +335,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }
 
         if (normalized.file) {
-          if (side) {
-            if (onOpenWorkspaceFileInSide) {
-              openWorkspaceFileInSide({ filePath: normalized.file });
-              return;
-            }
-          } else if (onOpenWorkspaceFile) {
-            openWorkspaceFile({ filePath: normalized.file });
+          if (onOpenWorkspaceFile) {
+            openWorkspaceFile({ filePath: normalized.file, disposition });
             return;
           }
 
@@ -383,24 +372,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isMobile,
         openFileExplorerForCheckout,
         onOpenWorkspaceFile,
-        onOpenWorkspaceFileInSide,
         requestDirectoryListing,
         resolvedServerId,
         setExplorerTabForCheckout,
         openWorkspaceFile,
-        openWorkspaceFileInSide,
         workspaceId,
       ],
     );
 
-    const handleInlinePathPressInSide = useCallback(
-      (target: InlinePathTarget) => handleInlinePathPress(target, true),
-      [handleInlinePathPress],
-    );
-
     const handleToolCallOpenFile = useCallback(
       (filePath: string) => {
-        handleInlinePathPress({ raw: filePath, path: filePath });
+        handleInlinePathPress({ raw: filePath, path: filePath }, "main");
       },
       [handleInlinePathPress],
     );
@@ -522,7 +504,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             message={item.text}
             timestamp={item.timestamp.getTime()}
             onInlinePathPress={handleInlinePathPress}
-            onInlinePathPressInSide={handleInlinePathPressInSide}
             workspaceRoot={workspaceRoot}
             serverId={serverId}
             client={client}
@@ -531,15 +512,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [
-        handleInlinePathPress,
-        handleInlinePathPressInSide,
-        streamRenderStrategy,
-        workspaceRoot,
-        serverId,
-        client,
-        toast,
-      ],
+      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client, toast],
     );
 
     const renderThoughtItem = useCallback(

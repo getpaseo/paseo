@@ -4,23 +4,23 @@ import type { ToastApi } from "@/components/toast-host";
 import {
   createAssistantFileLinkResolver,
   type AssistantFileLinkContext,
-  type AssistantFileLinkInteraction,
+  type AssistantFileLinkOpenInput,
+  type AssistantFileLinkPrefetchInput,
 } from "@/utils/assistant-file-link-resolver";
-import type { InlinePathTarget } from "@/utils/inline-path";
+import type { InlinePathTarget, OpenFileDisposition } from "@/utils/inline-path";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 export interface UseAssistantFileLinkResolverOptions {
   client?: DaemonClient | null;
   serverId?: string;
   workspaceRoot?: string;
-  onOpenWorkspaceFile?: (target: InlinePathTarget) => void;
-  onOpenWorkspaceFileInSide?: (target: InlinePathTarget) => void;
+  onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
 }
 
 export interface AssistantFileLinkActions {
-  prefetch(input: Omit<AssistantFileLinkInteraction, "context">): void;
-  open(input: Omit<AssistantFileLinkInteraction, "context">): void;
+  prefetch(input: Omit<AssistantFileLinkPrefetchInput, "context">): void;
+  open(input: Omit<AssistantFileLinkOpenInput, "context">): void;
 }
 
 export function useAssistantFileLinkResolver({
@@ -28,7 +28,6 @@ export function useAssistantFileLinkResolver({
   serverId,
   workspaceRoot,
   onOpenWorkspaceFile,
-  onOpenWorkspaceFileInSide,
   toast,
 }: UseAssistantFileLinkResolverOptions): AssistantFileLinkActions {
   const context: AssistantFileLinkContext = useMemo(
@@ -55,12 +54,8 @@ export function useAssistantFileLinkResolver({
             error: result.error,
           };
         },
-        openWorkspaceFile(target, openDisposition) {
-          if (openDisposition === "side") {
-            onOpenWorkspaceFileInSide?.(target);
-            return;
-          }
-          onOpenWorkspaceFile?.(target);
+        openWorkspaceFile(target, disposition) {
+          onOpenWorkspaceFile?.(target, disposition);
         },
         openExternalUrl,
         onUnresolvedFileCandidate(token) {
@@ -77,7 +72,7 @@ export function useAssistantFileLinkResolver({
           );
         },
       }),
-    [client, onOpenWorkspaceFile, onOpenWorkspaceFileInSide, toast],
+    [client, onOpenWorkspaceFile, toast],
   );
 
   return useMemo(

@@ -46,7 +46,7 @@ describe("assistant file link resolver", () => {
       resolver.prefetch({ context: CONTEXT, source }),
       resolver.prefetch({ context: CONTEXT, source }),
     ]);
-    const result = await resolver.open({ context: CONTEXT, source });
+    const result = await resolver.open({ context: CONTEXT, source, disposition: "main" });
 
     expect(suggestions).toHaveBeenCalledTimes(1);
     expect(suggestions).toHaveBeenCalledWith({
@@ -63,7 +63,7 @@ describe("assistant file link resolver", () => {
         lineStart: undefined,
         lineEnd: undefined,
       },
-      undefined,
+      "main",
     );
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(result.opened).toBe(true);
@@ -81,7 +81,7 @@ describe("assistant file link resolver", () => {
     const source = { href: "http://dumm.md", text: "dumm.md", sourceInfo: "auto" };
 
     const prefetch = resolver.prefetch({ context: CONTEXT, source });
-    const opened = resolver.open({ context: CONTEXT, source });
+    const opened = resolver.open({ context: CONTEXT, source, disposition: "main" });
     deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
 
     await prefetch;
@@ -95,7 +95,7 @@ describe("assistant file link resolver", () => {
         lineStart: undefined,
         lineEnd: undefined,
       },
-      undefined,
+      "main",
     );
     expect(result.opened).toBe(true);
   });
@@ -115,7 +115,7 @@ describe("assistant file link resolver", () => {
     const source = { href: "http://dumm.md", text: "dumm.md", markup: "linkify" };
 
     const prefetchResult = await resolver.prefetch({ context: CONTEXT, source });
-    const openResult = await resolver.open({ context: CONTEXT, source });
+    const openResult = await resolver.open({ context: CONTEXT, source, disposition: "main" });
 
     expect(prefetchResult).toEqual({
       kind: "unresolvedFileCandidate",
@@ -129,7 +129,7 @@ describe("assistant file link resolver", () => {
         lineStart: undefined,
         lineEnd: undefined,
       },
-      undefined,
+      "main",
     );
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(openResult.opened).toBe(true);
@@ -151,8 +151,8 @@ describe("assistant file link resolver", () => {
     });
     const source = { href: "http://dumm.md", text: "dumm.md", markup: "linkify" };
 
-    const first = await resolver.open({ context: CONTEXT, source });
-    const second = await resolver.open({ context: CONTEXT, source });
+    const first = await resolver.open({ context: CONTEXT, source, disposition: "main" });
+    const second = await resolver.open({ context: CONTEXT, source, disposition: "main" });
 
     expect(first).toEqual({
       kind: "unresolvedFileCandidate",
@@ -168,7 +168,7 @@ describe("assistant file link resolver", () => {
         lineStart: undefined,
         lineEnd: undefined,
       },
-      undefined,
+      "main",
     );
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(onUnresolvedFileCandidate).toHaveBeenCalledTimes(1);
@@ -187,10 +187,11 @@ describe("assistant file link resolver", () => {
     });
     const source = { href: "http://dumm.md", text: "dumm.md", markup: "linkify" };
 
-    await resolver.open({ context: CONTEXT, source });
+    await resolver.open({ context: CONTEXT, source, disposition: "main" });
     await resolver.open({
       context: { serverId: "server-1", workspaceRoot: "/Users/test/other" },
       source,
+      disposition: "main",
     });
 
     expect(suggestions).toHaveBeenCalledTimes(2);
@@ -201,7 +202,7 @@ describe("assistant file link resolver", () => {
         lineStart: undefined,
         lineEnd: undefined,
       },
-      undefined,
+      "main",
     );
   });
 
@@ -219,6 +220,7 @@ describe("assistant file link resolver", () => {
     const opened = resolver.open({
       context: CONTEXT,
       source: { href: "http://dumm.md", text: "dumm.md", markup: "linkify" },
+      disposition: "main",
     });
     isCurrent = false;
     deferred.resolve(resolvedSuggestions([{ path: "dumm.md", kind: "file" }]));
@@ -241,6 +243,7 @@ describe("assistant file link resolver", () => {
     const result = await resolver.open({
       context: CONTEXT,
       source: { href: "src/components/message.tsx#L33" },
+      disposition: "main",
     });
 
     expect(suggestions).not.toHaveBeenCalled();
@@ -251,7 +254,7 @@ describe("assistant file link resolver", () => {
         lineStart: 33,
         lineEnd: undefined,
       },
-      undefined,
+      "main",
     );
     expect(result.opened).toBe(true);
   });
@@ -305,7 +308,7 @@ describe("assistant file link resolver", () => {
     await resolver.open({
       context: CONTEXT,
       source: { href: "src/components/message.tsx#L33" },
-      openDisposition: "side",
+      disposition: "side",
     });
 
     expect(openWorkspaceFile).toHaveBeenCalledWith(
@@ -330,6 +333,7 @@ describe("assistant file link resolver", () => {
     const result = await resolver.open({
       context: CONTEXT,
       source: { href: "http://dumm.md", text: "dumm.md" },
+      disposition: "main",
     });
 
     expect(openExternalUrl).toHaveBeenCalledWith("http://dumm.md");
@@ -352,6 +356,7 @@ describe("assistant file link resolver", () => {
     const result = await resolver.open({
       context: CONTEXT,
       source: { href: "http://google.com", text: "google.com", markup: "linkify" },
+      disposition: "main",
     });
 
     expect(suggestions).not.toHaveBeenCalled();
@@ -375,6 +380,7 @@ describe("assistant file link resolver", () => {
     const result = await resolver.open({
       context: CONTEXT,
       source: { href: "http://openai.com/path", text: "openai.com/path", sourceInfo: "auto" },
+      disposition: "main",
     });
 
     expect(suggestions).not.toHaveBeenCalled();
@@ -404,6 +410,7 @@ describe("assistant file link resolver", () => {
     const result = await resolver.open({
       context: CONTEXT,
       source: { href: "http://dumm.md", text: "dumm.md", sourceInfo: "auto" },
+      disposition: "main",
     });
 
     expect(openWorkspaceFile).not.toHaveBeenCalled();
@@ -436,6 +443,7 @@ describe("assistant file link resolver", () => {
     const result = await resolver.open({
       context: CONTEXT,
       source: { href: "http://dumm.md", text: "dumm.md", markup: "linkify" },
+      disposition: "main",
     });
 
     expect(openExternalUrl).not.toHaveBeenCalled();

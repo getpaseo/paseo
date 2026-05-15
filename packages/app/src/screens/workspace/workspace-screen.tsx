@@ -2755,20 +2755,18 @@ function WorkspaceScreenContent({
           }
           retargetWorkspaceTab(persistenceKey, input.tab.tabId, target);
         },
-        onOpenWorkspaceFile: (filePath) => {
+        onOpenWorkspaceFile: (filePath, disposition) => {
           if (input.focusPaneBeforeOpen && input.paneId && persistenceKey) {
             focusWorkspacePane(persistenceKey, input.paneId);
+          }
+          if (disposition === "side") {
+            handleOpenFileFromChatInSidePane({
+              filePath,
+              sourcePaneId: input.paneId ?? undefined,
+            });
+            return;
           }
           handleOpenFileFromChat(filePath);
-        },
-        onOpenWorkspaceFileInSide: (filePath) => {
-          if (input.focusPaneBeforeOpen && input.paneId && persistenceKey) {
-            focusWorkspacePane(persistenceKey, input.paneId);
-          }
-          handleOpenFileFromChatInSidePane({
-            filePath,
-            sourcePaneId: input.paneId ?? undefined,
-          });
         },
         onOpenImportSheet: openImportSheet,
       }),
