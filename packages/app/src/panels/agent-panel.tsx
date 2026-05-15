@@ -48,7 +48,7 @@ import {
   deriveRouteBottomAnchorRequest,
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
 import { type Agent, useSessionStore } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
@@ -60,6 +60,11 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import {
+  buildDraftAgentSetupSeed,
+  seedDraftAgentSetup,
+  type ClientSlashCommand,
+} from "@/client-slash-commands";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1257,7 +1262,8 @@ function ActiveAgentComposer({
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const paneContext = usePaneContext();
-  const { workspaceId } = paneContext;
+  const { workspaceId, retargetCurrentTab } = paneContext;
+  const { archiveAgent } = useArchiveAgent();
   const subagentRows = useSubagentsForParent({
     serverId,
     parentAgentId: agentId,
@@ -1305,6 +1311,30 @@ function ActiveAgentComposer({
     [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
   );
 
+  const handleClientSlashCommand = useCallback(
+    async (command: ClientSlashCommand) => {
+      const agent =
+        useSessionStore.getState().sessions[serverId]?.agents.get(agentId) ??
+        useSessionStore.getState().sessions[serverId]?.agentDetails.get(agentId) ??
+        null;
+      if (!agent) {
+        throw new Error("Agent not found");
+      }
+
+      if (command.kind === "replace-agent-with-draft") {
+        const draftId = generateDraftId();
+        seedDraftAgentSetup({
+          draftId,
+          setup: buildDraftAgentSetupSeed(agent),
+        });
+        retargetCurrentTab({ kind: "draft", draftId });
+      }
+
+      await archiveAgent({ serverId, agentId });
+    },
+    [agentId, archiveAgent, retargetCurrentTab, serverId],
+  );
+
   const inputAreaStyle = useMemo(
     () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
     [insets.bottom],
@@ -1336,6 +1366,7 @@ function ActiveAgentComposer({
         onAddImages={onAddImages}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
+        onClientSlashCommand={handleClientSlashCommand}
       />
     </View>
   );

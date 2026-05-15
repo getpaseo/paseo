@@ -75,6 +75,7 @@ export interface AgentRuntimeInfo {
   sessionId: string | null;
   model?: string | null;
   modeId?: string | null;
+  thinkingOptionId?: string | null;
   extra?: Record<string, unknown>;
 }
 

@@ -29,6 +29,35 @@ export interface TerminalPerfDaemonClient {
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
   }): Promise<{ id: string; status: string }>;
+  fetchAgent(agentId: string): Promise<{
+    agent: {
+      id: string;
+      status: string;
+      cwd?: string | null;
+      archivedAt?: string | null;
+      model?: string | null;
+      currentModeId?: string | null;
+      runtimeInfo?: { model?: string | null; modeId?: string | null };
+    } | null;
+  } | null>;
+  fetchAgents(): Promise<{
+    entries: Array<{
+      agent: {
+        id: string;
+        status: string;
+        cwd?: string | null;
+        archivedAt?: string | null;
+        model?: string | null;
+        currentModeId?: string | null;
+        runtimeInfo?: { model?: string | null; modeId?: string | null };
+      };
+    }>;
+  }>;
+  waitForAgentUpsert(
+    agentId: string,
+    predicate: (snapshot: { status: string }) => boolean,
+    timeout?: number,
+  ): Promise<{ status: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   subscribeTerminal(
     terminalId: string,

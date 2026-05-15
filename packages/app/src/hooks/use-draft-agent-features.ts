@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentProvider, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -21,14 +21,19 @@ export function useDraftAgentFeatures(input: {
   modeId: string | null | undefined;
   modelId: string | null | undefined;
   thinkingOptionId: string | null | undefined;
+  initialFeatureValues?: Record<string, unknown>;
 }) {
-  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId } = input;
-  const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>({});
+  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
+    input;
+  const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>(
+    () => initialFeatureValues ?? {},
+  );
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
   const normalizedProvider = provider ?? null;
+  const previousProviderRef = useRef<AgentProvider | null>(normalizedProvider);
   const persistedFeatureValues = useMemo(
     () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
     [preferences.providerPreferences, provider],
@@ -88,15 +93,25 @@ export function useDraftAgentFeatures(input: {
   }, [availableFeatures, featureValues]);
 
   useEffect(() => {
-    setLocalFeatureValues({});
-  }, [provider]);
+    const previousProvider = previousProviderRef.current;
+    previousProviderRef.current = normalizedProvider;
+    if (previousProvider === null) {
+      return;
+    }
+    if (previousProvider !== normalizedProvider) {
+      setLocalFeatureValues({});
+    }
+  }, [normalizedProvider]);
 
   useEffect(() => {
+    if (availableFeaturesRaw === undefined) {
+      return;
+    }
     const next = pruneFeatureValues(localFeatureValues, availableFeatures);
     if (next !== localFeatureValues) {
       setLocalFeatureValues(next);
     }
-  }, [availableFeatures, localFeatureValues]);
+  }, [availableFeatures, availableFeaturesRaw, localFeatureValues]);
 
   const effectiveFeatureValues = Object.keys(featureValues).length > 0 ? featureValues : undefined;
   const setFeatureValue = useCallback(

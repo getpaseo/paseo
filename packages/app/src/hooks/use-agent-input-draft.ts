@@ -27,6 +27,7 @@ type AttachmentUpdater =
 interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
+  initialFeatureValues?: Record<string, unknown>;
   isVisible?: boolean;
   onlineServerIds?: string[];
   lockedWorkingDir?: string;
@@ -229,6 +230,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     modeId: formState.selectedMode,
     modelId: effectiveModelId,
     thinkingOptionId: effectiveThinkingOptionId,
+    initialFeatureValues: composerOptions?.initialFeatureValues,
   });
 
   const commandDraftConfig = useMemo(

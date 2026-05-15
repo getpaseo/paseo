@@ -6,6 +6,7 @@ import { orderAutocompleteOptions } from "@/components/ui/autocomplete-utils";
 import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { CLIENT_SLASH_COMMANDS } from "@/client-slash-commands";
 import {
   applyFileMentionReplacement,
   findActiveFileMention,
@@ -277,7 +278,10 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
 
     if (mode === "command") {
       const filterLower = commandFilterQuery.toLowerCase();
-      const matches = commands.filter((cmd) => cmd.name.toLowerCase().includes(filterLower));
+      const availableCommands = isDraftContext ? commands : [...CLIENT_SLASH_COMMANDS, ...commands];
+      const matches = availableCommands.filter((cmd) =>
+        cmd.name.toLowerCase().includes(filterLower),
+      );
       const orderedMatches = orderAutocompleteOptions(matches);
       return orderedMatches.map((cmd) => ({
         type: "command" as const,
@@ -302,7 +306,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     }
 
     return [];
-  }, [activeFileMention, commandFilterQuery, commands, fileSuggestionsQuery.data, isVisible, mode]);
+  }, [
+    activeFileMention,
+    commandFilterQuery,
+    commands,
+    fileSuggestionsQuery.data,
+    isDraftContext,
+    isVisible,
+    mode,
+  ]);
 
   const onSelectOption = useCallback(
     (option: AutocompleteOption) => {

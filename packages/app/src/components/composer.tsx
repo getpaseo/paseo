@@ -99,6 +99,7 @@ import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useGithubSearchQuery } from "@/git/use-github-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useComposerGithubAutoAttach } from "./use-composer-github-auto-attach";
+import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 
 type QueuedMessage = QueuedComposerMessage;
 
@@ -607,6 +608,7 @@ interface ComposerProps {
   serverId: string;
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
+  onClientSlashCommand?: (command: ClientSlashCommand) => Promise<void>;
   /** When true, the submit button is enabled even without text or images (e.g. external attachment selected). */
   hasExternalContent?: boolean;
   /** When true, the composer can submit even with no text or attachments. */
@@ -807,6 +809,7 @@ export function Composer({
   serverId,
   isPaneFocused,
   onSubmitMessage,
+  onClientSlashCommand,
   hasExternalContent = false,
   allowEmptySubmit = false,
   submitButtonAccessibilityLabel,
@@ -1109,16 +1112,48 @@ export function Composer({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      const outgoingAttachments = buildOutgoingAttachments(attachments);
+      const clientSlashCommand = resolveClientSlashCommand({
+        text: payload.text,
+        hasAttachments: outgoingAttachments.length > 0,
+      });
+      if (clientSlashCommand && onClientSlashCommand) {
+        if (blurOnSubmit) {
+          messageInputRef.current?.blur();
+        }
+        clearDraft("sent");
+        setUserInput("");
+        setSelectedAttachments([]);
+        resetSuppression();
+        setSendError(null);
+        setIsProcessing(true);
+        void onClientSlashCommand(clientSlashCommand)
+          .catch((error) => {
+            console.error("[Composer] Failed to run client slash command:", error);
+            setSendError(error instanceof Error ? error.message : String(error));
+          })
+          .finally(() => {
+            setIsProcessing(false);
+          });
+        return;
+      }
+
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
-      void sendMessageWithContent(
-        payload.text,
-        buildOutgoingAttachments(attachments),
-        payload.forceSend,
-      );
+      void sendMessageWithContent(payload.text, outgoingAttachments, payload.forceSend);
     },
-    [attachments, blurOnSubmit, buildOutgoingAttachments, sendMessageWithContent],
+    [
+      attachments,
+      blurOnSubmit,
+      buildOutgoingAttachments,
+      clearDraft,
+      onClientSlashCommand,
+      resetSuppression,
+      sendMessageWithContent,
+      setSelectedAttachments,
+      setUserInput,
+    ],
   );
 
   const handlePickImage = useCallback(async () => {
@@ -1290,9 +1325,19 @@ export function Composer({
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
     (event: { key: string; preventDefault: () => void }) => {
+      if (
+        event.key === "Enter" &&
+        onClientSlashCommand &&
+        resolveClientSlashCommand({
+          text: userInput,
+          hasAttachments: buildOutgoingAttachments(attachments).length > 0,
+        })
+      ) {
+        return false;
+      }
       return autocompleteOnKeyPressRef.current(event);
     },
-    [],
+    [attachments, buildOutgoingAttachments, onClientSlashCommand, userInput],
   );
 
   const cancelButtonStyle = useMemo(
