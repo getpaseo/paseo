@@ -135,8 +135,9 @@ in
 
         When Paseo runs as a real user (not the default system user), AI agents
         need access to the user's tools (git, ssh, etc.). This adds the user's
-        NixOS profile and system paths so agents can use them without manually
-        setting PATH.
+        NixOS profile, home-manager profile (`~/.nix-profile/bin` and
+        `~/.local/state/nix/profile/bin`), and system paths so agents can use
+        them without manually setting PATH.
 
         Enabled by default when `user` is set to a non-default value.
       '';
@@ -221,17 +222,31 @@ in
         NODE_ENV = "production";
         PASEO_HOME = cfg.dataDir;
         PASEO_LISTEN = "${cfg.listenAddress}:${toString cfg.port}";
-      } // lib.optionalAttrs cfg.inheritUserEnvironment {
-        # mkForce overrides the default PATH from NixOS's systemd module (which
-        # only includes store paths for coreutils/grep/sed/systemd). Our PATH
-        # includes /run/current-system/sw/bin which is a superset of those.
-        PATH = lib.mkForce (lib.concatStringsSep ":" [
-          "/etc/profiles/per-user/${cfg.user}/bin"
-          "/run/current-system/sw/bin"
-          "/run/wrappers/bin"
-          "/nix/var/nix/profiles/default/bin"
-        ]);
-      } // lib.optionalAttrs (cfg.hostnames == true) {
+      } // lib.optionalAttrs cfg.inheritUserEnvironment (
+        let
+          # Match dataDir's convention. We can't read users.users.<name>.home
+          # because the user may be managed outside NixOS.
+          userHome = "/home/${cfg.user}";
+        in {
+          # mkForce overrides the default PATH from NixOS's systemd module (which
+          # only includes store paths for coreutils/grep/sed/systemd). When the
+          # daemon runs as a real user, also include home-manager profile paths
+          # so user-installed CLIs (claude, opencode, codex, ...) are reachable
+          # by agent processes the daemon spawns.
+          PATH = lib.mkForce (lib.concatStringsSep ":" (
+            lib.optionals (cfg.user != "paseo") [
+              "${userHome}/.nix-profile/bin"
+              "${userHome}/.local/state/nix/profile/bin"
+            ]
+            ++ [
+              "/etc/profiles/per-user/${cfg.user}/bin"
+              "/run/current-system/sw/bin"
+              "/run/wrappers/bin"
+              "/nix/var/nix/profiles/default/bin"
+            ]
+          ));
+        }
+      ) // lib.optionalAttrs (cfg.hostnames == true) {
         PASEO_HOSTNAMES = "true";
       } // lib.optionalAttrs (lib.isList cfg.hostnames && cfg.hostnames != [ ]) {
         PASEO_HOSTNAMES = lib.concatStringsSep "," cfg.hostnames;
