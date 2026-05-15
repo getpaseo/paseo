@@ -375,6 +375,8 @@ function QueryProvider({ children }: { children: ReactNode }) {
 
 const rowStyle = { flex: 1, flexDirection: "row" } as const;
 const flexStyle = { flex: 1 } as const;
+const MOBILE_WEB_EDGE_SWIPE_WIDTH = 32;
+const MOBILE_WEB_GESTURE_TOUCH_ACTION = isWeb ? "auto" : "pan-y";
 
 interface AppContainerProps {
   children: ReactNode;
@@ -498,6 +500,7 @@ function MobileGestureWrapper({
     openGestureRef,
   } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
+  const touchStartY = useSharedValue(0);
   const openGestureEnabled = chromeEnabled && mobileView === "agent";
 
   const handleGestureOpen = useCallback(() => {
@@ -516,6 +519,7 @@ function MobileGestureWrapper({
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
+            touchStartY.value = touch.absoluteY;
           }
         })
         .onTouchesMove((event, stateManager) => {
@@ -523,13 +527,31 @@ function MobileGestureWrapper({
           if (!touch || event.numberOfTouches !== 1) return;
 
           const deltaX = touch.absoluteX - touchStartX.value;
+          const deltaY = touch.absoluteY - touchStartY.value;
+          const absDeltaX = Math.abs(deltaX);
+          const absDeltaY = Math.abs(deltaY);
 
           if (horizontalScroll?.isAnyScrolledRight.value) {
             stateManager.fail();
             return;
           }
 
-          if (deltaX > 15) {
+          if (isWeb && touchStartX.value > MOBILE_WEB_EDGE_SWIPE_WIDTH) {
+            stateManager.fail();
+            return;
+          }
+
+          if (deltaX <= -10) {
+            stateManager.fail();
+            return;
+          }
+
+          if (absDeltaY > 10 && absDeltaY > absDeltaX) {
+            stateManager.fail();
+            return;
+          }
+
+          if (deltaX > 15 && absDeltaX > absDeltaY) {
             stateManager.activate();
           }
         })
@@ -571,11 +593,12 @@ function MobileGestureWrapper({
       openGestureRef,
       horizontalScroll?.isAnyScrolledRight,
       touchStartX,
+      touchStartY,
     ],
   );
 
   return (
-    <GestureDetector gesture={openGesture} touchAction="pan-y">
+    <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
       {children}
     </GestureDetector>
   );
