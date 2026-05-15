@@ -1,7 +1,6 @@
 import { expect, test, type Page } from "./fixtures";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { composerLocator, expectComposerVisible, submitMessage } from "./helpers/composer";
-import { expectAgentIdle } from "./helpers/agent-stream";
 import { connectTerminalClient, type TerminalPerfDaemonClient } from "./helpers/terminal-perf";
 import { createTempGitRepo } from "./helpers/workspace";
 import {
@@ -99,7 +98,6 @@ async function openActiveAgentTab(
   );
   await expectWorkspaceTabVisible(page, input.agentId);
   await expectComposerVisible(page);
-  await expectAgentIdle(page, 30_000);
 }
 
 async function runClientSlashCommand(page: Page, command: "/quit" | "/clear"): Promise<void> {

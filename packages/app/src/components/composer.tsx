@@ -80,7 +80,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/components/agent-input-submit";
-import { useAppSettings } from "@/hooks/use-settings";
+import { useAppSettings, type SendBehavior } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
 import type { GitHubSearchItem } from "@server/shared/messages";
 import type {
@@ -108,6 +108,30 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 function noop() {}
+
+function resolveActiveClientSlashCommand(input: {
+  text: string;
+  hasAttachments: boolean;
+  canHandleClientSlashCommand: boolean;
+}): ClientSlashCommand | null {
+  if (!input.canHandleClientSlashCommand) {
+    return null;
+  }
+  return resolveClientSlashCommand({
+    text: input.text,
+    hasAttachments: input.hasAttachments,
+  });
+}
+
+function resolveComposerSendBehavior(input: {
+  appSendBehavior: SendBehavior;
+  activeClientSlashCommand: ClientSlashCommand | null;
+}): SendBehavior {
+  if (input.activeClientSlashCommand) {
+    return "interrupt";
+  }
+  return input.appSendBehavior;
+}
 
 function resolveComposerButtonIconSize(): number {
   return isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -1320,24 +1344,22 @@ export function Composer({
     [attachments, buildOutgoingAttachments, queueMessage],
   );
 
+  const activeClientSlashCommand = resolveActiveClientSlashCommand({
+    text: userInput,
+    hasAttachments: buildOutgoingAttachments(attachments).length > 0,
+    canHandleClientSlashCommand: Boolean(onClientSlashCommand),
+  });
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
 
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
     (event: { key: string; preventDefault: () => void }) => {
-      if (
-        event.key === "Enter" &&
-        onClientSlashCommand &&
-        resolveClientSlashCommand({
-          text: userInput,
-          hasAttachments: buildOutgoingAttachments(attachments).length > 0,
-        })
-      ) {
+      if (event.key === "Enter" && activeClientSlashCommand) {
         return false;
       }
       return autocompleteOnKeyPressRef.current(event);
     },
-    [attachments, buildOutgoingAttachments, onClientSlashCommand, userInput],
+    [activeClientSlashCommand],
   );
 
   const cancelButtonStyle = useMemo(
@@ -1628,7 +1650,10 @@ export function Composer({
               voiceServerId={serverId}
               voiceAgentId={agentId}
               isAgentRunning={isAgentRunning}
-              defaultSendBehavior={appSettings.sendBehavior}
+              defaultSendBehavior={resolveComposerSendBehavior({
+                appSendBehavior: appSettings.sendBehavior,
+                activeClientSlashCommand,
+              })}
               onQueue={handleQueue}
               onSubmitLoadingPress={submitLoadingPressHandler}
               onKeyPress={handleCommandKeyPress}
