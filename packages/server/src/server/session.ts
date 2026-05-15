@@ -96,6 +96,7 @@ import type {
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type {
+  AgentManagerEvent,
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
   ManagedAgent,
@@ -1277,20 +1278,8 @@ export class Session {
         // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
         // for the focused agent, with a short grace window while backgrounded.
         // History catch-up is handled via pull-based `fetch_agent_timeline_request`.
-        const activity = this.clientActivity;
-        if (activity?.deviceType === "mobile") {
-          if (!activity.focusedAgentId) {
-            return;
-          }
-          if (activity.focusedAgentId !== event.agentId) {
-            return;
-          }
-          if (!activity.appVisible) {
-            const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
-            if (hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS) {
-              return;
-            }
-          }
+        if (this.shouldSkipAgentStreamForward(event.agentId)) {
+          return;
         }
 
         const serializedEvent = serializeAgentStreamEvent(event.event);
@@ -1309,17 +1298,9 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        const payload = {
-          agentId: event.agentId,
-          event: serializedEvent,
-          timestamp: new Date().toISOString(),
-          ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
-          ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
-        } as const;
-
         this.emit({
           type: "agent_stream",
-          payload,
+          payload: this.buildAgentStreamPayload(event, serializedEvent),
         });
 
         if (event.event.type === "permission_requested") {
@@ -1345,6 +1326,34 @@ export class Session {
       },
       { replayState: false },
     );
+  }
+
+  private shouldSkipAgentStreamForward(agentId: string): boolean {
+    const activity = this.clientActivity;
+    if (activity?.deviceType !== "mobile") {
+      return false;
+    }
+    if (!activity.focusedAgentId || activity.focusedAgentId !== agentId) {
+      return true;
+    }
+    if (activity.appVisible) {
+      return false;
+    }
+    const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
+    return hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS;
+  }
+
+  private buildAgentStreamPayload(
+    event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+  ): Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"] {
+    return {
+      agentId: event.agentId,
+      event: serializedEvent,
+      timestamp: event.timestamp ?? new Date().toISOString(),
+      ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
+      ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
+    };
   }
 
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {

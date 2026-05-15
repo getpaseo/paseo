@@ -35,13 +35,14 @@ import { Check, ChevronDown, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
+  AssistantTurnFooter,
   SpeakMessage,
   UserMessage,
   ActivityLog,
   ToolCall,
   TodoListCard,
   CompactionMarker,
-  TurnCopyButton,
+  LiveElapsed,
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "./message";
@@ -89,6 +90,7 @@ import {
   WORKING_INDICATOR_CYCLE_MS,
   WORKING_INDICATOR_OFFSETS,
 } from "@/utils/working-indicator";
+import { findInFlightTurnStartedAt, findTurnHeaderForAssistantTurn } from "@/timeline/turn-time";
 import { isWeb } from "@/constants/platform";
 import { SPACING, type Theme } from "@/styles/theme";
 
@@ -273,6 +275,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           streamRenderStrategy,
         ),
       [agent.status, baseRenderModel.segments.liveHead, streamRenderStrategy],
+    );
+    const inFlightTurnStartedAt = useMemo(
+      () =>
+        findInFlightTurnStartedAt({
+          agentStatus: agent.status,
+          liveHead: baseRenderModel.segments.liveHead,
+          tail: streamItems,
+        }),
+      [agent.status, baseRenderModel.segments.liveHead, streamItems],
     );
     useImperativeHandle(
       ref,
@@ -548,6 +559,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               />
             );
 
+          case "turn_header":
+            // Purely a data carrier - duration renders next to the assistant
+            // turn's copy button (TurnCopyButtonSlot), and the in-flight
+            // ticker renders next to the WorkingIndicator dots.
+            return null;
+
           default:
             return null;
         }
@@ -582,7 +599,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           item.kind === "assistant_message" && item.id === inlineWorkingIndicatorItemId;
         let footer: ReactNode = null;
         if (isRunningAssistantTurnFooter) {
-          footer = <InlineWorkingIndicatorSlot />;
+          footer = <InlineWorkingIndicatorSlot inFlightTurnStartedAt={inFlightTurnStartedAt} />;
         } else if (isEndOfAssistantTurn) {
           footer = (
             <TurnCopyButtonSlot strategy={streamRenderStrategy} items={items} startIndex={index} />
@@ -602,6 +619,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         agent.status,
         streamRenderStrategy,
         inlineWorkingIndicatorItemId,
+        inFlightTurnStartedAt,
       ],
     );
 
@@ -627,10 +645,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () =>
         showAuxiliaryWorkingIndicator ? (
           <View style={stylesheet.bottomBarWrapper} testID="stream-working-indicator-auxiliary">
-            <WorkingIndicator />
+            <WorkingIndicator inFlightTurnStartedAt={inFlightTurnStartedAt} />
           </View>
         ) : null,
-      [showAuxiliaryWorkingIndicator],
+      [showAuxiliaryWorkingIndicator, inFlightTurnStartedAt],
     );
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
@@ -802,7 +820,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 export const AgentStreamView = memo(AgentStreamViewComponent);
 AgentStreamView.displayName = "AgentStreamView";
 
-function WorkingIndicator({ variant = "auxiliary" }: { variant?: "auxiliary" | "inline" }) {
+function WorkingIndicator({
+  variant = "auxiliary",
+  inFlightTurnStartedAt = null,
+}: {
+  variant?: "auxiliary" | "inline";
+  inFlightTurnStartedAt?: Date | null;
+}) {
   const progress = useSharedValue(0);
 
   useEffect(() => {
@@ -866,14 +890,25 @@ function WorkingIndicator({ variant = "auxiliary" }: { variant?: "auxiliary" | "
         <Animated.View style={dotTwoCombinedStyle} />
         <Animated.View style={dotThreeCombinedStyle} />
       </View>
+      {inFlightTurnStartedAt ? (
+        <LiveElapsed
+          startedAt={inFlightTurnStartedAt}
+          style={stylesheet.workingElapsed}
+          testID="turn-working-elapsed"
+        />
+      ) : null}
     </View>
   );
 }
 
-function InlineWorkingIndicatorSlot() {
+function InlineWorkingIndicatorSlot({
+  inFlightTurnStartedAt,
+}: {
+  inFlightTurnStartedAt: Date | null;
+}) {
   return (
     <View style={stylesheet.inlineTurnFooter} testID="turn-working-indicator">
-      <WorkingIndicator variant="inline" />
+      <WorkingIndicator variant="inline" inFlightTurnStartedAt={inFlightTurnStartedAt} />
     </View>
   );
 }
@@ -899,7 +934,17 @@ function TurnCopyButtonSlot({ strategy, items, startIndex }: TurnCopyButtonSlotP
       }),
     [strategy, items, startIndex],
   );
-  return <TurnCopyButton getContent={getContent} />;
+  const header = useMemo(
+    () => findTurnHeaderForAssistantTurn({ strategy, items, startIndex }),
+    [strategy, items, startIndex],
+  );
+  return (
+    <AssistantTurnFooter
+      getContent={getContent}
+      startedAt={header?.startedAt}
+      durationMs={header?.durationMs}
+    />
+  );
 }
 
 interface ToolCallSlotProps extends Omit<
@@ -1250,8 +1295,15 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   inlineWorkingIndicatorFrame: {
     height: 18,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
+    gap: theme.spacing[2],
+  },
+  workingElapsed: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontVariant: ["tabular-nums"],
   },
   workingIndicatorBubble: {
     flexDirection: "row",

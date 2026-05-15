@@ -822,6 +822,144 @@ describe("OpenCode adapter startTurn error handling", () => {
     expect(fakeClient.session.delete).not.toHaveBeenCalled();
   });
 
+  test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {
+    const fakeClient = {
+      session: {
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: {
+                id: "msg_user",
+                sessionID: "ses_unit_test",
+                role: "user",
+                time: { created: 1778762475873 },
+              },
+              parts: [
+                {
+                  id: "prt_user",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "text",
+                  text: "Reply with exactly: probe ok",
+                },
+              ],
+            },
+            {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+                time: { created: 1778762475884, completed: 1778762489358 },
+              },
+              parts: [
+                {
+                  id: "prt_reasoning",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "reasoning",
+                  text: "thinking",
+                  time: { start: 1778762482953, end: 1778762483610 },
+                },
+                {
+                  id: "prt_text",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "text",
+                  text: "probe ok",
+                  time: { start: 1778762483612, end: 1778762489351 },
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+      "/tmp/opencode-storage",
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-05-14T12:41:15.873Z",
+        item: { type: "user_message", text: "Reply with exactly: probe ok" },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-05-14T12:41:22.953Z",
+        item: { type: "reasoning", text: "thinking" },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-05-14T12:41:23.612Z",
+        item: { type: "assistant_message", text: "probe ok" },
+      },
+    ]);
+  });
+
+  test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
+    const fakeClient = {
+      session: {
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+              },
+              parts: [
+                {
+                  id: "prt_text",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "text",
+                  text: "no clocks here",
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+      "/tmp/opencode-storage",
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: "no clocks here" },
+      },
+    ]);
+  });
+
   test("emits turn_failed when client.session.promptAsync throws synchronously", async () => {
     // Yield the server-connected event, then park forever. The adapter waits
     // for that first event before sending the prompt.

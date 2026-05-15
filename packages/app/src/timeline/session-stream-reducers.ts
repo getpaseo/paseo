@@ -395,7 +395,10 @@ function applyTimelineIncrementalPath(args: {
   if (acceptedUnits.length > 0) {
     if (payload.direction === "before") {
       const olderTail = hydrateStreamState(
-        acceptedUnits.map(({ event, timestamp }) => ({ event, timestamp })),
+        acceptedUnits.map(({ event, timestamp }) => ({
+          event,
+          timestamp,
+        })),
         { source: "canonical" },
       );
       nextTail = mergePrependedCanonicalTail(olderTail, currentTail);
@@ -414,7 +417,9 @@ function applyTimelineIncrementalPath(args: {
     } else {
       nextTail = acceptedUnits.reduce<StreamItem[]>(
         (state, { event, timestamp }) =>
-          reduceStreamUpdate(state, event, timestamp, { source: "canonical" }),
+          reduceStreamUpdate(state, event, timestamp, {
+            source: "canonical",
+          }),
         currentTail,
       );
     }
@@ -482,7 +487,7 @@ export function processTimelineResponse(
   }));
 
   const toHydratedEvents = (
-    units: typeof timelineUnits,
+    units: TimelineUnit[],
   ): Array<{ event: AgentStreamEventPayload; timestamp: Date }> =>
     units.map(({ event, timestamp }) => ({ event, timestamp }));
 

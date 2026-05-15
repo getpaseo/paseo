@@ -122,6 +122,7 @@ export type AgentManagerEvent =
       event: AgentStreamEvent;
       seq?: number;
       epoch?: string;
+      timestamp?: string;
     };
 
 export type AgentSubscriber = (event: AgentManagerEvent) => void;
@@ -1391,10 +1392,11 @@ export class AgentManager {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
           epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
         });
         return;
       }
-      this.dispatchStream(agent.id, event);
+      this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
     };
     void (async () => {
       try {
@@ -1436,6 +1438,7 @@ export class AgentManager {
       {
         seq: row.seq,
         epoch: this.timelineStore.getEpoch(agentId),
+        timestamp: row.timestamp,
       },
     );
     if (options?.emitState !== false) {
@@ -1457,6 +1460,7 @@ export class AgentManager {
       {
         seq: row.seq,
         epoch: this.timelineStore.getEpoch(agentId),
+        timestamp: row.timestamp,
       },
     );
     await this.persistSnapshot(agent);
@@ -1786,7 +1790,7 @@ export class AgentManager {
       const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
       if (bufferedResolution) {
         agent.bufferedPermissionResolutions.delete(requestId);
-        this.dispatchStream(agent.id, bufferedResolution);
+        this.dispatchStream(agent.id, bufferedResolution, { timestamp: new Date().toISOString() });
       }
 
       return result;
@@ -1876,12 +1880,16 @@ export class AgentManager {
     // Clear any pending permissions that weren't cleaned up by handleStreamEvent.
     if (agent.pendingPermissions.size > 0) {
       for (const [requestId] of agent.pendingPermissions) {
-        this.dispatchStream(agent.id, {
-          type: "permission_resolved",
-          provider: agent.provider,
-          requestId,
-          resolution: { behavior: "deny", message: "Interrupted" },
-        });
+        this.dispatchStream(
+          agent.id,
+          {
+            type: "permission_resolved",
+            provider: agent.provider,
+            requestId,
+            resolution: { behavior: "deny", message: "Interrupted" },
+          },
+          { timestamp: new Date().toISOString() },
+        );
       }
       agent.pendingPermissions.clear();
       this.touchUpdatedAt(agent);
@@ -2587,7 +2595,11 @@ export class AgentManager {
         if (isDuplicateLegacyUserMessage(event.item, canonicalUserMessagesById)) {
           continue;
         }
-        this.recordTimeline(agent.id, event.item);
+        this.recordTimeline(
+          agent.id,
+          event.item,
+          event.timestamp ? { timestamp: event.timestamp } : undefined,
+        );
       }
     } catch {
       // ignore history failures
@@ -2663,7 +2675,7 @@ export class AgentManager {
     }
 
     if (!options?.fromHistory && flags.shouldDispatchEvent) {
-      this.dispatchStream(agent.id, event);
+      this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
     }
 
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
@@ -2862,7 +2874,11 @@ export class AgentManager {
     }
 
     if (options?.fromHistory) {
-      this.recordTimeline(agent.id, event.item);
+      this.recordTimeline(
+        agent.id,
+        event.item,
+        event.timestamp ? { timestamp: event.timestamp } : undefined,
+      );
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -3068,6 +3084,7 @@ export class AgentManager {
     this.dispatchStream(agentId, event, {
       seq: row.seq,
       epoch: this.timelineStore.getEpoch(agentId),
+      timestamp: row.timestamp,
     });
     return event;
   }
@@ -3108,6 +3125,7 @@ export class AgentManager {
       {
         seq: row.seq,
         epoch: this.timelineStore.getEpoch(agent.id),
+        timestamp: row.timestamp,
       },
     );
   }
@@ -3128,8 +3146,12 @@ export class AgentManager {
     return parts.join("\n\n");
   }
 
-  private recordTimeline(agentId: string, item: AgentTimelineItem): AgentTimelineRow {
-    const row = this.timelineStore.append(agentId, item);
+  private recordTimeline(
+    agentId: string,
+    item: AgentTimelineItem,
+    options?: { timestamp?: string },
+  ): AgentTimelineRow {
+    const row = this.timelineStore.append(agentId, item, options);
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
   }
@@ -3282,7 +3304,7 @@ export class AgentManager {
   private dispatchStream(
     agentId: string,
     event: AgentStreamEvent,
-    metadata?: { seq?: number; epoch?: string },
+    metadata?: { seq?: number; epoch?: string; timestamp?: string },
   ): void {
     const agent = this.agents.get(agentId);
     this.logger.trace(

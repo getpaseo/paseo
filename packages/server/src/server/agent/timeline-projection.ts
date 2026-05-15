@@ -142,6 +142,7 @@ function collapseToolLifecycle(entries: readonly WorkingEntry[]): WorkingEntry[]
     output[existingIndex] = {
       ...existing,
       item: mergedItem,
+      timestamp: entry.timestamp,
       seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
       sourceSeqRanges: mergedRanges,
       collapsed,
@@ -181,6 +182,7 @@ function mergeReasoningChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
         type: "reasoning",
         text: `${previousReasoning.text}${entryReasoning.text}`,
       },
+      timestamp: entry.timestamp,
       seqEnd: entry.seqEnd,
       sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
       collapsed: Array.from(collapsedKinds),
@@ -231,6 +233,7 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
         text: `${previousAssistant.text}${entryAssistant.text}`,
         ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
       },
+      timestamp: entry.timestamp,
       seqEnd: entry.seqEnd,
       sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
       collapsed: Array.from(collapsedKinds),

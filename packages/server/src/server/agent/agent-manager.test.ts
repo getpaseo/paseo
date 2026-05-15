@@ -5004,6 +5004,69 @@ test("hydrateTimeline keeps provider user_message items when no canonical user h
   expect(assistantMessages).toHaveLength(2);
 });
 
+test("hydrateTimeline preserves provider replay timestamps and marks missing ones untrusted", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-timestamps-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class TimestampedHistorySession extends TestAgentSession {
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        timestamp: "2026-05-01T10:00:00.000Z",
+        item: { type: "user_message", text: "hello", messageId: "msg_history_1" },
+      };
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "no original timestamp" },
+      };
+    }
+  }
+
+  class TimestampedHistoryClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new TimestampedHistorySession(config);
+    }
+
+    async resumeSession(): Promise<AgentSession> {
+      throw new Error("Not used in this test");
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new TimestampedHistoryClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000204",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  await manager.hydrateTimelineFromProvider(snapshot.id);
+  const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 0 }).rows;
+
+  expect(timeline).toHaveLength(2);
+  expect(timeline[0]).toMatchObject({
+    timestamp: "2026-05-01T10:00:00.000Z",
+    item: { type: "user_message", text: "hello", messageId: "msg_history_1" },
+  });
+  expect(timeline[1]?.timestamp).toEqual(expect.any(String));
+});
+
 test("hydrateTimeline suppresses only matching canonical user_message messageId", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-partial-dedup-"));
   const storagePath = join(workdir, "agents");

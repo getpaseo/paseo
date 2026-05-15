@@ -1,3 +1,4 @@
+import invariant from "tiny-invariant";
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { StreamItem } from "@/types/stream";
@@ -216,6 +217,36 @@ describe("processTimelineResponse", () => {
     });
     expect(result.error).toBe(null);
     expect(result.sideEffects.some((e) => e.type === "flush_pending_updates")).toBe(true);
+  });
+
+  it("uses the timeline entry timestamp as canonical", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "hello", "user_message"),
+            timestamp: new Date("2025-01-01T12:00:03Z").toISOString(),
+          },
+          {
+            ...makeTimelineEntry(2, "reply"),
+            timestamp: new Date("2025-01-01T12:00:04Z").toISOString(),
+          },
+        ],
+      },
+    });
+
+    const user = result.tail.find((item) => item.kind === "user_message");
+    const header = result.tail.find((item) => item.kind === "turn_header");
+
+    expect(user?.timestamp.toISOString()).toBe("2025-01-01T12:00:03.000Z");
+    invariant(header?.kind === "turn_header");
+    expect(header.startedAt.toISOString()).toBe("2025-01-01T12:00:04.000Z");
+    expect(header.completedAt?.toISOString()).toBe("2025-01-01T12:00:04.000Z");
   });
 
   it("sets cursor to null when reset=true but no cursors in payload", () => {

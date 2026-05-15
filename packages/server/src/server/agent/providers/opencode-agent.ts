@@ -62,6 +62,7 @@ import {
   type OpenCodeRuntime,
   type OpenCodeServerAcquisition,
 } from "./opencode/runtime.js";
+import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -898,6 +899,71 @@ function getOpenCodeMessageTimestamp(message: OpenCodeStoredMessage): number {
 
 function getOpenCodePartTimestamp(part: OpenCodeStoredPart): number {
   return part.time?.start ?? part.time?.end ?? 0;
+}
+
+function resolveOpenCodeReplayTimestamp(params: {
+  message: { time?: { created?: number; completed?: number } | undefined };
+  part?: unknown;
+}): string | null {
+  const timedPart = params.part as
+    | { time?: { start?: number; end?: number } | undefined }
+    | undefined;
+  const partTimestamp =
+    timedPart?.time?.start ??
+    timedPart?.time?.end ??
+    params.message.time?.created ??
+    params.message.time?.completed;
+  return normalizeProviderReplayTimestamp(partTimestamp);
+}
+
+function buildOpenCodeReplayTimelineEvent(params: {
+  item: AgentTimelineItem;
+  message: { time?: { created?: number; completed?: number } | undefined };
+  part?: unknown;
+}): Extract<AgentStreamEvent, { type: "timeline" }> {
+  const timestamp = resolveOpenCodeReplayTimestamp({
+    message: params.message,
+    part: params.part,
+  });
+  return {
+    type: "timeline",
+    provider: "opencode",
+    item: params.item,
+    ...(timestamp ? { timestamp } : {}),
+  };
+}
+
+function buildOpenCodeReplayPartTimelineEvent(params: {
+  part: OpenCodePart;
+  message: { structured?: unknown; time?: { created?: number; completed?: number } | undefined };
+}): Extract<AgentStreamEvent, { type: "timeline" }> | null {
+  const { part, message } = params;
+  if (part.type === "text" && part.text) {
+    return buildOpenCodeReplayTimelineEvent({
+      item: { type: "assistant_message", text: part.text },
+      message,
+      part,
+    });
+  }
+  if (part.type === "reasoning" && part.text) {
+    return buildOpenCodeReplayTimelineEvent({
+      item: { type: "reasoning", text: part.text },
+      message,
+      part,
+    });
+  }
+  if (part.type !== "tool") {
+    return null;
+  }
+  const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+  if (!parsedToolPart.success || !parsedToolPart.data) {
+    return null;
+  }
+  return buildOpenCodeReplayTimelineEvent({
+    item: parsedToolPart.data,
+    message,
+    part,
+  });
 }
 
 export const __openCodeInternals = {
@@ -2886,53 +2952,30 @@ class OpenCodeAgentSession implements AgentSession {
           .join("");
 
         if (text) {
-          yield {
-            type: "timeline",
-            provider: "opencode",
+          yield buildOpenCodeReplayTimelineEvent({
             item: { type: "user_message", text },
-          };
+            message: info,
+          });
         }
       } else {
         let emittedAssistantText = false;
         for (const part of parts) {
           if (part.type === "text" && part.text) {
             emittedAssistantText = true;
-            yield {
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "assistant_message", text: part.text },
-            };
-            continue;
           }
-          if (part.type === "reasoning" && part.text) {
-            yield {
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "reasoning", text: part.text },
-            };
-            continue;
-          }
-          if (part.type !== "tool") {
-            continue;
-          }
-          const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
-          if (parsedToolPart.success && parsedToolPart.data) {
-            yield {
-              type: "timeline",
-              provider: "opencode",
-              item: parsedToolPart.data,
-            };
+          const event = buildOpenCodeReplayPartTimelineEvent({ part, message: info });
+          if (event) {
+            yield event;
           }
         }
 
         if (!emittedAssistantText) {
           const text = stringifyStructuredAssistantMessage(info.structured);
           if (text) {
-            yield {
-              type: "timeline",
-              provider: "opencode",
+            yield buildOpenCodeReplayTimelineEvent({
               item: { type: "assistant_message", text },
-            };
+              message: info,
+            });
           }
         }
       }

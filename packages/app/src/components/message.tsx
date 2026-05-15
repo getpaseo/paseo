@@ -76,6 +76,7 @@ import {
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import {
   getAssistantImageLoadStateFromMetadata,
   getAssistantImageMetadata,
@@ -393,15 +394,24 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   copyButton: {
-    alignSelf: "flex-end",
     padding: theme.spacing[1],
+  },
+  trailingRow: {
+    alignSelf: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
     marginTop: theme.spacing[2],
   },
-  copyButtonHidden: {
+  trailingRowHidden: {
     opacity: 0,
   },
-  copyButtonVisible: {
+  trailingRowVisible: {
     opacity: 1,
+  },
+  timestampText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
 }));
 
@@ -435,22 +445,26 @@ export const UserMessage = memo(function UserMessage({
   message,
   images = [],
   attachments = [],
-  timestamp: _timestamp,
+  timestamp,
   isFirstInGroup = true,
   isLastInGroup = true,
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
-  const [messageHovered, setMessageHovered] = useState(false);
-  const [copyButtonHovered, setCopyButtonHovered] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isCopyHovered, setIsCopyHovered] = useState(false);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
+  const showTrailingRow = hasText && (isCompact || isNative || isHovered || isCopyHovered);
+  const formattedTimestamp = useMemo(
+    () => formatMessageTimestamp(new Date(timestamp)),
+    [timestamp],
+  );
 
-  const handleHoverIn = useCallback(() => setMessageHovered(true), []);
-  const handleHoverOut = useCallback(() => setMessageHovered(false), []);
+  const handleHoverIn = useCallback(() => setIsHovered(true), []);
+  const handleHoverOut = useCallback(() => setIsHovered(false), []);
   const getMessageContent = useCallback(() => message, [message]);
 
   const containerStyle = useMemo(
@@ -478,63 +492,217 @@ export const UserMessage = memo(function UserMessage({
     ],
     [hasText],
   );
-  const copyButtonStyle = useMemo(
+  const trailingRowStyle = useMemo(
     () => [
-      userMessageStylesheet.copyButton,
-      showCopyButton
-        ? userMessageStylesheet.copyButtonVisible
-        : userMessageStylesheet.copyButtonHidden,
+      userMessageStylesheet.trailingRow,
+      showTrailingRow
+        ? userMessageStylesheet.trailingRowVisible
+        : userMessageStylesheet.trailingRowHidden,
     ],
-    [showCopyButton],
+    [showTrailingRow],
   );
 
   return (
     <View style={containerStyle}>
-      <Pressable
-        style={userMessageStylesheet.content}
-        onHoverIn={handleHoverIn}
-        onHoverOut={handleHoverOut}
-      >
-        <View style={userMessageStylesheet.bubble}>
-          {hasImages ? (
-            <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
-                <View key={image.id} style={userMessageStylesheet.imagePill}>
-                  <UserMessageAttachmentThumbnail image={image} />
-                </View>
-              ))}
-            </View>
-          ) : null}
-          {hasAttachments ? (
-            <View style={attachmentPreviewContainerStyle}>
-              {attachments.map((attachment, index) => (
-                <View
-                  key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                  style={userMessageStylesheet.structuredAttachmentPill}
-                >
-                  <Text style={userMessageStylesheet.structuredAttachmentText} numberOfLines={1}>
-                    {getUserMessageAttachmentLabel(attachment)}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-          {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
-              {message}
-            </Text>
-          ) : null}
-        </View>
+      <View style={userMessageStylesheet.content}>
+        <Pressable onHoverIn={handleHoverIn} onHoverOut={handleHoverOut}>
+          <View style={userMessageStylesheet.bubble}>
+            {hasImages ? (
+              <View style={imagePreviewContainerStyle}>
+                {images.map((image) => (
+                  <View key={image.id} style={userMessageStylesheet.imagePill}>
+                    <UserMessageAttachmentThumbnail image={image} />
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {hasAttachments ? (
+              <View style={attachmentPreviewContainerStyle}>
+                {attachments.map((attachment, index) => (
+                  <View
+                    key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+                    style={userMessageStylesheet.structuredAttachmentPill}
+                  >
+                    <Text style={userMessageStylesheet.structuredAttachmentText} numberOfLines={1}>
+                      {getUserMessageAttachmentLabel(attachment)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {hasText ? (
+              <Text selectable style={userMessageStylesheet.text}>
+                {message}
+              </Text>
+            ) : null}
+          </View>
+        </Pressable>
         {hasText ? (
-          <TurnCopyButton
-            getContent={getMessageContent}
-            containerStyle={copyButtonStyle}
-            accessibilityLabel="Copy message"
-            onHoverChange={setCopyButtonHovered}
-          />
+          <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
+            <Text style={userMessageStylesheet.timestampText}>{formattedTimestamp}</Text>
+            <TurnCopyButton
+              getContent={getMessageContent}
+              containerStyle={userMessageStylesheet.copyButton}
+              accessibilityLabel="Copy message"
+              onHoverChange={setIsCopyHovered}
+            />
+          </View>
         ) : null}
-      </Pressable>
+      </View>
     </View>
+  );
+});
+
+interface AssistantTurnFooterProps {
+  getContent: () => string;
+  startedAt?: Date;
+  durationMs?: number;
+}
+
+const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
+  container: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  copyButton: {
+    alignSelf: "center",
+    padding: theme.spacing[1],
+    paddingTop: theme.spacing[1],
+    marginTop: 0,
+  },
+  labelWrapper: {
+    position: "relative",
+  },
+  labelSizer: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    opacity: 0,
+  },
+  labelOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+}));
+
+const TIMESTAMP_REVEAL_MS = 3000;
+
+/**
+ * Footer rendered next to the copy button at the end of an assistant turn.
+ * Always shows the turn duration; swaps to the start timestamp on hover (web)
+ * or tap (native). The hidden sizer keeps the label width stable while the
+ * visible text swaps.
+ */
+export const AssistantTurnFooter = memo(function AssistantTurnFooter({
+  getContent,
+  startedAt,
+  durationMs,
+}: AssistantTurnFooterProps) {
+  const [hovered, setHovered] = useState(false);
+  const [pressedReveal, setPressedReveal] = useState(false);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (revealTimerRef.current) {
+        clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const durationLabel = useMemo(
+    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : ""),
+    [durationMs],
+  );
+  const timestampLabel = useMemo(
+    () => (startedAt ? formatMessageTimestamp(startedAt) : ""),
+    [startedAt],
+  );
+
+  const canSwap = Boolean(timestampLabel);
+  const showTimestamp = canSwap && (isWeb ? hovered : pressedReveal);
+
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+  const handlePress = useCallback(() => {
+    if (isWeb || !canSwap) return;
+    if (revealTimerRef.current) {
+      clearTimeout(revealTimerRef.current);
+    }
+    setPressedReveal((prev) => !prev);
+    revealTimerRef.current = setTimeout(() => {
+      setPressedReveal(false);
+      revealTimerRef.current = null;
+    }, TIMESTAMP_REVEAL_MS);
+  }, [canSwap]);
+
+  return (
+    <View style={assistantTurnFooterStylesheet.container}>
+      <TurnCopyButton
+        getContent={getContent}
+        containerStyle={assistantTurnFooterStylesheet.copyButton}
+      />
+      {durationLabel ? (
+        <Pressable
+          onPress={handlePress}
+          onHoverIn={handleHoverIn}
+          onHoverOut={handleHoverOut}
+          accessibilityRole={canSwap ? "button" : undefined}
+          accessibilityLabel={
+            canSwap ? `${durationLabel}, started ${timestampLabel}` : durationLabel
+          }
+        >
+          <View style={assistantTurnFooterStylesheet.labelWrapper}>
+            {/* Sizer reserves space for whichever label is longer so the
+                container width is stable across hover transitions. */}
+            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
+              {durationLabel.length >= timestampLabel.length ? durationLabel : timestampLabel}
+            </Text>
+            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
+              {showTimestamp ? timestampLabel : durationLabel}
+            </Text>
+          </View>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+});
+
+interface LiveElapsedProps {
+  startedAt: Date;
+  style?: StyleProp<TextStyle>;
+  testID?: string;
+}
+
+/**
+ * Ticks every 100ms to render an elapsed duration. Isolated from parents so
+ * only this component re-renders on each tick.
+ */
+export const LiveElapsed = memo(function LiveElapsed({
+  startedAt,
+  style,
+  testID,
+}: LiveElapsedProps) {
+  const startedAtMs = startedAt.getTime();
+  const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAtMs));
+
+  useEffect(() => {
+    setElapsedMs(Math.max(0, Date.now() - startedAtMs));
+    const handle = setInterval(() => {
+      setElapsedMs(Math.max(0, Date.now() - startedAtMs));
+    }, 100);
+    return () => clearInterval(handle);
+  }, [startedAtMs]);
+
+  return (
+    <Text style={style} testID={testID}>
+      {formatDuration(elapsedMs, { mode: "live" })}
+    </Text>
   );
 });
 

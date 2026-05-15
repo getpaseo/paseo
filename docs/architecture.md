@@ -207,6 +207,7 @@ initializing → idle ⇄ running
 
 - **AgentManager** is the source of truth for agent state and broadcasts updates to all subscribers
 - Timeline is append-only with epochs (each run starts a new epoch). Storage uses sequence numbers for client-side dedup; the default fetch page is 200 items
+- Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to all subscribed clients in real time
 - Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json` (timeline rows live alongside the record)
 

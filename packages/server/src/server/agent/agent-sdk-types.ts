@@ -337,7 +337,13 @@ export type AgentStreamEvent =
       turnId?: string;
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
-  | { type: "timeline"; item: AgentTimelineItem; provider: AgentProvider; turnId?: string }
+  | {
+      type: "timeline";
+      item: AgentTimelineItem;
+      provider: AgentProvider;
+      turnId?: string;
+      timestamp?: string;
+    }
   | {
       type: "permission_requested";
       provider: AgentProvider;

@@ -64,6 +64,7 @@ import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "./provider-image-output.js";
+import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -356,6 +357,11 @@ function normalizeCodexOutputSchema(schema: unknown): Record<string, unknown> {
 interface CodexConfiguredDefaults {
   model?: string;
   thinkingOptionId?: string;
+}
+
+interface PersistedTimelineEntry {
+  item: AgentTimelineItem;
+  timestamp?: string;
 }
 
 function mergeCodexConfiguredDefaults(
@@ -1444,6 +1450,18 @@ function firstStringField(
   return null;
 }
 
+function readCodexHistoryTimestamp(item: unknown): string | null {
+  const record = toObjectRecord(item);
+  if (!record) {
+    return null;
+  }
+  return (
+    normalizeProviderReplayTimestamp(record.timestamp) ??
+    normalizeProviderReplayTimestamp(record.createdAt) ??
+    normalizeProviderReplayTimestamp(record.created_at)
+  );
+}
+
 function codexImageOutputFromResult(result: unknown): ProviderImageOutput | null {
   if (typeof result === "string") {
     const trimmed = result.trim();
@@ -1591,14 +1609,18 @@ async function loadCodexThreadHistoryTimeline(params: {
   threadId: string;
   cwd: string | null;
   requestThread: CodexThreadReadRequest;
-}): Promise<AgentTimelineItem[]> {
+}): Promise<PersistedTimelineEntry[]> {
   const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
-  const timeline: AgentTimelineItem[] = [];
+  const timeline: PersistedTimelineEntry[] = [];
   for (const turn of response.thread.turns) {
     for (const item of turn.items) {
       const timelineItem = threadItemToTimeline(item, { cwd: params.cwd });
       if (timelineItem) {
-        timeline.push(timelineItem);
+        const timestamp = readCodexHistoryTimestamp(item);
+        timeline.push({
+          item: timelineItem,
+          timestamp: timestamp ?? undefined,
+        });
       }
     }
   }
@@ -2678,7 +2700,7 @@ class CodexAppServerAgentSession implements AgentSession {
   private serviceTier: "fast" | null = null;
   private planModeEnabled = false;
   private historyPending = false;
-  private persistedHistory: AgentTimelineItem[] = [];
+  private persistedHistory: PersistedTimelineEntry[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private pendingPermissionHandlers = new Map<
     string,
@@ -3334,8 +3356,13 @@ class CodexAppServerAgentSession implements AgentSession {
     const history = this.persistedHistory;
     this.persistedHistory = [];
     this.historyPending = false;
-    for (const item of history) {
-      yield { type: "timeline", provider: CODEX_PROVIDER, item };
+    for (const entry of history) {
+      yield {
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: entry.item,
+        timestamp: entry.timestamp,
+      };
     }
   }
 
@@ -5151,7 +5178,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           const threadId = typeof thread.id === "string" ? thread.id : "";
           const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
           const title = typeof thread.preview === "string" ? thread.preview : null;
-          let timeline: AgentTimelineItem[] = [];
+          let timeline: PersistedTimelineEntry[] = [];
 
           try {
             timeline = await loadCodexThreadHistoryTimeline({
@@ -5186,7 +5213,7 @@ export class CodexAppServerAgentClient implements AgentClient {
                 threadId,
               },
             },
-            timeline,
+            timeline: timeline.map((entry) => entry.item),
           };
         }),
       );

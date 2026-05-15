@@ -1370,10 +1370,12 @@ describe("Codex app-server provider", () => {
                     type: "agentMessage",
                     id: "message-history",
                     text: "History loaded.",
+                    timestamp: "2026-05-01T10:00:00.000Z",
                   },
                   {
                     type: "contextCompaction",
                     id: "compact-history",
+                    createdAt: "2026-05-01T10:00:01.000Z",
                   },
                 ],
               },
@@ -1397,6 +1399,7 @@ describe("Codex app-server provider", () => {
       {
         type: "timeline",
         provider: "codex",
+        timestamp: "2026-05-01T10:00:00.000Z",
         item: {
           type: "assistant_message",
           text: "History loaded.",
@@ -1406,6 +1409,7 @@ describe("Codex app-server provider", () => {
       {
         type: "timeline",
         provider: "codex",
+        timestamp: "2026-05-01T10:00:01.000Z",
         item: {
           type: "compaction",
           status: "completed",
