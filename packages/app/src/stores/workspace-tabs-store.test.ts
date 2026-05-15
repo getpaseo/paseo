@@ -185,6 +185,96 @@ describe("workspace-tabs-store retargetTab", () => {
     ]);
   });
 
+  it("keeps draft setup on a retargeted tab", () => {
+    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
+    expect(key).toBeTruthy();
+    const workspaceKey = key as string;
+
+    const tabId = useWorkspaceTabsStore.getState().ensureTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "agent", agentId: "agent-1" },
+    });
+    if (!tabId) {
+      throw new Error("Expected tab id");
+    }
+    expect(tabId).toBe("agent_agent-1");
+
+    useWorkspaceTabsStore.getState().retargetTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      tabId,
+      target: {
+        kind: "draft",
+        draftId: "draft-replacement",
+        setup: {
+          provider: "mock",
+          cwd: "/repo/worktree",
+          modeId: "load-test",
+          model: "ten-second-stream",
+          thinkingOptionId: null,
+          featureValues: { effort: "high" },
+        },
+      },
+    });
+
+    expect(useWorkspaceTabsStore.getState().uiTabsByWorkspace[workspaceKey]?.[0]?.target).toEqual({
+      kind: "draft",
+      draftId: "draft-replacement",
+      setup: {
+        provider: "mock",
+        cwd: "/repo/worktree",
+        modeId: "load-test",
+        model: "ten-second-stream",
+        thinkingOptionId: null,
+        featureValues: { effort: "high" },
+      },
+    });
+  });
+
+  it("updates an existing draft tab when the setup changes", () => {
+    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
+    expect(key).toBeTruthy();
+    const workspaceKey = key as string;
+
+    const first = useWorkspaceTabsStore.getState().ensureTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "draft", draftId: "draft-1" },
+    });
+    const second = useWorkspaceTabsStore.getState().ensureTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "draft",
+        draftId: "draft-1",
+        setup: {
+          provider: "mock",
+          cwd: "/repo/worktree",
+          modeId: "load-test",
+          model: "ten-second-stream",
+          thinkingOptionId: null,
+          featureValues: {},
+        },
+      },
+    });
+
+    expect(second).toBe(first);
+    expect(useWorkspaceTabsStore.getState().uiTabsByWorkspace[workspaceKey]).toHaveLength(1);
+    expect(useWorkspaceTabsStore.getState().uiTabsByWorkspace[workspaceKey]?.[0]?.target).toEqual({
+      kind: "draft",
+      draftId: "draft-1",
+      setup: {
+        provider: "mock",
+        cwd: "/repo/worktree",
+        modeId: "load-test",
+        model: "ten-second-stream",
+        thinkingOptionId: null,
+        featureValues: {},
+      },
+    });
+  });
+
   it("retargeting a background draft keeps the currently focused tab focused", () => {
     const draftTabId = "draft_background";
     const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });

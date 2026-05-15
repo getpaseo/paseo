@@ -1,14 +1,25 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   buildDeterministicWorkspaceTabId,
+  normalizeWorkspaceDraftTabSetup,
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
 } from "@/utils/workspace-tab-identity";
 
+export interface WorkspaceDraftTabSetup {
+  provider: AgentProvider;
+  cwd: string;
+  modeId: string | null;
+  model: string | null;
+  thinkingOptionId: string | null;
+  featureValues: Record<string, unknown>;
+}
+
 export type WorkspaceTabTarget =
-  | { kind: "draft"; draftId: string }
+  | { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup }
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
@@ -140,7 +151,12 @@ function extractMigrationRawSources(persistedState: unknown): MigrationRawSource
 function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
   const kind = typeof raw.kind === "string" ? raw.kind : null;
   if (kind === "draft" && typeof raw.draftId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "draft", draftId: raw.draftId });
+    const setup = normalizeWorkspaceDraftTabSetup(raw.setup);
+    return normalizeWorkspaceTabTarget({
+      kind: "draft",
+      draftId: raw.draftId,
+      ...(setup ? { setup } : {}),
+    });
   }
   if (kind === "agent" && typeof raw.agentId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "agent", agentId: raw.agentId });

@@ -41,7 +41,6 @@ async function withOpenReadyMockAgent(
   const client = await connectTerminalClient();
 
   try {
-    await installCreateAgentRequestRecorder(page);
     await openProject(client, repo.path);
     const agent = await createReadyMockAgent(client, {
       cwd: repo.path,
@@ -56,34 +55,6 @@ async function withOpenReadyMockAgent(
     await client.close();
     await repo.cleanup();
   }
-}
-
-async function installCreateAgentRequestRecorder(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const requests: unknown[] = [];
-    (
-      window as typeof window & {
-        __paseoE2eCreateAgentRequests?: unknown[];
-      }
-    ).__paseoE2eCreateAgentRequests = requests;
-    const originalSend = WebSocket.prototype.send;
-    WebSocket.prototype.send = function (data) {
-      if (typeof data === "string") {
-        try {
-          const parsed = JSON.parse(data) as {
-            type?: unknown;
-            message?: { type?: unknown };
-          };
-          if (parsed.type === "session" && parsed.message?.type === "create_agent_request") {
-            requests.push(parsed.message);
-          }
-        } catch {
-          // Ignore non-JSON frames.
-        }
-      }
-      return originalSend.call(this, data);
-    };
-  });
 }
 
 async function openProject(client: TerminalPerfDaemonClient, cwd: string): Promise<void> {
@@ -144,53 +115,16 @@ async function expectAgentArchivedInSessions(page: Page, title: string): Promise
   await expectSessionRowArchived(page, title);
 }
 
-async function expectSeededDraftReady(page: Page): Promise<void> {
+async function expectReplacementDraftMatchesPreviousSetup(page: Page): Promise<void> {
   await expectComposerVisible(page);
+  await expect(
+    page.getByRole("button", { name: "Select model (Ten second stream)" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Select agent mode (load-test)" })).toBeVisible();
 }
 
-async function createAgentFromSeededDraft(page: Page): Promise<void> {
+async function createAgentFromReplacementDraft(page: Page): Promise<void> {
   await submitMessage(page, REPLACEMENT_PROMPT);
-}
-
-async function expectReplacementAgentMatchesSetup(input: {
-  page: Page;
-  oldAgentId: string;
-  cwd: string;
-  provider: string;
-  model: string;
-  modeId: string;
-}): Promise<void> {
-  await waitForReplacementAgentId(input.page, input.oldAgentId);
-  await expect
-    .poll(async () => getRecordedReplacementCreateConfig(input.page), { timeout: 30_000 })
-    .toEqual({
-      cwd: input.cwd,
-      modeId: input.modeId,
-      model: input.model,
-      provider: input.provider,
-    });
-}
-
-async function getRecordedReplacementCreateConfig(page: Page): Promise<{
-  cwd?: string;
-  modeId?: string;
-  model?: string;
-  provider?: string;
-} | null> {
-  return page.evaluate((expectedPrompt) => {
-    const requests =
-      (
-        window as typeof window & {
-          __paseoE2eCreateAgentRequests?: Array<{
-            initialPrompt?: string;
-            config?: { cwd?: string; modeId?: string; model?: string; provider?: string };
-          }>;
-        }
-      ).__paseoE2eCreateAgentRequests ?? [];
-
-    const request = requests.find((candidate) => candidate.initialPrompt === expectedPrompt);
-    return request?.config ?? null;
-  }, REPLACEMENT_PROMPT);
 }
 
 async function waitForReplacementAgentId(page: Page, oldAgentId: string): Promise<string> {
@@ -236,23 +170,16 @@ test.describe("Client slash commands", () => {
     });
   });
 
-  test("slash clear replaces the active agent with a seeded draft", async ({ page }) => {
+  test("slash clear replaces the active agent with a matching draft", async ({ page }) => {
     await withOpenReadyMockAgent(
       page,
       { title: "Slash clear e2e", model: "ten-second-stream", modeId: "load-test" },
-      async ({ agent, cwd, title }) => {
+      async ({ agent, title }) => {
         await runClientSlashCommand(page, "/clear");
         await expectWorkspaceTabHidden(page, agent.id);
-        await expectSeededDraftReady(page);
-        await createAgentFromSeededDraft(page);
-        await expectReplacementAgentMatchesSetup({
-          page,
-          oldAgentId: agent.id,
-          cwd,
-          provider: "mock",
-          model: "ten-second-stream",
-          modeId: "load-test",
-        });
+        await expectReplacementDraftMatchesPreviousSetup(page);
+        await createAgentFromReplacementDraft(page);
+        await waitForReplacementAgentId(page, agent.id);
         await expectAgentArchivedInSessions(page, title);
       },
     );

@@ -1,6 +1,5 @@
-import { useEffect, useRef } from "react";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/stores/session-store";
+import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 
 export type ClientSlashCommandKind = "archive-agent" | "replace-agent-with-draft";
 
@@ -9,15 +8,6 @@ export interface ClientSlashCommand {
   description: string;
   argumentHint: string;
   kind: ClientSlashCommandKind;
-}
-
-export interface DraftAgentSetupSeed {
-  provider: AgentProvider;
-  cwd: string;
-  modeId: string | null;
-  model: string | null;
-  thinkingOptionId: string | null;
-  featureValues: Record<string, unknown>;
 }
 
 export const CLIENT_SLASH_COMMANDS: readonly ClientSlashCommand[] = [
@@ -54,7 +44,6 @@ export const CLIENT_SLASH_COMMANDS: readonly ClientSlashCommand[] = [
 ];
 
 const COMMAND_BY_NAME = new Map(CLIENT_SLASH_COMMANDS.map((command) => [command.name, command]));
-const draftSetupSeeds = new Map<string, DraftAgentSetupSeed>();
 
 export function resolveClientSlashCommand(input: {
   text: string;
@@ -77,7 +66,7 @@ export function resolveClientSlashCommand(input: {
   return COMMAND_BY_NAME.get(commandName) ?? null;
 }
 
-export function buildDraftAgentSetupSeed(agent: Agent): DraftAgentSetupSeed {
+export function buildDraftAgentSetup(agent: Agent): WorkspaceDraftTabSetup {
   const featureValues: Record<string, unknown> = {};
   for (const feature of agent.features ?? []) {
     featureValues[feature.id] = feature.value;
@@ -92,35 +81,3 @@ export function buildDraftAgentSetupSeed(agent: Agent): DraftAgentSetupSeed {
     featureValues,
   };
 }
-
-export function seedDraftAgentSetup(input: { draftId: string; setup: DraftAgentSetupSeed }): void {
-  draftSetupSeeds.set(input.draftId, input.setup);
-}
-
-export function consumeDraftAgentSetupSeed(draftId: string): DraftAgentSetupSeed | null {
-  const seed = draftSetupSeeds.get(draftId) ?? null;
-  draftSetupSeeds.delete(draftId);
-  return seed;
-}
-
-export function useDraftAgentSetupSeed(draftId: string): DraftAgentSetupSeed | null {
-  const seedRef = useRef<{ draftId: string; seed: DraftAgentSetupSeed | null } | null>(null);
-  if (seedRef.current?.draftId !== draftId) {
-    seedRef.current = {
-      draftId,
-      seed: draftSetupSeeds.get(draftId) ?? null,
-    };
-  }
-
-  useEffect(() => {
-    draftSetupSeeds.delete(draftId);
-  }, [draftId]);
-
-  return seedRef.current.seed;
-}
-
-export const __private__ = {
-  clearDraftAgentSetupSeeds: () => {
-    draftSetupSeeds.clear();
-  },
-};

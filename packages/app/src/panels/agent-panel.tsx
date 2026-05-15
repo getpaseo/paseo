@@ -60,11 +60,7 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
-import {
-  buildDraftAgentSetupSeed,
-  seedDraftAgentSetup,
-  type ClientSlashCommand,
-} from "@/client-slash-commands";
+import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1313,21 +1309,17 @@ function ActiveAgentComposer({
 
   const handleClientSlashCommand = useCallback(
     async (command: ClientSlashCommand) => {
-      const agent =
-        useSessionStore.getState().sessions[serverId]?.agents.get(agentId) ??
-        useSessionStore.getState().sessions[serverId]?.agentDetails.get(agentId) ??
-        null;
+      const agent = resolveChatAgentFromSession(useSessionStore.getState(), serverId, agentId);
       if (!agent) {
         throw new Error("Agent not found");
       }
 
       if (command.kind === "replace-agent-with-draft") {
-        const draftId = generateDraftId();
-        seedDraftAgentSetup({
-          draftId,
-          setup: buildDraftAgentSetupSeed(agent),
+        retargetCurrentTab({
+          kind: "draft",
+          draftId: generateDraftId(),
+          setup: buildDraftAgentSetup(agent),
         });
-        retargetCurrentTab({ kind: "draft", draftId });
       }
 
       await archiveAgent({ serverId, agentId });

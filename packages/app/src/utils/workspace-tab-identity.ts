@@ -1,5 +1,7 @@
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 
+type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
+
 export function normalizeWorkspaceTabTarget(
   value: WorkspaceTabTarget | null | undefined,
 ): WorkspaceTabTarget | null {
@@ -8,7 +10,11 @@ export function normalizeWorkspaceTabTarget(
   }
   if (value.kind === "draft") {
     const draftId = trimNonEmpty(value.draftId);
-    return draftId ? { kind: "draft", draftId } : null;
+    if (!draftId) {
+      return null;
+    }
+    const setup = normalizeWorkspaceDraftTabSetup(value.setup);
+    return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
   }
   if (value.kind === "agent") {
     const agentId = trimNonEmpty(value.agentId);
@@ -33,6 +39,30 @@ export function normalizeWorkspaceTabTarget(
   return null;
 }
 
+export function normalizeWorkspaceDraftTabSetup(
+  value: unknown,
+): WorkspaceDraftTabSetup | undefined {
+  const record = isPlainRecord(value) ? value : null;
+  if (!record) {
+    return undefined;
+  }
+  const provider = trimNonEmpty(typeof record.provider === "string" ? record.provider : null);
+  const cwd = trimNonEmpty(typeof record.cwd === "string" ? record.cwd : null);
+  if (!provider || !cwd) {
+    return undefined;
+  }
+  return {
+    provider,
+    cwd,
+    modeId: trimOptionalString(typeof record.modeId === "string" ? record.modeId : null),
+    model: trimOptionalString(typeof record.model === "string" ? record.model : null),
+    thinkingOptionId: trimOptionalString(
+      typeof record.thinkingOptionId === "string" ? record.thinkingOptionId : null,
+    ),
+    featureValues: isPlainRecord(record.featureValues) ? { ...record.featureValues } : {},
+  };
+}
+
 export function workspaceTabTargetsEqual(
   left: WorkspaceTabTarget,
   right: WorkspaceTabTarget,
@@ -41,7 +71,7 @@ export function workspaceTabTargetsEqual(
     return false;
   }
   if (left.kind === "draft" && right.kind === "draft") {
-    return left.draftId === right.draftId;
+    return left.draftId === right.draftId && workspaceDraftTabSetupsEqual(left.setup, right.setup);
   }
   if (left.kind === "agent" && right.kind === "agent") {
     return left.agentId === right.agentId;
@@ -59,6 +89,39 @@ export function workspaceTabTargetsEqual(
     return left.workspaceId === right.workspaceId;
   }
   return false;
+}
+
+function workspaceDraftTabSetupsEqual(
+  left: WorkspaceDraftTabSetup | undefined,
+  right: WorkspaceDraftTabSetup | undefined,
+): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+  return (
+    left.provider === right.provider &&
+    left.cwd === right.cwd &&
+    left.modeId === right.modeId &&
+    left.model === right.model &&
+    left.thinkingOptionId === right.thinkingOptionId &&
+    recordsShallowEqual(left.featureValues, right.featureValues)
+  );
+}
+
+function recordsShallowEqual(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) {
+    return false;
+  }
+  for (const key of leftKeys) {
+    if (!Object.hasOwn(right, key) || !Object.is(left[key], right[key])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
@@ -86,4 +149,12 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function trimOptionalString(value: string | null | undefined): string | null {
+  return value == null ? null : trimNonEmpty(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

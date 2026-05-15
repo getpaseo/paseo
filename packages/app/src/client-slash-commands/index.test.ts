@@ -1,11 +1,5 @@
-import { describe, expect, it, afterEach } from "vitest";
-import {
-  __private__,
-  buildDraftAgentSetupSeed,
-  consumeDraftAgentSetupSeed,
-  resolveClientSlashCommand,
-  seedDraftAgentSetup,
-} from "@/client-slash-commands";
+import { describe, expect, it } from "vitest";
+import { buildDraftAgentSetup, resolveClientSlashCommand } from "@/client-slash-commands";
 import type { Agent } from "@/stores/session-store";
 
 function createAgent(overrides: Partial<Agent> = {}): Agent {
@@ -58,10 +52,6 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
   };
 }
 
-afterEach(() => {
-  __private__.clearDraftAgentSetupSeeds();
-});
-
 describe("resolveClientSlashCommand", () => {
   it("resolves exact client commands after trimming", () => {
     expect(resolveClientSlashCommand({ text: " /quit ", hasAttachments: false })?.kind).toBe(
@@ -92,9 +82,9 @@ describe("resolveClientSlashCommand", () => {
   });
 });
 
-describe("draft setup seeds", () => {
+describe("buildDraftAgentSetup", () => {
   it("builds draft setup from the active agent snapshot", () => {
-    expect(buildDraftAgentSetupSeed(createAgent())).toEqual({
+    expect(buildDraftAgentSetup(createAgent())).toEqual({
       provider: "codex",
       cwd: "/repo",
       modeId: "mode-current",
@@ -109,7 +99,7 @@ describe("draft setup seeds", () => {
 
   it("falls back to runtime model setup when top-level fields are absent", () => {
     expect(
-      buildDraftAgentSetupSeed(
+      buildDraftAgentSetup(
         createAgent({
           currentModeId: null,
           model: null,
@@ -121,13 +111,5 @@ describe("draft setup seeds", () => {
       model: "runtime-model",
       thinkingOptionId: "runtime-thinking",
     });
-  });
-
-  it("consumes a seeded setup once by draft id", () => {
-    const setup = buildDraftAgentSetupSeed(createAgent());
-    seedDraftAgentSetup({ draftId: "draft-1", setup });
-
-    expect(consumeDraftAgentSetupSeed("draft-1")).toEqual(setup);
-    expect(consumeDraftAgentSetupSeed("draft-1")).toBeNull();
   });
 });

@@ -32,7 +32,7 @@ import {
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { useDraftAgentSetupSeed, type DraftAgentSetupSeed } from "@/client-slash-commands";
+import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -274,31 +274,31 @@ function buildDraftAgentSnapshot(input: {
   };
 }
 
-function buildSeededDraftInitialValues(input: {
+function buildDraftInitialValues(input: {
   workingDir: string | null;
-  seededSetup: DraftAgentSetupSeed | null;
+  initialSetup: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
   if (!input.workingDir) {
     return undefined;
   }
-  if (!input.seededSetup) {
+  if (!input.initialSetup) {
     return { workingDir: input.workingDir };
   }
   return {
     workingDir: input.workingDir,
-    provider: input.seededSetup.provider,
-    modeId: input.seededSetup.modeId,
-    model: input.seededSetup.model,
-    thinkingOptionId: input.seededSetup.thinkingOptionId,
+    provider: input.initialSetup.provider,
+    modeId: input.initialSetup.modeId,
+    model: input.initialSetup.model,
+    thinkingOptionId: input.initialSetup.thinkingOptionId,
   };
 }
 
 function resolveDraftWorkingDirectory(input: {
   workspaceDirectory: string | null;
-  seededSetup: DraftAgentSetupSeed | null;
+  initialSetup: WorkspaceDraftTabSetup | null;
 }): string | null {
-  if (input.seededSetup) {
-    return input.seededSetup.cwd;
+  if (input.initialSetup) {
+    return input.initialSetup.cwd;
   }
   return input.workspaceDirectory;
 }
@@ -315,6 +315,7 @@ interface WorkspaceDraftAgentTabProps {
   workspaceId: string;
   tabId: string;
   draftId: string;
+  initialSetup?: WorkspaceDraftTabSetup;
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (input: { filePath: string }) => void;
@@ -326,6 +327,7 @@ export function WorkspaceDraftAgentTab({
   workspaceId,
   tabId,
   draftId,
+  initialSetup = undefined,
   isPaneFocused,
   onCreated,
   onOpenWorkspaceFile,
@@ -337,11 +339,14 @@ export function WorkspaceDraftAgentTab({
   const workspaceAuthority = useWorkspaceExecutionAuthority(serverId, workspaceId);
   const workspaceExecutionAuthority = workspaceAuthority?.ok ? workspaceAuthority.authority : null;
   const workspaceDirectory = workspaceExecutionAuthority?.workspaceDirectory ?? null;
-  const seededSetup = useDraftAgentSetupSeed(draftId);
-  const draftWorkingDirectory = resolveDraftWorkingDirectory({ workspaceDirectory, seededSetup });
-  const draftInitialValues = buildSeededDraftInitialValues({
+  const draftSetup = initialSetup ?? null;
+  const draftWorkingDirectory = resolveDraftWorkingDirectory({
+    workspaceDirectory,
+    initialSetup: draftSetup,
+  });
+  const draftInitialValues = buildDraftInitialValues({
     workingDir: draftWorkingDirectory,
-    seededSetup,
+    initialSetup: draftSetup,
   });
   const onlineServerIds = resolveOnlineServerIds({ isConnected, serverId });
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
@@ -359,7 +364,7 @@ export function WorkspaceDraftAgentTab({
     composer: {
       initialServerId: serverId,
       initialValues: draftInitialValues,
-      initialFeatureValues: seededSetup?.featureValues,
+      initialFeatureValues: draftSetup?.featureValues,
       isVisible: true,
       onlineServerIds,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
