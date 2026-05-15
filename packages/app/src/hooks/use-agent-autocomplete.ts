@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
-import { useAgentCommandsQuery, type DraftCommandConfig } from "./use-agent-commands-query";
+import {
+  useAgentCommandsQuery,
+  type AgentSlashCommand,
+  type DraftCommandConfig,
+} from "./use-agent-commands-query";
 import { orderAutocompleteOptions } from "@/components/ui/autocomplete-utils";
 import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { CLIENT_SLASH_COMMANDS } from "@/client-slash-commands";
+import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   applyFileMentionReplacement,
   findActiveFileMention,
@@ -21,10 +25,13 @@ interface UseAgentAutocompleteInput {
   agentId: string;
   draftConfig?: DraftCommandConfig;
   onAutocompleteApplied?: () => void;
+  onClientSlashCommand?: (command: ClientSlashCommand) => void;
+  canExecuteClientSlashCommand?: boolean;
 }
 
 type AgentAutocompleteOption =
-  | (AutocompleteOption & { type: "command" })
+  | (AutocompleteOption & { type: "client_command"; command: ClientSlashCommand })
+  | (AutocompleteOption & { type: "provider_command" })
   | (AutocompleteOption & {
       type: "workspace_entry";
       entryPath: string;
@@ -47,6 +54,10 @@ interface DirectorySuggestionEntry {
   path: string;
   kind: "file" | "directory";
 }
+
+type AvailableCommand =
+  | { source: "client"; command: ClientSlashCommand }
+  | { source: "provider"; command: AgentSlashCommand };
 
 function normalizeDraftCommandConfig(
   draftConfig?: DraftCommandConfig,
@@ -95,6 +106,28 @@ function mapDirectorySuggestionsToEntries(payload: {
     path,
     kind: "directory" as const,
   }));
+}
+
+function mapCommandToOption(entry: AvailableCommand): AgentAutocompleteOption {
+  const command = entry.command;
+  const base = {
+    id: command.name,
+    label: `/${command.name}`,
+    detail: command.argumentHint || undefined,
+    description: command.description,
+    kind: "command" as const,
+  };
+  if (entry.source === "client") {
+    return {
+      ...base,
+      type: "client_command",
+      command: entry.command,
+    };
+  }
+  return {
+    ...base,
+    type: "provider_command",
+  };
 }
 
 type AutocompleteMode = "command" | "file" | null;
@@ -171,6 +204,8 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     agentId,
     draftConfig,
     onAutocompleteApplied,
+    onClientSlashCommand,
+    canExecuteClientSlashCommand,
   } = input;
 
   const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
@@ -278,19 +313,22 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
 
     if (mode === "command") {
       const filterLower = commandFilterQuery.toLowerCase();
-      const availableCommands = isDraftContext ? commands : [...CLIENT_SLASH_COMMANDS, ...commands];
-      const matches = availableCommands.filter((cmd) =>
-        cmd.name.toLowerCase().includes(filterLower),
+      const providerCommands = commands.map(
+        (command): AvailableCommand => ({ source: "provider", command }),
+      );
+      const availableCommands: AvailableCommand[] = isDraftContext
+        ? providerCommands
+        : [
+            ...CLIENT_SLASH_COMMANDS.map(
+              (command): AvailableCommand => ({ source: "client", command }),
+            ),
+            ...providerCommands,
+          ];
+      const matches = availableCommands.filter((entry) =>
+        entry.command.name.toLowerCase().includes(filterLower),
       );
       const orderedMatches = orderAutocompleteOptions(matches);
-      return orderedMatches.map((cmd) => ({
-        type: "command" as const,
-        id: cmd.name,
-        label: `/${cmd.name}`,
-        detail: cmd.argumentHint || undefined,
-        description: cmd.description,
-        kind: "command",
-      }));
+      return orderedMatches.map(mapCommandToOption);
     }
 
     if (mode === "file" && activeFileMention) {
@@ -319,7 +357,17 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const onSelectOption = useCallback(
     (option: AutocompleteOption) => {
       const selected = option as AgentAutocompleteOption;
-      if (selected.type === "command") {
+      if (
+        selected.type === "client_command" &&
+        selected.command.execution === "immediate" &&
+        canExecuteClientSlashCommand &&
+        onClientSlashCommand
+      ) {
+        onClientSlashCommand(selected.command);
+        return;
+      }
+
+      if (selected.type === "client_command" || selected.type === "provider_command") {
         setUserInput(`/${selected.id} `);
         onAutocompleteApplied?.();
         return;
@@ -333,7 +381,13 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       setUserInput(nextInput);
       onAutocompleteApplied?.();
     },
-    [onAutocompleteApplied, setUserInput, userInput],
+    [
+      canExecuteClientSlashCommand,
+      onAutocompleteApplied,
+      onClientSlashCommand,
+      setUserInput,
+      userInput,
+    ],
   );
 
   const { selectedIndex, onKeyPress } = useAutocomplete({

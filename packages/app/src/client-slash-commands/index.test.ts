@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDraftAgentSetup, resolveClientSlashCommand } from "@/client-slash-commands";
+import {
+  CLIENT_SLASH_COMMANDS,
+  buildDraftAgentSetup,
+  resolveClientSlashCommand,
+} from "@/client-slash-commands";
 import type { Agent } from "@/stores/session-store";
 
 function createAgent(overrides: Partial<Agent> = {}): Agent {
@@ -53,10 +57,21 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
 }
 
 describe("resolveClientSlashCommand", () => {
+  it("declares the exact client commands that execute immediately", () => {
+    expect(CLIENT_SLASH_COMMANDS.map((command) => [command.name, command.execution])).toEqual([
+      ["quit", "immediate"],
+      ["exit", "immediate"],
+      ["q", "immediate"],
+      ["clear", "immediate"],
+      ["new", "immediate"],
+    ]);
+  });
+
   it("resolves exact client commands after trimming", () => {
-    expect(resolveClientSlashCommand({ text: " /quit ", hasAttachments: false })?.kind).toBe(
-      "archive-agent",
-    );
+    expect(resolveClientSlashCommand({ text: " /quit ", hasAttachments: false })).toMatchObject({
+      kind: "archive-agent",
+      execution: "immediate",
+    });
     expect(resolveClientSlashCommand({ text: "/exit", hasAttachments: false })?.kind).toBe(
       "archive-agent",
     );

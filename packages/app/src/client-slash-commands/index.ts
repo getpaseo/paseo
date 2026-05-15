@@ -2,12 +2,14 @@ import type { Agent } from "@/stores/session-store";
 import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 
 export type ClientSlashCommandKind = "archive-agent" | "replace-agent-with-draft";
+export type ClientSlashCommandExecution = "immediate" | "insert";
 
 export interface ClientSlashCommand {
   name: string;
   description: string;
   argumentHint: string;
   kind: ClientSlashCommandKind;
+  execution: ClientSlashCommandExecution;
 }
 
 export const CLIENT_SLASH_COMMANDS: readonly ClientSlashCommand[] = [
@@ -16,30 +18,35 @@ export const CLIENT_SLASH_COMMANDS: readonly ClientSlashCommand[] = [
     description: "Archive the current agent",
     argumentHint: "",
     kind: "archive-agent",
+    execution: "immediate",
   },
   {
     name: "exit",
     description: "Archive the current agent",
     argumentHint: "",
     kind: "archive-agent",
+    execution: "immediate",
   },
   {
     name: "q",
     description: "Archive the current agent",
     argumentHint: "",
     kind: "archive-agent",
+    execution: "immediate",
   },
   {
     name: "clear",
     description: "Archive this agent and start a fresh draft",
     argumentHint: "",
     kind: "replace-agent-with-draft",
+    execution: "immediate",
   },
   {
     name: "new",
     description: "Archive this agent and start a fresh draft",
     argumentHint: "",
     kind: "replace-agent-with-draft",
+    execution: "immediate",
   },
 ];
 

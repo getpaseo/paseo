@@ -74,14 +74,6 @@ export interface AttachmentMenuItem {
   icon?: React.ReactElement | null;
 }
 
-export interface MessageInputKeyPressEvent {
-  key: string;
-  preventDefault: () => void;
-  text: string;
-  attachments: ComposerAttachment[];
-  cwd: string;
-}
-
 export interface MessageInputProps {
   value: string;
   onChangeText: (text: string) => void;
@@ -127,7 +119,7 @@ export interface MessageInputProps {
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
-  onKeyPress?: (event: MessageInputKeyPressEvent) => boolean;
+  onKeyPress?: (event: { key: string; preventDefault: () => void }) => boolean;
   /** Reports cursor selection updates from the underlying input. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
@@ -372,15 +364,12 @@ function resolveSendTooltipLabel(input: {
 }
 
 interface DesktopKeyPressContext {
-  onKeyPressCallback: ((event: MessageInputKeyPressEvent) => boolean) | undefined;
+  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
   isAgentRunning: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   disabled: boolean;
-  value: string;
-  attachments: ComposerAttachment[];
-  cwd: string;
   handleAlternateSendAction: () => void;
   handleDefaultSendAction: () => void;
 }
@@ -395,9 +384,6 @@ function handleDesktopKeyPressImpl(
     const handled = ctx.onKeyPressCallback({
       key: event.nativeEvent.key,
       preventDefault: () => event.preventDefault(),
-      text: ctx.value,
-      attachments: ctx.attachments,
-      cwd: ctx.cwd,
     });
     if (handled) return;
   }
@@ -1106,7 +1092,7 @@ interface ResolvedMessageInputProps {
   defaultSendBehavior: "interrupt" | "queue";
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
-  onKeyPressCallback: ((event: MessageInputKeyPressEvent) => boolean) | undefined;
+  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
   onFocusChange: ((focused: boolean) => void) | undefined;
   onHeightChange: ((height: number) => void) | undefined;
@@ -1591,9 +1577,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isSubmitDisabled,
         isSubmitLoading,
         disabled,
-        value: valueRef.current,
-        attachments,
-        cwd,
         handleAlternateSendAction,
         handleDefaultSendAction,
       });

@@ -36,7 +36,6 @@ import {
   type ImageAttachment,
   type MessageInputRef,
   type AttachmentMenuItem,
-  type MessageInputKeyPressEvent,
 } from "./message-input";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
@@ -81,7 +80,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/components/agent-input-submit";
-import { useAppSettings, type SendBehavior } from "@/hooks/use-settings";
+import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
 import type { GitHubSearchItem } from "@server/shared/messages";
 import type {
@@ -109,30 +108,6 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 function noop() {}
-
-function resolveActiveClientSlashCommand(input: {
-  text: string;
-  hasAttachments: boolean;
-  canHandleClientSlashCommand: boolean;
-}): ClientSlashCommand | null {
-  if (!input.canHandleClientSlashCommand) {
-    return null;
-  }
-  return resolveClientSlashCommand({
-    text: input.text,
-    hasAttachments: input.hasAttachments,
-  });
-}
-
-function resolveComposerSendBehavior(input: {
-  appSendBehavior: SendBehavior;
-  activeClientSlashCommand: ClientSlashCommand | null;
-}): SendBehavior {
-  if (input.activeClientSlashCommand) {
-    return "interrupt";
-  }
-  return input.appSendBehavior;
-}
 
 function resolveComposerButtonIconSize(): number {
   return isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -935,6 +910,41 @@ export function Composer({
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
   );
 
+  const runClientSlashCommand = useCallback(
+    (command: ClientSlashCommand): boolean => {
+      if (command.execution !== "immediate" || !onClientSlashCommand) {
+        return false;
+      }
+
+      if (blurOnSubmit) {
+        messageInputRef.current?.blur();
+      }
+      clearDraft("sent");
+      setUserInput("");
+      setSelectedAttachments([]);
+      resetSuppression();
+      setSendError(null);
+      setIsProcessing(true);
+      void onClientSlashCommand(command)
+        .catch((error) => {
+          console.error("[Composer] Failed to run client slash command:", error);
+          setSendError(error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          setIsProcessing(false);
+        });
+      return true;
+    },
+    [
+      blurOnSubmit,
+      clearDraft,
+      onClientSlashCommand,
+      resetSuppression,
+      setSelectedAttachments,
+      setUserInput,
+    ],
+  );
+
   const autocomplete = useAgentAutocomplete({
     userInput,
     cursorIndex,
@@ -942,6 +952,8 @@ export function Composer({
     serverId,
     agentId,
     draftConfig: commandDraftConfig,
+    canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
+    onClientSlashCommand: runClientSlashCommand,
     onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
@@ -1142,24 +1154,7 @@ export function Composer({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
       });
-      if (clientSlashCommand && onClientSlashCommand) {
-        if (blurOnSubmit) {
-          messageInputRef.current?.blur();
-        }
-        clearDraft("sent");
-        setUserInput("");
-        setSelectedAttachments([]);
-        resetSuppression();
-        setSendError(null);
-        setIsProcessing(true);
-        void onClientSlashCommand(clientSlashCommand)
-          .catch((error) => {
-            console.error("[Composer] Failed to run client slash command:", error);
-            setSendError(error instanceof Error ? error.message : String(error));
-          })
-          .finally(() => {
-            setIsProcessing(false);
-          });
+      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
         return;
       }
 
@@ -1172,12 +1167,8 @@ export function Composer({
       attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
-      clearDraft,
-      onClientSlashCommand,
-      resetSuppression,
+      runClientSlashCommand,
       sendMessageWithContent,
-      setSelectedAttachments,
-      setUserInput,
     ],
   );
 
@@ -1340,41 +1331,26 @@ export function Composer({
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
-      queueMessage(payload.text, buildOutgoingAttachments(attachments));
+      const outgoingAttachments = buildOutgoingAttachments(attachments);
+      const clientSlashCommand = resolveClientSlashCommand({
+        text: payload.text,
+        hasAttachments: outgoingAttachments.length > 0,
+      });
+      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
+        return;
+      }
+      queueMessage(payload.text, outgoingAttachments);
     },
-    [attachments, buildOutgoingAttachments, queueMessage],
+    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
   );
 
-  const activeClientSlashCommand = resolveActiveClientSlashCommand({
-    text: userInput,
-    hasAttachments: buildOutgoingAttachments(attachments).length > 0,
-    canHandleClientSlashCommand: Boolean(onClientSlashCommand),
-  });
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
 
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
-    (event: MessageInputKeyPressEvent) => {
-      if (event.key === "Enter") {
-        const clientSlashCommand = resolveActiveClientSlashCommand({
-          text: event.text,
-          hasAttachments: event.attachments.length > 0,
-          canHandleClientSlashCommand: Boolean(onClientSlashCommand),
-        });
-        if (clientSlashCommand) {
-          event.preventDefault();
-          handleSubmit({
-            text: event.text,
-            attachments: event.attachments,
-            cwd: event.cwd,
-            forceSend: isAgentRunning || undefined,
-          });
-          return true;
-        }
-      }
-      return autocompleteOnKeyPressRef.current(event);
-    },
-    [handleSubmit, isAgentRunning, onClientSlashCommand],
+    (event: { key: string; preventDefault: () => void }) =>
+      autocompleteOnKeyPressRef.current(event),
+    [],
   );
 
   const cancelButtonStyle = useMemo(
@@ -1665,10 +1641,7 @@ export function Composer({
               voiceServerId={serverId}
               voiceAgentId={agentId}
               isAgentRunning={isAgentRunning}
-              defaultSendBehavior={resolveComposerSendBehavior({
-                appSendBehavior: appSettings.sendBehavior,
-                activeClientSlashCommand,
-              })}
+              defaultSendBehavior={appSettings.sendBehavior}
               onQueue={handleQueue}
               onSubmitLoadingPress={submitLoadingPressHandler}
               onKeyPress={handleCommandKeyPress}

@@ -4,7 +4,7 @@ import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 const COMMANDS_STALE_TIME = 60_000; // Commands rarely change, cache for 1 minute
 
-interface AgentSlashCommand {
+export interface AgentSlashCommand {
   name: string;
   description: string;
   argumentHint: string;

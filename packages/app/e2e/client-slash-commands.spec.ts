@@ -108,6 +108,14 @@ async function runClientSlashCommand(page: Page, command: "/quit" | "/clear"): P
   await input.press("Enter");
 }
 
+async function selectClientSlashCommand(page: Page, query: string, label: string): Promise<void> {
+  const input = composerLocator(page);
+  await expect(input).toBeEditable({ timeout: 30_000 });
+  await input.fill(query);
+  await expect(page.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+  await input.press("Enter");
+}
+
 async function expectAgentArchivedInSessions(page: Page, title: string): Promise<void> {
   await openSessions(page);
   await expectSessionRowArchived(page, title);
@@ -166,6 +174,18 @@ test.describe("Client slash commands", () => {
       await expectWorkspaceTabHidden(page, agent.id);
       await expectAgentArchivedInSessions(page, title);
     });
+  });
+
+  test("slash quit selected from autocomplete archives immediately", async ({ page }) => {
+    await withOpenReadyMockAgent(
+      page,
+      { title: "Slash quit autocomplete e2e" },
+      async ({ agent, title }) => {
+        await selectClientSlashCommand(page, "/qu", "/quit");
+        await expectWorkspaceTabHidden(page, agent.id);
+        await expectAgentArchivedInSessions(page, title);
+      },
+    );
   });
 
   test("slash clear replaces the active agent with a matching draft", async ({ page }) => {
