@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveWorkspacePaneState,
   getWorkspacePaneDescriptors,
+  resolveSideFileOpenPlacement,
 } from "@/screens/workspace/workspace-pane-state";
 import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
@@ -103,5 +104,81 @@ describe("workspace-pane-state", () => {
       kind: "file",
       path: "/repo/README.md",
     });
+  });
+
+  it("resolves side file opens to an existing file tab", () => {
+    const layout: WorkspaceLayout = {
+      root: {
+        kind: "pane",
+        pane: {
+          id: "main",
+          tabIds: ["file_/repo/README.md"],
+          focusedTabId: "file_/repo/README.md",
+        },
+      },
+      focusedPaneId: "main",
+    };
+    const tabs = [createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" })];
+
+    expect(
+      resolveSideFileOpenPlacement({
+        layout,
+        sourcePaneId: "main",
+        tabs,
+        target: { kind: "file", path: "/repo/README.md" },
+      }),
+    ).toEqual({ kind: "open-in-source" });
+  });
+
+  it("resolves side file opens to an existing right pane", () => {
+    const layout: WorkspaceLayout = {
+      root: {
+        kind: "group",
+        group: {
+          id: "group-root",
+          direction: "horizontal",
+          sizes: [0.5, 0.5],
+          children: [
+            {
+              kind: "pane",
+              pane: { id: "left", tabIds: ["agent_agent-a"], focusedTabId: "agent_agent-a" },
+            },
+            {
+              kind: "pane",
+              pane: { id: "right", tabIds: [], focusedTabId: null },
+            },
+          ],
+        },
+      },
+      focusedPaneId: "left",
+    };
+
+    expect(
+      resolveSideFileOpenPlacement({
+        layout,
+        sourcePaneId: "left",
+        tabs: [createTab("agent_agent-a", { kind: "agent", agentId: "agent-a" })],
+        target: { kind: "file", path: "/repo/README.md" },
+      }),
+    ).toEqual({ kind: "focus-side-pane", paneId: "right" });
+  });
+
+  it("resolves side file opens to a split when there is no right pane", () => {
+    const layout: WorkspaceLayout = {
+      root: {
+        kind: "pane",
+        pane: { id: "main", tabIds: ["agent_agent-a"], focusedTabId: "agent_agent-a" },
+      },
+      focusedPaneId: "main",
+    };
+
+    expect(
+      resolveSideFileOpenPlacement({
+        layout,
+        sourcePaneId: "main",
+        tabs: [createTab("agent_agent-a", { kind: "agent", agentId: "agent-a" })],
+        target: { kind: "file", path: "/repo/README.md" },
+      }),
+    ).toEqual({ kind: "split-side-pane", paneId: "main" });
   });
 });

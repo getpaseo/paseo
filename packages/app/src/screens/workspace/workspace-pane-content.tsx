@@ -24,6 +24,7 @@ export interface BuildWorkspacePaneContentModelInput {
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onOpenWorkspaceFile: (filePath: string) => void;
+  onOpenWorkspaceFileInSide: (filePath: string) => void;
   onOpenImportSheet: () => void;
 }
 
@@ -35,6 +36,7 @@ export function buildWorkspacePaneContentModel({
   onCloseCurrentTab,
   onRetargetCurrentTab,
   onOpenWorkspaceFile,
+  onOpenWorkspaceFileInSide,
   onOpenImportSheet,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
   ensurePanelsRegistered();
@@ -52,6 +54,7 @@ export function buildWorkspacePaneContentModel({
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
       openFileInWorkspace: onOpenWorkspaceFile,
+      openFileInWorkspaceInSide: onOpenWorkspaceFileInSide,
       openImportSheet: onOpenImportSheet,
     },
   };

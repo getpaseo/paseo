@@ -18,6 +18,8 @@ export interface AssistantFileLinkSource {
   sourceType?: "inline-code";
 }
 
+type AssistantFileLinkOpenDisposition = "side";
+
 export interface DirectorySuggestionEntry {
   path: string;
   kind: "file" | "directory";
@@ -36,7 +38,10 @@ export interface AssistantFileLinkResolverDependencies {
     includeDirectories: false;
     limit: number;
   }) => Promise<DirectorySuggestionResult>;
-  openWorkspaceFile: (target: InlinePathTarget) => void;
+  openWorkspaceFile: (
+    target: InlinePathTarget,
+    openDisposition?: AssistantFileLinkOpenDisposition,
+  ) => void;
   openExternalUrl: (url: string) => void | Promise<void>;
   onUnresolvedFileCandidate?: (token: string) => void;
   isCurrentContext?: (context: AssistantFileLinkContext) => boolean;
@@ -50,6 +55,7 @@ export interface AssistantFileLinkResolver {
 export interface AssistantFileLinkInteraction {
   context: AssistantFileLinkContext;
   source: AssistantFileLinkSource;
+  openDisposition?: AssistantFileLinkOpenDisposition;
 }
 
 export type ResolvedAssistantFileLink =
@@ -144,7 +150,7 @@ export function createAssistantFileLinkResolver(
       }
 
       if (resolved.kind === "file") {
-        dependencies.openWorkspaceFile(resolved.target);
+        dependencies.openWorkspaceFile(resolved.target, input.openDisposition);
         return { ...resolved, opened: true };
       }
 

@@ -281,15 +281,16 @@ function useAgentPanelDescriptor(
 }
 
 function AgentPanel() {
-  const { serverId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, target, openFileInWorkspace, openFileInWorkspaceInSide } = usePaneContext();
   const { isInteractive } = usePaneFocus();
   invariant(target.kind === "agent", "AgentPanel requires agent target");
 
-  function openWorkspaceFile(input: { filePath: string }) {
-    openFileInWorkspace(input.filePath);
-  }
-
-  const handleOpenWorkspaceFile = useStableEvent(openWorkspaceFile);
+  const handleOpenWorkspaceFile = useStableEvent(({ filePath }: { filePath: string }) => {
+    openFileInWorkspace(filePath);
+  });
+  const handleOpenWorkspaceFileInSide = useStableEvent(({ filePath }: { filePath: string }) => {
+    openFileInWorkspaceInSide(filePath);
+  });
 
   return (
     <AgentPanelContent
@@ -297,6 +298,7 @@ function AgentPanel() {
       agentId={target.agentId}
       isPaneFocused={isInteractive}
       onOpenWorkspaceFile={handleOpenWorkspaceFile}
+      onOpenWorkspaceFileInSide={handleOpenWorkspaceFileInSide}
     />
   );
 }
@@ -358,11 +360,13 @@ function AgentPanelContent({
   agentId,
   isPaneFocused,
   onOpenWorkspaceFile,
+  onOpenWorkspaceFileInSide,
 }: {
   serverId: string;
   agentId: string;
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onOpenWorkspaceFileInSide?: (input: { filePath: string }) => void;
 }) {
   const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
@@ -405,6 +409,7 @@ function AgentPanelContent({
       isConnected={runtimeIsConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onOpenWorkspaceFileInSide={onOpenWorkspaceFileInSide}
     />
   );
 }
@@ -417,6 +422,7 @@ function AgentPanelBody({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
+  onOpenWorkspaceFileInSide,
 }: {
   serverId: string;
   agentId?: string;
@@ -425,6 +431,7 @@ function AgentPanelBody({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onOpenWorkspaceFileInSide?: (input: { filePath: string }) => void;
 }) {
   const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
@@ -570,6 +577,7 @@ function AgentPanelBody({
       isConnected={isConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onOpenWorkspaceFileInSide={onOpenWorkspaceFileInSide}
     />
   );
 }
@@ -582,6 +590,7 @@ function ChatAgentContent({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
+  onOpenWorkspaceFileInSide,
 }: {
   serverId: string;
   agentId?: string;
@@ -590,6 +599,7 @@ function ChatAgentContent({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onOpenWorkspaceFileInSide?: (input: { filePath: string }) => void;
 }) {
   const panelToast = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
@@ -969,6 +979,7 @@ function ChatAgentContent({
                 hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
                 toast={panelToast.api}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onOpenWorkspaceFileInSide={onOpenWorkspaceFileInSide}
               />
             </ReanimatedAnimated.View>
           </View>
@@ -1027,6 +1038,7 @@ function AgentStreamSection({
   hasAppliedAuthoritativeHistory,
   toast,
   onOpenWorkspaceFile,
+  onOpenWorkspaceFileInSide,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   serverId: string;
@@ -1039,6 +1051,7 @@ function AgentStreamSection({
   hasAppliedAuthoritativeHistory: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onOpenWorkspaceFileInSide?: (input: { filePath: string }) => void;
 }) {
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
@@ -1174,6 +1187,7 @@ function AgentStreamSection({
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onOpenWorkspaceFileInSide={onOpenWorkspaceFileInSide}
     />
   );
 }

@@ -64,6 +64,7 @@ function buildContent() {
     onCloseCurrentTab: vi.fn(),
     onRetargetCurrentTab: vi.fn(),
     onOpenWorkspaceFile: vi.fn(),
+    onOpenWorkspaceFileInSide: vi.fn(),
     onOpenImportSheet: vi.fn(),
   });
 }

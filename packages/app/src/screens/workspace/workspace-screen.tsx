@@ -135,7 +135,10 @@ import {
   deriveWorkspaceAgentVisibility,
   workspaceAgentVisibilityEqual,
 } from "@/workspace-tabs/agent-visibility";
-import { deriveWorkspacePaneState } from "@/screens/workspace/workspace-pane-state";
+import {
+  deriveWorkspacePaneState,
+  resolveSideFileOpenPlacement,
+} from "@/screens/workspace/workspace-pane-state";
 import {
   buildWorkspacePaneContentModel,
   WorkspacePaneContent,
@@ -2029,7 +2032,7 @@ function WorkspaceScreenContent({
   );
 
   const handleOpenFileFromChat = useCallback(
-    ({ filePath }: { filePath: string }) => {
+    (filePath: string) => {
       const normalizedFilePath = filePath.trim();
       if (!normalizedFilePath) {
         return;
@@ -2037,6 +2040,51 @@ function WorkspaceScreenContent({
       handleOpenFileFromExplorer(normalizedFilePath);
     },
     [handleOpenFileFromExplorer],
+  );
+
+  const handleOpenFileFromChatInSidePane = useCallback(
+    (input: { filePath: string; sourcePaneId?: string }) => {
+      const normalizedFilePath = input.filePath.trim();
+      if (!normalizedFilePath) {
+        return;
+      }
+      if (!persistenceKey || isMobile || !input.sourcePaneId) {
+        handleOpenFileFromExplorer(normalizedFilePath);
+        return;
+      }
+
+      const target: WorkspaceTabTarget = { kind: "file", path: normalizedFilePath };
+      const placement = resolveSideFileOpenPlacement({
+        layout: workspaceLayout,
+        sourcePaneId: input.sourcePaneId,
+        tabs: uiTabs,
+        target,
+      });
+      if (placement.kind === "focus-side-pane") {
+        focusWorkspacePane(persistenceKey, placement.paneId);
+      } else if (placement.kind === "split-side-pane") {
+        splitWorkspacePaneEmpty(persistenceKey, {
+          targetPaneId: placement.paneId,
+          position: "right",
+        });
+      }
+
+      const tabId = openWorkspaceTabFocused(persistenceKey, target);
+      if (tabId) {
+        navigateToTabId(tabId);
+      }
+    },
+    [
+      handleOpenFileFromExplorer,
+      isMobile,
+      focusWorkspacePane,
+      navigateToTabId,
+      openWorkspaceTabFocused,
+      persistenceKey,
+      splitWorkspacePaneEmpty,
+      uiTabs,
+      workspaceLayout,
+    ],
   );
 
   const [_hoveredTabKey, setHoveredTabKey] = useState<string | null>(null);
@@ -2711,13 +2759,23 @@ function WorkspaceScreenContent({
           if (input.focusPaneBeforeOpen && input.paneId && persistenceKey) {
             focusWorkspacePane(persistenceKey, input.paneId);
           }
-          handleOpenFileFromChat({ filePath });
+          handleOpenFileFromChat(filePath);
+        },
+        onOpenWorkspaceFileInSide: (filePath) => {
+          if (input.focusPaneBeforeOpen && input.paneId && persistenceKey) {
+            focusWorkspacePane(persistenceKey, input.paneId);
+          }
+          handleOpenFileFromChatInSidePane({
+            filePath,
+            sourcePaneId: input.paneId ?? undefined,
+          });
         },
         onOpenImportSheet: openImportSheet,
       }),
     [
       handleCloseTabById,
       handleOpenFileFromChat,
+      handleOpenFileFromChatInSidePane,
       focusWorkspacePane,
       navigateToTabId,
       normalizedServerId,

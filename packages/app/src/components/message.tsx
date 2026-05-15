@@ -710,6 +710,7 @@ interface AssistantMessageProps {
   message: string;
   timestamp: number;
   onInlinePathPress?: (target: InlinePathTarget) => void;
+  onInlinePathPressInSide?: (target: InlinePathTarget) => void;
   workspaceRoot?: string;
   serverId?: string;
   client?: DaemonClient | null;
@@ -1005,18 +1006,31 @@ function MarkdownLink({
   source,
   style,
   onPress,
+  onPressInSide,
   onPrefetch,
   children,
 }: {
   source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
   onPress: (source: AssistantFileLinkSource) => void;
+  onPressInSide: (source: AssistantFileLinkSource) => void;
   onPrefetch: (source: AssistantFileLinkSource) => void;
   children: ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
   const href = source.href;
   const handlePress = useCallback(() => onPress(source), [onPress, source]);
+  const handleAnchorClickCapture = useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+      if (!isModifiedOpenEvent(event)) {
+        return;
+      }
+      event.stopPropagation();
+      onPressInSide(source);
+    },
+    [onPressInSide, source],
+  );
   const handlePrefetch = useCallback(() => onPrefetch(source), [onPrefetch, source]);
   const handleHoverIn = useCallback(() => {
     setHovered(true);
@@ -1038,7 +1052,7 @@ function MarkdownLink({
   return (
     <a
       href={href}
-      onClickCapture={preventAnchorNavigation}
+      onClickCapture={handleAnchorClickCapture}
       onAuxClickCapture={preventAnchorNavigation}
       style={MARKDOWN_LINK_ANCHOR_STYLE}
     >
@@ -1063,6 +1077,10 @@ const MARKDOWN_LINK_ANCHOR_STYLE: React.CSSProperties = {
 
 function preventAnchorNavigation(event: React.MouseEvent<HTMLAnchorElement>): void {
   event.preventDefault();
+}
+
+function isModifiedOpenEvent(event: React.MouseEvent<HTMLElement>): boolean {
+  return event.metaKey || event.ctrlKey;
 }
 
 function getInlineCodeAutoLinkUrl(
@@ -1562,6 +1580,7 @@ interface MarkdownInheritedCodeLinkProps {
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
   onPress: (source: AssistantFileLinkSource) => void;
+  onPressInSide: (source: AssistantFileLinkSource) => void;
   onPrefetch: (source: AssistantFileLinkSource) => void;
   children: ReactNode;
 }
@@ -1572,6 +1591,7 @@ function MarkdownInheritedCodeLink({
   codeInlineStyle,
   linkStyle,
   onPress,
+  onPressInSide,
   onPrefetch,
   children,
 }: MarkdownInheritedCodeLinkProps) {
@@ -1580,7 +1600,13 @@ function MarkdownInheritedCodeLink({
     [inheritedStyles, codeInlineStyle, linkStyle],
   );
   return (
-    <MarkdownLink source={source} style={style} onPress={onPress} onPrefetch={onPrefetch}>
+    <MarkdownLink
+      source={source}
+      style={style}
+      onPress={onPress}
+      onPressInSide={onPressInSide}
+      onPrefetch={onPrefetch}
+    >
       {children}
     </MarkdownLink>
   );
@@ -1592,6 +1618,7 @@ interface MarkdownInlinePathCodeLinkProps {
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
   onPress: (source: AssistantFileLinkSource) => void;
+  onPressInSide: (source: AssistantFileLinkSource) => void;
   onPrefetch: (source: AssistantFileLinkSource) => void;
 }
 
@@ -1601,6 +1628,7 @@ function MarkdownInlinePathCodeLink({
   codeInlineStyle,
   linkStyle,
   onPress,
+  onPressInSide,
   onPrefetch,
 }: MarkdownInlinePathCodeLinkProps) {
   const source = useMemo<AssistantFileLinkSource>(
@@ -1619,6 +1647,7 @@ function MarkdownInlinePathCodeLink({
       codeInlineStyle={codeInlineStyle}
       linkStyle={linkStyle}
       onPress={onPress}
+      onPressInSide={onPressInSide}
       onPrefetch={onPrefetch}
     >
       {content}
@@ -1690,6 +1719,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp: _timestamp,
   onInlinePathPress,
+  onInlinePathPressInSide,
   workspaceRoot,
   serverId,
   client,
@@ -1714,12 +1744,19 @@ export const AssistantMessage = memo(function AssistantMessage({
     serverId,
     workspaceRoot,
     onOpenWorkspaceFile: onInlinePathPress,
+    onOpenWorkspaceFileInSide: onInlinePathPressInSide,
     toast,
   });
 
   const handleLinkPress = useCallback(
     (source: AssistantFileLinkSource) => {
       fileLinkResolver.open({ source });
+    },
+    [fileLinkResolver],
+  );
+  const handleLinkPressInSide = useCallback(
+    (source: AssistantFileLinkSource) => {
+      fileLinkResolver.open({ source, openDisposition: "side" });
     },
     [fileLinkResolver],
   );
@@ -1822,6 +1859,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
+              onPressInSide={handleLinkPressInSide}
               onPrefetch={handleLinkPrefetch}
             />
           );
@@ -1841,6 +1879,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
+              onPressInSide={handleLinkPressInSide}
               onPrefetch={handleLinkPrefetch}
             >
               {content}
@@ -1921,6 +1960,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           source={getMarkdownLinkSource(node)}
           style={styles.link}
           onPress={handleLinkPress}
+          onPressInSide={handleLinkPressInSide}
           onPrefetch={handleLinkPrefetch}
         >
           {Children.map(children, (child) => {
@@ -1964,8 +2004,10 @@ export const AssistantMessage = memo(function AssistantMessage({
     client,
     handleLinkPrefetch,
     handleLinkPress,
+    handleLinkPressInSide,
     markdownParser,
     onInlinePathPress,
+    onInlinePathPressInSide,
     serverId,
     workspaceRoot,
   ]);

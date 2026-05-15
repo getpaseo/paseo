@@ -14,6 +14,7 @@ export interface UseAssistantFileLinkResolverOptions {
   serverId?: string;
   workspaceRoot?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget) => void;
+  onOpenWorkspaceFileInSide?: (target: InlinePathTarget) => void;
   toast?: ToastApi | null;
 }
 
@@ -27,6 +28,7 @@ export function useAssistantFileLinkResolver({
   serverId,
   workspaceRoot,
   onOpenWorkspaceFile,
+  onOpenWorkspaceFileInSide,
   toast,
 }: UseAssistantFileLinkResolverOptions): AssistantFileLinkActions {
   const context: AssistantFileLinkContext = useMemo(
@@ -53,7 +55,11 @@ export function useAssistantFileLinkResolver({
             error: result.error,
           };
         },
-        openWorkspaceFile(target) {
+        openWorkspaceFile(target, openDisposition) {
+          if (openDisposition === "side") {
+            onOpenWorkspaceFileInSide?.(target);
+            return;
+          }
           onOpenWorkspaceFile?.(target);
         },
         openExternalUrl,
@@ -71,7 +77,7 @@ export function useAssistantFileLinkResolver({
           );
         },
       }),
-    [client, onOpenWorkspaceFile, toast],
+    [client, onOpenWorkspaceFile, onOpenWorkspaceFileInSide, toast],
   );
 
   return useMemo(

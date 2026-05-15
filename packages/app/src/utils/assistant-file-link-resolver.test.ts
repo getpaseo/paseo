@@ -56,12 +56,15 @@ describe("assistant file link resolver", () => {
       includeDirectories: false,
       limit: 1,
     });
-    expect(openWorkspaceFile).toHaveBeenCalledWith({
-      raw: "dumm.md",
-      path: "/Users/test/project/src/dumm.md",
-      lineStart: undefined,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "dumm.md",
+        path: "/Users/test/project/src/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      undefined,
+    );
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(result.opened).toBe(true);
   });
@@ -85,12 +88,15 @@ describe("assistant file link resolver", () => {
     const result = await opened;
 
     expect(suggestions).toHaveBeenCalledTimes(1);
-    expect(openWorkspaceFile).toHaveBeenCalledWith({
-      raw: "dumm.md",
-      path: "/Users/test/project/docs/dumm.md",
-      lineStart: undefined,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "dumm.md",
+        path: "/Users/test/project/docs/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      undefined,
+    );
     expect(result.opened).toBe(true);
   });
 
@@ -116,12 +122,15 @@ describe("assistant file link resolver", () => {
       token: "dumm.md",
     });
     expect(suggestions).toHaveBeenCalledTimes(2);
-    expect(openWorkspaceFile).toHaveBeenCalledWith({
-      raw: "dumm.md",
-      path: "/Users/test/project/docs/dumm.md",
-      lineStart: undefined,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "dumm.md",
+        path: "/Users/test/project/docs/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      undefined,
+    );
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(openResult.opened).toBe(true);
   });
@@ -152,12 +161,15 @@ describe("assistant file link resolver", () => {
     });
     expect(second.opened).toBe(true);
     expect(suggestions).toHaveBeenCalledTimes(2);
-    expect(openWorkspaceFile).toHaveBeenCalledWith({
-      raw: "dumm.md",
-      path: "/Users/test/project/docs/dumm.md",
-      lineStart: undefined,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "dumm.md",
+        path: "/Users/test/project/docs/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      undefined,
+    );
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(onUnresolvedFileCandidate).toHaveBeenCalledTimes(1);
   });
@@ -182,12 +194,15 @@ describe("assistant file link resolver", () => {
     });
 
     expect(suggestions).toHaveBeenCalledTimes(2);
-    expect(openWorkspaceFile).toHaveBeenLastCalledWith({
-      raw: "dumm.md",
-      path: "/Users/test/other/two/dumm.md",
-      lineStart: undefined,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenLastCalledWith(
+      {
+        raw: "dumm.md",
+        path: "/Users/test/other/two/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      undefined,
+    );
   });
 
   it("does not apply stale async results after the active context changes", async () => {
@@ -229,12 +244,15 @@ describe("assistant file link resolver", () => {
     });
 
     expect(suggestions).not.toHaveBeenCalled();
-    expect(openWorkspaceFile).toHaveBeenCalledWith({
-      raw: "src/components/message.tsx#L33",
-      path: "/Users/test/project/src/components/message.tsx",
-      lineStart: 33,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "src/components/message.tsx#L33",
+        path: "/Users/test/project/src/components/message.tsx",
+        lineStart: 33,
+        lineEnd: undefined,
+      },
+      undefined,
+    );
     expect(result.opened).toBe(true);
   });
 
@@ -274,6 +292,31 @@ describe("assistant file link resolver", () => {
       lineEnd: undefined,
     });
     expect(result.opened).toBe(true);
+  });
+
+  it("passes side open disposition to workspace file links", async () => {
+    const openWorkspaceFile = vi.fn();
+    const resolver = createAssistantFileLinkResolver({
+      getDirectorySuggestions: vi.fn(async () => resolvedSuggestions([])),
+      openWorkspaceFile,
+      openExternalUrl: vi.fn(),
+    });
+
+    await resolver.open({
+      context: CONTEXT,
+      source: { href: "src/components/message.tsx#L33" },
+      openDisposition: "side",
+    });
+
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "src/components/message.tsx#L33",
+        path: "/Users/test/project/src/components/message.tsx",
+        lineStart: 33,
+        lineEnd: undefined,
+      },
+      "side",
+    );
   });
 
   it("keeps explicit external URLs external", async () => {
