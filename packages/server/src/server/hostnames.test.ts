@@ -11,9 +11,16 @@ describe("hostnames (vite-style)", () => {
     expect(isHostnameAllowed("foo.localhost:6767", undefined)).toBe(true);
   });
 
-  it("allows IP addresses by default", () => {
+  it("allows loopback IP addresses by default", () => {
     expect(isHostnameAllowed("127.0.0.1:6767", undefined)).toBe(true);
+    expect(isHostnameAllowed("127.42.0.1:6767", undefined)).toBe(true);
     expect(isHostnameAllowed("[::1]:6767", undefined)).toBe(true);
+  });
+
+  it("rejects non-loopback IP addresses by default", () => {
+    expect(isHostnameAllowed("192.168.1.20:6767", undefined)).toBe(false);
+    expect(isHostnameAllowed("10.0.0.2:6767", undefined)).toBe(false);
+    expect(isHostnameAllowed("[2001:db8::1]:6767", undefined)).toBe(false);
   });
 
   it("rejects non-default hosts when no allowlist is provided", () => {
@@ -30,6 +37,10 @@ describe("hostnames (vite-style)", () => {
     expect(isHostnameAllowed("foo.example.com:6767", hostnames)).toBe(true);
     expect(isHostnameAllowed("foo.bar.example.com:6767", hostnames)).toBe(true);
     expect(isHostnameAllowed("notexample.com:6767", hostnames)).toBe(false);
+  });
+
+  it("allows explicitly configured IP addresses", () => {
+    expect(isHostnameAllowed("192.168.1.20:6767", ["192.168.1.20"])).toBe(true);
   });
 
   it("merges arrays (append + de-dupe) and short-circuits on true", () => {

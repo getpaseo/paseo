@@ -1,4 +1,4 @@
-import net from "node:net";
+import { isLoopbackHost } from "./loopback-host.js";
 
 export type HostnamesConfig = true | string[] | undefined;
 
@@ -39,11 +39,8 @@ function matchesHostnamePattern(hostname: string, pattern: string): boolean {
 }
 
 function isDefaultAllowedHostname(hostname: string): boolean {
-  // Vite-style defaults: localhost, *.localhost, and all IP addresses.
-  if (hostname === "localhost") return true;
-  if (hostname.endsWith(".localhost")) return true;
-  if (net.isIP(hostname) !== 0) return true;
-  return false;
+  // Vite-style localhost defaults, hardened to loopback-only IP literals.
+  return isLoopbackHost(hostname);
 }
 
 /**
@@ -51,7 +48,7 @@ function isDefaultAllowedHostname(hostname: string): boolean {
  *
  * Semantics:
  * - `hostnames === true` => allow any host.
- * - `hostnames === []` or `undefined` => allow localhost, *.localhost, and all IPs.
+ * - `hostnames === []` or `undefined` => allow localhost, *.localhost, and loopback IPs.
  * - `hostnames === ['.example.com', 'myhost']` => allow those *in addition* to defaults.
  */
 export function isHostnameAllowed(

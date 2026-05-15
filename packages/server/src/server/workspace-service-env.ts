@@ -1,4 +1,5 @@
 import { buildScriptHostname } from "../utils/script-hostname.js";
+import { isLoopbackHost } from "./loopback-host.js";
 
 export interface WorkspaceServicePeer {
   scriptName: string;
@@ -64,7 +65,7 @@ export function buildWorkspaceServiceEnv(
 }
 
 export function resolveServiceBindHost(daemonListenHost: string | null | undefined): string {
-  return isLoopbackListenHost(daemonListenHost) ? "127.0.0.1" : "0.0.0.0";
+  return !daemonListenHost || isLoopbackHost(daemonListenHost) ? "127.0.0.1" : "0.0.0.0";
 }
 
 interface BuildServiceProxyUrlOptions {
@@ -81,20 +82,6 @@ function buildServiceProxyUrl(options: BuildServiceProxyUrlOptions): string {
     scriptName: options.scriptName,
   });
   return `http://${hostname}:${options.daemonPort}`;
-}
-
-function isLoopbackListenHost(host: string | null | undefined): boolean {
-  if (!host) {
-    return true;
-  }
-
-  const normalizedHost = host.trim().toLowerCase();
-  return (
-    normalizedHost === "localhost" ||
-    normalizedHost === "127.0.0.1" ||
-    normalizedHost === "::1" ||
-    normalizedHost === "[::1]"
-  );
 }
 
 export function assertNoServiceEnvNameCollisions(scriptNames: readonly string[]): void {

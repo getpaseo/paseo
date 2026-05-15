@@ -37,6 +37,28 @@ describe("buildWorkspaceServiceEnv", () => {
         peers: [{ scriptName: "daemon", port: 5173 }],
       }).HOST,
     ).toBe("127.0.0.1");
+
+    expect(
+      buildWorkspaceServiceEnv({
+        scriptName: "daemon",
+        projectSlug: "paseo",
+        branchName: "main",
+        daemonPort: 6767,
+        daemonListenHost: "127.42.0.1",
+        peers: [{ scriptName: "daemon", port: 5173 }],
+      }).HOST,
+    ).toBe("127.0.0.1");
+
+    expect(
+      buildWorkspaceServiceEnv({
+        scriptName: "daemon",
+        projectSlug: "paseo",
+        branchName: "main",
+        daemonPort: 6767,
+        daemonListenHost: "[::1]",
+        peers: [{ scriptName: "daemon", port: 5173 }],
+      }).HOST,
+    ).toBe("127.0.0.1");
   });
 
   it("uses network host binding when daemon listen host is non-loopback", () => {
