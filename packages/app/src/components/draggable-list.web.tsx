@@ -30,6 +30,8 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 });
 
 const DND_MODIFIERS = [restrictToVerticalAxis];
+const DEFAULT_POINTER_ACTIVATION_CONSTRAINT = { distance: 6 };
+const HANDLE_POINTER_ACTIVATION_CONSTRAINT = { delay: 250, tolerance: 8 };
 
 interface SortableItemProps<T> {
   id: string;
@@ -89,12 +91,6 @@ function SortableItem<T>({
     }),
     [combinedTransform, transition, isDragging],
   );
-  const {
-    role: _dragRole,
-    tabIndex: _dragTabIndex,
-    "aria-roledescription": _dragRoleDescription,
-    ...dragHandleAttributes
-  } = attributes as unknown as Record<string, unknown>;
 
   const info: DraggableRenderItemInfo<T> = {
     item,
@@ -103,7 +99,7 @@ function SortableItem<T>({
     isActive: activeId === id,
     dragHandleProps: useDragHandle
       ? {
-          attributes: dragHandleAttributes,
+          attributes: attributes as unknown as Record<string, unknown>,
           listeners: listeners as unknown as Record<string, unknown>,
           setActivatorNodeRef: setActivatorNodeRef as unknown as (node: unknown) => void,
         }
@@ -149,12 +145,13 @@ export function DraggableList<T>({
   const scrollbar = useWebScrollViewScrollbar(scrollViewRef, {
     enabled: showCustomScrollbar,
   });
+  const pointerActivationConstraint = useDragHandle
+    ? HANDLE_POINTER_ACTIVATION_CONSTRAINT
+    : DEFAULT_POINTER_ACTIVATION_CONSTRAINT;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 6,
-      },
+      activationConstraint: pointerActivationConstraint,
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,

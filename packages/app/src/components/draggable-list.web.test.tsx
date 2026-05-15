@@ -13,6 +13,9 @@ interface DndContextProps {
 }
 
 let latestDndContextProps: DndContextProps | null = null;
+const dndKitMocks = vi.hoisted(() => ({
+  useSensor: vi.fn(() => ({})),
+}));
 
 vi.mock("@dnd-kit/core", () => ({
   DndContext: ({ children, ...props }: React.PropsWithChildren<DndContextProps>) => {
@@ -22,7 +25,7 @@ vi.mock("@dnd-kit/core", () => ({
   closestCenter: vi.fn(),
   KeyboardSensor: vi.fn(),
   PointerSensor: vi.fn(),
-  useSensor: vi.fn(() => ({})),
+  useSensor: dndKitMocks.useSensor,
   useSensors: vi.fn(() => []),
 }));
 
@@ -104,7 +107,7 @@ function renderItem({ item, isActive }: { item: string; isActive: boolean }) {
   );
 }
 
-function renderList(): void {
+function renderList({ useDragHandle = false }: { useDragHandle?: boolean } = {}): void {
   act(() => {
     root?.render(
       <DraggableList
@@ -113,6 +116,7 @@ function renderList(): void {
         onDragEnd={vi.fn()}
         renderItem={renderItem}
         scrollEnabled={false}
+        useDragHandle={useDragHandle}
       />,
     );
   });
@@ -125,6 +129,28 @@ function getItemActiveState(item: string): string | null {
 }
 
 describe("DraggableList web", () => {
+  it("uses distance activation for default draggable rows", () => {
+    renderList();
+
+    expect(dndKitMocks.useSensor).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        activationConstraint: { distance: 6 },
+      }),
+    );
+  });
+
+  it("requires a held pointer before activating handle-based drags", () => {
+    renderList({ useDragHandle: true });
+
+    expect(dndKitMocks.useSensor).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        activationConstraint: { delay: 250, tolerance: 8 },
+      }),
+    );
+  });
+
   it("clears active drag state when a drag is cancelled", () => {
     renderList();
 
