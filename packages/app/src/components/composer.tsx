@@ -36,6 +36,7 @@ import {
   type ImageAttachment,
   type MessageInputRef,
   type AttachmentMenuItem,
+  type MessageInputKeyPressEvent,
 } from "./message-input";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
@@ -1353,13 +1354,27 @@ export function Composer({
 
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) => {
-      if (event.key === "Enter" && activeClientSlashCommand) {
-        return false;
+    (event: MessageInputKeyPressEvent) => {
+      if (event.key === "Enter") {
+        const clientSlashCommand = resolveActiveClientSlashCommand({
+          text: event.text,
+          hasAttachments: event.attachments.length > 0,
+          canHandleClientSlashCommand: Boolean(onClientSlashCommand),
+        });
+        if (clientSlashCommand) {
+          event.preventDefault();
+          handleSubmit({
+            text: event.text,
+            attachments: event.attachments,
+            cwd: event.cwd,
+            forceSend: isAgentRunning || undefined,
+          });
+          return true;
+        }
       }
       return autocompleteOnKeyPressRef.current(event);
     },
-    [activeClientSlashCommand],
+    [handleSubmit, isAgentRunning, onClientSlashCommand],
   );
 
   const cancelButtonStyle = useMemo(
