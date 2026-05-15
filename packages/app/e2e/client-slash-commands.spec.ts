@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "./fixtures";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { expectComposerVisible, submitMessage } from "./helpers/composer";
+import { composerLocator, expectComposerVisible, submitMessage } from "./helpers/composer";
 import { expectAgentIdle } from "./helpers/agent-stream";
 import { connectTerminalClient, type TerminalPerfDaemonClient } from "./helpers/terminal-perf";
 import { createTempGitRepo } from "./helpers/workspace";
@@ -132,7 +132,11 @@ async function openActiveAgentTab(
 }
 
 async function runClientSlashCommand(page: Page, command: "/quit" | "/clear"): Promise<void> {
-  await submitMessage(page, command);
+  const input = composerLocator(page);
+  await expect(input).toBeEditable({ timeout: 30_000 });
+  await input.fill(command);
+  await expect(input).toHaveValue(command);
+  await input.press("Enter");
 }
 
 async function expectAgentArchivedInSessions(page: Page, title: string): Promise<void> {
