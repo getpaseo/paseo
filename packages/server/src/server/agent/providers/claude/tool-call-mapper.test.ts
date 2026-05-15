@@ -443,4 +443,16 @@ describe("claude tool-call mapper", () => {
 
     expect(item).toBeNull();
   });
+
+  it("propagates images onto the completed tool call timeline item", () => {
+    const result = mapClaudeCompletedToolCall({
+      callId: "call_1",
+      name: "Read",
+      input: { file_path: "/tmp/x.png" },
+      output: null,
+      images: [{ data: "AAAA", mimeType: "image/png" }],
+    });
+    expect(result).not.toBeNull();
+    expect(result?.images).toEqual([{ data: "AAAA", mimeType: "image/png" }]);
+  });
 });

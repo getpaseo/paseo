@@ -677,7 +677,7 @@ test("maps tool_result content shapes into deterministic string output", async (
     buildToolOutput: (
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
-    ) => Record<string, unknown> | undefined;
+    ) => { output: Record<string, unknown> | undefined; images: unknown[] };
   } = asInternals(session);
 
   const toolEntry = {
@@ -721,7 +721,7 @@ test("maps tool_result content shapes into deterministic string output", async (
 
   try {
     for (const fixture of fixtures) {
-      const output = internal.buildToolOutput(
+      const { output } = internal.buildToolOutput(
         {
           type: "tool_result",
           tool_use_id: "tool-1",
@@ -750,7 +750,7 @@ test("Grep tool_result string content flows to a search detail with content", as
     buildToolOutput: (
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
-    ) => Record<string, unknown> | undefined;
+    ) => { output: Record<string, unknown> | undefined; images: unknown[] };
   } = asInternals(session);
 
   const grepEntry = {
@@ -763,7 +763,7 @@ test("Grep tool_result string content flows to a search detail with content", as
   };
 
   try {
-    const output = internal.buildToolOutput(
+    const { output } = internal.buildToolOutput(
       {
         type: "tool_result",
         tool_use_id: "tool-grep-1",

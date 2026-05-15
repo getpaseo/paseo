@@ -487,12 +487,22 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, z.ZodTypeDef, unkno
     }),
   ]);
 
+// Outbound shape on tool_call timeline items. Tighter than the inbound
+// ImageAttachmentSchema (defined below for SendAgentMessage*) because the
+// daemon controls what it emits and must not produce empty fields that would
+// render as broken data: URIs on the client.
+const ToolCallImageSchema = z.object({
+  data: z.string().min(1),
+  mimeType: z.string().min(1),
+});
+
 const ToolCallBasePayloadSchema = z.object({
   type: z.literal("tool_call"),
   callId: z.string(),
   name: z.string(),
   detail: ToolCallDetailPayloadSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),
+  images: z.array(ToolCallImageSchema).optional(),
 });
 
 const ToolCallRunningPayloadSchema = ToolCallBasePayloadSchema.extend({
@@ -872,9 +882,11 @@ function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
 
 const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).optional();
 
+// Inbound shape used by SendAgentMessage*; kept permissive so existing clients
+// that may emit boundary cases still parse.
 const ImageAttachmentSchema = z.object({
-  data: z.string(), // base64 encoded image
-  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+  data: z.string(),
+  mimeType: z.string(),
 });
 
 export const SendAgentMessageSchema = z.object({

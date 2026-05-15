@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
+import type { ToolCallImage, ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { deriveClaudeToolDetail } from "./tool-call-detail-parser.js";
 
@@ -10,6 +10,7 @@ interface MapperParams {
   input?: unknown;
   output?: unknown;
   metadata?: Record<string, unknown>;
+  images?: ToolCallImage[];
 }
 
 const ClaudeToolCallStatusSchema = z.enum(["running", "completed", "failed", "canceled"]);
@@ -128,6 +129,7 @@ function mapClaudeToolCall(
       status: "failed",
       error: raw.error ?? { message: "Tool call failed" },
       ...(raw.metadata ? { metadata: raw.metadata } : {}),
+      ...(params.images && params.images.length > 0 ? { images: params.images } : {}),
     };
   }
   return {
@@ -138,6 +140,7 @@ function mapClaudeToolCall(
     status: raw.status,
     error: null,
     ...(raw.metadata ? { metadata: raw.metadata } : {}),
+    ...(params.images && params.images.length > 0 ? { images: params.images } : {}),
   };
 }
 

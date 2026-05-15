@@ -79,8 +79,10 @@ import {
   type ListImportableSessionsOptions,
   type ListModelsOptions,
   type McpServerConfig,
+  type ToolCallImage,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { extractToolResultParts } from "./tool-result-content.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -433,94 +435,6 @@ function mergeClaudeSettings(
     return settings ?? updates;
   }
   return { ...settings, ...updates };
-}
-
-function isToolResultTextBlock(value: unknown): value is { type: "text"; text: string } {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    (value as { type?: unknown }).type === "text" &&
-    typeof (value as { text?: unknown }).text === "string"
-  );
-}
-
-function normalizeForDeterministicString(value: unknown, seen: WeakSet<object>): unknown {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  if (typeof value === "function") {
-    return "[function]";
-  }
-  if (typeof value === "symbol") {
-    return value.toString();
-  }
-  if (typeof value === "undefined") {
-    return "[undefined]";
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => normalizeForDeterministicString(entry, seen));
-  }
-  if (typeof value === "object") {
-    const objectValue = value;
-    if (seen.has(objectValue)) {
-      return "[circular]";
-    }
-    seen.add(objectValue);
-    const record = toObjectRecord(value);
-    if (!record) {
-      seen.delete(objectValue);
-      return "[invalid]";
-    }
-    const normalized: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) {
-      normalized[key] = normalizeForDeterministicString(record[key], seen);
-    }
-    seen.delete(objectValue);
-    return normalized;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "[unsupported]";
-}
-
-function deterministicStringify(value: unknown): string {
-  if (typeof value === "undefined") {
-    return "";
-  }
-  try {
-    const normalized = normalizeForDeterministicString(value, new WeakSet<object>());
-    if (typeof normalized === "string") {
-      return normalized;
-    }
-    return JSON.stringify(normalized);
-  } catch {
-    if (typeof value === "string") {
-      return value;
-    }
-    if (typeof value === "number" || typeof value === "boolean") {
-      return String(value);
-    }
-    return "[unserializable]";
-  }
-}
-
-function coerceToolResultContentToString(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content) && content.every((block) => isToolResultTextBlock(block))) {
-    return content.map((block) => block.text).join("");
-  }
-  return deterministicStringify(content);
 }
 
 function normalizeClaudeTranscriptText(value: unknown): string | null {
@@ -4179,8 +4093,9 @@ class ClaudeAgentSession implements AgentSession {
         ? block.tool_use_id
         : (entry?.id ?? null);
 
-    // Extract output from block.content (SDK always returns content in string form)
-    const output = this.buildToolOutput(block, entry);
+    // Extract text output and any image blocks from block.content. SDK may
+    // return content as either a plain string or an array of text/image blocks.
+    const { output, images } = this.buildToolOutput(block, entry);
 
     if (block.is_error) {
       this.pushToolCall(
@@ -4190,6 +4105,7 @@ class ClaudeAgentSession implements AgentSession {
           input: entry?.input ?? null,
           output: output ?? null,
           error: block,
+          ...(images.length > 0 ? { images } : {}),
         }),
         items,
       );
@@ -4200,6 +4116,7 @@ class ClaudeAgentSession implements AgentSession {
           callId,
           input: entry?.input ?? null,
           output: output ?? null,
+          ...(images.length > 0 ? { images } : {}),
         }),
         items,
       );
@@ -4214,35 +4131,35 @@ class ClaudeAgentSession implements AgentSession {
   private buildToolOutput(
     block: ClaudeContentChunk,
     entry: ToolUseCacheEntry | undefined,
-  ): AgentMetadata | undefined {
+  ): { output: AgentMetadata | undefined; images: ToolCallImage[] } {
     if (block.is_error) {
-      return undefined;
+      return { output: undefined, images: [] };
     }
 
     const blockServer = typeof block.server === "string" ? block.server : undefined;
     const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
     const server = entry?.server ?? blockServer ?? "tool";
     const tool = entry?.name ?? blockToolName ?? "tool";
-    const content = coerceToolResultContentToString(block.content);
+    const parts = extractToolResultParts(block.content);
     const input = entry?.input;
 
     // Build structured result based on tool type
-    const structured = this.buildStructuredToolResult(server, tool, content, input);
+    const structured = this.buildStructuredToolResult(server, tool, parts.text, input);
 
     if (structured) {
-      return structured;
+      return { output: structured, images: parts.images };
     }
 
     // Fallback format - try to parse JSON first
     const result: AgentMetadata = {};
 
-    if (content.length > 0) {
+    if (parts.text.length > 0) {
       try {
         // If content is a JSON string, parse it
-        result.output = JSON.parse(content);
+        result.output = JSON.parse(parts.text);
       } catch {
         // If not JSON, return unchanged (no extra wrapping)
-        result.output = content;
+        result.output = parts.text;
       }
     }
 
@@ -4251,7 +4168,10 @@ class ClaudeAgentSession implements AgentSession {
       result.files = entry.files;
     }
 
-    return Object.keys(result).length > 0 ? result : undefined;
+    return {
+      output: Object.keys(result).length > 0 ? result : undefined,
+      images: parts.images,
+    };
   }
 
   private isCommandExecutionTool(

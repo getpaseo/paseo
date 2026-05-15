@@ -1,5 +1,8 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { ToolCallImage } from "@getpaseo/protocol/agent-types";
+
+export type { ToolCallImage };
 
 export type AgentProvider = string;
 
@@ -323,6 +326,7 @@ interface ToolCallBase {
   name: string;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
+  images?: ToolCallImage[];
 }
 
 type ToolCallRunningTimelineItem = ToolCallBase & {

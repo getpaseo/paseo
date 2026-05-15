@@ -68,14 +68,61 @@ describe("shared messages tool_call schema", () => {
     expect(unknownStatus.success).toBe(false);
   });
 
+  it("round-trips a completed tool_call carrying images", () => {
+    const parsed = AgentTimelineItemPayloadSchema.parse({
+      ...canonicalBase(),
+      status: "completed",
+      error: null,
+      images: [
+        { data: "AAAA", mimeType: "image/png" },
+        { data: "BBBB", mimeType: "image/jpeg" },
+      ],
+    });
+    expect(parsed.type).toBe("tool_call");
+    if (parsed.type === "tool_call") {
+      expect(parsed.images).toEqual([
+        { data: "AAAA", mimeType: "image/png" },
+        { data: "BBBB", mimeType: "image/jpeg" },
+      ]);
+    }
+  });
+
+  it("rejects tool_call images with empty data or mimeType strings", () => {
+    const emptyData = AgentTimelineItemPayloadSchema.safeParse({
+      ...canonicalBase(),
+      status: "completed",
+      error: null,
+      images: [{ data: "", mimeType: "image/png" }],
+    });
+    const emptyMime = AgentTimelineItemPayloadSchema.safeParse({
+      ...canonicalBase(),
+      status: "completed",
+      error: null,
+      images: [{ data: "AAAA", mimeType: "" }],
+    });
+    expect(emptyData.success).toBe(false);
+    expect(emptyMime.success).toBe(false);
+  });
+
+  it("accepts tool_call payloads with no images field (old-daemon compat)", () => {
+    const parsed = AgentTimelineItemPayloadSchema.parse({
+      ...canonicalBase(),
+      status: "completed",
+      error: null,
+    });
+    expect(parsed.type).toBe("tool_call");
+    if (parsed.type === "tool_call") {
+      expect(parsed.images).toBeUndefined();
+    }
+  });
+
   it("ignores unknown top-level fields on tool_call payloads", () => {
     // Non-strict protocol: extra top-level keys are stripped, not rejected.
     const parsed = AgentTimelineItemPayloadSchema.safeParse({
       ...canonicalBase(),
       status: "running",
       error: null,
-      input: { command: "pwd" },
-      output: { exitCode: 0 },
+      futureField: { whatever: true },
     });
 
     expect(parsed.success).toBe(true);
