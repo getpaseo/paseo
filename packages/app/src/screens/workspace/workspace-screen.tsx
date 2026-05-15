@@ -164,6 +164,7 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
+const COMPACT_WEB_GESTURE_TOUCH_ACTION = isWeb ? "auto" : "pan-y";
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedEllipsis = withUnistyles(Ellipsis);
@@ -3213,7 +3214,10 @@ function WorkspaceScreenContent({
 
               <View style={styles.centerContent}>
                 {isMobile ? (
-                  <GestureDetector gesture={explorerOpenGesture} touchAction="pan-y">
+                  <GestureDetector
+                    gesture={explorerOpenGesture}
+                    touchAction={COMPACT_WEB_GESTURE_TOUCH_ACTION}
+                  >
                     <View style={styles.content}>{content}</View>
                   </GestureDetector>
                 ) : (
