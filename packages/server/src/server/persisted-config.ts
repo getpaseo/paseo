@@ -263,6 +263,7 @@ export const PersistedConfigSchema = z
             endpoint: z.string().optional(),
             publicEndpoint: z.string().optional(),
             useTls: z.boolean().optional(),
+            publicUseTls: z.boolean().optional(),
           })
           .strict()
           .optional(),
@@ -387,7 +388,9 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     raw = readFileSync(configPath, "utf-8");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, {
+      cause: err,
+    });
   }
 
   let parsed: unknown;
@@ -395,7 +398,9 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     parsed = JSON.parse(raw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, {
+      cause: err,
+    });
   }
 
   const migrated = stripDeprecatedLocalSpeechConfigFields(parsed);
@@ -432,6 +437,8 @@ export function savePersistedConfig(
     log?.info(`Saved to ${configPath}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, {
+      cause: err,
+    });
   }
 }

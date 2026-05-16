@@ -140,7 +140,7 @@ Single file, validated with `PersistedConfigSchema`.
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     cors: { allowedOrigins: string[] },
-    relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean },
+    relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean },
     auth: { password: string }    // bcrypt hash, optional
   },
   app: {

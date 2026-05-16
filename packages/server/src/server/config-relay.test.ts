@@ -44,7 +44,42 @@ describe("daemon relay config", () => {
     });
     expect(loadConfig(envHome, { env: { PASEO_RELAY_USE_TLS: "true" } }).relayUseTls).toBe(true);
 
-    const hostedHome = await createPaseoHome({ version: 1, daemon: { relay: {} } });
+    const hostedHome = await createPaseoHome({
+      version: 1,
+      daemon: { relay: {} },
+    });
     expect(loadConfig(hostedHome, { env: {} }).relayUseTls).toBe(true);
+  });
+
+  test("relayPublicUseTls falls back to relayUseTls when unset", async () => {
+    const home = await createPaseoHome({ version: 1, daemon: { relay: {} } });
+    // Default: both true (hosted relay)
+    expect(loadConfig(home, { env: {} }).relayPublicUseTls).toBe(true);
+  });
+
+  test("PASEO_RELAY_PUBLIC_USE_TLS overrides relayUseTls for public side", async () => {
+    const home = await createPaseoHome({ version: 1, daemon: { relay: {} } });
+    const config = loadConfig(home, {
+      env: { PASEO_RELAY_USE_TLS: "false", PASEO_RELAY_PUBLIC_USE_TLS: "true" },
+    });
+    expect(config.relayUseTls).toBe(false);
+    expect(config.relayPublicUseTls).toBe(true);
+  });
+
+  test("relayPublicUseTls falls back to relayUseTls when only PASEO_RELAY_USE_TLS is set", async () => {
+    const home = await createPaseoHome({ version: 1, daemon: { relay: {} } });
+    const config = loadConfig(home, { env: { PASEO_RELAY_USE_TLS: "false" } });
+    expect(config.relayUseTls).toBe(false);
+    expect(config.relayPublicUseTls).toBe(false);
+  });
+
+  test("persisted publicUseTls overrides relayUseTls fallback", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { relay: { useTls: false, publicUseTls: true } },
+    });
+    const config = loadConfig(home, { env: {} });
+    expect(config.relayUseTls).toBe(false);
+    expect(config.relayPublicUseTls).toBe(true);
   });
 });

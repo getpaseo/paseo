@@ -148,6 +148,18 @@ interface ResolvedRelay {
   endpoint: string;
   publicEndpoint: string;
   useTls: boolean;
+  publicUseTls: boolean;
+}
+
+function resolveTlsFromEnv(
+  envValue: string | undefined,
+  persistedValue: boolean | undefined,
+  fallback: boolean,
+): boolean {
+  if (envValue !== undefined) {
+    return parseBooleanEnv(envValue) ?? false;
+  }
+  return persistedValue ?? fallback;
 }
 
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
@@ -166,10 +178,17 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     endpoint;
   const useTls =
     input.cliRelayUseTls ??
-    (input.env.PASEO_RELAY_USE_TLS !== undefined
-      ? (parseBooleanEnv(input.env.PASEO_RELAY_USE_TLS) ?? false)
-      : (input.persisted.daemon?.relay?.useTls ?? endpoint === DEFAULT_RELAY_ENDPOINT));
-  return { enabled, endpoint, publicEndpoint, useTls };
+    resolveTlsFromEnv(
+      input.env.PASEO_RELAY_USE_TLS,
+      input.persisted.daemon?.relay?.useTls,
+      endpoint === DEFAULT_RELAY_ENDPOINT,
+    );
+  const publicUseTls = resolveTlsFromEnv(
+    input.env.PASEO_RELAY_PUBLIC_USE_TLS,
+    input.persisted.daemon?.relay?.publicUseTls,
+    useTls,
+  );
+  return { enabled, endpoint, publicEndpoint, useTls, publicUseTls };
 }
 
 interface ResolvedVoiceLlm {
@@ -305,6 +324,7 @@ export function loadConfig(
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,
+    relayPublicUseTls: relay.publicUseTls,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

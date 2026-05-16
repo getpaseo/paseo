@@ -239,6 +239,7 @@ export interface PaseoDaemonConfig {
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   relayUseTls?: boolean;
+  relayPublicUseTls?: boolean;
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
@@ -300,7 +301,9 @@ export async function createPaseoDaemon(
   const staticDir = config.staticDir;
   const downloadTokenTtlMs = config.downloadTokenTtlMs ?? 60000;
 
-  const downloadTokenStore = new DownloadTokenStore({ ttlMs: downloadTokenTtlMs });
+  const downloadTokenStore = new DownloadTokenStore({
+    ttlMs: downloadTokenTtlMs,
+  });
 
   const listenTarget = parseListenString(config.listen);
 
@@ -863,6 +866,7 @@ export async function createPaseoDaemon(
           const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
           const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
           const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
+          const relayPublicUseTls = config.relayPublicUseTls ?? relayUseTls;
           const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
 
           if (boundListenTarget.type === "tcp") {
@@ -938,7 +942,10 @@ export async function createPaseoDaemon(
             const offer = await createConnectionOfferV2({
               serverId,
               daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
-              relay: { endpoint: relayPublicEndpoint, useTls: relayUseTls },
+              relay: {
+                endpoint: relayPublicEndpoint,
+                useTls: relayPublicUseTls,
+              },
             });
 
             encodeOfferToFragmentUrl({ offer, appBaseUrl });
