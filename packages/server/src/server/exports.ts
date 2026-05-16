@@ -19,6 +19,13 @@ export {
 } from "../shared/connection-offer.js";
 export { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 export {
+  DaemonClient,
+  type ConnectionState,
+  type DaemonClientConfig,
+  type DaemonEvent,
+} from "@getpaseo/client/internal/daemon-client";
+export type { WebSocketFactory, WebSocketLike } from "@getpaseo/client/internal/daemon-client";
+export {
   buildDaemonWebSocketUrl,
   deriveLabelFromEndpoint,
   normalizeHostPort,
