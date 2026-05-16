@@ -68,12 +68,8 @@ import type { AgentAttachment } from "@server/shared/messages";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
-import {
-  classifyAssistantFileLink,
-  parseInlinePathToken,
-  type InlinePathTarget,
-  type OpenFileDisposition,
-} from "@/utils/inline-path";
+import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
+import type { OpenFileDisposition } from "@/utils/workspace-file-open";
 import { getMarkdownListMarker, getMarkdownNextSiblingType } from "@/utils/markdown-list";
 import { type AssistantFileLinkSource } from "@/utils/assistant-file-link-resolver";
 import { useAssistantFileLinkResolver } from "@/hooks/use-assistant-file-link-resolver";
@@ -96,8 +92,11 @@ import {
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { Shortcut } from "./ui/shortcut";
+import {
+  AssistantInlineCodePathLink,
+  AssistantMarkdownCodeLink,
+  AssistantMarkdownLink,
+} from "./assistant-file-link";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
@@ -1008,194 +1007,6 @@ function resolveAssistantImageErrorText(fileError: unknown, dataError: unknown):
   return "Unable to load image preview.";
 }
 
-function MarkdownLink({
-  source,
-  style,
-  onPress,
-  onPrefetch,
-  workspaceRoot,
-  children,
-}: {
-  source: AssistantFileLinkSource;
-  style: StyleProp<TextStyle>;
-  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  onPrefetch: (source: AssistantFileLinkSource) => void;
-  workspaceRoot?: string;
-  children: ReactNode;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const href = source.href;
-  const handlePress = useCallback(() => onPress(source, "main"), [onPress, source]);
-  const handleAnchorClickCapture = useCallback(
-    (event: React.MouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      if (!isModifiedOpenEvent(event)) {
-        return;
-      }
-      event.stopPropagation();
-      onPress(source, "side");
-    },
-    [onPress, source],
-  );
-  const handlePrefetch = useCallback(() => onPrefetch(source), [onPrefetch, source]);
-  const handleHoverIn = useCallback(() => {
-    setHovered(true);
-    handlePrefetch();
-  }, [handlePrefetch]);
-  const handleHoverOut = useCallback(() => setHovered(false), []);
-  const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
-    () => [style, hovered && { textDecorationLine: "underline" as const }],
-    [style, hovered],
-  );
-  const tooltipFilePath = useMemo(
-    () => getMarkdownLinkTooltipFilePath(source.href, workspaceRoot),
-    [source.href, workspaceRoot],
-  );
-  if (isNative) {
-    return (
-      <Text accessibilityRole="link" onPress={handlePress} style={style}>
-        {children}
-      </Text>
-    );
-  }
-
-  const anchor = (
-    <a
-      href={href}
-      onClickCapture={handleAnchorClickCapture}
-      onAuxClickCapture={preventAnchorNavigation}
-      style={MARKDOWN_LINK_ANCHOR_STYLE}
-    >
-      <Pressable
-        accessibilityRole="link"
-        onPress={handlePress}
-        onFocus={handlePrefetch}
-        onHoverIn={handleHoverIn}
-        onHoverOut={handleHoverOut}
-      >
-        <Text style={hoveredTextStyle}>{children}</Text>
-      </Pressable>
-    </a>
-  );
-
-  if (tooltipFilePath) {
-    return <FileLinkHoverTooltip filePath={tooltipFilePath}>{anchor}</FileLinkHoverTooltip>;
-  }
-  return anchor;
-}
-
-function formatInlinePathTargetForTooltip(
-  target: InlinePathTarget,
-  workspaceRoot: string | undefined,
-): string {
-  let result = relativizePathToWorkspace(target.path, workspaceRoot);
-  if (target.lineStart) {
-    result += `:${target.lineStart}`;
-    if (target.lineEnd && target.lineEnd !== target.lineStart) {
-      result += `-${target.lineEnd}`;
-    }
-  }
-  return result;
-}
-
-function getMarkdownLinkTooltipFilePath(
-  href: string,
-  workspaceRoot: string | undefined,
-): string | null {
-  const classification = classifyAssistantFileLink(href, { workspaceRoot });
-  if (classification?.kind !== "directFile") {
-    return null;
-  }
-  return formatInlinePathTargetForTooltip(classification.target, workspaceRoot);
-}
-
-function relativizePathToWorkspace(filePath: string, workspaceRoot: string | undefined): string {
-  if (!workspaceRoot) {
-    return filePath;
-  }
-  const root = workspaceRoot.replace(/\/+$/, "");
-  if (!root) {
-    return filePath;
-  }
-  if (filePath === root) {
-    return ".";
-  }
-  const prefix = `${root}/`;
-  if (filePath.startsWith(prefix)) {
-    return filePath.slice(prefix.length);
-  }
-  return filePath;
-}
-
-const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
-  // RN doesn't type "inline-flex" but RN-web honors it at runtime, which is
-  // what we need so the tooltip wrapper doesn't break inline link flow.
-  display: "inline-flex" as ViewStyle["display"],
-};
-
-const FILE_LINK_TOOLTIP_MOD_KEYS = ["mod"];
-
-function FileLinkHoverTooltip({ filePath, children }: { filePath: string; children: ReactNode }) {
-  if (!isWeb) {
-    return children;
-  }
-  return (
-    <Tooltip delayDuration={400}>
-      <TooltipTrigger asChild>
-        <View style={FILE_LINK_TOOLTIP_TRIGGER_STYLE}>{children}</View>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="start" maxWidth={520}>
-        <View style={fileLinkTooltipStyles.body}>
-          <Text selectable={false} style={fileLinkTooltipStyles.path}>
-            {filePath}
-          </Text>
-          <View style={fileLinkTooltipStyles.hintRow}>
-            <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
-            <Text selectable={false} style={fileLinkTooltipStyles.hintText}>
-              click for side pane
-            </Text>
-          </View>
-        </View>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-const fileLinkTooltipStyles = StyleSheet.create((theme) => ({
-  body: {
-    gap: theme.spacing[1],
-  },
-  path: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-  },
-  hintRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  hintText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-  },
-}));
-
-const MARKDOWN_LINK_ANCHOR_STYLE: React.CSSProperties = {
-  display: "contents",
-  color: "inherit",
-  textDecoration: "none",
-};
-
-function preventAnchorNavigation(event: React.MouseEvent<HTMLAnchorElement>): void {
-  event.preventDefault();
-}
-
-function isModifiedOpenEvent(event: React.MouseEvent<HTMLElement>): boolean {
-  return event.metaKey || event.ctrlKey;
-}
-
 function getInlineCodeAutoLinkUrl(
   markdownParser: ReturnType<typeof MarkdownIt>,
   content: string,
@@ -1687,87 +1498,6 @@ function MarkdownInheritedText({
   return <Text style={style}>{children}</Text>;
 }
 
-interface MarkdownInheritedCodeLinkProps {
-  source: AssistantFileLinkSource;
-  inheritedStyles: TextStyle;
-  codeInlineStyle: TextStyle;
-  linkStyle: TextStyle;
-  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  onPrefetch: (source: AssistantFileLinkSource) => void;
-  workspaceRoot?: string;
-  children: ReactNode;
-}
-
-function MarkdownInheritedCodeLink({
-  source,
-  inheritedStyles,
-  codeInlineStyle,
-  linkStyle,
-  onPress,
-  onPrefetch,
-  workspaceRoot,
-  children,
-}: MarkdownInheritedCodeLinkProps) {
-  const style = useMemo(
-    () => [inheritedStyles, codeInlineStyle, linkStyle],
-    [inheritedStyles, codeInlineStyle, linkStyle],
-  );
-  return (
-    <MarkdownLink
-      source={source}
-      style={style}
-      onPress={onPress}
-      onPrefetch={onPrefetch}
-      workspaceRoot={workspaceRoot}
-    >
-      {children}
-    </MarkdownLink>
-  );
-}
-
-interface MarkdownInlinePathCodeLinkProps {
-  content: string;
-  inheritedStyles: TextStyle;
-  codeInlineStyle: TextStyle;
-  linkStyle: TextStyle;
-  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  onPrefetch: (source: AssistantFileLinkSource) => void;
-  workspaceRoot?: string;
-}
-
-function MarkdownInlinePathCodeLink({
-  content,
-  inheritedStyles,
-  codeInlineStyle,
-  linkStyle,
-  onPress,
-  onPrefetch,
-  workspaceRoot,
-}: MarkdownInlinePathCodeLinkProps) {
-  const source = useMemo<AssistantFileLinkSource>(
-    () => ({
-      href: content,
-      text: content,
-      sourceType: "inline-code",
-    }),
-    [content],
-  );
-
-  return (
-    <MarkdownInheritedCodeLink
-      source={source}
-      inheritedStyles={inheritedStyles}
-      codeInlineStyle={codeInlineStyle}
-      linkStyle={linkStyle}
-      onPress={onPress}
-      onPrefetch={onPrefetch}
-      workspaceRoot={workspaceRoot}
-    >
-      {content}
-    </MarkdownInheritedCodeLink>
-  );
-}
-
 interface MarkdownListItemContentProps {
   contentStyle: ViewStyle;
   children: ReactNode;
@@ -1957,7 +1687,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
         if (shouldResolveInlinePath) {
           return (
-            <MarkdownInlinePathCodeLink
+            <AssistantInlineCodePathLink
               key={node.key}
               content={content}
               inheritedStyles={inheritedStyles}
@@ -1977,7 +1707,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             content,
           });
           return (
-            <MarkdownInheritedCodeLink
+            <AssistantMarkdownCodeLink
               key={node.key}
               source={source}
               inheritedStyles={inheritedStyles}
@@ -1988,7 +1718,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               workspaceRoot={workspaceRoot}
             >
               {content}
-            </MarkdownInheritedCodeLink>
+            </AssistantMarkdownCodeLink>
           );
         }
 
@@ -2060,7 +1790,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         </MarkdownParagraphView>
       ),
       link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <MarkdownLink
+        <AssistantMarkdownLink
           key={node.key}
           source={getMarkdownLinkSource(node)}
           style={styles.link}
@@ -2075,7 +1805,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               style: [childProps.style, { color: styles.link.color }],
             } as Partial<{ style: StyleProp<TextStyle> }>);
           })}
-        </MarkdownLink>
+        </AssistantMarkdownLink>
       ),
       image: (
         node: ASTNode,

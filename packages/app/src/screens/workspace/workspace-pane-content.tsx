@@ -9,7 +9,7 @@ import {
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
-import type { OpenFileDisposition } from "@/utils/inline-path";
+import type { OpenFileDisposition } from "@/utils/workspace-file-open";
 
 export interface WorkspacePaneContentModel {
   key: string;

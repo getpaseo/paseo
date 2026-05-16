@@ -6,7 +6,7 @@ import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelRegistration } from "@/panels/panel-registry";
 import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-import type { OpenFileDisposition } from "@/utils/inline-path";
+import type { OpenFileDisposition } from "@/utils/workspace-file-open";
 
 function useDraftPanelDescriptor() {
   return {

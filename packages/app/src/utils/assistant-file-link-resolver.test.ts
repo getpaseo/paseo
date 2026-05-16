@@ -279,6 +279,7 @@ describe("assistant file link resolver", () => {
         text: "workspace-git-service.ts:1553",
         sourceType: "inline-code",
       },
+      disposition: "main",
     });
 
     expect(suggestions).toHaveBeenCalledWith({
@@ -288,12 +289,15 @@ describe("assistant file link resolver", () => {
       includeDirectories: false,
       limit: 1,
     });
-    expect(openWorkspaceFile).toHaveBeenCalledWith({
-      raw: "workspace-git-service.ts:1553",
-      path: "/Users/test/project/packages/server/src/server/workspace-git-service.ts",
-      lineStart: 1553,
-      lineEnd: undefined,
-    });
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "workspace-git-service.ts:1553",
+        path: "/Users/test/project/packages/server/src/server/workspace-git-service.ts",
+        lineStart: 1553,
+        lineEnd: undefined,
+      },
+      "main",
+    );
     expect(result.opened).toBe(true);
   });
 

@@ -74,7 +74,8 @@ import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
-import { normalizeInlinePathTarget, type OpenFileDisposition } from "@/utils/inline-path";
+import { normalizeInlinePathTarget } from "@/utils/inline-path";
+import type { OpenFileDisposition } from "@/utils/workspace-file-open";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";

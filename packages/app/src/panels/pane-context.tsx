@@ -1,7 +1,7 @@
 import React, { createContext, useContext, type ReactNode } from "react";
 import invariant from "tiny-invariant";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
-import type { OpenFileDisposition } from "@/utils/inline-path";
+import type { OpenFileDisposition } from "@/utils/workspace-file-open";
 
 export interface PaneContextValue {
   serverId: string;

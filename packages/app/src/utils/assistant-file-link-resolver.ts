@@ -3,8 +3,8 @@ import {
   isFileLookingAssistantToken,
   type AssistantFileLinkClassification,
   type InlinePathTarget,
-  type OpenFileDisposition,
 } from "./inline-path";
+import type { OpenFileDisposition } from "./workspace-file-open";
 
 export interface AssistantFileLinkContext {
   serverId?: string;
