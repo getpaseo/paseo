@@ -27,12 +27,12 @@ Or from `packages/app`:
 
 ```bash
 # Debug
-APP_VARIANT=development npx expo prebuild --platform android --non-interactive
-APP_VARIANT=development npx expo run:android --variant=debug
+npx cross-env APP_VARIANT=development expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=development expo run:android --variant=debug
 
 # Release
-APP_VARIANT=production npx expo prebuild --platform android --non-interactive
-APP_VARIANT=production npx expo run:android --variant=release
+npx cross-env APP_VARIANT=production expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=production expo run:android --variant=release
 
 # Clear generated Android project
 rm -rf android
