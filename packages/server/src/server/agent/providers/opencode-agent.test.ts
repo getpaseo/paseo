@@ -681,7 +681,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     const turn = await collectTurnEvents(streamSession(session, "hello"));
@@ -773,7 +772,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     const turn = await collectTurnEvents(streamSession(session, "hello"));
@@ -837,7 +835,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     const events: AgentStreamEvent[] = [];
@@ -877,7 +874,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
       new Map(),
       undefined,
       false,
@@ -905,7 +901,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     await session.close();
@@ -972,7 +967,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     const history: AgentStreamEvent[] = [];
@@ -985,7 +979,11 @@ describe("OpenCode adapter startTurn error handling", () => {
         type: "timeline",
         provider: "opencode",
         timestamp: "2026-05-14T12:41:15.873Z",
-        item: { type: "user_message", text: "Reply with exactly: probe ok" },
+        item: {
+          type: "user_message",
+          text: "Reply with exactly: probe ok",
+          messageId: "msg_user",
+        },
       },
       {
         type: "timeline",
@@ -1034,7 +1032,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     const history: AgentStreamEvent[] = [];
@@ -1088,7 +1085,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     const events: AgentStreamEvent[] = [];
@@ -1133,7 +1129,6 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
-      "/tmp/opencode-storage",
     );
 
     await session.startTurn("first");
