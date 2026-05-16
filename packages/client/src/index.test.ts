@@ -71,17 +71,32 @@ function parseSentSessionMessage(data: string | ArrayBuffer | Uint8Array | undef
   return parsed.message;
 }
 
+function parseSentFrame(
+  data: string | ArrayBuffer | Uint8Array | undefined,
+): Record<string, unknown> {
+  if (typeof data !== "string") {
+    throw new Error("Expected string WebSocket frame");
+  }
+  return JSON.parse(data);
+}
+
 async function connectClient(): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
-    clientId: "clsk_sdk_test",
     reconnect: { enabled: false },
   });
 
   const connectPromise = client.connect();
   const ws = FakeWebSocket.instances[0];
   ws.open();
+  const hello = parseSentFrame(ws.sent.at(-1));
+  expect(hello).toMatchObject({
+    type: "hello",
+    clientType: "cli",
+    protocolVersion: 1,
+  });
+  expect(hello.clientId).toEqual(expect.stringMatching(/^paseo-sdk-/));
   ws.message(
     sessionMessage({
       type: "status",

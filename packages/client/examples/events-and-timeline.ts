@@ -3,8 +3,6 @@ import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 export function createClient(url: string): PaseoClient {
   return createPaseoClient({
     url,
-    clientId: "sdk-events-example",
-    clientType: "cli",
   });
 }
 

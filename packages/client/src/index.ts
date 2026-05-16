@@ -42,8 +42,7 @@ export interface PaseoLogger {
 
 export interface PaseoClientConfig {
   url: string;
-  clientId: string;
-  clientType?: "mobile" | "browser" | "cli" | "mcp";
+  clientId?: string;
   appVersion?: string;
   runtimeGeneration?: number | null;
   password?: string;
@@ -331,7 +330,11 @@ export interface PaseoClient {
 }
 
 export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
-  const daemonClient = new DaemonClient(config);
+  const daemonClient = new DaemonClient({
+    ...config,
+    clientId: config.clientId ?? createGeneratedClientId(),
+    clientType: "cli",
+  });
   const createWorkspaceHandle = createWorkspaceHandleFactory(daemonClient);
   const createAgentHandle = createAgentHandleFactory(daemonClient);
 
@@ -517,4 +520,12 @@ function providerConfig(
     ...(input.thinkingOptionId !== undefined ? { thinkingOptionId: input.thinkingOptionId } : {}),
     ...(input.featureValues !== undefined ? { featureValues: input.featureValues } : {}),
   };
+}
+
+function createGeneratedClientId(): string {
+  const randomId =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : Math.random().toString(36).slice(2);
+  return `paseo-sdk-${randomId}`;
 }
