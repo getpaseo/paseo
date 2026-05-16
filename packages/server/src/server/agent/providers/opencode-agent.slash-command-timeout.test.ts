@@ -27,7 +27,7 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     const openCodeClient = createOpenCodeClientWithConnectedProvider();
     runtime.enqueueClient(openCodeClient);
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     await expect(session.listCommands?.()).resolves.toEqual(
@@ -47,7 +47,7 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     const openCodeClient = createOpenCodeClientWithConnectedProvider();
     runtime.enqueueClient(openCodeClient);
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     await expect(session.run("/compact")).resolves.toMatchObject({
@@ -79,7 +79,7 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     })();
     runtime.enqueueClient(openCodeClient);
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     const runPromise = session.run("/help");

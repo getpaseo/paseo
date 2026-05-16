@@ -40,7 +40,7 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
     });
   runtime.enqueueClient(openCodeClient);
 
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
   const modelsPromise = client.listModels({ cwd: "/tmp/opencode-models", force: false });
 
   await vi.advanceTimersByTimeAsync(15_000);
@@ -66,7 +66,7 @@ test("passes explicit refresh force through server acquisition", async () => {
   };
   runtime.enqueueClient(openCodeClient);
 
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
 
   await client.listModels({ cwd: "/tmp/opencode-models", force: true });
 
@@ -98,7 +98,7 @@ test("includes models from api-source providers not in connected", async () => {
   };
   runtime.enqueueClient(openCodeClient);
 
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
   const models = await client.listModels({ cwd: "/tmp/opencode-models", force: false });
 
   expect(models).toMatchObject([
@@ -130,7 +130,7 @@ test("throws when no providers are accessible (neither connected nor api-source)
   };
   runtime.enqueueClient(openCodeClient);
 
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
 
   await expect(client.listModels({ cwd: "/tmp/opencode-models", force: false })).rejects.toThrow(
     "OpenCode has no connected providers",
@@ -157,7 +157,7 @@ test("does not throw when only api-source providers are present with no connecte
   };
   runtime.enqueueClient(openCodeClient);
 
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, undefined, { runtime });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
 
   await expect(
     client.listModels({ cwd: "/tmp/opencode-models", force: false }),

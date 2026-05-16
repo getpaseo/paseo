@@ -113,7 +113,7 @@ test("does not fail an active OpenCode provider retry before the advertised retr
       OPENCODE_DISABLE_AUTO_UPDATE: "1",
     },
   };
-  const client = new OpenCodeAgentClient(logger, runtimeSettings, path.join(root, "paseo-storage"));
+  const client = new OpenCodeAgentClient(logger, runtimeSettings);
   const events: AgentStreamEvent[] = [];
   const eventLog: Array<{ elapsedMs: number; event: AgentStreamEvent }> = [];
   let session: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>> | undefined;

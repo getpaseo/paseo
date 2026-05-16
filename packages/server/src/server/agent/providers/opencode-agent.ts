@@ -1,12 +1,13 @@
-import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import path from "node:path";
 import {
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
+  type GlobalSession as OpenCodeGlobalSession,
+  type Message as OpenCodeMessage,
   type OpencodeClient,
   type Part as OpenCodePart,
+  type Session as OpenCodeSession,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
@@ -75,7 +76,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
 
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
-const OPENCODE_STORAGE_SESSION_LIMIT = 200;
+const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -96,53 +97,14 @@ const DEFAULT_MODES: AgentMode[] = [
   },
 ];
 
-const OpenCodeStoredSessionSchema = z
-  .object({
-    id: z.string().min(1),
-    directory: z.string().min(1),
-    title: z.string().nullable().optional(),
-    time: z
-      .object({
-        created: z.number().optional(),
-        updated: z.number().optional(),
-      })
-      .optional(),
-  })
-  .passthrough();
-
-const OpenCodeStoredMessageSchema = z
-  .object({
-    id: z.string().min(1),
-    sessionID: z.string().min(1),
-    role: z.string().optional(),
-    time: z
-      .object({
-        created: z.number().optional(),
-        completed: z.number().optional(),
-      })
-      .optional(),
-  })
-  .passthrough();
-
-const OpenCodeStoredPartSchema = z
-  .object({
-    type: z.string().optional(),
-    text: z.string().optional(),
-    time: z
-      .object({
-        start: z.number().optional(),
-        end: z.number().optional(),
-      })
-      .optional(),
-  })
-  .passthrough();
-
-type OpenCodeStoredSession = z.infer<typeof OpenCodeStoredSessionSchema>;
-type OpenCodeStoredMessage = z.infer<typeof OpenCodeStoredMessageSchema>;
-type OpenCodeStoredPart = z.infer<typeof OpenCodeStoredPartSchema>;
-
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
+type OpenCodePersistedSession = OpenCodeSession | OpenCodeGlobalSession;
+
+interface OpenCodeSessionMessage {
+  info: OpenCodeMessage;
+  parts: OpenCodePart[];
+}
 
 type OpenCodeMcpConfig =
   | {
@@ -730,48 +692,41 @@ function buildOpenCodePromptParts(
   return output;
 }
 
-function resolveOpenCodeStorageRoot(): string {
-  const xdgDataHome = process.env.XDG_DATA_HOME;
-  const dataHome =
-    typeof xdgDataHome === "string" && xdgDataHome.trim().length > 0
-      ? xdgDataHome
-      : path.join(homedir(), ".local", "share");
-  return path.join(dataHome, "opencode", "storage");
-}
-
-async function collectOpenCodePersistedAgentsFromStorage(
-  storageRoot: string,
+async function collectOpenCodePersistedAgentsFromSdk(
+  client: Pick<OpencodeClient, "experimental" | "session">,
   options?: ListPersistedAgentsOptions,
 ): Promise<PersistedAgentDescriptor[]> {
-  const sessions = await readOpenCodeStoredSessions(path.join(storageRoot, "session"));
-  const limit = options?.limit ?? OPENCODE_STORAGE_SESSION_LIMIT;
+  const limit = options?.limit ?? OPENCODE_PERSISTED_SESSION_LIMIT;
+  const response = await client.experimental.session.list({
+    ...(options?.cwd ? { directory: options.cwd } : {}),
+    archived: true,
+    roots: true,
+    limit,
+  });
+
+  if (response.error) {
+    throw new Error(`Failed to list OpenCode sessions: ${JSON.stringify(response.error)}`);
+  }
+
+  const sessions = response.data ?? [];
   const candidates = sessions
     .filter((session) => !options?.cwd || session.directory === options.cwd)
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
     .slice(0, limit);
 
   return await Promise.all(
-    candidates.map((session) => buildOpenCodePersistedAgentDescriptor(storageRoot, session)),
+    candidates.map((session) => buildOpenCodePersistedAgentDescriptor(client, session)),
   );
 }
 
-async function readOpenCodeStoredSessions(sessionRoot: string): Promise<OpenCodeStoredSession[]> {
-  const files = await findJsonFiles(sessionRoot);
-  const sessions: OpenCodeStoredSession[] = [];
-  for (const file of files) {
-    const parsed = await readJsonFile(file, OpenCodeStoredSessionSchema);
-    if (parsed) {
-      sessions.push(parsed);
-    }
-  }
-  return sessions;
-}
-
 async function buildOpenCodePersistedAgentDescriptor(
-  storageRoot: string,
-  session: OpenCodeStoredSession,
+  client: Pick<OpencodeClient, "session">,
+  session: OpenCodePersistedSession,
 ): Promise<PersistedAgentDescriptor> {
-  const timeline = await readOpenCodeSessionTimeline(storageRoot, session.id);
+  const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
+  const timeline = buildOpenCodeSessionTimeline(messages);
+  const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
+  const model = resolveOpenCodePersistedSessionModel(session, messages);
   return {
     provider: "opencode",
     sessionId: session.id,
@@ -786,101 +741,12 @@ async function buildOpenCodePersistedAgentDescriptor(
         provider: "opencode",
         cwd: session.directory,
         title: normalizeOpenCodeSessionTitle(session.title),
+        ...(modeId ? { modeId } : {}),
+        ...(model ? { model } : {}),
       },
     },
     timeline,
   };
-}
-
-async function readOpenCodeSessionTimeline(
-  storageRoot: string,
-  sessionId: string,
-): Promise<AgentTimelineItem[]> {
-  const messageRoot = path.join(storageRoot, "message", sessionId);
-  const messageFiles = await findJsonFiles(messageRoot);
-  const messages: OpenCodeStoredMessage[] = [];
-  for (const file of messageFiles) {
-    const parsed = await readJsonFile(file, OpenCodeStoredMessageSchema);
-    if (parsed?.sessionID === sessionId) {
-      messages.push(parsed);
-    }
-  }
-
-  const timeline: AgentTimelineItem[] = [];
-  for (const message of messages.sort(
-    (left, right) => getOpenCodeMessageTimestamp(left) - getOpenCodeMessageTimestamp(right),
-  )) {
-    const text = await readOpenCodeMessageText(storageRoot, message.id);
-    if (!text) {
-      continue;
-    }
-    if (message.role === "user") {
-      timeline.push({ type: "user_message", text, messageId: message.id });
-    } else if (message.role === "assistant") {
-      timeline.push({ type: "assistant_message", text });
-    }
-  }
-  return timeline;
-}
-
-async function readOpenCodeMessageText(storageRoot: string, messageId: string): Promise<string> {
-  const parts = await readOpenCodeStoredParts(storageRoot, messageId);
-  return readOpenCodeTextFromParts(parts);
-}
-
-async function readOpenCodeStoredParts(
-  storageRoot: string,
-  messageId: string,
-): Promise<OpenCodeStoredPart[]> {
-  const partRoot = path.join(storageRoot, "part", messageId);
-  const partFiles = await findJsonFiles(partRoot);
-  const parts: OpenCodeStoredPart[] = [];
-  for (const file of partFiles) {
-    const parsed = await readJsonFile(file, OpenCodeStoredPartSchema);
-    if (parsed) {
-      parts.push(parsed);
-    }
-  }
-
-  return parts.sort(
-    (left, right) => getOpenCodePartTimestamp(left) - getOpenCodePartTimestamp(right),
-  );
-}
-
-function readOpenCodeTextFromParts(parts: OpenCodeStoredPart[]): string {
-  return parts
-    .filter((part) => part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text?.trim() ?? "")
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-async function findJsonFiles(root: string): Promise<string[]> {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const entryPath = path.join(root, entry.name);
-      if (entry.isDirectory()) {
-        return findJsonFiles(entryPath);
-      }
-      return entry.isFile() && entry.name.endsWith(".json") ? [entryPath] : [];
-    }),
-  );
-  return files.flat();
-}
-
-async function readJsonFile<T>(file: string, schema: z.ZodType<T>): Promise<T | null> {
-  try {
-    return schema.parse(JSON.parse(await readFile(file, "utf8")));
-  } catch {
-    return null;
-  }
 }
 
 function normalizeOpenCodeSessionTitle(title: string | null | undefined): string | null {
@@ -888,16 +754,8 @@ function normalizeOpenCodeSessionTitle(title: string | null | undefined): string
   return normalized ? normalized : null;
 }
 
-function getOpenCodeSessionTimestamp(session: OpenCodeStoredSession): number {
+function getOpenCodeSessionTimestamp(session: OpenCodePersistedSession): number {
   return session.time?.updated ?? session.time?.created ?? 0;
-}
-
-function getOpenCodeMessageTimestamp(message: OpenCodeStoredMessage): number {
-  return message.time?.created ?? message.time?.completed ?? 0;
-}
-
-function getOpenCodePartTimestamp(part: OpenCodeStoredPart): number {
-  return part.time?.start ?? part.time?.end ?? 0;
 }
 
 function resolveOpenCodeReplayTimestamp(params: {
@@ -965,6 +823,115 @@ function buildOpenCodeReplayPartTimelineEvent(params: {
   });
 }
 
+async function readOpenCodeSessionMessagesFromSdk(
+  client: Pick<OpencodeClient, "session">,
+  session: OpenCodePersistedSession,
+): Promise<OpenCodeSessionMessage[]> {
+  const response = await client.session.messages({
+    sessionID: session.id,
+    directory: session.directory,
+  });
+
+  if (response.error || !response.data) {
+    return [];
+  }
+
+  return response.data;
+}
+
+function buildOpenCodeSessionTimeline(
+  messages: ReadonlyArray<OpenCodeSessionMessage>,
+): AgentTimelineItem[] {
+  return messages.flatMap((message) =>
+    buildOpenCodeReplayTimelineEvents(message).map((event) => event.item),
+  );
+}
+
+function resolveOpenCodePersistedSessionModeId(
+  session: OpenCodePersistedSession,
+  messages: ReadonlyArray<OpenCodeSessionMessage>,
+): string | undefined {
+  const agent = session.agent ?? messages.map(readOpenCodeMessageAgent).find(Boolean);
+  return agent ? normalizeOpenCodeModeId(agent) : undefined;
+}
+
+function readOpenCodeMessageAgent(message: OpenCodeSessionMessage): string | undefined {
+  const agent = message.info.agent;
+  return typeof agent === "string" && agent.trim() ? agent : undefined;
+}
+
+function resolveOpenCodePersistedSessionModel(
+  session: OpenCodePersistedSession,
+  messages: ReadonlyArray<OpenCodeSessionMessage>,
+): string | undefined {
+  if (session.model) {
+    return buildOpenCodeModelLookupKey(session.model.providerID, session.model.id);
+  }
+
+  const model = messages.map(readOpenCodeMessageModel).find(Boolean);
+  return model ? buildOpenCodeModelLookupKey(model.providerID, model.modelID) : undefined;
+}
+
+function readOpenCodeMessageModel(
+  message: OpenCodeSessionMessage,
+): { providerID: string; modelID: string } | undefined {
+  const { info } = message;
+  if (info.role === "user") {
+    return info.model;
+  }
+  return {
+    providerID: info.providerID,
+    modelID: info.modelID,
+  };
+}
+
+function buildOpenCodeReplayTimelineEvents(
+  message: OpenCodeSessionMessage,
+): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+  const { info, parts } = message;
+  if (info.role === "user") {
+    const text = parts
+      .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+
+    return text
+      ? [
+          buildOpenCodeReplayTimelineEvent({
+            item: { type: "user_message", text, messageId: info.id },
+            message: info,
+          }),
+        ]
+      : [];
+  }
+
+  const events: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+  let emittedAssistantText = false;
+  for (const part of parts) {
+    if (part.type === "text" && part.text) {
+      emittedAssistantText = true;
+    }
+    const event = buildOpenCodeReplayPartTimelineEvent({ part, message: info });
+    if (event) {
+      events.push(event);
+    }
+  }
+
+  if (!emittedAssistantText) {
+    const text = stringifyStructuredAssistantMessage(info.structured);
+    if (text) {
+      events.push(
+        buildOpenCodeReplayTimelineEvent({
+          item: { type: "assistant_message", text },
+          message: info,
+        }),
+      );
+    }
+  }
+
+  return events;
+}
+
 export const __openCodeInternals = {
   buildOpenCodePromptParts,
   buildOpenCodeModelContextWindowLookup,
@@ -1015,17 +982,14 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
-  private readonly storageRoot: string;
 
   constructor(
     logger: Logger,
     runtimeSettings?: ProviderRuntimeSettings,
-    storageRoot?: string,
     deps: OpenCodeAgentClientDeps = {},
   ) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
     this.runtimeSettings = runtimeSettings;
-    this.storageRoot = storageRoot ?? resolveOpenCodeStorageRoot();
     this.runtime =
       deps.runtime ??
       new ProductionOpenCodeRuntime(
@@ -1069,7 +1033,6 @@ export class OpenCodeAgentClient implements AgentClient {
         client,
         session.id,
         this.logger,
-        this.storageRoot,
         new Map(this.modelContextWindows),
         acquisition.release,
         options?.persistSession,
@@ -1086,15 +1049,17 @@ export class OpenCodeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const cwd = overrides?.cwd ?? (handle.metadata?.cwd as string);
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const cwd = overrides?.cwd ?? metadata.cwd;
     if (!cwd) {
       throw new Error("OpenCode resume requires the original working directory");
     }
 
     const config: AgentSessionConfig = {
+      ...metadata,
+      ...overrides,
       provider: "opencode",
       cwd,
-      ...overrides,
     };
     const openCodeConfig = this.assertConfig(config);
     const acquisition = await this.runtime.acquireServer({ force: false });
@@ -1112,7 +1077,6 @@ export class OpenCodeAgentClient implements AgentClient {
         client,
         handle.sessionId,
         this.logger,
-        this.storageRoot,
         new Map(this.modelContextWindows),
         acquisition.release,
         undefined,
@@ -1228,7 +1192,18 @@ export class OpenCodeAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    return collectOpenCodePersistedAgentsFromStorage(this.storageRoot, options);
+    const acquisition = await this.runtime.acquireServer({ force: false });
+    const { url } = acquisition.server;
+    const client = this.runtime.createClient({
+      baseUrl: url,
+      directory: options?.cwd ?? "",
+    });
+
+    try {
+      return await collectOpenCodePersistedAgentsFromSdk(client, options);
+    } finally {
+      acquisition.release();
+    }
   }
 
   async isAvailable(): Promise<boolean> {
@@ -2299,7 +2274,6 @@ class OpenCodeAgentSession implements AgentSession {
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
-    _storageRoot: string,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
     releaseServer?: () => void,
     persistSession = true,
@@ -2901,40 +2875,9 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
 
-    for (const { info, parts } of response.data) {
-      if (info.role === "user") {
-        const text = parts
-          .filter((p): p is Extract<OpenCodePart, { type: "text" }> => p.type === "text")
-          .map((p) => p.text)
-          .join("");
-
-        if (text) {
-          yield buildOpenCodeReplayTimelineEvent({
-            item: { type: "user_message", text },
-            message: info,
-          });
-        }
-      } else {
-        let emittedAssistantText = false;
-        for (const part of parts) {
-          if (part.type === "text" && part.text) {
-            emittedAssistantText = true;
-          }
-          const event = buildOpenCodeReplayPartTimelineEvent({ part, message: info });
-          if (event) {
-            yield event;
-          }
-        }
-
-        if (!emittedAssistantText) {
-          const text = stringifyStructuredAssistantMessage(info.structured);
-          if (text) {
-            yield buildOpenCodeReplayTimelineEvent({
-              item: { type: "assistant_message", text },
-              message: info,
-            });
-          }
-        }
+    for (const message of response.data) {
+      for (const event of buildOpenCodeReplayTimelineEvents(message)) {
+        yield event;
       }
     }
   }
@@ -3052,6 +2995,8 @@ class OpenCodeAgentSession implements AgentSession {
       nativeHandle: this.sessionId,
       metadata: {
         cwd: this.config.cwd,
+        ...(this.config.modeId ? { modeId: this.config.modeId } : {}),
+        ...(this.config.model ? { model: this.config.model } : {}),
       },
     };
   }

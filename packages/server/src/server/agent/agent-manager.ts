@@ -656,13 +656,14 @@ export class AgentManager {
   async findPersistedAgent(
     provider: AgentProvider,
     sessionId: string,
+    options?: Pick<ListPersistedAgentsOptions, "cwd">,
   ): Promise<PersistedAgentDescriptor | null> {
     const client = this.requireClient(provider);
     if (!client.listPersistedAgents) {
       return null;
     }
 
-    const descriptors = await client.listPersistedAgents({ limit: 200 });
+    const descriptors = await client.listPersistedAgents({ limit: 200, cwd: options?.cwd });
     return (
       descriptors.find((descriptor) => {
         return (

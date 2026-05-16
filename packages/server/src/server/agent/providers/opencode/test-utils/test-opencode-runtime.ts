@@ -47,6 +47,7 @@ export class TestOpenCodeClient {
     appAgents: [] as unknown[],
     commandList: [] as unknown[],
     eventSubscribe: [] as unknown[],
+    experimentalSessionList: [] as unknown[],
     globalEvent: [] as unknown[],
     permissionReply: [] as unknown[],
     providerList: [] as unknown[],
@@ -65,6 +66,7 @@ export class TestOpenCodeClient {
   appAgentsResponse: OpenCodeResponse = { data: [] };
   commandListResponse: OpenCodeResponse = { data: [] };
   eventStream: AsyncIterable<unknown> = createEventStream([idleEvent()]);
+  experimentalSessionListResponse: OpenCodeResponse = { data: [] };
   permissionReplyResponse: OpenCodeResponse = {};
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
   providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
@@ -98,6 +100,14 @@ export class TestOpenCodeClient {
         subscribe: async (parameters: unknown, options: unknown) => {
           this.calls.eventSubscribe.push({ parameters, options });
           return { stream: this.eventStream };
+        },
+      },
+      experimental: {
+        session: {
+          list: async (parameters: unknown) => {
+            this.calls.experimentalSessionList.push(parameters);
+            return this.experimentalSessionListResponse;
+          },
         },
       },
       global: {

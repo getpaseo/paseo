@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -12,6 +12,10 @@ import {
   translateOpenCodeEvent,
 } from "./opencode-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
+import {
+  TestOpenCodeClient,
+  TestOpenCodeRuntime,
+} from "./opencode/test-utils/test-opencode-runtime.js";
 import type {
   AgentSessionConfig,
   AgentStreamEvent,
@@ -1155,58 +1159,104 @@ describe("OpenCode adapter startTurn error handling", () => {
 
 describe("OpenCode persisted sessions", () => {
   test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
-    const storageRoot = mkdtempSync(path.join(os.tmpdir(), "opencode-storage-"));
-    const cwd = path.join(storageRoot, "repo");
-    const otherCwd = path.join(storageRoot, "other");
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    const cwd = "/workspace/repo";
+    const otherCwd = "/workspace/other";
 
-    writeOpenCodeJson(storageRoot, "session/project-1/ses_old.json", {
-      id: "ses_old",
-      directory: cwd,
-      title: "Old session",
-      time: { created: 1000, updated: 1000 },
-    });
-    writeOpenCodeJson(storageRoot, "session/project-1/ses_new.json", {
-      id: "ses_new",
-      directory: cwd,
-      title: "New session",
-      time: { created: 2000, updated: 3000 },
-    });
-    writeOpenCodeJson(storageRoot, "session/project-2/ses_other.json", {
-      id: "ses_other",
-      directory: otherCwd,
-      title: "Other cwd",
-      time: { created: 4000, updated: 4000 },
-    });
-    writeOpenCodeJson(storageRoot, "message/ses_new/msg_user.json", {
-      id: "msg_user",
-      sessionID: "ses_new",
-      role: "user",
-      time: { created: 2100 },
-    });
-    writeOpenCodeJson(storageRoot, "part/msg_user/prt_user.json", {
-      id: "prt_user",
-      sessionID: "ses_new",
-      messageID: "msg_user",
-      type: "text",
-      text: "hello world",
-      time: { start: 2100 },
-    });
-    writeOpenCodeJson(storageRoot, "message/ses_new/msg_assistant.json", {
-      id: "msg_assistant",
-      sessionID: "ses_new",
-      role: "assistant",
-      time: { created: 2200 },
-    });
-    writeOpenCodeJson(storageRoot, "part/msg_assistant/prt_assistant.json", {
-      id: "prt_assistant",
-      sessionID: "ses_new",
-      messageID: "msg_assistant",
-      type: "text",
-      text: "hello back",
-      time: { start: 2200 },
-    });
+    openCodeClient.experimentalSessionListResponse = {
+      data: [
+        {
+          id: "ses_old",
+          directory: cwd,
+          title: "Old session",
+          time: { created: 1000, updated: 1000 },
+        },
+        {
+          id: "ses_new",
+          directory: cwd,
+          title: "New session",
+          time: { created: 2000, updated: 3000 },
+        },
+        {
+          id: "ses_other",
+          directory: otherCwd,
+          title: "Other cwd",
+          time: { created: 4000, updated: 4000 },
+        },
+      ],
+    };
+    openCodeClient.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_user",
+            sessionID: "ses_new",
+            role: "user",
+            time: { created: 2100 },
+            agent: "build",
+            model: { providerID: "opencode", modelID: "big-pickle" },
+          },
+          parts: [
+            {
+              id: "prt_user",
+              sessionID: "ses_new",
+              messageID: "msg_user",
+              type: "text",
+              text: "hello world",
+              time: { start: 2100 },
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg_assistant",
+            sessionID: "ses_new",
+            role: "assistant",
+            time: { created: 2200, completed: 2400 },
+            structured: { fallback: false },
+            agent: "build",
+            providerID: "opencode",
+            modelID: "big-pickle",
+          },
+          parts: [
+            {
+              id: "prt_reasoning",
+              sessionID: "ses_new",
+              messageID: "msg_assistant",
+              type: "reasoning",
+              text: "thinking clearly",
+              time: { start: 2200 },
+            },
+            {
+              id: "prt_tool",
+              sessionID: "ses_new",
+              messageID: "msg_assistant",
+              type: "tool",
+              tool: "bash",
+              callID: "call_shell",
+              state: {
+                status: "completed",
+                input: { command: "echo hello" },
+                output: "hello\n",
+              },
+              time: { start: 2250, end: 2300 },
+            },
+            {
+              id: "prt_assistant",
+              sessionID: "ses_new",
+              messageID: "msg_assistant",
+              type: "text",
+              text: "hello back",
+              time: { start: 2350 },
+            },
+          ],
+        },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, storageRoot);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const descriptors = await client.listPersistedAgents({ cwd, limit: 1 });
 
     expect(descriptors).toHaveLength(1);
@@ -1219,23 +1269,32 @@ describe("OpenCode persisted sessions", () => {
         provider: "opencode",
         sessionId: "ses_new",
         nativeHandle: "ses_new",
+        metadata: {
+          modeId: "build",
+          model: "opencode/big-pickle",
+        },
       },
     });
     expect(descriptors[0]?.lastActivityAt.toISOString()).toBe("1970-01-01T00:00:03.000Z");
     expect(descriptors[0]?.timeline).toEqual([
       { type: "user_message", text: "hello world", messageId: "msg_user" },
+      { type: "reasoning", text: "thinking clearly" },
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "call_shell",
+        status: "completed",
+      }),
       { type: "assistant_message", text: "hello back" },
     ]);
-
-    rmSync(storageRoot, { recursive: true, force: true });
+    expect(runtime.clientCreations).toEqual([{ baseUrl: runtime.server.url, directory: cwd }]);
+    expect(openCodeClient.calls.experimentalSessionList).toEqual([
+      { directory: cwd, archived: true, roots: true, limit: 1 },
+    ]);
+    expect(openCodeClient.calls.sessionMessages).toEqual([
+      { sessionID: "ses_new", directory: cwd },
+    ]);
   });
 });
-
-function writeOpenCodeJson(storageRoot: string, relativePath: string, value: unknown): void {
-  const filePath = path.join(storageRoot, relativePath);
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, JSON.stringify(value), "utf8");
-}
 
 function createTestDeferred<T>(): {
   promise: Promise<T>;

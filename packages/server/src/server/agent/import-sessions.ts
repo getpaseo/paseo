@@ -146,7 +146,9 @@ export async function importProviderSession(
   input: ImportProviderSessionInput,
 ): Promise<ImportProviderSessionResult> {
   const { provider, providerHandleId, cwd, labels } = input.request;
-  const descriptor = await input.agentManager.findPersistedAgent(provider, providerHandleId);
+  const descriptor = await input.agentManager.findPersistedAgent(provider, providerHandleId, {
+    cwd,
+  });
   if (!descriptor && provider === "opencode" && !cwd) {
     throw new Error(
       "OpenCode sessions require --cwd when the session cannot be found in persisted agents",

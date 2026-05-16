@@ -374,6 +374,7 @@ test("importProviderSession resumes by provider handle, hydrates the timeline, a
   expect(agentManager.findPersistedAgent).toHaveBeenCalledWith(
     "custom-codex",
     "provider-thread-imported",
+    { cwd },
   );
   expect(agentManager.resumeAgentFromPersistence).toHaveBeenCalledWith(
     descriptor.persistence,
