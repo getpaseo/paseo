@@ -1,0 +1,43 @@
+{
+  "name": "@getpaseo/client",
+  "version": "0.1.82",
+  "private": true,
+  "description": "Private Paseo client SDK package",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./dist/client/src/index.js"
+    },
+    "./internal/daemon-client": {
+      "types": "./src/daemon-client.ts",
+      "source": "./src/daemon-client.ts",
+      "default": "./dist/client/src/daemon-client.js"
+    },
+    "./internal/daemon-client-transport-types": {
+      "types": "./src/daemon-client-transport-types.ts",
+      "source": "./src/daemon-client-transport-types.ts",
+      "default": "./dist/client/src/daemon-client-transport-types.js"
+    }
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
+    "prepack": "npm run build",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@getpaseo/relay": "0.1.82",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "typescript": "^5.2.2",
+    "vitest": "^4.1.6"
+  }
+}

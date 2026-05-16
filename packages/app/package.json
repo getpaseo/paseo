@@ -33,6 +33,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@floating-ui/react-native": "^0.10.7",
+    "@getpaseo/client": "*",
     "@getpaseo/expo-two-way-audio": "*",
     "@getpaseo/highlight": "*",
     "@gorhom/bottom-sheet": "^5.2.14",

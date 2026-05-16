@@ -119,12 +119,12 @@ The fastest way to keep this consistent is to rebuild the whole daemon stack wit
 npm run build:daemon
 ```
 
-This rebuilds, in order, `@getpaseo/highlight` → `@getpaseo/relay` → `@getpaseo/server` → `@getpaseo/cli`. Use it whenever you have changed any of those four and need clean cross-package types or runtime behavior.
+This rebuilds, in order, `@getpaseo/highlight` → `@getpaseo/relay` → `@getpaseo/client` → `@getpaseo/server` → `@getpaseo/cli`. Use it whenever you have changed any of those packages and need clean cross-package types or runtime behavior.
 
 For tighter loops, you can rebuild a single workspace:
 
 - Changed `packages/relay/src/*`: `npm run build --workspace=@getpaseo/relay` (server imports `@getpaseo/relay` from `dist/*`).
-- Changed `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types: `npm run build --workspace=@getpaseo/server` (CLI imports `@getpaseo/server` via package exports resolving to `dist/*`).
+- Changed `packages/client/src/*` (especially `daemon-client.ts`) or shared WS protocol types: `npm run build --workspace=@getpaseo/client` then `npm run build --workspace=@getpaseo/server` (CLI imports `@getpaseo/server` via package exports resolving to `dist/*`).
 - Changed `packages/highlight/src/*`: `npm run build --workspace=@getpaseo/highlight` (server depends on it).
 
 ## CLI reference

@@ -4,8 +4,8 @@ import {
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
   type TerminalStreamFrame,
-} from "../shared/binary-frames/index.js";
-import type { TerminalInput, TerminalState } from "../shared/messages.js";
+} from "../../server/src/shared/binary-frames/index.js";
+import type { TerminalInput, TerminalState } from "../../server/src/shared/messages.js";
 
 export type TerminalStreamEvent =
   | { terminalId: string; type: "output"; data: Uint8Array }

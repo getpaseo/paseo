@@ -6,12 +6,11 @@ import {
   normalizeHostPort,
   parseConnectionUri,
   parseConnectionOfferFromUrl,
-  DaemonClient,
   resolvePaseoHome,
   shouldUseTlsForDefaultHostedRelay,
   type ConnectionOffer,
-  type WebSocketLike,
 } from "@getpaseo/server";
+import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";

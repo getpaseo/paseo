@@ -1,7 +1,10 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
-import { encodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
+import {
+  encodeFileTransferFrame,
+  FileTransferOpcode,
+} from "../../server/src/shared/binary-frames/index.js";
 import {
   asUint8Array,
   decodeTerminalResizePayload,
@@ -9,7 +12,7 @@ import {
   encodeTerminalSnapshotPayload,
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
-} from "../shared/terminal-stream-protocol.js";
+} from "../../server/src/shared/terminal-stream-protocol.js";
 
 expectTypeOf<"getGitDiff" extends keyof DaemonClient ? true : false>().toEqualTypeOf<false>();
 expectTypeOf<

@@ -1,4 +1,4 @@
-import type { SessionOutboundMessage } from "../shared/messages.js";
+import type { SessionOutboundMessage } from "../../server/src/shared/messages.js";
 
 interface RuntimeMetricsLogger {
   info(obj: object, msg?: string): void;
