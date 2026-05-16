@@ -16,7 +16,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import {
@@ -58,6 +58,7 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { getModeVisuals, type AgentModeColorTier } from "@server/server/agent/provider-manifest";
+import type { Theme } from "@/styles/theme";
 import {
   getFeatureHighlightColor,
   getFeatureTooltip,
@@ -182,6 +183,21 @@ const MODE_ICONS = {
   ShieldAlert,
   ShieldOff,
   ShieldQuestionMark,
+} as const;
+const ThemedShieldCheck = withUnistyles(ShieldCheck);
+const ThemedShieldAlert = withUnistyles(ShieldAlert);
+const ThemedShieldOff = withUnistyles(ShieldOff);
+const ThemedShieldQuestionMark = withUnistyles(ShieldQuestionMark);
+
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+
+const MODE_MENU_LEADING_ICONS = {
+  ShieldCheck: <ThemedShieldCheck size={16} uniProps={foregroundColorMapping} />,
+  ShieldAlert: <ThemedShieldAlert size={16} uniProps={foregroundColorMapping} />,
+  ShieldOff: <ThemedShieldOff size={16} uniProps={foregroundColorMapping} />,
+  ShieldQuestionMark: <ThemedShieldQuestionMark size={16} uniProps={foregroundColorMapping} />,
 } as const;
 
 function alwaysTrue() {
@@ -1606,18 +1622,11 @@ function ModeMenuItem({
   selected: boolean;
   onSelectMode?: (modeId: string) => void;
 }) {
-  const { theme } = useUnistyles();
   const visuals = getModeVisuals(provider, mode.id, providerDefinitions);
-  const Icon = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
-
+  const leadingIcon = visuals?.icon ? MODE_MENU_LEADING_ICONS[visuals.icon] : null;
   const handleSelect = useCallback(() => {
     onSelectMode?.(mode.id);
   }, [mode.id, onSelectMode]);
-
-  const leadingIcon = useMemo(
-    () => <Icon size={16} color={theme.colors.foreground} />,
-    [Icon, theme.colors.foreground],
-  );
 
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leadingIcon}>
