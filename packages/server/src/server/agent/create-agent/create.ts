@@ -25,10 +25,7 @@ import type {
 import type { AgentStorage } from "../agent-storage.js";
 import { getAgentProviderDefinition } from "../provider-manifest.js";
 import type { ProviderDefinition } from "../provider-registry.js";
-import {
-  setupFinishNotification,
-  startCreatedAgentInitialPrompt,
-} from "../agent-prompt.js";
+import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveAndValidateCreateAgentMode } from "../create-agent-mode.js";
 import { resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
@@ -612,4 +609,3 @@ function isParentInUnattendedMode(
   }
   return modes.some((mode) => mode.id === modeId && mode.isUnattended === true);
 }
-

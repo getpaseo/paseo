@@ -13,18 +13,14 @@ export interface LifecycleAgentManager {
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
   closeAgent(agentId: string): Promise<void>;
-  updateAgentMetadata(
-    agentId: string,
-    updates: {
-      title?: string;
-      labels?: Record<string, string>;
-    },
-  ): Promise<void>;
+  setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
+  notifyAgentState(agentId: string): void;
   setAgentMode(agentId: string, modeId: string): Promise<void>;
 }
 
 export interface LifecycleAgentStorage {
   get(agentId: string): Promise<StoredAgentRecord | null>;
+  upsert(record: StoredAgentRecord): Promise<void>;
 }
 
 export interface AgentLifecycleCommandDependencies {
@@ -129,7 +125,7 @@ export interface UpdateAgentResult {
 }
 
 export async function updateAgentCommand(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
   input: {
     agentId: string;
     name?: string;
@@ -146,10 +142,22 @@ export async function updateAgentCommand(
     };
   }
 
-  await dependencies.agentManager.updateAgentMetadata(input.agentId, {
-    ...(title ? { title } : {}),
-    ...(labels ? { labels } : {}),
-  });
+  if (title) {
+    const record = await dependencies.agentStorage.get(input.agentId);
+    if (!record) {
+      throw new Error(`Agent ${input.agentId} not found`);
+    }
+    await dependencies.agentStorage.upsert({
+      ...record,
+      title,
+      updatedAt: new Date().toISOString(),
+    });
+    dependencies.agentManager.notifyAgentState(input.agentId);
+  }
+
+  if (labels) {
+    await dependencies.agentManager.setLabels(input.agentId, labels);
+  }
 
   return {
     accepted: true,

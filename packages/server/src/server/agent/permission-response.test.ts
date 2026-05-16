@@ -36,6 +36,10 @@ class FakePermissionAgentManager {
     return this.outOfBandHandled;
   }
 
+  getAgent() {
+    return undefined;
+  }
+
   hasInFlightRun(): boolean {
     return this.hasRunInFlight;
   }

@@ -1437,7 +1437,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       }
 
       const metadataResult = await updateAgentCommand(
-        { agentManager },
+        { agentManager, agentStorage },
         { agentId, name, labels },
       );
 

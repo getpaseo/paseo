@@ -14,9 +14,15 @@ import {
 
 class FakeLifecycleAgentStorage implements LifecycleAgentStorage {
   readonly records = new Map<string, StoredAgentRecord>();
+  readonly upserts: StoredAgentRecord[] = [];
 
   async get(agentId: string): Promise<StoredAgentRecord | null> {
     return this.records.get(agentId) ?? null;
+  }
+
+  async upsert(record: StoredAgentRecord): Promise<void> {
+    this.upserts.push(record);
+    this.records.set(record.id, record);
   }
 }
 
@@ -26,10 +32,8 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
   readonly clearedAttentionAgentIds: string[] = [];
   readonly archivedAgentIds: string[] = [];
   readonly closedAgentIds: string[] = [];
-  readonly metadataUpdates: Array<{
-    agentId: string;
-    updates: { title?: string; labels?: Record<string, string> };
-  }> = [];
+  readonly labelUpdates: Array<{ agentId: string; labels: Record<string, string> }> = [];
+  readonly notifiedAgentIds: string[] = [];
   readonly modeUpdates: Array<{ agentId: string; modeId: string }> = [];
   inFlightAgentIds = new Set<string>();
 
@@ -82,11 +86,12 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     this.liveAgents.delete(agentId);
   }
 
-  async updateAgentMetadata(
-    agentId: string,
-    updates: { title?: string; labels?: Record<string, string> },
-  ): Promise<void> {
-    this.metadataUpdates.push({ agentId, updates });
+  async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
+    this.labelUpdates.push({ agentId, labels });
+  }
+
+  notifyAgentState(agentId: string): void {
+    this.notifiedAgentIds.push(agentId);
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
@@ -155,11 +160,12 @@ describe("agent lifecycle commands", () => {
 
   test("normalizes metadata updates and rejects empty updates", async () => {
     const storage = new FakeLifecycleAgentStorage();
+    storage.records.set("agent-1", storedAgent("agent-1"));
     const manager = new FakeLifecycleAgentManager(storage);
 
     await expect(
       updateAgentCommand(
-        { agentManager: manager },
+        { agentManager: manager, agentStorage: storage },
         {
           agentId: "agent-1",
           name: "  Renamed agent  ",
@@ -168,21 +174,22 @@ describe("agent lifecycle commands", () => {
       ),
     ).resolves.toEqual({ accepted: true, error: null });
     await expect(
-      updateAgentCommand({ agentManager: manager }, { agentId: "agent-1", name: "   " }),
+      updateAgentCommand(
+        { agentManager: manager, agentStorage: storage },
+        { agentId: "agent-1", name: "   " },
+      ),
     ).resolves.toEqual({
       accepted: false,
       error: "Nothing to update (provide name and/or labels)",
     });
 
-    expect(manager.metadataUpdates).toEqual([
-      {
-        agentId: "agent-1",
-        updates: {
-          title: "Renamed agent",
-          labels: { team: "infra" },
-        },
-      },
-    ]);
+    expect(storage.upserts).toHaveLength(1);
+    expect(storage.upserts[0]).toMatchObject({
+      id: "agent-1",
+      title: "Renamed agent",
+    });
+    expect(manager.notifiedAgentIds).toEqual(["agent-1"]);
+    expect(manager.labelUpdates).toEqual([{ agentId: "agent-1", labels: { team: "infra" } }]);
   });
 
   test("sets an agent mode and returns the accepted mode", async () => {

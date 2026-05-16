@@ -560,6 +560,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
       id: "mode-agent",
+      provider: "codex",
       cwd: REPO_CWD,
       lifecycle: "idle",
       currentModeId: "build",
@@ -1308,6 +1309,8 @@ describe("create_agent MCP tool", () => {
 
       const workspaceGitService = {
         getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
+        resolveRepoRoot: vi.fn(async () => repoDir),
       };
       const server = await createAgentMcpServer({
         agentManager,
@@ -1316,7 +1319,7 @@ describe("create_agent MCP tool", () => {
         createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
-          "getSnapshot" | "listWorktrees"
+          "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
         archiveWorkspaceRecord: vi.fn(async () => undefined),
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
@@ -1342,6 +1345,11 @@ describe("create_agent MCP tool", () => {
       expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
         force: true,
         reason: "archive-worktree",
+      });
+      expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(repoDir);
+      expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "mcp:archive-worktree",
       });
       await expect(
         access(z.string().parse(created.structuredContent.worktreePath)),
