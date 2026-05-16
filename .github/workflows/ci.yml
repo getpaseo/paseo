@@ -12,6 +12,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # CI does not use the CUDA execution provider, and the onnxruntime-node
+  # postinstall download from NuGet is large enough to make npm ci flaky.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   format:
     runs-on: ubuntu-latest
