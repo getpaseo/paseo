@@ -98,13 +98,19 @@ export function useComposerHeightMirror({
 
   useLayoutEffect(() => {
     measure();
-  }, [value, measure]);
+  }, [maxHeight, minHeight, value, measure]);
 
   useEffect(() => {
     const source = textareaRef.current;
     if (!source || !(source instanceof HTMLElement)) return;
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => measure());
+    let previousWidth = source.clientWidth;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = source.clientWidth;
+      if (Math.abs(nextWidth - previousWidth) < 1) return;
+      previousWidth = nextWidth;
+      measure();
+    });
     observer.observe(source);
     return () => observer.disconnect();
   }, [textareaRef, measure]);

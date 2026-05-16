@@ -3,6 +3,7 @@ import {
   Text,
   TextInput,
   ActivityIndicator,
+  useWindowDimensions,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
   TextInputKeyPressEventData,
@@ -144,7 +145,8 @@ export interface MessageInputRef {
 
 const MIN_INPUT_HEIGHT_MOBILE = 30;
 const MIN_INPUT_HEIGHT_DESKTOP = 46;
-const MAX_INPUT_HEIGHT = 160;
+const DEFAULT_MAX_INPUT_HEIGHT = 160;
+const MAX_INPUT_VIEWPORT_RATIO = 0.5;
 const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
@@ -983,17 +985,22 @@ function computeIsDictationStartEnabled(
   return (isReadyForDictation ?? isConnected) && !disabled;
 }
 
-function computeTextInputHeightStyle(inputHeight: number) {
+function resolveMaxInputHeight(windowHeight: number): number {
+  if (!Number.isFinite(windowHeight) || windowHeight <= 0) return DEFAULT_MAX_INPUT_HEIGHT;
+  return Math.max(DEFAULT_MAX_INPUT_HEIGHT, Math.floor(windowHeight * MAX_INPUT_VIEWPORT_RATIO));
+}
+
+function computeTextInputHeightStyle(inputHeight: number, maxInputHeight: number) {
   if (isWeb) {
     return {
       height: inputHeight,
       minHeight: MIN_INPUT_HEIGHT,
-      maxHeight: MAX_INPUT_HEIGHT,
+      maxHeight: maxInputHeight,
     };
   }
   return {
     minHeight: MIN_INPUT_HEIGHT,
-    maxHeight: MAX_INPUT_HEIGHT,
+    maxHeight: maxInputHeight,
   };
 }
 
@@ -1191,6 +1198,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentSlot,
     } = resolveMessageInputProps(props);
     const isCompact = useIsCompactFormFactor();
+    const { height: windowHeight } = useWindowDimensions();
+    const maxInputHeight = resolveMaxInputHeight(windowHeight);
     const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
     const toast = useToast();
     const voice = useVoiceOptional();
@@ -1522,7 +1531,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [getWebTextArea]);
 
     const inputScrollbar = useWebElementScrollbar(webTextareaRef, {
-      enabled: isWeb && inputHeight >= MAX_INPUT_HEIGHT,
+      enabled: isWeb,
     });
 
     usePasteImagesEffect({
@@ -1536,20 +1545,24 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const setBoundedInputHeight = useCallback(
       (nextHeight: number) => {
-        const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, nextHeight));
+        const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(maxInputHeight, nextHeight));
         if (Math.abs(inputHeightRef.current - bounded) < 1) return;
         inputHeightRef.current = bounded;
         setInputHeight(bounded);
         onHeightChange?.(bounded);
       },
-      [onHeightChange],
+      [maxInputHeight, onHeightChange],
     );
+
+    useEffect(() => {
+      setBoundedInputHeight(inputHeightRef.current);
+    }, [setBoundedInputHeight]);
 
     useComposerHeightMirror({
       value,
       textareaRef: webTextareaRef,
       minHeight: MIN_INPUT_HEIGHT,
-      maxHeight: MAX_INPUT_HEIGHT,
+      maxHeight: maxInputHeight,
       onHeight: setBoundedInputHeight,
     });
 
@@ -1674,8 +1687,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [inputWrapperStyle, inputAnimatedStyle],
     );
     const textInputStyle = useMemo(
-      () => [styles.textInput, computeTextInputHeightStyle(inputHeight)],
-      [inputHeight],
+      () => [styles.textInput, computeTextInputHeightStyle(inputHeight, maxInputHeight)],
+      [inputHeight, maxInputHeight],
     );
     const sendButtonCombinedStyle = useMemo(
       () => [styles.sendButton, isSendButtonDisabled && styles.buttonDisabled],
@@ -1727,7 +1740,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               onBlur={handleInputBlur}
               style={textInputStyle}
               multiline
-              scrollEnabled={isWeb ? inputHeight >= MAX_INPUT_HEIGHT : true}
+              scrollEnabled={isWeb ? inputHeight >= maxInputHeight : true}
               onContentSizeChange={handleContentSizeChange}
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
               onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
