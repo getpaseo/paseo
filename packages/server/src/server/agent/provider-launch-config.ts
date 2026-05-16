@@ -5,19 +5,23 @@ export {
   AgentProviderRuntimeSettingsMapSchema,
   ProviderCommandSchema,
   ProviderOverrideSchema,
+  ProviderOverridesSchema,
   ProviderProfileModelSchema,
   ProviderRuntimeSettingsSchema,
   type AgentProviderRuntimeSettingsMap,
   type ProviderCommand,
   type ProviderOverride,
+  type ProviderOverrides,
   type ProviderProfileModel,
   type ProviderRuntimeSettings,
 } from "@getpaseo/protocol/provider-config";
 import {
   ProviderOverrideSchema,
+  ProviderOverridesSchema,
   ProviderRuntimeSettingsSchema,
   type ProviderCommand,
   type ProviderOverride,
+  type ProviderOverrides,
   type ProviderRuntimeSettings,
 } from "@getpaseo/protocol/provider-config";
 
@@ -157,7 +161,7 @@ export function resolveShellEnv(): Record<string, string> {
 export function migrateProviderSettings(
   raw: Record<string, unknown>,
   builtinProviderIds: string[],
-): Record<string, ProviderOverride> {
+): ProviderOverrides {
   const migrated: Record<string, ProviderOverride> = {};
   const builtinProviderIdSet = new Set(builtinProviderIds);
 
@@ -190,7 +194,7 @@ export function migrateProviderSettings(
     migrated[providerId] = nextEntry;
   }
 
-  return migrated;
+  return ProviderOverridesSchema.parse(migrated);
 }
 
 // Env vars that indicate a running Claude Code session. If the daemon itself is
