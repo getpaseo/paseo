@@ -1,12 +1,9 @@
 import { z } from "zod";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
-import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
-import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
-import {
-  normalizeAgentModelDefinition,
-  TOOL_CALL_ICON_NAMES,
-} from "../server/agent/agent-sdk-types.js";
+import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
+import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
+import { normalizeAgentModelDefinition, TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -22,7 +19,7 @@ import {
   ChatPostResponseSchema,
   ChatReadResponseSchema,
   ChatWaitResponseSchema,
-} from "../server/chat/chat-rpc-schemas.js";
+} from "./chat/rpc-schemas.js";
 import {
   ScheduleCreateRequestSchema,
   ScheduleListRequestSchema,
@@ -42,7 +39,7 @@ import {
   ScheduleDeleteResponseSchema,
   ScheduleRunOnceResponseSchema,
   ScheduleUpdateResponseSchema,
-} from "../server/schedule/rpc-schemas.js";
+} from "@getpaseo/protocol/schedule/rpc-schemas";
 import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
@@ -54,7 +51,7 @@ import {
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
-} from "../server/loop/rpc-schemas.js";
+} from "@getpaseo/protocol/loop/rpc-schemas";
 import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -70,7 +67,7 @@ import {
   type PaseoMetadataGenerationEntry,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
-} from "../utils/paseo-config-schema.js";
+} from "@getpaseo/protocol/paseo-config-schema";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -146,7 +143,7 @@ import type {
   ToolCallDetail,
   ToolCallTimelineItem,
   AgentUsage,
-} from "../server/agent/agent-sdk-types.js";
+} from "./agent-types.js";
 
 export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
 

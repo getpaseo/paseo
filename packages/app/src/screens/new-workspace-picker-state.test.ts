@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
-import type { GitHubSearchItem } from "@server/shared/messages";
+import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
 import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
 
 function makePrItem(number: number, title: string, headRefName = "feature/x"): GitHubSearchItem {

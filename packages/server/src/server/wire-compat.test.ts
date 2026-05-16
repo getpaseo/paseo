@@ -2,17 +2,17 @@ import pino from "pino";
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
 
-import { CLIENT_CAPS } from "./client-capabilities.js";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
   type SessionOutboundMessage,
-} from "./messages.js";
-import { Session, type SessionOptions } from "../server/session.js";
-import type { AgentTimelineRow } from "../server/agent/agent-manager.js";
-import { handleCreatePaseoWorktreeRequest } from "../server/worktree-session.js";
+} from "@getpaseo/protocol/messages";
+import { Session, type SessionOptions } from "./session.js";
+import type { AgentTimelineRow } from "./agent/agent-manager.js";
+import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
 
 const LegacyTimelineEntryPayloadSchema = z.object({
   provider: z.enum(["claude", "codex", "opencode"]),

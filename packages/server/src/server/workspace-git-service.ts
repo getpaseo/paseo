@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pLimit from "p-limit";
 import type pino from "pino";
-import type { ProjectCheckoutLitePayload } from "../shared/messages.js";
+import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type { CheckoutContext } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,

@@ -1,4 +1,4 @@
-import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
+import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
 
 export type AttachmentStorageType = "web-indexeddb" | "desktop-file" | "native-file";
 

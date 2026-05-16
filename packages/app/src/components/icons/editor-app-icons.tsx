@@ -5,7 +5,7 @@ import {
   isKnownEditorTargetId,
   type EditorTargetId,
   type KnownEditorTargetId,
-} from "@server/shared/messages";
+} from "@getpaseo/protocol/messages";
 
 interface EditorAppIconProps {
   editorId: EditorTargetId;

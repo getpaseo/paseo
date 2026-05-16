@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, type Page } from "@playwright/test";
-import type { DaemonClient as ServerDaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient as ServerDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { expectWorkspaceHeader, workspaceLabelFromPath } from "./workspace-ui";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";

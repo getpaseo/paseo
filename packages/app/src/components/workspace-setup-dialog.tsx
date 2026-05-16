@@ -16,7 +16,10 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
-import type { CreateAgentRequestOptions, DaemonClient } from "@server/client/daemon-client";
+import type {
+  CreateAgentRequestOptions,
+  DaemonClient,
+} from "@getpaseo/client/internal/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceExecutionAuthority } from "@/utils/workspace-execution";
 import { navigateToAgent } from "@/utils/navigate-to-agent";

@@ -31,9 +31,9 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload } from "@/composer/types";
-import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
-import type { CreatePaseoWorktreeInput } from "@server/client/daemon-client";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
+import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
   pickerItemToCheckoutRequest,

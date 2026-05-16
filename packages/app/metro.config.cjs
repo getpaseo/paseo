@@ -6,7 +6,6 @@ const path = require("path");
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
-const serverSrcRoot = path.resolve(projectRoot, "../server/src");
 const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
 const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .trim()
@@ -68,11 +67,7 @@ function resolveWithCustomWebOverlay(context, moduleName, platform) {
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const origin = context.originModulePath;
-  if (
-    origin &&
-    (origin.startsWith(serverSrcRoot) || origin.startsWith(relaySrcRoot)) &&
-    moduleName.endsWith(".js")
-  ) {
+  if (origin && origin.startsWith(relaySrcRoot) && moduleName.endsWith(".js")) {
     const tsModuleName = moduleName.replace(/\.js$/, ".ts");
     const candidatePath = path.resolve(path.dirname(origin), tsModuleName);
     if (fs.existsSync(candidatePath)) {

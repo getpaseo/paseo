@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
 import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
-import type { PersistenceHandle } from "../../shared/messages.js";
+import type { PersistenceHandle } from "@getpaseo/protocol/messages";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "two-cycle-resume-"));

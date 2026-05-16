@@ -13,13 +13,16 @@ import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { AgentListItemPayloadSchema, AgentSnapshotPayloadSchema } from "../../shared/messages.js";
+import {
+  AgentListItemPayloadSchema,
+  AgentSnapshotPayloadSchema,
+} from "@getpaseo/protocol/messages";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type {
   CreateScheduleInput,
   StoredSchedule,
   UpdateScheduleInput,
-} from "../schedule/types.js";
+} from "@getpaseo/protocol/schedule/types";
 import type { ScheduleService } from "../schedule/service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
@@ -30,7 +33,7 @@ import type { CreatePaseoWorktreeWorkflowFn } from "../worktree-session.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");

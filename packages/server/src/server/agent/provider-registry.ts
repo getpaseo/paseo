@@ -38,7 +38,7 @@ import {
   DEV_AGENT_PROVIDER_DEFINITIONS,
   getAgentProviderDefinition,
   type AgentProviderDefinition,
-} from "./provider-manifest.js";
+} from "@getpaseo/protocol/provider-manifest";
 
 function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
   return value.length > 0;
@@ -61,7 +61,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
 
-export { IMPORTABLE_PROVIDERS } from "../../shared/importable-providers.js";
+export { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
 
 export interface BuildProviderRegistryOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;

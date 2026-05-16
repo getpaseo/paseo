@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { act } from "@testing-library/react";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createRoot, type Root } from "react-dom/client";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";

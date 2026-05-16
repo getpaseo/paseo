@@ -75,6 +75,9 @@ jobs:
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
 
+      - name: Build protocol dependency
+        run: npm run build --workspace=@getpaseo/protocol
+
       - name: Build client dependency
         run: npm run build --workspace=@getpaseo/client
 
@@ -116,6 +119,9 @@ jobs:
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
 
+      - name: Build protocol dependency
+        run: npm run build --workspace=@getpaseo/protocol
+
       - name: Build client dependency
         run: npm run build --workspace=@getpaseo/client
 
@@ -149,6 +155,9 @@ jobs:
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
 
+      - name: Build protocol dependency
+        run: npm run build --workspace=@getpaseo/protocol
+
       - name: Build client dependency
         run: npm run build --workspace=@getpaseo/client
 
@@ -180,6 +189,9 @@ jobs:
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
 
+      - name: Build protocol dependency
+        run: npm run build --workspace=@getpaseo/protocol
+
       - name: Build client dependency
         run: npm run build --workspace=@getpaseo/client
 
@@ -207,6 +219,9 @@ jobs:
 
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build protocol dependency
+        run: npm run build --workspace=@getpaseo/protocol
 
       - name: Build client dependency
         run: npm run build --workspace=@getpaseo/client
@@ -277,6 +292,9 @@ jobs:
 
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build protocol dependency
+        run: npm run build --workspace=@getpaseo/protocol
 
       - name: Build client dependency
         run: npm run build --workspace=@getpaseo/client

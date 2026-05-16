@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
-import { IMPORTABLE_PROVIDERS } from "@server/shared/importable-providers";
+import type { DaemonClient, FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
 import { Inbox, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";

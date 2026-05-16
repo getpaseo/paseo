@@ -44,8 +44,9 @@ import {
   ScheduleRunSchema,
   ScheduleSummarySchema,
   StoredScheduleSchema,
-} from "../schedule/types.js";
-import type { ScheduleCadence, UpdateScheduleInput } from "../schedule/types.js";
+  type ScheduleCadence,
+  type UpdateScheduleInput,
+} from "@getpaseo/protocol/schedule/types";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { resolveSnapshotCwd } from "./provider-snapshot-manager.js";
 import {

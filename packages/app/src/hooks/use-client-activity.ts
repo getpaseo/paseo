@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { AppState } from "react-native";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
 import { getDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
 import { useStableEvent } from "@/hooks/use-stable-event";

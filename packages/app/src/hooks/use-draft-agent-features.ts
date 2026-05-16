@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { AgentProvider, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider, AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 import {

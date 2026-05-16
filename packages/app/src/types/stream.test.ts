@@ -14,9 +14,9 @@ import {
   type StreamItem,
   isAgentToolCallItem,
 } from "./stream";
-import type { AgentProvider, ToolCallDetail } from "@server/server/agent/agent-sdk-types";
-import type { AgentStreamEventPayload } from "@server/shared/messages";
-import { buildToolCallDisplayModel } from "../../../server/src/shared/tool-call-display";
+import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 

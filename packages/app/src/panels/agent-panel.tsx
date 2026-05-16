@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { SquarePen } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";

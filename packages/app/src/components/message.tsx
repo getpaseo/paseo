@@ -64,8 +64,8 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Fonts } from "@/constants/theme";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
-import type { AgentAttachment } from "@server/shared/messages";
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
@@ -101,7 +101,7 @@ import {
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";

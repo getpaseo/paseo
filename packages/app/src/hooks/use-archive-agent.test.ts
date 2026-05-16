@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import React from "react";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";

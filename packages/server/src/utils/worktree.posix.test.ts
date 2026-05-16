@@ -20,7 +20,7 @@ import {
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
-import type { PaseoConfig } from "./paseo-config-schema.js";
+import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execFileSync } from "child_process";
 import { isPlatform } from "../test-utils/platform.js";

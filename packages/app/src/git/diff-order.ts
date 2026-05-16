@@ -1,4 +1,4 @@
-import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
+import type { SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
 
 type ParsedDiffFile = SubscribeCheckoutDiffResponse["payload"]["files"][number];
 

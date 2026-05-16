@@ -1,6 +1,6 @@
 import os from "node:os";
 
-import { ConnectionOfferV2Schema, type ConnectionOffer } from "../shared/connection-offer.js";
+import { ConnectionOfferV2Schema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 
 interface BuildOfferEndpointsArgs {
   listenHost: string;

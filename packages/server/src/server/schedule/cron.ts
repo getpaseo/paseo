@@ -1,4 +1,4 @@
-import type { ScheduleCadence } from "./types.js";
+import type { ScheduleCadence } from "@getpaseo/protocol/schedule/types";
 
 interface CronFieldMatcher {
   matches(value: number): boolean;

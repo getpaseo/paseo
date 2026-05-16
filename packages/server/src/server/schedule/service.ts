@@ -7,7 +7,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
-import { getUnattendedModeId } from "../agent/provider-manifest.js";
+import { getUnattendedModeId } from "@getpaseo/protocol/provider-manifest";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -18,7 +18,7 @@ import type {
   StoredSchedule,
   UpdateScheduleInput,
   UpdateScheduleNewAgentConfig,
-} from "./types.js";
+} from "@getpaseo/protocol/schedule/types";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 

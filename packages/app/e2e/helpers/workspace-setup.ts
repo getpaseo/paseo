@@ -7,7 +7,7 @@ import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes
 import { gotoAppShell } from "./app";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
-import type { SessionOutboundMessage } from "@server/shared/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 interface WorkspaceSetupDaemonClient {
   connect(): Promise<void>;

@@ -168,7 +168,6 @@ packages/server/src/
 │       └── agent-storage.ts  # File-backed JSON persistence
 ├── providers/                 # Claude, Codex, Copilot, OpenCode, Pi adapters
 ├── relay-transport.ts        # Outbound relay connection
-└── client/daemon-client.ts   # Client library for daemon connection
 ```
 
 Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`  

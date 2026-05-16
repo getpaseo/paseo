@@ -15,8 +15,8 @@ import {
   decodeTerminalStreamFrame,
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
-} from "../shared/terminal-stream-protocol.js";
-import { CLIENT_CAPS } from "../shared/client-capabilities.js";
+} from "@getpaseo/protocol/terminal-stream-protocol";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 
 type SocketListener = (...args: unknown[]) => void;
 

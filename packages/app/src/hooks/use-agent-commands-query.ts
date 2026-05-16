@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
 const COMMANDS_STALE_TIME = 60_000; // Commands rarely change, cache for 1 minute
 

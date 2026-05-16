@@ -1,7 +1,7 @@
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
+import type { SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 

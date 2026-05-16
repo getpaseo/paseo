@@ -14,7 +14,7 @@ import type {
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
 import { execCommand, platformShell } from "../utils/spawn.js";
-import { getUnattendedModeId } from "./agent/provider-manifest.js";
+import { getUnattendedModeId } from "@getpaseo/protocol/provider-manifest";
 
 const LOOP_ID_LENGTH = 8;
 const DEFAULT_LOOP_PROVIDER: AgentProvider = "claude";

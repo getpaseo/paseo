@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
-import { stripCwdPrefix } from "../../../../shared/path-utils.js";
+import { stripCwdPrefix } from "@getpaseo/protocol/path-utils";
 import {
   ToolEditInputSchema,
   ToolEditOutputSchema,

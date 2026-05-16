@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
   normalizeWorkspaceDescriptor,

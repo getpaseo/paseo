@@ -11,7 +11,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CircleHelp, X } from "lucide-react-native";
 import type { PendingPermission } from "@/types/shared";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
 
 interface QuestionOption {

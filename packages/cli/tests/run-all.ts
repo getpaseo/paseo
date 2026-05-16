@@ -177,6 +177,7 @@ let failed = 0;
 const failures: Failure[] = [];
 
 await runCommand("Building relay", "npm run build --workspace=@getpaseo/relay");
+await runCommand("Building protocol", "npm run build --workspace=@getpaseo/protocol");
 await runCommand("Building client", "npm run build --workspace=@getpaseo/client");
 await runCommand("Building server", "npm run build --workspace=@getpaseo/server");
 await runCommand("Building CLI", "npm run build --workspace=@getpaseo/cli");

@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {

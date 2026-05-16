@@ -1,7 +1,7 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { CheckoutStatusResponse } from "@server/shared/messages";
+import type { CheckoutStatusResponse } from "@getpaseo/protocol/messages";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
 
 export const CHECKOUT_STATUS_STALE_TIME = 15_000;

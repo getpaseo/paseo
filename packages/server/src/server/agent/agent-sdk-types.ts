@@ -1,5 +1,5 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentAttachment } from "../../shared/messages.js";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 export type AgentProvider = string;
 

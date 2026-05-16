@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ChatMessageSchema, ChatRoomDetailSchema } from "./chat-types.js";
+import { ChatMessageSchema, ChatRoomDetailSchema } from "./types.js";
 
 export const ChatCreateRequestSchema = z.object({
   type: z.literal("chat/create"),

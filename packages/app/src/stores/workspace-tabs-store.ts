@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {

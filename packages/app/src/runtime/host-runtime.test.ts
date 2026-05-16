@@ -4,8 +4,8 @@ import type {
   ConnectionState,
   FetchAgentsEntry,
   FetchAgentsOptions,
-} from "@server/client/daemon-client";
-import type { ConnectionOffer } from "@server/shared/connection-offer";
+} from "@getpaseo/client/internal/daemon-client";
+import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import {

@@ -9,7 +9,7 @@ import {
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";

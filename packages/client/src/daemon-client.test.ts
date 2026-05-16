@@ -4,7 +4,7 @@ import { DaemonClient, type DaemonTransport } from "./daemon-client";
 import {
   encodeFileTransferFrame,
   FileTransferOpcode,
-} from "../../server/src/shared/binary-frames/index.js";
+} from "@getpaseo/protocol/binary-frames/index";
 import {
   asUint8Array,
   decodeTerminalResizePayload,
@@ -12,7 +12,7 @@ import {
   encodeTerminalSnapshotPayload,
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
-} from "../../server/src/shared/terminal-stream-protocol.js";
+} from "@getpaseo/protocol/terminal-stream-protocol";
 
 expectTypeOf<"getGitDiff" extends keyof DaemonClient ? true : false>().toEqualTypeOf<false>();
 expectTypeOf<

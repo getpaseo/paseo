@@ -4,8 +4,8 @@ import { stat } from "node:fs/promises";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
-} from "../../shared/agent-lifecycle.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+} from "@getpaseo/protocol/agent-lifecycle";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -53,7 +53,7 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
-import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";

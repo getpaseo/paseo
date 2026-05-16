@@ -25,6 +25,7 @@
   "dependencies": {
     "@clack/prompts": "^1.0.0",
     "@getpaseo/client": "0.1.83",
+    "@getpaseo/protocol": "0.1.83",
     "@getpaseo/server": "0.1.83",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { CheckoutPrStatusResponse } from "@server/shared/messages";
+import type { CheckoutPrStatusResponse } from "@getpaseo/protocol/messages";
 import { checkoutPrStatusQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutPrStatusQueryOptions {

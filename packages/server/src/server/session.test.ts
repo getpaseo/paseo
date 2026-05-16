@@ -6,8 +6,11 @@ import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import type { WorkspaceDescriptorPayload } from "../shared/messages.js";
-import { decodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
+import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import {
+  decodeFileTransferFrame,
+  FileTransferOpcode,
+} from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type {

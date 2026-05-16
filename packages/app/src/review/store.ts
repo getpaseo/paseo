@@ -6,7 +6,7 @@ import type { ComposerAttachment } from "@/attachments/types";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
-import type { AgentAttachment } from "@server/shared/messages";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 const STORE_VERSION = 1;
 const CONTEXT_RADIUS = 3;

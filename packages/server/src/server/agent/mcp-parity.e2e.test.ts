@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { AGENT_WAIT_TIMEOUT_MS } from "./mcp-shared.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 interface StructuredContent {
   [key: string]: unknown;

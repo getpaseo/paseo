@@ -8,11 +8,11 @@ import {
   buildWorkspaceScriptPayloads,
   createScriptStatusEmitter,
 } from "./script-status-projection.js";
-import { WorkspaceScriptPayloadSchema } from "../shared/messages.js";
+import { WorkspaceScriptPayloadSchema } from "@getpaseo/protocol/messages";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { readPaseoConfig } from "../utils/worktree.js";
-import type { PaseoConfig } from "../utils/paseo-config-schema.js";
+import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { createTestLogger } from "../test-utils/test-logger.js";
 
 function createWorkspaceRepo(options?: {

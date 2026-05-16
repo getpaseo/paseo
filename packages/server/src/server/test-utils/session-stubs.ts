@@ -3,7 +3,7 @@ import { vi } from "vitest";
 import type { ProviderSnapshotEntry } from "../agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "../session.js";
-import type { SessionOutboundMessage } from "../../shared/messages.js";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { asInternals, createStub } from "./class-mocks.js";
 
 // ---------------------------------------------------------------------------

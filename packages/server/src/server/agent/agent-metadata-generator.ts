@@ -8,7 +8,7 @@ import {
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
-import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import { MAX_AUTO_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import { buildMetadataPrompt } from "../../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 

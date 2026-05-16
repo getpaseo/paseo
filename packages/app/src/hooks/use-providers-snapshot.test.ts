@@ -6,8 +6,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { DaemonClient } from "@server/client/daemon-client";
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { useSessionStore } from "@/stores/session-store";
 import { providersSnapshotQueryKey, useProvidersSnapshot } from "./use-providers-snapshot";
 

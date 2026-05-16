@@ -1,5 +1,5 @@
-import type { DaemonClient } from "../../client/daemon-client.js";
-import type { SessionOutboundMessage } from "../../shared/messages.js";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 export interface MessageCollector {
   messages: SessionOutboundMessage[];

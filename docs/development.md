@@ -109,9 +109,11 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 }
 ```
 
-## Build sync gotchas
+## Built workspace packages
 
-The daemon and CLI consume sibling workspaces from compiled `dist/` output, not `src/`. When you change a workspace that something else imports, rebuild the producer first or the consumer will speak a stale protocol and fail with handshake warnings, timeouts, or stale type errors.
+Package imports resolve through package exports to compiled `dist/` output, not sibling `src/` files. This is true in local dev and in published packages: the app, daemon, CLI, and SDK consumers should all exercise the same runtime paths.
+
+`npm run dev`, `npm run dev:server`, and `npm run dev:app` build `@getpaseo/protocol` and `@getpaseo/client` once, then keep their `dist/` directories fresh with TypeScript watch builds while the daemon or Expo runs. If you change protocol schemas or client code outside those watch workflows, rebuild the producer before trusting runtime behavior.
 
 The fastest way to keep this consistent is to rebuild the whole daemon stack with one command:
 
@@ -119,12 +121,13 @@ The fastest way to keep this consistent is to rebuild the whole daemon stack wit
 npm run build:daemon
 ```
 
-This rebuilds, in order, `@getpaseo/highlight` → `@getpaseo/relay` → `@getpaseo/client` → `@getpaseo/server` → `@getpaseo/cli`. Use it whenever you have changed any of those packages and need clean cross-package types or runtime behavior.
+This rebuilds, in order, `@getpaseo/highlight` → `@getpaseo/relay` → `@getpaseo/protocol` → `@getpaseo/client` → `@getpaseo/server` → `@getpaseo/cli`. Use it whenever you have changed any of those packages and need clean cross-package types or runtime behavior.
 
 For tighter loops, you can rebuild a single workspace:
 
 - Changed `packages/relay/src/*`: `npm run build --workspace=@getpaseo/relay` (server imports `@getpaseo/relay` from `dist/*`).
-- Changed `packages/client/src/*` (especially `daemon-client.ts`) or shared WS protocol types: `npm run build --workspace=@getpaseo/client` then `npm run build --workspace=@getpaseo/server` (CLI imports `@getpaseo/server` via package exports resolving to `dist/*`).
+- Changed `packages/protocol/src/*`: `npm run build --workspace=@getpaseo/protocol` then rebuild dependents (`@getpaseo/client`, `@getpaseo/server`, and `@getpaseo/cli` as needed).
+- Changed `packages/client/src/*` (especially `daemon-client.ts`): `npm run build --workspace=@getpaseo/client` then `npm run build --workspace=@getpaseo/server` (CLI imports `@getpaseo/server` via package exports resolving to `dist/*`).
 - Changed `packages/highlight/src/*`: `npm run build --workspace=@getpaseo/highlight` (server depends on it).
 
 ## CLI reference

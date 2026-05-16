@@ -25,7 +25,7 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import { asUint8Array, decodeTerminalStreamFrame } from "../shared/binary-frames/index.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
@@ -49,7 +49,7 @@ import { computeNotificationPlan, type ClientPresenceState } from "./agent-atten
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
-} from "../shared/agent-attention-notification.js";
+} from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import {
   extractWsBearerProtocol,

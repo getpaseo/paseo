@@ -10,8 +10,8 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react-native";
-import type { ToolCallDetail, ToolCallIconName } from "@server/server/agent/agent-sdk-types";
-import { isPaseoToolName } from "@server/server/agent/tool-name-normalization";
+import type { ToolCallDetail, ToolCallIconName } from "@getpaseo/protocol/agent-types";
+import { isPaseoToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 
 export type ToolCallIconComponent = ComponentType<{ size?: number; color?: string }>;

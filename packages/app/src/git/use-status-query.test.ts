@@ -8,7 +8,7 @@ import {
   onlineManager,
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CheckoutStatusResponse } from "@server/shared/messages";
+import type { CheckoutStatusResponse } from "@getpaseo/protocol/messages";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
 import { useCheckoutStatusQuery } from "./use-status-query";
 

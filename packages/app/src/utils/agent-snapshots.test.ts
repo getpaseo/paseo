@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentSnapshotPayload } from "@server/shared/messages";
-import { PARENT_AGENT_ID_LABEL } from "@server/shared/agent-labels";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { normalizeAgentSnapshot } from "./agent-snapshots";
 
 function createSnapshot(

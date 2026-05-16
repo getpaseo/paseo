@@ -1,4 +1,7 @@
-import type { DaemonTransport, DaemonTransportFactory } from "@server/client/daemon-client";
+import type {
+  DaemonTransport,
+  DaemonTransportFactory,
+} from "@getpaseo/client/internal/daemon-client";
 import {
   closeLocalTransportSession,
   listenToLocalTransportEvents,

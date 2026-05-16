@@ -9,7 +9,7 @@ import path from "node:path";
 import { expect, test, vi } from "vitest";
 
 import { Session, type SessionOptions } from "./session.js";
-import type { SessionOutboundMessage } from "../shared/messages.js";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import {

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
-} from "@server/shared/messages";
+} from "@getpaseo/protocol/messages";
 import { checkoutPrStatusQueryKey, prPaneTimelineQueryKey } from "@/git/query-keys";
 import { usePrPaneData, type UsePrPaneDataResult } from "./use-pr-pane-data";
 import { useWorkspacePrHint } from "@/git/use-pr-status-query";

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
-import { GitHubSearchItemSchema } from "@server/shared/messages";
+import { GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
 import {
   garbageCollectAttachments,
   persistAttachmentFromDataUrl,

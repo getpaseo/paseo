@@ -9,7 +9,7 @@ import type {
   DaemonClient,
   FetchAgentHistoryEntry,
   FetchAgentHistoryOptions,
-} from "@server/client/daemon-client";
+} from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useAgentHistory } from "./use-agent-history";
 

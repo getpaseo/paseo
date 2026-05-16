@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { FileReadResult } from "@server/client/daemon-client";
+import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,

@@ -44,7 +44,7 @@ vi.mock("react-native", () => ({
   },
 }));
 
-vi.mock("@server/client/daemon-client", () => ({}));
+vi.mock("@getpaseo/client/internal/daemon-client", () => ({}));
 
 function createTestClient() {
   return {

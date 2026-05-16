@@ -23,7 +23,7 @@ import type {
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleService } from "./service.js";
-import type { StoredSchedule, ScheduleExecutionResult } from "./types.js";
+import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult>;

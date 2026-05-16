@@ -29,7 +29,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";

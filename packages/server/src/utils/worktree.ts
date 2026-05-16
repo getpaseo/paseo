@@ -16,8 +16,8 @@ export {
   PaseoConfigSchema,
   type PaseoConfig,
   type PaseoConfigRaw,
-} from "./paseo-config-schema.js";
-import { PaseoConfigSchema, type PaseoConfig } from "./paseo-config-schema.js";
+} from "@getpaseo/protocol/paseo-config-schema";
+import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import {
   normalizeBaseRefName,
   readPaseoWorktreeMetadata,

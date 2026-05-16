@@ -10,7 +10,7 @@ import type {
 import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
-} from "../shared/agent-state-bucket.js";
+} from "@getpaseo/protocol/agent-state-bucket";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
