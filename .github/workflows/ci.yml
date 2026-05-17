@@ -104,8 +104,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Claude Code CLI for provider tests
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @anthropic-ai/claude-code opencode-ai
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
