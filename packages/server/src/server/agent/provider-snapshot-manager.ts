@@ -22,6 +22,7 @@ interface ProviderLoadOptions {
   cwd: string;
   providers: AgentProvider[];
   force: boolean;
+  skipModelsAndModes?: boolean;
 }
 interface ProviderLoad {
   promise: Promise<void>;
@@ -207,6 +208,7 @@ export class ProviderSnapshotManager {
       cwd,
       providers: providersToRefresh,
       force: false,
+      skipModelsAndModes: true,
     });
   }
 
@@ -243,6 +245,7 @@ export class ProviderSnapshotManager {
           definition,
           load,
           force: options.force,
+          skipModelsAndModes: options.skipModelsAndModes,
         }),
       )
       .finally(() => {
@@ -263,8 +266,9 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     load: ProviderLoad;
     force: boolean;
+    skipModelsAndModes?: boolean;
   }): Promise<void> {
-    const { cwd, provider, definition, load, force } = options;
+    const { cwd, provider, definition, load, force, skipModelsAndModes } = options;
     const snapshot = this.getOrCreateSnapshot(options.cwd);
     const base = {
       provider,
@@ -295,6 +299,18 @@ export class ProviderSnapshotManager {
       );
       if (!available) {
         setEntry({ ...base, status: "unavailable", enabled: true });
+        return;
+      }
+
+      if (skipModelsAndModes) {
+        setEntry({
+          ...base,
+          status: "ready",
+          enabled: true,
+          models: undefined,
+          modes: undefined,
+          fetchedAt: new Date().toISOString(),
+        });
         return;
       }
 
