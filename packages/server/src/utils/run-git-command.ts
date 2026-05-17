@@ -77,7 +77,9 @@ export function runGitCommand(
           logger.trace(traceContext, "Spawning git command");
         }
 
-        const child = spawnProcess("git", args, {
+        // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
+        // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
+        const child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
           cwd: options.cwd,
           envOverlay,
           shell: false,
