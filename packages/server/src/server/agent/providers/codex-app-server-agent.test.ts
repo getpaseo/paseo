@@ -1352,6 +1352,40 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("does not synthesize a parent sub-agent failure from child error state alone", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-transient-child-error",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Validate the child agent result.",
+        receiverThreadIds: ["child-thread-1"],
+        agentsStates: {
+          "child-thread-1": { status: "error", message: "Sub-agent failed" },
+        },
+      },
+    });
+
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      callId: "call-sub-agent-transient-child-error",
+      name: "Sub-agent",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Validate the child agent result.",
+      },
+    });
+  });
+
   test("loads Codex persisted history from the app-server thread", async () => {
     const session = createSession();
     const requests: Array<{ method: string; params: unknown }> = [];

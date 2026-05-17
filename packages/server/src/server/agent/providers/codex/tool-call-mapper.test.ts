@@ -212,6 +212,64 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("does not fail a collabAgentToolCall from child error state alone", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-sub-agent-transient-child-error",
+      tool: "spawnAgent",
+      status: "completed",
+      prompt: "Inspect the Codex stream path.",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: "error", message: "Sub-agent failed" },
+      },
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-sub-agent-transient-child-error",
+      name: "Sub-agent",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Inspect the Codex stream path.",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
+  it("still fails a collabAgentToolCall from an explicitly failed child state", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-sub-agent-child-failed",
+      tool: "spawnAgent",
+      status: "completed",
+      prompt: "Inspect the Codex stream path.",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: "failed", message: "Child failed" },
+      },
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-sub-agent-child-failed",
+      name: "Sub-agent",
+      status: "failed",
+      error: { message: "Sub-agent failed" },
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Inspect the Codex stream path.",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
   it("maps mcp read_file completion with detail", () => {
     const item = mapCodexToolCallFromThreadItem(
       {

@@ -544,6 +544,14 @@ function readStatus(value: unknown): string | undefined {
   return typeof value.status === "string" ? value.status : undefined;
 }
 
+function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "error" || normalized === "errored") {
+    return "running";
+  }
+  return normalizeToolCallStatus(status, null, null);
+}
+
 function resolveCollabAgentStatus(
   item: z.infer<typeof CodexCollabAgentToolCallItemSchema>,
 ): ToolCallTimelineItem["status"] {
@@ -551,10 +559,15 @@ function resolveCollabAgentStatus(
     return "failed";
   }
 
+  const parentStatus = normalizeToolCallStatus(item.status, null, null);
+  if (parentStatus === "failed") {
+    return "failed";
+  }
+
   const childStatuses = Object.values(item.agentsStates ?? {})
     .map(readStatus)
     .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
-    .map((status) => normalizeToolCallStatus(status, null, null));
+    .map(normalizeCollabAgentChildStatus);
 
   if (childStatuses.some((status) => status === "failed")) {
     return "failed";
@@ -566,7 +579,7 @@ function resolveCollabAgentStatus(
     return childStatuses.every((status) => status === "completed") ? "completed" : "running";
   }
 
-  return normalizeToolCallStatus(item.status, item.error ?? null, null);
+  return parentStatus;
 }
 
 function buildMcpToolName(server: string | undefined, tool: string): string {
