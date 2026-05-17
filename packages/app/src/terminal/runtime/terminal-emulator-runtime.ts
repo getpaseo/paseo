@@ -15,6 +15,7 @@ import {
 } from "@server/shared/terminal-input-mode";
 import {
   type PendingTerminalModifiers,
+  isAppleHandheldPlatform,
   isTerminalModifierDomKey,
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
@@ -83,6 +84,14 @@ const isMac =
   typeof navigator !== "undefined" &&
   (/Macintosh|Mac OS/i.test(navigator.userAgent ?? "") ||
     /Mac/i.test((navigator as Navigator & { platform?: string }).platform ?? ""));
+
+const isAppleHandheld =
+  typeof navigator !== "undefined" &&
+  isAppleHandheldPlatform({
+    userAgent: navigator.userAgent,
+    platform: (navigator as Navigator & { platform?: string }).platform,
+    maxTouchPoints: navigator.maxTouchPoints,
+  });
 
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
@@ -365,6 +374,7 @@ export class TerminalEmulatorRuntime {
           metaKey: event.metaKey,
           pendingModifiers: this.pendingModifiers,
           enhancedInputActive: this.inputModeTracker.supportsModifiedEnter(),
+          isAppleHandheld,
         })
       ) {
         return true;

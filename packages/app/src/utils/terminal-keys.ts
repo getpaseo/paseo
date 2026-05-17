@@ -82,6 +82,27 @@ export function hasPendingTerminalModifiers(modifiers: PendingTerminalModifiers)
   return modifiers.ctrl || modifiers.shift || modifiers.alt;
 }
 
+export interface AppleHandheldDetectionInput {
+  userAgent: string | null | undefined;
+  platform: string | null | undefined;
+  maxTouchPoints: number | null | undefined;
+}
+
+// iPadOS 13+ WKWebView reports navigator.platform="MacIntel" and a Mac UA string. Distinguish
+// iPad/iPhone from real macOS via maxTouchPoints, which is 0 on macOS and >1 on iPadOS/iOS.
+export function isAppleHandheldPlatform(input: AppleHandheldDetectionInput): boolean {
+  const userAgent = input.userAgent ?? "";
+  const platform = input.platform ?? "";
+  const touchPoints = input.maxTouchPoints ?? 0;
+  if (/iPad|iPhone|iPod/.test(userAgent)) {
+    return true;
+  }
+  if (/Mac/i.test(platform) && touchPoints > 1) {
+    return true;
+  }
+  return false;
+}
+
 export function shouldInterceptDomTerminalKey(args: {
   key: string;
   ctrlKey: boolean;
@@ -90,12 +111,26 @@ export function shouldInterceptDomTerminalKey(args: {
   metaKey: boolean;
   pendingModifiers: PendingTerminalModifiers;
   enhancedInputActive?: boolean;
+  isAppleHandheld?: boolean;
 }): boolean {
   if (hasPendingTerminalModifiers(args.pendingModifiers)) {
     return true;
   }
   if (args.key === "Enter" && (args.shiftKey || args.ctrlKey || args.altKey || args.metaKey)) {
     return Boolean(args.enhancedInputActive);
+  }
+  // COMPAT(xterm-ipad-ctrl-c): WebKit sends keyCode=13 for hardware-kbd Ctrl+C on iPad, so
+  // xterm.js 6.x emits \r instead of \x03. Fixed upstream in xtermjs/xterm.js#5742 (6.1.0-beta).
+  // Drop this branch and the isAppleHandheld plumbing once @xterm/xterm >= 6.1.0 stable.
+  if (
+    args.isAppleHandheld &&
+    args.ctrlKey &&
+    !args.metaKey &&
+    !args.altKey &&
+    !args.shiftKey &&
+    (args.key === "c" || args.key === "C")
+  ) {
+    return true;
   }
   return false;
 }

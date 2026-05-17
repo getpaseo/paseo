@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hasPendingTerminalModifiers,
+  isAppleHandheldPlatform,
   isTerminalModifierDomKey,
   mapTerminalDataToKey,
   mergeTerminalModifiers,
@@ -9,6 +10,13 @@ import {
   resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
 } from "./terminal-keys";
+
+const IPAD_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Safari/605.1.15";
+const MAC_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+const IPHONE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
 
 describe("terminal key helpers", () => {
   it("normalizes supported DOM keys", () => {
@@ -153,6 +161,140 @@ describe("terminal key helpers", () => {
         altKey: false,
         metaKey: false,
         pendingModifiers: { ctrl: false, shift: false, alt: false },
+      }),
+    ).toBe(false);
+  });
+
+  it("intercepts plain Ctrl+C on iPad so xterm's keyCode-13 quirk never reaches the PTY (#1049)", () => {
+    // See COMPAT(xterm-ipad-ctrl-c) in terminal-keys.ts.
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "c",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+        isAppleHandheld: true,
+      }),
+    ).toBe(true);
+    // Uppercase variant in case Caps Lock is on.
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "C",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+        isAppleHandheld: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not intercept other Ctrl+letter combos on iPad (xterm handles them correctly)", () => {
+    for (const key of ["b", "d", "z", "a", "r", "l"]) {
+      expect(
+        shouldInterceptDomTerminalKey({
+          key,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          metaKey: false,
+          pendingModifiers: { ctrl: false, shift: false, alt: false },
+          isAppleHandheld: true,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("does not intercept Ctrl+C on real macOS / Windows / Linux", () => {
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "c",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+        isAppleHandheld: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not intercept Cmd+C on iPad (Cmd-based shortcuts stay with the OS)", () => {
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "c",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: true,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+        isAppleHandheld: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not intercept Ctrl+Shift+C / Ctrl+Alt+C on iPad", () => {
+    // Only bare Ctrl+C is affected by the WebKit quirk; modified variants stay with xterm.
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "c",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+        isAppleHandheld: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "c",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: true,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+        isAppleHandheld: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("detects iPad masquerading as macOS via maxTouchPoints", () => {
+    expect(
+      isAppleHandheldPlatform({ userAgent: IPAD_UA, platform: "MacIntel", maxTouchPoints: 5 }),
+    ).toBe(true);
+  });
+
+  it("detects iPhone/iPod by UA", () => {
+    expect(
+      isAppleHandheldPlatform({ userAgent: IPHONE_UA, platform: "iPhone", maxTouchPoints: 5 }),
+    ).toBe(true);
+  });
+
+  it("does not flag real macOS desktop as a handheld", () => {
+    expect(
+      isAppleHandheldPlatform({ userAgent: MAC_UA, platform: "MacIntel", maxTouchPoints: 0 }),
+    ).toBe(false);
+  });
+
+  it("does not flag macOS when maxTouchPoints == 1 (some trackpad contexts)", () => {
+    expect(
+      isAppleHandheldPlatform({ userAgent: MAC_UA, platform: "MacIntel", maxTouchPoints: 1 }),
+    ).toBe(false);
+  });
+
+  it("tolerates null/undefined navigator-style inputs", () => {
+    expect(isAppleHandheldPlatform({ userAgent: null, platform: null, maxTouchPoints: null })).toBe(
+      false,
+    );
+    expect(
+      isAppleHandheldPlatform({
+        userAgent: undefined,
+        platform: undefined,
+        maxTouchPoints: undefined,
       }),
     ).toBe(false);
   });
