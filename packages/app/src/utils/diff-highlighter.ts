@@ -30,17 +30,40 @@ function isDiffMetadataLine(line: string): boolean {
   return DIFF_METADATA_PREFIXES.some((prefix) => line.startsWith(prefix));
 }
 
-// Git's default patch headers use a/path and b/path, while diff.noprefix emits
-// plain paths. Normalize both forms so parsed hunks match checkout file entries.
-function stripDiffPathPrefix(path: string): string {
-  return path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path;
+// Git's default patch headers use paired a/path and b/path prefixes, while
+// diff.noprefix emits plain paths that may legitimately start with a/ or b/.
+function usesDiffPathPrefixes(oldPath: string, newPath: string): boolean {
+  return oldPath.startsWith("a/") && newPath.startsWith("b/");
 }
 
-function extractDiffPath(firstLine: string): string {
+function extractPathFromMetadata(lines: string[], prefix: "--- " | "+++ "): string | null {
+  const line = lines.find((candidate) => candidate.startsWith(prefix));
+  if (!line) {
+    return null;
+  }
+
+  const path = line.slice(prefix.length).replace(/\t.*$/, "").trimEnd();
+  return path === "/dev/null" ? null : path;
+}
+
+function extractDiffPath(lines: string[]): string {
+  const firstLine = lines[0] ?? "";
+  const prefixedPathMatch = firstLine.match(/^a\/(.+) b\/(.+)$/);
+  if (prefixedPathMatch) {
+    return prefixedPathMatch[2];
+  }
+
+  const metadataPath =
+    extractPathFromMetadata(lines, "+++ ") ?? extractPathFromMetadata(lines, "--- ");
+  if (metadataPath) {
+    return metadataPath;
+  }
+
   const pathMatch = firstLine.match(/^(\S+)\s+(\S+)$/);
   if (pathMatch) {
     const [, oldPath, newPath] = pathMatch;
-    return stripDiffPathPrefix(newPath === "/dev/null" ? oldPath : newPath);
+    const path = newPath === "/dev/null" ? oldPath : newPath;
+    return usesDiffPathPrefixes(oldPath, newPath) ? path.slice(2) : path;
   }
   return "unknown";
 }
@@ -121,11 +144,10 @@ export function parseDiff(diffText: string): ParsedDiffFile[] {
 
   for (const section of fileSections) {
     const lines = section.split("\n");
-    const firstLine = lines[0];
 
     const isNew = section.includes("new file mode") || section.includes("--- /dev/null");
     const isDeleted = section.includes("deleted file mode") || section.includes("+++ /dev/null");
-    const path = extractDiffPath(firstLine);
+    const path = extractDiffPath(lines);
     const { hunks, additions, deletions } = parseHunks(lines);
 
     files.push({ path, isNew, isDeleted, additions, deletions, hunks });

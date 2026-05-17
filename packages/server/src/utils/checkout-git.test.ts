@@ -313,6 +313,27 @@ const x = 1;
     expect(removedLine?.tokens).toEqual([{ text: "old comment line", style: "comment" }]);
   });
 
+  it("preserves no-prefix structured paths that start with a or b", async () => {
+    mkdirSync(join(repoDir, "a"));
+    mkdirSync(join(repoDir, "b"));
+    commitFile(repoDir, "a/example.ts", "const value = 1;\n", "add a-prefixed path");
+    commitFile(repoDir, "b/other.ts", "const value = 1;\n", "add b-prefixed path");
+    commitFile(repoDir, "file with space.ts", "const value = 1;\n", "add path with space");
+    execFileSync("git", ["config", "diff.noprefix", "true"], { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "a/example.ts"), "const value = 2;\n");
+    writeFileSync(join(repoDir, "b/other.ts"), "const value = 2;\n");
+    writeFileSync(join(repoDir, "file with space.ts"), "const value = 2;\n");
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+
+    expect(diff.structured?.map((file) => [file.path, file.hunks.length])).toEqual([
+      ["a/example.ts", 1],
+      ["b/other.ts", 1],
+      ["file with space.ts", 1],
+    ]);
+  });
+
   it("returns checkout root metadata for normal repos", async () => {
     const status = await getCheckoutStatus(repoDir);
     expect(status.isGit).toBe(true);
