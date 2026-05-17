@@ -277,7 +277,10 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async killServer(server: OpenCodeServerGeneration): Promise<void> {
-    if (server.process.killed) {
+    if (
+      (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
+      (server.process.signalCode !== null && server.process.signalCode !== undefined)
+    ) {
       return;
     }
     const result = await terminateWithTreeKill(server.process, {

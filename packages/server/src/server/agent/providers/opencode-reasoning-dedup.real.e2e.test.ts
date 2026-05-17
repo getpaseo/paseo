@@ -1,15 +1,19 @@
-import { beforeAll, beforeEach, describe, test, expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, test, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
 import { OpenCodeAgentClient } from "./opencode-agent.js";
+import { OpenCodeServerManager } from "./opencode/server-manager.js";
 import { isProviderAvailable } from "../../daemon-e2e/agent-configs.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 
+const BIG_PICKLE_MODEL = "opencode/big-pickle";
+
 describe("OpenCode reasoning dedup", () => {
   let canRun = false;
+  const logger = pino({ level: "silent" });
 
   beforeAll(async () => {
     canRun = await isProviderAvailable("opencode");
@@ -21,16 +25,19 @@ describe("OpenCode reasoning dedup", () => {
     }
   });
 
+  afterAll(async () => {
+    await OpenCodeServerManager.getInstance(logger).shutdown();
+  });
+
   test("reasoning content is not duplicated as assistant_message", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "opencode-reasoning-dedup-"));
-    const logger = pino({ level: "silent" });
     const client = new OpenCodeAgentClient(logger);
 
     try {
       const session = await client.createSession({
         provider: "opencode",
         cwd,
-        model: "opencode/gpt-5-nano",
+        model: BIG_PICKLE_MODEL,
         modeId: "build",
       });
 

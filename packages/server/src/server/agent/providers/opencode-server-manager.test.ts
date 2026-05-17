@@ -106,6 +106,19 @@ describe("OpenCodeServerManager generations", () => {
     expect(second.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  test("shutdown still signals a process after an earlier kill signal if it has not exited", async () => {
+    const manager = createTestManager();
+    const first = createGeneration(4451);
+    stubGenerations(manager, [first]);
+
+    await manager.acquire({ force: false });
+    first.process.killed = true;
+
+    await manager.shutdown();
+
+    expect(first.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   test("repeated rotations leave zero unreferenced retired servers", async () => {
     const manager = createTestManager();
     const first = createGeneration(4501);

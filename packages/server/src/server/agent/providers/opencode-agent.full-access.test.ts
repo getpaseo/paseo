@@ -4,7 +4,6 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 import {
-  createEventStream,
   idleEvent,
   TestOpenCodeClient,
   TestOpenCodeRuntime,
@@ -19,7 +18,7 @@ function mockOpenCodeClient(options: MockOpenCodeClientOptions = {}) {
   const runtime = new TestOpenCodeRuntime();
   const openCodeClient = new TestOpenCodeClient();
   openCodeClient.appAgentsResponse = { data: options.agents ?? [] };
-  openCodeClient.eventStream = createEventStream(options.events ?? [idleEvent()]);
+  openCodeClient.sessionPromptAsyncEvents = options.events ?? [idleEvent()];
   runtime.enqueueClient(openCodeClient);
 
   return { openCodeClient, runtime };

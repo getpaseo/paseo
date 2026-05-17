@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test, vi } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -11,6 +11,7 @@ import {
   OpenCodeAgentClient,
   translateOpenCodeEvent,
 } from "./opencode-agent.js";
+import { OpenCodeServerManager } from "./opencode/server-manager.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 import {
   TestOpenCodeClient,
@@ -33,8 +34,7 @@ function tmpCwd(): string {
   }
 }
 
-// Dynamic model selection - will be set in beforeAll
-let TEST_MODEL: string | undefined;
+const TEST_MODEL = "opencode/big-pickle";
 
 interface TurnResult {
   events: AgentStreamEvent[];
@@ -82,14 +82,6 @@ async function collectTurnEvents(iterator: AsyncGenerator<AgentStreamEvent>): Pr
   return result;
 }
 
-function createAsyncIterable<T>(items: T[]): AsyncIterable<T> {
-  return (async function* () {
-    for (const item of items) {
-      yield item;
-    }
-  })();
-}
-
 function isBinaryInstalled(binary: string): boolean {
   try {
     const out = execFileSync("which", [binary], { encoding: "utf8" }).trim();
@@ -109,45 +101,9 @@ const hasOpenCode = isBinaryInstalled("opencode");
     model: TEST_MODEL,
   });
 
-  beforeAll(async () => {
-    const startTime = Date.now();
-    logger.info("beforeAll: Starting model selection");
-
-    const client = new OpenCodeAgentClient(logger);
-    const models = await client.listModels({ cwd: os.homedir(), force: false });
-
-    logger.info(
-      { modelCount: models.length, elapsed: Date.now() - startTime },
-      "beforeAll: Retrieved models",
-    );
-
-    // Prefer cheap models that support tool use (required by OpenCode agents).
-    // Avoid free-tier OpenRouter models — they often lack tool-use support.
-    const fastModel = models.find(
-      (m) =>
-        m.id.includes("gpt-4.1-nano") ||
-        m.id.includes("gpt-4.1-mini") ||
-        m.id.includes("gpt-5-nano") ||
-        m.id.includes("gpt-5.4-mini") ||
-        m.id.includes("gpt-4o-mini"),
-    );
-
-    if (fastModel) {
-      TEST_MODEL = fastModel.id;
-    } else if (models.length > 0) {
-      // Fallback to any available model
-      TEST_MODEL = models[0].id;
-    } else {
-      throw new Error(
-        "No OpenCode models available. Please authenticate with a provider (e.g., set OPENAI_API_KEY).",
-      );
-    }
-
-    logger.info(
-      { model: TEST_MODEL, totalElapsed: Date.now() - startTime },
-      "beforeAll: Selected OpenCode test model",
-    );
-  }, 30_000);
+  afterAll(async () => {
+    await OpenCodeServerManager.getInstance(logger).shutdown();
+  });
 
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
@@ -200,6 +156,7 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
     // HARD ASSERT: At least one model is returned (OpenCode has connected providers)
     expect(models.length).toBeGreaterThan(0);
+    expect(models.some((model) => model.id === TEST_MODEL)).toBe(true);
 
     // HARD ASSERT: Each model has required fields with correct types
     for (const model of models) {
@@ -623,6 +580,7 @@ describe("OpenCode adapter context-window normalization", () => {
 
 describe("OpenCode adapter startTurn error handling", () => {
   test("emits turn_started before live OpenCode timeline items", async () => {
+    const eventsGate = createTestDeferred<void>();
     const globalEvents = [
       {
         payload: {
@@ -669,10 +627,18 @@ describe("OpenCode adapter startTurn error handling", () => {
     ];
     const fakeClient = {
       global: {
-        event: vi.fn().mockResolvedValue({ stream: createAsyncIterable(globalEvents) }),
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            await eventsGate.promise;
+            yield* globalEvents;
+          })(),
+        }),
       },
       session: {
-        promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
       },
     } as never;
 
@@ -698,6 +664,7 @@ describe("OpenCode adapter startTurn error handling", () => {
   });
 
   test("unwraps OpenCode global event payloads during a turn", async () => {
+    const eventsGate = createTestDeferred<void>();
     const globalEvents = [
       {
         payload: {
@@ -760,10 +727,18 @@ describe("OpenCode adapter startTurn error handling", () => {
         subscribe: vi.fn(),
       },
       global: {
-        event: vi.fn().mockResolvedValue({ stream: createAsyncIterable(globalEvents) }),
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            await eventsGate.promise;
+            yield* globalEvents;
+          })(),
+        }),
       },
       session: {
-        promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
       },
     } as never;
 
@@ -790,11 +765,13 @@ describe("OpenCode adapter startTurn error handling", () => {
 
   test("keeps a turn active while OpenCode is retrying", async () => {
     vi.useFakeTimers();
+    const eventsGate = createTestDeferred<void>();
     const retryStream: AsyncIterable<unknown> = {
       [Symbol.asyncIterator]: () => {
         let emitted = false;
         return {
           next: async () => {
+            await eventsGate.promise;
             if (!emitted) {
               emitted = true;
               return {
@@ -826,7 +803,10 @@ describe("OpenCode adapter startTurn error handling", () => {
       session: {
         abort: vi.fn().mockResolvedValue({ error: null }),
         update: vi.fn().mockResolvedValue({ error: null }),
-        promptAsync: vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
       },
     } as never;
 

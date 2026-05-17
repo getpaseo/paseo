@@ -50,7 +50,7 @@ export const agentConfigs = {
   },
   opencode: {
     provider: "opencode",
-    model: "opencode/glm-5-free",
+    model: "opencode/big-pickle",
     modes: {
       full: "default",
       ask: "default",

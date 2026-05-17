@@ -2267,6 +2267,8 @@ class OpenCodeAgentSession implements AgentSession {
   private pendingChildToolPartsBySessionId = new Map<string, OpenCodeToolPartEventPart[]>();
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
+  private eventStreamAbortController: AbortController | null = null;
+  private eventStreamReady: Deferred<void> | null = null;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
   constructor(
@@ -2290,6 +2292,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
+    this.startEventStream();
   }
 
   get id(): string | null {
@@ -2422,22 +2425,17 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
+    try {
+      await this.ensureEventStreamReady();
+    } catch (error) {
+      if (this.abortController === turnAbortController) {
+        this.abortController = null;
+      }
+      throw error;
+    }
+
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
-
-    // OpenCode's /event SSE endpoint does NOT replay past events. If we send
-    // the prompt before our reader is connected, terminal events fired early
-    // by the server (e.g. session.error / session.idle for invalid model or
-    // mode) are missed and the turn hangs forever. Wait for the subscription
-    // to be established before sending anything.
-    const subscriptionReady = createDeferred<void>();
-    void this.consumeEventStream(turnId, turnAbortController, subscriptionReady);
-    try {
-      await subscriptionReady.promise;
-    } catch {
-      // consumeEventStream already finished the turn with the subscription error.
-      return { turnId };
-    }
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
@@ -2480,12 +2478,8 @@ class OpenCodeAgentSession implements AgentSession {
         return { turnId };
       }
 
-      // command() blocks until the server finishes processing. OpenCode's SSE
-      // endpoint does NOT replay past events, so if the command completes before
-      // our SSE reader connects, we miss `session.idle` and the turn hangs.
-      // Handle both success and error in the response handler as a fallback —
-      // finishForegroundTurn's guard prevents duplicate terminal events if the
-      // SSE stream already delivered the event.
+      // command() is only dispatch acknowledgement. OpenCode session events are
+      // the source of truth for when the command turn becomes idle or fails.
       void this.client.session
         .command({
           sessionID: this.sessionId,
@@ -2512,11 +2506,6 @@ class OpenCodeAgentSession implements AgentSession {
             const errorMsg = toDiagnosticErrorMessage(response.error);
             this.finishForegroundTurn(
               { type: "turn_failed", provider: "opencode", error: errorMsg },
-              turnId,
-            );
-          } else {
-            this.finishForegroundTurn(
-              { type: "turn_completed", provider: "opencode", usage: undefined },
               turnId,
             );
           }
@@ -2608,7 +2597,6 @@ class OpenCodeAgentSession implements AgentSession {
 
     return { turnId };
   }
-
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {
@@ -2616,95 +2604,102 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
+  private startEventStream(): void {
+    void this.ensureEventStreamReady().catch((error) => {
+      this.logger.warn({ err: error, sessionId: this.sessionId }, "OpenCode event stream failed");
+    });
+  }
+
+  private ensureEventStreamReady(): Promise<void> {
+    if (this.eventStreamReady) {
+      return this.eventStreamReady.promise;
+    }
+
+    const eventStreamAbortController = new AbortController();
+    const eventStreamReady = createDeferred<void>();
+    this.eventStreamAbortController = eventStreamAbortController;
+    this.eventStreamReady = eventStreamReady;
+    void this.consumeEventStream(eventStreamAbortController, eventStreamReady).finally(() => {
+      if (this.eventStreamAbortController === eventStreamAbortController) {
+        this.eventStreamAbortController = null;
+        this.eventStreamReady = null;
+      }
+    });
+
+    return eventStreamReady.promise;
+  }
+
   private async consumeEventStream(
-    turnId: string,
-    turnAbortController: AbortController,
-    subscriptionReady: Deferred<void>,
+    eventStreamAbortController: AbortController,
+    eventStreamReady: Deferred<void>,
   ): Promise<void> {
     this.traceOpenCode("provider.opencode.subscribe.start", {
-      turnId,
       sessionId: this.sessionId,
       cwd: this.config.cwd,
     });
+    let eventStreamReadyResolved = false;
     try {
       const result = await this.client.global.event({
-        signal: turnAbortController.signal,
+        signal: eventStreamAbortController.signal,
         sseMaxRetryAttempts: 0,
       });
+      eventStreamReadyResolved = true;
+      this.traceOpenCode("provider.opencode.subscribe.ready", {
+        sessionId: this.sessionId,
+      });
+      eventStreamReady.resolve();
+
       let eventCount = 0;
-      let subscriptionReadyResolved = false;
       for await (const rawEvent of result.stream) {
         eventCount += 1;
-        if (!subscriptionReadyResolved) {
-          subscriptionReadyResolved = true;
-          this.traceOpenCode("provider.opencode.subscribe.ready", {
-            turnId,
-            sessionId: this.sessionId,
-          });
-          subscriptionReady.resolve();
-        }
-        const shouldContinue = await this.consumeOpenCodeStreamEvent({
-          rawEvent,
-          eventCount,
-          turnId,
-          turnAbortController,
-        });
-        if (!shouldContinue) {
-          return;
-        }
+        await this.consumeOpenCodeStreamEvent({ rawEvent, eventCount });
       }
 
       this.traceOpenCode("provider.opencode.stream.eof", {
-        turnId,
         eventCount,
-        aborted: turnAbortController.signal.aborted,
-        stillActive: this.activeForegroundTurnId === turnId,
+        aborted: eventStreamAbortController.signal.aborted,
+        activeTurnId: this.activeForegroundTurnId,
       });
 
-      if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
-        this.traceOpenCode("provider.opencode.turn.fail_eof", { turnId, eventCount });
-        if (!subscriptionReadyResolved) {
-          subscriptionReady.reject(new Error("OpenCode event stream ended before it became ready"));
+      if (!eventStreamAbortController.signal.aborted) {
+        if (!eventStreamReadyResolved) {
+          eventStreamReady.reject(new Error("OpenCode event stream ended before it became ready"));
         }
-        this.finishForegroundTurn(
-          {
-            type: "turn_failed",
-            provider: "opencode",
-            error: "OpenCode event stream ended before the turn reached a terminal state",
-          },
-          turnId,
-        );
+        const activeTurnId = this.activeForegroundTurnId;
+        if (activeTurnId) {
+          this.traceOpenCode("provider.opencode.turn.fail_eof", {
+            turnId: activeTurnId,
+            eventCount,
+          });
+          this.finishForegroundTurn(
+            {
+              type: "turn_failed",
+              provider: "opencode",
+              error: "OpenCode event stream ended before the turn reached a terminal state",
+            },
+            activeTurnId,
+          );
+        }
       }
     } catch (error) {
       this.traceOpenCode("provider.opencode.subscribe.error", {
-        turnId,
+        turnId: this.activeForegroundTurnId ?? undefined,
         error:
           error instanceof Error ? { name: error.name, message: error.message } : String(error),
       });
-      subscriptionReady.reject(error);
-      if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
+      if (!eventStreamReadyResolved) {
+        eventStreamReady.reject(error);
+      }
+      const activeTurnId = this.activeForegroundTurnId;
+      if (!eventStreamAbortController.signal.aborted && activeTurnId) {
         this.finishForegroundTurn(
           {
             type: "turn_failed",
             provider: "opencode",
             error: toDiagnosticErrorMessage(error),
           },
-          turnId,
+          activeTurnId,
         );
-      }
-    } finally {
-      if (turnAbortController.signal.aborted) {
-        this.finishForegroundTurn(
-          {
-            type: "turn_canceled",
-            provider: "opencode",
-            reason: "interrupted",
-          },
-          turnId,
-        );
-      }
-      if (this.abortController === turnAbortController && this.activeForegroundTurnId !== turnId) {
-        this.abortController = null;
       }
     }
   }
@@ -2712,13 +2707,12 @@ class OpenCodeAgentSession implements AgentSession {
   private async consumeOpenCodeStreamEvent(params: {
     rawEvent: unknown;
     eventCount: number;
-    turnId: string;
-    turnAbortController: AbortController;
-  }): Promise<boolean> {
-    const { rawEvent, eventCount, turnId, turnAbortController } = params;
+  }): Promise<void> {
+    const { rawEvent, eventCount } = params;
+    const turnId = this.activeForegroundTurnId;
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
     this.traceOpenCode("provider.opencode.raw_event", {
-      turnId,
+      turnId: turnId ?? undefined,
       n: eventCount,
       type: event?.type,
       rawType: readOpenCodeRecord(rawEvent)?.type,
@@ -2727,16 +2721,15 @@ class OpenCodeAgentSession implements AgentSession {
       properties: event?.properties,
     });
     if (!event) {
-      return true;
+      return;
     }
-    if (turnAbortController.signal.aborted || this.activeForegroundTurnId !== turnId) {
+    if (!turnId) {
       this.traceOpenCode("provider.opencode.event.skip", {
-        turnId,
         n: eventCount,
-        aborted: turnAbortController.signal.aborted,
-        activeTurnId: this.activeForegroundTurnId,
+        reason: "no_active_turn",
+        type: event.type,
       });
-      return false;
+      return;
     }
     const translated = await this.translateEvent(event);
     this.traceOpenCode("provider.opencode.parsed_event", {
@@ -2750,7 +2743,7 @@ class OpenCodeAgentSession implements AgentSession {
     for (const e of translated) {
       if (this.activeForegroundTurnId !== turnId) {
         this.traceOpenCode("provider.opencode.parsed_event.skip_active", { turnId, type: e.type });
-        return false;
+        return;
       }
       if (e.type === "timeline" && e.item.type === "tool_call") {
         this.trackToolCall(e.item);
@@ -2762,12 +2755,10 @@ class OpenCodeAgentSession implements AgentSession {
           type: terminalEvent.type,
         });
         this.finishForegroundTurn(terminalEvent, turnId);
-        return false;
+        return;
       }
       this.notifySubscribers(e, turnId);
     }
-
-    return true;
   }
 
   private finishForegroundTurn(
@@ -2790,8 +2781,6 @@ class OpenCodeAgentSession implements AgentSession {
       this.runningToolCalls.clear();
     }
     this.activeForegroundTurnId = null;
-    // Abort the SSE connection so the SDK tears down the underlying fetch.
-    this.abortController?.abort();
     this.abortController = null;
     this.notifySubscribers(event, turnId);
   }
@@ -3004,6 +2993,9 @@ class OpenCodeAgentSession implements AgentSession {
   async close(): Promise<void> {
     try {
       this.abortController?.abort();
+      this.eventStreamAbortController?.abort();
+      this.eventStreamAbortController = null;
+      this.eventStreamReady = null;
       await reconcileOpenCodeSessionClose({
         client: this.client,
         sessionId: this.sessionId,
