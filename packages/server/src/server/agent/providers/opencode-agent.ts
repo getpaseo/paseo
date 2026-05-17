@@ -2269,6 +2269,7 @@ class OpenCodeAgentSession implements AgentSession {
   private releaseServer: (() => void) | null;
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamReady: Deferred<void> | null = null;
+  private closed = false;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
   constructor(
@@ -2822,6 +2823,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string): void {
+    if (this.closed) {
+      return;
+    }
     const turnId = turnIdOverride ?? this.activeForegroundTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
     this.traceOpenCode("provider.opencode.event_emit", {
@@ -2992,10 +2996,16 @@ class OpenCodeAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     try {
+      // Flip closed before clearing subscribers so any event the SDK delivers
+      // after the abort (between here and subscribers.clear) is swallowed by
+      // notifySubscribers instead of bubbling through provider-runner as an
+      // unhandled rejection in whichever test the daemon hops to next.
+      this.closed = true;
       this.abortController?.abort();
       this.eventStreamAbortController?.abort();
       this.eventStreamAbortController = null;
       this.eventStreamReady = null;
+      this.subscribers.clear();
       await reconcileOpenCodeSessionClose({
         client: this.client,
         sessionId: this.sessionId,
@@ -3003,7 +3013,6 @@ class OpenCodeAgentSession implements AgentSession {
         logger: this.logger,
       });
       await this.deleteProviderSessionIfEphemeral();
-      this.subscribers.clear();
       this.activeForegroundTurnId = null;
     } finally {
       this.releaseServer?.();

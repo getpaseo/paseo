@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -171,8 +171,12 @@ const hasOpenCode = isBinaryInstalled("opencode");
       expect(model.metadata).toMatchObject({
         providerId: expect.any(String),
         modelId: expect.any(String),
-        contextWindowMaxTokens: expect.any(Number),
       });
+      // contextWindowMaxTokens is upstream-provided and may be absent for some
+      // OpenCode-routed providers; assert the type only when present.
+      if (model.metadata?.contextWindowMaxTokens !== undefined) {
+        expect(typeof model.metadata.contextWindowMaxTokens).toBe("number");
+      }
     }
   }, 60_000);
 
