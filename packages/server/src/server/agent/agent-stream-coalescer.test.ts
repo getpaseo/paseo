@@ -670,4 +670,80 @@ describe("AgentStreamCoalescer", () => {
       { type: "assistant_message", text: "b" },
     ]);
   });
+
+  test("preserves sub_agent detail when terminal unknown replaces it in the same window", () => {
+    const { coalescer, flushes } = createHarness();
+
+    const callId = "create-agent-call-1";
+
+    const subAgentRunning: Extract<AgentStreamEvent, { type: "timeline" }> = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "tool_call",
+        callId,
+        name: "Task",
+        status: "running",
+        error: null,
+        detail: {
+          type: "sub_agent",
+          subAgentType: "advisor",
+          description: "Code review advisor",
+          log: "[Read] CLAUDE.md\n[Bash] git log",
+          actions: [],
+        },
+      },
+    };
+
+    const unknownCompleted: Extract<AgentStreamEvent, { type: "timeline" }> = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "tool_call",
+        callId,
+        name: "Task",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "unknown",
+          input: { description: "Code review" },
+          output: "done",
+        },
+      },
+    };
+
+    coalescer.handle("agent-1", subAgentRunning);
+    // Terminal event triggers immediate flush after merging into buffer
+    coalescer.handle("agent-1", unknownCompleted);
+
+    expect(flushes).toHaveLength(1);
+    const flushed = flushes[0];
+    if (flushed?.item.type !== "tool_call") throw new Error("expected tool_call");
+
+    // Sub_agent detail must survive: the unknown terminal must not clobber it
+    expect(flushed.item.detail.type).toBe("sub_agent");
+    if (flushed.item.detail.type !== "sub_agent") throw new Error("expected sub_agent");
+    expect(flushed.item.detail.subAgentType).toBe("advisor");
+    expect(flushed.item.detail.log).toContain("[Read] CLAUDE.md");
+    // Status and error come from the terminal event (completed, null)
+    expect(flushed.item.status).toBe("completed");
+    expect(flushed.item.error).toBeNull();
+  });
+
+  test("still takes incoming detail when both entries have the same non-unknown type", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    const running1 = toolCall({ callId: "tool-1", output: "partial" });
+    const running2 = toolCall({ callId: "tool-1", output: "final", status: "completed" });
+
+    coalescer.handle("agent-1", running1);
+    coalescer.handle("agent-1", running2);
+
+    expect(flushes).toHaveLength(1);
+    const flushed = flushes[0];
+    if (flushed?.item.type !== "tool_call") throw new Error("expected tool_call");
+    if (flushed.item.detail.type !== "shell") throw new Error("expected shell");
+    // Latest non-unknown detail wins
+    expect(flushed.item.detail.output).toBe("final");
+  });
 });

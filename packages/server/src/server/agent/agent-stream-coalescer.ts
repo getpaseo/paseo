@@ -166,7 +166,20 @@ export class AgentStreamCoalescer {
     };
 
     if (existingIndex !== undefined) {
-      buffer.entries[existingIndex] = entry;
+      const existing = buffer.entries[existingIndex] as PendingToolCallEntry;
+      // Preserve richer detail when incoming detail type degrades to "unknown".
+      // This prevents terminal tool-result events (which always produce
+      // detail:{type:"unknown"}) from clobbering a sub_agent/shell/etc. detail
+      // that was accumulated by intermediate running-status events in the same
+      // coalesce window. Without this merge the sub_agent log is permanently
+      // lost from the timeline store for relay clients that hydrate canonically.
+      const existingDetail = existing.item.detail;
+      const incomingDetail = entry.item.detail;
+      const mergedDetail =
+        incomingDetail.type === "unknown" && existingDetail.type !== "unknown"
+          ? existingDetail
+          : incomingDetail;
+      buffer.entries[existingIndex] = { ...entry, item: { ...entry.item, detail: mergedDetail } };
       return;
     }
 
