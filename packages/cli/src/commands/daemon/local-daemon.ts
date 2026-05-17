@@ -33,6 +33,7 @@ export interface LocalDaemonState {
   relayEnabled: boolean;
   relayEndpoint: string;
   relayUseTls: boolean;
+  relayPublicUseTls: boolean;
   logPath: string;
   pidPath: string;
   pidInfo: LocalDaemonPidInfo | null;
@@ -409,6 +410,7 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
     relayEnabled: config.relayEnabled ?? true,
     relayEndpoint: config.relayPublicEndpoint ?? config.relayEndpoint ?? "relay.paseo.sh:443",
     relayUseTls: config.relayUseTls ?? false,
+    relayPublicUseTls: config.relayPublicUseTls ?? config.relayUseTls ?? false,
     logPath,
     pidPath,
     pidInfo,

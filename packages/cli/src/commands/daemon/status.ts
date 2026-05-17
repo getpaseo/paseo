@@ -316,7 +316,7 @@ async function resolveDaemonNodeLabel(
 
 function formatRelayStatus(state: ReturnType<typeof resolveLocalDaemonState>): string {
   if (!state.relayEnabled) return "disabled";
-  const scheme = state.relayUseTls ? "wss" : "ws";
+  const scheme = state.relayPublicUseTls ? "wss" : "ws";
   return `${scheme}://${state.relayEndpoint}`;
 }
 

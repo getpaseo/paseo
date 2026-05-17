@@ -1,9 +1,13 @@
 import { EventEmitter } from "node:events";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   type DaemonLaunchRuntime,
   type DetachedDaemonProcess,
+  resolveLocalDaemonState,
   startLocalDaemonDetached,
   startLocalDaemonForeground,
 } from "./local-daemon.js";
@@ -64,6 +68,17 @@ class FakeDaemonRuntime implements DaemonLaunchRuntime {
   }
 }
 
+const tempRoots: string[] = [];
+
+async function createPaseoHome(config: unknown): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-local-daemon-"));
+  tempRoots.push(root);
+  const paseoHome = path.join(root, ".paseo");
+  await mkdir(paseoHome, { recursive: true });
+  await writeFile(path.join(paseoHome, "config.json"), JSON.stringify(config, null, 2));
+  return paseoHome;
+}
+
 function expectSupervisorLaunch(argv: string[]): void {
   const joined = argv.join(" ");
   expect(joined).toContain("supervisor-entrypoint");
@@ -76,6 +91,12 @@ function expectSupervisorLaunch(argv: string[]): void {
 describe("local daemon launch supervision", () => {
   beforeEach(() => {
     vi.useRealTimers();
+  });
+
+  afterEach(async () => {
+    await Promise.all(
+      tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    );
   });
 
   test("foreground start spawns supervisor-entrypoint instead of server/index", async () => {
@@ -130,5 +151,25 @@ describe("local daemon launch supervision", () => {
     expect(launch?.mode).toBe("foreground");
     expect(launch?.args).toContain("--relay-use-tls");
     expect(launch?.options?.env?.PASEO_RELAY_USE_TLS).toBe("true");
+  });
+
+  test("local daemon state keeps public relay TLS separate from daemon relay TLS", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        relay: {
+          endpoint: "10.0.0.5:51185",
+          publicEndpoint: "paseo.example.com",
+          useTls: false,
+          publicUseTls: true,
+        },
+      },
+    });
+
+    const state = resolveLocalDaemonState({ home });
+
+    expect(state.relayEndpoint).toBe("paseo.example.com");
+    expect(state.relayUseTls).toBe(false);
+    expect(state.relayPublicUseTls).toBe(true);
   });
 });
