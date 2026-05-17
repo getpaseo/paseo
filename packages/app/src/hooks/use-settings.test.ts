@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
 
 const asyncStorageMock = vi.hoisted(() => ({
   getItem: vi.fn<(_: string) => Promise<string | null>>(),
@@ -208,6 +209,27 @@ describe("use-settings", () => {
     const result = await mod.loadAppSettingsFromStorage();
 
     expect(result.terminalScrollbackLines).toBe(42_000);
+  });
+
+  it("saves terminal scrollback through app settings persistence", async () => {
+    asyncStorageMock.setItem.mockResolvedValue();
+
+    const mod = await import("./use-settings");
+    asyncStorageMock.getItem.mockResolvedValue(JSON.stringify(mod.DEFAULT_CLIENT_SETTINGS));
+    const queryClient = new QueryClient();
+
+    await mod.saveAppSettings({
+      queryClient,
+      updates: { terminalScrollbackLines: 42_000 },
+    });
+
+    expect(asyncStorageMock.setItem).toHaveBeenLastCalledWith(
+      mod.APP_SETTINGS_KEY,
+      JSON.stringify({
+        ...mod.DEFAULT_CLIENT_SETTINGS,
+        terminalScrollbackLines: 42_000,
+      }),
+    );
   });
 
   it("normalizes terminal scrollback lines from storage", async () => {

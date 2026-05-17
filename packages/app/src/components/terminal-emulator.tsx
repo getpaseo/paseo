@@ -205,6 +205,8 @@ export default function TerminalEmulator({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalEmulatorRuntime | null>(null);
   const mountedThemeRef = useRef<ITheme>(xtermTheme);
+  const scrollbackLinesRef = useRef(scrollbackLines);
+  scrollbackLinesRef.current = scrollbackLines;
   const viewportRef = useRef<HTMLElement | null>(null);
   const dragStartOffsetRef = useRef(0);
   const dragStartClientYRef = useRef(0);
@@ -285,6 +287,10 @@ export default function TerminalEmulator({
     mountedThemeRef.current = nextTheme;
     runtimeRef.current?.setTheme({ theme: nextTheme });
   }, [themeKey]);
+
+  useEffect(() => {
+    runtimeRef.current?.setScrollback({ lines: scrollbackLines });
+  }, [scrollbackLines]);
 
   useEffect(() => {
     ensureTerminalScrollbarStyle();
@@ -426,7 +432,7 @@ export default function TerminalEmulator({
       root,
       host,
       initialSnapshot: initialSnapshotRef.current,
-      scrollback: scrollbackLines,
+      scrollback: scrollbackLinesRef.current,
       theme: mountedThemeRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
@@ -438,7 +444,7 @@ export default function TerminalEmulator({
         runtimeRef.current = null;
       }
     };
-  }, [scrollbackLines, streamKey]);
+  }, [streamKey]);
 
   useEffect(() => {
     runtimeRef.current?.setCallbacks({

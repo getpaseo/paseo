@@ -568,6 +568,22 @@ export class TerminalEmulatorRuntime {
     this.refreshVisibleRows();
   }
 
+  setScrollback(input: { lines: number }): void {
+    const terminal = this.terminal;
+    if (!terminal) {
+      return;
+    }
+
+    try {
+      terminal.options.scrollback = input.lines;
+    } catch {
+      // ignore
+      return;
+    }
+
+    this.refreshVisibleRows();
+  }
+
   focus(): void {
     this.terminal?.focus();
   }

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/query/query-client";
 import {
   DEFAULT_DESKTOP_SETTINGS,
@@ -78,11 +78,7 @@ export function useAppSettings(): UseAppSettingsReturn {
   const updateSettings = useCallback(
     async (updates: Partial<AppSettings>) => {
       try {
-        const prev =
-          queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS;
-        const next = { ...prev, ...updates };
-        queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-        await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+        await saveAppSettings({ queryClient, updates });
       } catch (err) {
         console.error("[AppSettings] Failed to save settings:", err);
         throw err;
@@ -127,7 +123,9 @@ export function useSettings(): UseSettingsReturn {
       if (updates.serviceUrlBehavior !== undefined) {
         appUpdates.serviceUrlBehavior = updates.serviceUrlBehavior;
       }
-
+      if (updates.terminalScrollbackLines !== undefined) {
+        appUpdates.terminalScrollbackLines = updates.terminalScrollbackLines;
+      }
       const promises: Promise<void>[] = [];
       if (Object.keys(appUpdates).length > 0) {
         promises.push(appSettings.updateSettings(appUpdates));
@@ -176,11 +174,18 @@ export function useSettings(): UseSettingsReturn {
 }
 
 export async function persistAppSettings(updates: Partial<AppSettings>): Promise<void> {
+  await saveAppSettings({ queryClient: appQueryClient, updates });
+}
+
+export async function saveAppSettings(input: {
+  queryClient: QueryClient;
+  updates: Partial<AppSettings>;
+}): Promise<void> {
   const current =
-    appQueryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
+    input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage());
-  const next = { ...current, ...updates };
-  appQueryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
+  const next = { ...current, ...input.updates };
+  input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
   await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
 }
 

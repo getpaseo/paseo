@@ -83,7 +83,7 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown };
+  options?: { theme?: unknown; scrollback?: number };
   rows?: number;
   cols?: number;
 }
@@ -303,6 +303,26 @@ describe("terminal-emulator-runtime", () => {
       background: "after",
       overviewRulerBorder: "after",
     });
+    expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("updates terminal scrollback without remounting", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { scrollback: 10_000 },
+      rows: 12,
+      cols: 40,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+
+    runtime.setScrollback({ lines: 42_000 });
+
+    expect(terminal.options?.scrollback).toBe(42_000);
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
