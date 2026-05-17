@@ -9,7 +9,7 @@ import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
-} from "@/utils/workspace-tab-identity";
+} from "@/workspace-tabs/identity";
 import { findAdjacentPane } from "@/utils/split-navigation";
 
 export interface WorkspaceDerivedTab {
@@ -209,7 +209,10 @@ export function resolveSideFileOpenPlacement(input: {
   tabs: WorkspaceTab[];
   target: WorkspaceTabTarget;
 }): WorkspaceSideFileOpenPlacement {
-  const existingTab = input.tabs.find((tab) => workspaceTabTargetsEqual(tab.target, input.target));
+  const targetTabId = buildDeterministicWorkspaceTabId(input.target);
+  const existingTab = input.tabs.find(
+    (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, input.target),
+  );
   if (existingTab) {
     return { kind: "open-in-source" };
   }

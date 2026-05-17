@@ -4,7 +4,7 @@ import {
   getAssistantFileLinkToken,
   type AssistantFileLinkContext,
   type DirectorySuggestionResult,
-} from "./assistant-file-link-resolver";
+} from "./resolver";
 
 const CONTEXT: AssistantFileLinkContext = {
   serverId: "server-1",
@@ -257,6 +257,31 @@ describe("assistant file link resolver", () => {
       "main",
     );
     expect(result.opened).toBe(true);
+  });
+
+  it("preserves direct workspace file line ranges", async () => {
+    const openWorkspaceFile = vi.fn();
+    const resolver = createAssistantFileLinkResolver({
+      getDirectorySuggestions: vi.fn(async () => resolvedSuggestions([])),
+      openWorkspaceFile,
+      openExternalUrl: vi.fn(),
+    });
+
+    await resolver.open({
+      context: CONTEXT,
+      source: { href: "src/components/message.tsx:33-40" },
+      disposition: "main",
+    });
+
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      {
+        raw: "src/components/message.tsx:33-40",
+        path: "/Users/test/project/src/components/message.tsx",
+        lineStart: 33,
+        lineEnd: 40,
+      },
+      "main",
+    );
   });
 
   it("resolves inline-code basename line refs through directory suggestions", async () => {

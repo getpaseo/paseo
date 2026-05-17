@@ -68,11 +68,8 @@ import type { AgentAttachment } from "@server/shared/messages";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
-import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
-import type { OpenFileDisposition } from "@/utils/workspace-file-open";
+import type { OpenFileDisposition } from "@/workspace/file-open";
 import { getMarkdownListMarker, getMarkdownNextSiblingType } from "@/utils/markdown-list";
-import { type AssistantFileLinkSource } from "@/utils/assistant-file-link-resolver";
-import { useAssistantFileLinkResolver } from "@/hooks/use-assistant-file-link-resolver";
 import type { ToastApi } from "@/components/toast-host";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
@@ -95,15 +92,19 @@ import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
   AssistantInlineCodePathLink,
+  classifyAssistantFileLink,
+  type AssistantFileLinkSource,
   AssistantMarkdownCodeLink,
   AssistantMarkdownLink,
-} from "./assistant-file-link";
+  type InlinePathTarget,
+  useAssistantFileLinkResolver,
+} from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
-export type { InlinePathTarget } from "@/utils/inline-path";
+export type { InlinePathTarget } from "@/assistant-file-links";
 
 type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
@@ -1683,8 +1684,12 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => {
         const content = node.content ?? "";
         const isLinkedInlineCode = nodeHasParentType(parent, "link");
+        const inlineCodeFileLink = classifyAssistantFileLink(content, { workspaceRoot });
         const shouldResolveInlinePath =
-          onInlinePathPress && !isLinkedInlineCode && parseInlinePathToken(content);
+          onInlinePathPress &&
+          !isLinkedInlineCode &&
+          inlineCodeFileLink &&
+          inlineCodeFileLink.kind !== "external";
 
         if (shouldResolveInlinePath) {
           return (

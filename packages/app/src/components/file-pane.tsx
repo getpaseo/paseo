@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@server/client/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
@@ -26,11 +26,13 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
   lineNumber: number;
   gutterWidth: number;
+  highlighted: boolean;
 }
 
 interface FilePreviewBodyProps {
@@ -38,7 +40,7 @@ interface FilePreviewBodyProps {
   isLoading: boolean;
   showDesktopWebScrollbar: boolean;
   isMobile: boolean;
-  filePath: string;
+  location: WorkspaceFileLocation;
   imagePreviewUri: string | null;
 }
 
@@ -48,6 +50,11 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+interface FileLineSelection {
+  lineStart: number;
+  lineEnd: number;
 }
 
 function formatFileSize({ size }: { size: number }): string {
@@ -92,14 +99,38 @@ async function createFilePanePreview(file: FileReadResult | null): Promise<{
   };
 }
 
-const CodeLine = React.memo(function CodeLine({ tokens, lineNumber, gutterWidth }: CodeLineProps) {
+function clampLineSelection(input: {
+  lineStart?: number;
+  lineEnd?: number;
+  lineCount: number;
+}): FileLineSelection | null {
+  if (!input.lineStart || input.lineStart <= 0 || input.lineCount <= 0) {
+    return null;
+  }
+  const lineStart = Math.min(Math.floor(input.lineStart), input.lineCount);
+  const rawLineEnd =
+    input.lineEnd && input.lineEnd >= input.lineStart ? input.lineEnd : input.lineStart;
+  const lineEnd = Math.min(Math.floor(rawLineEnd), input.lineCount);
+  return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
+}
+
+const CodeLine = React.memo(function CodeLine({
+  tokens,
+  lineNumber,
+  gutterWidth,
+  highlighted,
+}: CodeLineProps) {
   const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
+  const lineStyle = useMemo(
+    () => [codeLineStyles.line, highlighted && codeLineStyles.highlightedLine],
+    [highlighted],
+  );
   const keyedTokens = useMemo(
     () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
     [tokens],
   );
   return (
-    <View style={codeLineStyles.line}>
+    <View style={lineStyle}>
       <View style={gutterStyle}>
         <Text numberOfLines={1} style={codeLineStyles.gutterText}>
           {String(lineNumber)}
@@ -125,6 +156,9 @@ function CodeLineToken({ token }: CodeLineTokenProps) {
 const codeLineStyles = StyleSheet.create((theme) => ({
   line: {
     flexDirection: "row",
+  },
+  highlightedLine: {
+    backgroundColor: theme.colors.accentBorder,
   },
   gutter: {
     alignItems: "flex-end",
@@ -152,13 +186,15 @@ function FilePreviewBody({
   isLoading,
   showDesktopWebScrollbar,
   isMobile,
-  filePath,
+  location,
   imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
+  const filePath = location.path;
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
   const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
-  const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
+  const isMarkdownFile =
+    preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
 
   const previewScrollRef = useRef<RNScrollView>(null);
   const webScrollbarStyle = useWebScrollbarStyle();
@@ -178,11 +214,35 @@ function FilePreviewBody({
     if (!highlightedLines) return 0;
     return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.sm);
   }, [highlightedLines, theme.fontSize.sm]);
+  const lineHeight = theme.fontSize.sm * 1.45;
+  const lineSelection = useMemo(() => {
+    if (!highlightedLines) {
+      return null;
+    }
+    return clampLineSelection({
+      lineStart: location.lineStart,
+      lineEnd: location.lineEnd,
+      lineCount: highlightedLines.length,
+    });
+  }, [highlightedLines, location.lineEnd, location.lineStart]);
 
   const imageSource = useMemo(
     () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
     [imagePreviewUri],
   );
+
+  useEffect(() => {
+    if (!lineSelection) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      previewScrollRef.current?.scrollTo({
+        y: Math.max(0, (lineSelection.lineStart - 1) * lineHeight),
+        animated: false,
+      });
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [lineHeight, lineSelection]);
 
   if (isLoading && !preview) {
     return (
@@ -233,7 +293,17 @@ function FilePreviewBody({
     const codeLines = (
       <View>
         {keyedLines.map(({ key, tokens, lineNumber }) => (
-          <CodeLine key={key} tokens={tokens} lineNumber={lineNumber} gutterWidth={gutterWidth} />
+          <CodeLine
+            key={key}
+            tokens={tokens}
+            lineNumber={lineNumber}
+            gutterWidth={gutterWidth}
+            highlighted={
+              Boolean(lineSelection) &&
+              lineNumber >= (lineSelection?.lineStart ?? 0) &&
+              lineNumber <= (lineSelection?.lineEnd ?? 0)
+            }
+          />
         ))}
       </View>
     );
@@ -312,18 +382,18 @@ function FilePreviewBody({
 export function FilePane({
   serverId,
   workspaceRoot,
-  filePath,
+  location,
 }: {
   serverId: string;
   workspaceRoot: string;
-  filePath: string;
+  location: WorkspaceFileLocation;
 }) {
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
-  const normalizedFilePath = useMemo(() => trimNonEmpty(filePath), [filePath]);
+  const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
 
   const query = useQuery({
     queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
@@ -366,7 +436,7 @@ export function FilePane({
         isLoading={query.isFetching}
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         isMobile={isMobile}
-        filePath={filePath}
+        location={location}
         imagePreviewUri={imagePreviewUri}
       />
     </View>

@@ -16,11 +16,11 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
-import { classifyAssistantFileLink, type InlinePathTarget } from "@/utils/inline-path";
-import type { AssistantFileLinkSource } from "@/utils/assistant-file-link-resolver";
-import type { OpenFileDisposition } from "@/utils/workspace-file-open";
+import type { OpenFileDisposition } from "@/workspace/file-open";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { classifyAssistantFileLink, type InlinePathTarget } from "./parse";
+import type { AssistantFileLinkSource } from "./resolver";
 
 interface AssistantInlinePathLinkProps {
   content: string;

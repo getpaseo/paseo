@@ -44,7 +44,7 @@ import {
   type WorkspaceTabSnapshot,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
-import { normalizeWorkspaceTabTarget } from "@/utils/workspace-tab-identity";
+import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 
 export { buildWorkspaceTabPersistenceKey };
 export {

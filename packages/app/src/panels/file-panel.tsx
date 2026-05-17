@@ -38,7 +38,7 @@ function FilePanel() {
       </View>
     );
   }
-  return <FilePane serverId={serverId} workspaceRoot={workspaceDirectory} filePath={target.path} />;
+  return <FilePane serverId={serverId} workspaceRoot={workspaceDirectory} location={target} />;
 }
 
 export const filePanelRegistration: PanelRegistration<"file"> = {

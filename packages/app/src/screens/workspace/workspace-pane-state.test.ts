@@ -130,6 +130,30 @@ describe("workspace-pane-state", () => {
     ).toEqual({ kind: "open-in-source" });
   });
 
+  it("resolves side file opens to an existing file tab when only the line range differs", () => {
+    const layout: WorkspaceLayout = {
+      root: {
+        kind: "pane",
+        pane: {
+          id: "main",
+          tabIds: ["file_/repo/README.md"],
+          focusedTabId: "file_/repo/README.md",
+        },
+      },
+      focusedPaneId: "main",
+    };
+    const tabs = [createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" })];
+
+    expect(
+      resolveSideFileOpenPlacement({
+        layout,
+        sourcePaneId: "main",
+        tabs,
+        target: { kind: "file", path: "/repo/README.md", lineStart: 12, lineEnd: 20 },
+      }),
+    ).toEqual({ kind: "open-in-source" });
+  });
+
   it("resolves side file opens to an existing right pane", () => {
     const layout: WorkspaceLayout = {
       root: {

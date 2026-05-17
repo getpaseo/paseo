@@ -5,7 +5,7 @@ import {
   parseAssistantFileLink,
   parseFileProtocolUrl,
   parseInlinePathToken,
-} from "./inline-path";
+} from "./parse";
 
 describe("parseInlinePathToken", () => {
   it("returns null for plain paths without a line number", () => {
@@ -31,6 +31,33 @@ describe("parseInlinePathToken", () => {
     });
   });
 
+  it("parses filename:line:column as a line target", () => {
+    expect(parseInlinePathToken("src/app.ts:12:4")).toEqual({
+      raw: "src/app.ts:12:4",
+      path: "src/app.ts",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("parses filename(line,column) as a line target", () => {
+    expect(parseInlinePathToken("src/app.ts(12,4)")).toEqual({
+      raw: "src/app.ts(12,4)",
+      path: "src/app.ts",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("parses filename lines lineStart-lineEnd", () => {
+    expect(parseInlinePathToken("src/app.ts lines 12-20")).toEqual({
+      raw: "src/app.ts lines 12-20",
+      path: "src/app.ts",
+      lineStart: 12,
+      lineEnd: 20,
+    });
+  });
+
   it("rejects range-only :line tokens", () => {
     expect(parseInlinePathToken(":12")).toBeNull();
     expect(parseInlinePathToken(":12-20")).toBeNull();
@@ -44,6 +71,15 @@ describe("parseFileProtocolUrl", () => {
       path: "/Users/test/project/src/app.tsx",
       lineStart: 81,
       lineEnd: undefined,
+    });
+  });
+
+  it("parses file URLs with line-column fragments", () => {
+    expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L81C5-L83C2")).toEqual({
+      raw: "file:///Users/test/project/src/app.tsx#L81C5-L83C2",
+      path: "/Users/test/project/src/app.tsx",
+      lineStart: 81,
+      lineEnd: 83,
     });
   });
 

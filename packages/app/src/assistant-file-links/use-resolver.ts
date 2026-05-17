@@ -6,9 +6,9 @@ import {
   type AssistantFileLinkContext,
   type AssistantFileLinkOpenInput,
   type AssistantFileLinkPrefetchInput,
-} from "@/utils/assistant-file-link-resolver";
-import type { InlinePathTarget } from "@/utils/inline-path";
-import type { OpenFileDisposition } from "@/utils/workspace-file-open";
+} from "./resolver";
+import type { InlinePathTarget } from "./parse";
+import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 export interface UseAssistantFileLinkResolverOptions {

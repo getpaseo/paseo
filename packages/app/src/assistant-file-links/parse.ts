@@ -1,4 +1,4 @@
-import { isAbsolutePath } from "./path";
+import { isAbsolutePath } from "@/utils/path";
 
 export interface InlinePathTarget {
   raw: string;
@@ -8,7 +8,10 @@ export interface InlinePathTarget {
 }
 
 const FILE_PROTOCOL = "file:";
-const INLINE_LINE_FRAGMENT = /^L([0-9]+)(?:-L?([0-9]+))?$/i;
+const INLINE_LINE_FRAGMENT = /^L([0-9]+)(?:C[0-9]+)?(?:-L?([0-9]+)(?:C[0-9]+)?)?$/i;
+const INLINE_COLON_LINE_SUFFIX = /^(.+?):([0-9]+)(?::[0-9]+)?(?:-([0-9]+)(?::[0-9]+)?)?$/;
+const INLINE_PAREN_LINE_SUFFIX = /^(.+?)\(([0-9]+)(?:,[0-9]+)?(?:-([0-9]+)(?:,[0-9]+)?)?\)$/;
+const INLINE_WORD_LINE_SUFFIX = /^(.+?)\s+lines?\s+([0-9]+)(?:-([0-9]+))?$/i;
 const ASSISTANT_FILE_EXTENSIONS = new Set([
   "astro",
   "bash",
@@ -142,7 +145,10 @@ export function parseInlinePathToken(value: string): InlinePathTarget | null {
     return null;
   }
 
-  const match = trimmed.match(/^(.+?):([0-9]+)(?:-([0-9]+))?$/);
+  const match =
+    trimmed.match(INLINE_COLON_LINE_SUFFIX) ??
+    trimmed.match(INLINE_PAREN_LINE_SUFFIX) ??
+    trimmed.match(INLINE_WORD_LINE_SUFFIX);
   if (!match) {
     return null;
   }

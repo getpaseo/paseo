@@ -353,6 +353,39 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("updates an existing file tab when opening the same path at a new line range", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    const firstTabId = store.openTabFocused(workspaceKey, {
+      kind: "file",
+      path: "/repo/worktree/a.ts",
+      lineStart: 5,
+    });
+    const secondTabId = store.openTabFocused(workspaceKey, {
+      kind: "file",
+      path: "/repo/worktree/a.ts",
+      lineStart: 10,
+      lineEnd: 12,
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    expect(firstTabId).toBe("file_/repo/worktree/a.ts");
+    expect(secondTabId).toBe(firstTabId);
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "file_/repo/worktree/a.ts",
+        target: {
+          kind: "file",
+          path: "/repo/worktree/a.ts",
+          lineStart: 10,
+          lineEnd: 12,
+        },
+        createdAt: expect.any(Number),
+      },
+    ]);
+  });
+
   it("openTabInBackground inserts a tab without stealing focus", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

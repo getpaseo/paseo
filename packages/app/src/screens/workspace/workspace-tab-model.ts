@@ -3,7 +3,7 @@ import {
   deriveWorkspacePaneState,
   type WorkspaceDerivedTab,
 } from "@/screens/workspace/workspace-pane-state";
-import { buildDeterministicWorkspaceTabId } from "@/utils/workspace-tab-identity";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 
 export interface WorkspaceTabModel {
   tabs: WorkspaceDerivedTab[];

@@ -9,7 +9,7 @@ import {
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
-import type { OpenFileDisposition } from "@/utils/workspace-file-open";
+import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 
 export interface WorkspacePaneContentModel {
   key: string;
@@ -24,7 +24,7 @@ export interface BuildWorkspacePaneContentModelInput {
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
-  onOpenWorkspaceFile: (filePath: string, disposition: OpenFileDisposition) => void;
+  onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
   onOpenImportSheet: () => void;
 }
 

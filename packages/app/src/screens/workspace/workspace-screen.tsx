@@ -77,10 +77,7 @@ import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-s
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import {
-  normalizeWorkspaceTabTarget,
-  workspaceTabTargetsEqual,
-} from "@/utils/workspace-tab-identity";
+import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import {
   getHostRuntimeStore,
   useHostRuntimeClient,
@@ -161,6 +158,12 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { canCreateWorkspaceTerminal } from "@/screens/workspace/terminals/state";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
+import {
+  createWorkspaceFileTabTarget,
+  normalizeWorkspaceFileLocation,
+  type WorkspaceFileLocation,
+  type WorkspaceFileOpenRequest,
+} from "@/workspace/file-open";
 
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
@@ -2023,7 +2026,11 @@ function WorkspaceScreenContent({
       if (!persistenceKey) {
         return;
       }
-      const tabId = openWorkspaceTabFocused(persistenceKey, { kind: "file", path: filePath });
+      const location = normalizeWorkspaceFileLocation({ path: filePath });
+      if (!location) {
+        return;
+      }
+      const tabId = openWorkspaceTabFocused(persistenceKey, createWorkspaceFileTabTarget(location));
       if (tabId) {
         navigateToTabId(tabId);
       }
@@ -2032,28 +2039,40 @@ function WorkspaceScreenContent({
   );
 
   const handleOpenFileFromChat = useCallback(
-    (filePath: string) => {
-      const normalizedFilePath = filePath.trim();
-      if (!normalizedFilePath) {
+    (location: WorkspaceFileLocation) => {
+      const normalizedLocation = normalizeWorkspaceFileLocation(location);
+      if (!normalizedLocation) {
         return;
       }
-      handleOpenFileFromExplorer(normalizedFilePath);
+      if (isMobile) {
+        showMobileAgent();
+      }
+      if (!persistenceKey) {
+        return;
+      }
+      const tabId = openWorkspaceTabFocused(
+        persistenceKey,
+        createWorkspaceFileTabTarget(normalizedLocation),
+      );
+      if (tabId) {
+        navigateToTabId(tabId);
+      }
     },
-    [handleOpenFileFromExplorer],
+    [isMobile, navigateToTabId, openWorkspaceTabFocused, persistenceKey, showMobileAgent],
   );
 
   const handleOpenFileFromChatInSidePane = useCallback(
-    (input: { filePath: string; sourcePaneId?: string }) => {
-      const normalizedFilePath = input.filePath.trim();
-      if (!normalizedFilePath) {
+    (input: { location: WorkspaceFileLocation; sourcePaneId?: string }) => {
+      const location = normalizeWorkspaceFileLocation(input.location);
+      if (!location) {
         return;
       }
       if (!persistenceKey || isMobile || !input.sourcePaneId) {
-        handleOpenFileFromExplorer(normalizedFilePath);
+        handleOpenFileFromChat(location);
         return;
       }
 
-      const target: WorkspaceTabTarget = { kind: "file", path: normalizedFilePath };
+      const target: WorkspaceTabTarget = createWorkspaceFileTabTarget(location);
       const placement = resolveSideFileOpenPlacement({
         layout: workspaceLayout,
         sourcePaneId: input.sourcePaneId,
@@ -2075,7 +2094,7 @@ function WorkspaceScreenContent({
       }
     },
     [
-      handleOpenFileFromExplorer,
+      handleOpenFileFromChat,
       isMobile,
       focusWorkspacePane,
       navigateToTabId,
@@ -2755,18 +2774,18 @@ function WorkspaceScreenContent({
           }
           retargetWorkspaceTab(persistenceKey, input.tab.tabId, target);
         },
-        onOpenWorkspaceFile: (filePath, disposition) => {
+        onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => {
           if (input.focusPaneBeforeOpen && input.paneId && persistenceKey) {
             focusWorkspacePane(persistenceKey, input.paneId);
           }
-          if (disposition === "side") {
+          if (request.disposition === "side") {
             handleOpenFileFromChatInSidePane({
-              filePath,
+              location: request.location,
               sourcePaneId: input.paneId ?? undefined,
             });
             return;
           }
-          handleOpenFileFromChat(filePath);
+          handleOpenFileFromChat(request.location);
         },
         onOpenImportSheet: openImportSheet,
       }),

@@ -74,11 +74,15 @@ import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
-import { normalizeInlinePathTarget } from "@/utils/inline-path";
-import type { OpenFileDisposition } from "@/utils/workspace-file-open";
+import { normalizeInlinePathTarget } from "@/assistant-file-links";
+import {
+  createWorkspaceFileTabTarget,
+  normalizeWorkspaceFileLocation,
+  type OpenFileDisposition,
+  type WorkspaceFileOpenRequest,
+} from "@/workspace/file-open";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
-import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 
@@ -243,7 +247,7 @@ export interface AgentStreamViewProps {
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
-  onOpenWorkspaceFile?: (input: { filePath: string; disposition: OpenFileDisposition }) => void;
+  onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
@@ -303,12 +307,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       toast,
     });
-    const openWorkspaceFile = useStableEvent(function openWorkspaceFile(input: {
-      filePath: string;
-      disposition: OpenFileDisposition;
-    }) {
-      onOpenWorkspaceFile?.(input);
-    });
     // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
     // tracked in react-native-reanimated#8422.
     const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -336,8 +334,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }
 
         if (normalized.file) {
+          const location = normalizeWorkspaceFileLocation({
+            path: normalized.file,
+            lineStart: target.lineStart,
+            lineEnd: target.lineEnd,
+          });
+          if (!location) {
+            return;
+          }
+
           if (onOpenWorkspaceFile) {
-            openWorkspaceFile({ filePath: normalized.file, disposition });
+            onOpenWorkspaceFile({
+              location,
+              disposition,
+            });
             return;
           }
 
@@ -345,7 +355,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             navigateToPreparedWorkspaceTab({
               serverId: resolvedServerId,
               workspaceId,
-              target: { kind: "file", path: normalized.file },
+              target: createWorkspaceFileTabTarget(location),
             });
           }
           return;
@@ -376,7 +386,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         requestDirectoryListing,
         resolvedServerId,
         setExplorerTabForCheckout,
-        openWorkspaceFile,
         workspaceId,
       ],
     );

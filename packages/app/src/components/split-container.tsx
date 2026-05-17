@@ -67,7 +67,7 @@ import {
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
-import { workspaceTabTargetsEqual } from "@/utils/workspace-tab-identity";
+import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { isNative } from "@/constants/platform";
 
 interface SplitContainerProps {

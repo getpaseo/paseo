@@ -6,7 +6,7 @@ import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
-} from "@/utils/workspace-tab-identity";
+} from "@/workspace-tabs/identity";
 
 export interface SplitPane {
   id: string;
@@ -1051,19 +1051,45 @@ function insertNewTabIntoFocusedPane(input: {
   };
 }
 
+function findExistingTabForTarget(root: SplitNodeInternal, target: WorkspaceTabTarget) {
+  const targetTabId = buildDeterministicWorkspaceTabId(target);
+  return (
+    collectAllTabs(root).find(
+      (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, target),
+    ) ?? null
+  );
+}
+
+function updateExistingTabTarget(
+  layout: { root: SplitNodeInternal; focusedPaneId: string | null },
+  tab: WorkspaceTab,
+  target: WorkspaceTabTarget,
+): { root: SplitNodeInternal; focusedPaneId: string | null } {
+  if (workspaceTabTargetsEqual(tab.target, target)) {
+    return layout;
+  }
+  return {
+    ...layout,
+    root: replaceTabInTree(layout.root, {
+      tabId: tab.tabId,
+      nextTabId: tab.tabId,
+      target,
+    }),
+  };
+}
+
 export function openTabInLayoutFocused(input: OpenTabInLayoutInput): OpenTabInLayoutResult {
   const layout = asInternalLayout(input.layout);
-  const existingTab = collectAllTabs(layout.root).find((tab) =>
-    workspaceTabTargetsEqual(tab.target, input.target),
-  );
+  const existingTab = findExistingTabForTarget(layout.root, input.target);
   if (existingTab) {
+    const nextLayout = updateExistingTabTarget(layout, existingTab, input.target);
     return {
       tabId: existingTab.tabId,
       layout:
         focusTabInLayout({
-          layout,
+          layout: nextLayout,
           tabId: existingTab.tabId,
-        }) ?? input.layout,
+        }) ?? nextLayout,
     };
   }
 
@@ -1072,11 +1098,12 @@ export function openTabInLayoutFocused(input: OpenTabInLayoutInput): OpenTabInLa
 
 export function openTabInLayoutBackground(input: OpenTabInLayoutInput): OpenTabInLayoutResult {
   const layout = asInternalLayout(input.layout);
-  const existingTab = collectAllTabs(layout.root).find((tab) =>
-    workspaceTabTargetsEqual(tab.target, input.target),
-  );
+  const existingTab = findExistingTabForTarget(layout.root, input.target);
   if (existingTab) {
-    return { tabId: existingTab.tabId, layout: input.layout };
+    return {
+      tabId: existingTab.tabId,
+      layout: updateExistingTabTarget(layout, existingTab, input.target),
+    };
   }
 
   return insertNewTabIntoFocusedPane({ ...input, focus: false });
