@@ -241,6 +241,15 @@ const CATALOG_DATA = [
     command: ["kilo", "acp"],
   },
   {
+    id: "kiro",
+    title: "Kiro CLI",
+    description: "Amazon's AI coding agent with native ACP support",
+    version: "manual",
+    iconId: null,
+    installLink: "https://kiro.dev/docs/cli/acp/",
+    command: ["kiro-cli", "acp"],
+  },
+  {
     id: "kimi",
     title: "Kimi CLI",
     description: "Moonshot AI's coding assistant",

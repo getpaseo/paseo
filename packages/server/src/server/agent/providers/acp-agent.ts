@@ -1667,6 +1667,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    this.logger.trace(
+      {
+        agentId: this.agentId,
+        provider: this.provider,
+        sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
+        method,
+        rawEvent: params,
+      },
+      "provider.acp.extension_notification",
+    );
+  }
+
   async readTextFile(params: ReadTextFileRequest): Promise<{ content: string }> {
     const raw = await fs.readFile(params.path, "utf8");
     if (!params.line && !params.limit) {

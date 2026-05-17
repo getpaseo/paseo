@@ -1438,6 +1438,26 @@ describe("ACPAgentSession slash commands", () => {
 });
 
 describe("ACPAgentSession", () => {
+  test("accepts ACP extension notifications without failing the JSON-RPC connection", async () => {
+    const logger = createTestLogger();
+    const trace = vi.spyOn(logger, "trace");
+    const session = createSessionWithConfig({ provider: "kiro" }, logger);
+
+    await expect(
+      session.extNotification("_kiro.dev/session/initialized", {
+        sessionId: "session-1",
+      }),
+    ).resolves.toBeUndefined();
+    expect(trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "kiro",
+        method: "_kiro.dev/session/initialized",
+        sessionId: "session-1",
+      }),
+      "provider.acp.extension_notification",
+    );
+  });
+
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
     const events: Array<{ type: string; item?: { type: string; text?: string } }> = [];
