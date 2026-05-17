@@ -82,7 +82,7 @@ export function hasPendingTerminalModifiers(modifiers: PendingTerminalModifiers)
   return modifiers.ctrl || modifiers.shift || modifiers.alt;
 }
 
-export interface AppleHandheldDetectionInput {
+interface AppleHandheldDetectionInput {
   userAgent: string | null | undefined;
   platform: string | null | undefined;
   maxTouchPoints: number | null | undefined;
