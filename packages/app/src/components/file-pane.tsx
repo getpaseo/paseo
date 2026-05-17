@@ -15,13 +15,8 @@ import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
-import {
-  highlightCode,
-  darkHighlightColors,
-  lightHighlightColors,
-  type HighlightToken,
-  type HighlightStyle,
-} from "@getpaseo/highlight";
+import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
@@ -36,8 +31,6 @@ interface CodeLineProps {
   tokens: HighlightToken[];
   lineNumber: number;
   gutterWidth: number;
-  colorMap: Record<HighlightStyle, string>;
-  baseColor: string;
 }
 
 interface FilePreviewBodyProps {
@@ -99,18 +92,8 @@ async function createFilePanePreview(file: FileReadResult | null): Promise<{
   };
 }
 
-const CodeLine = React.memo(function CodeLine({
-  tokens,
-  lineNumber,
-  gutterWidth,
-  colorMap,
-  baseColor,
-}: CodeLineProps) {
+const CodeLine = React.memo(function CodeLine({ tokens, lineNumber, gutterWidth }: CodeLineProps) {
   const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
-  const gutterTextStyle = useMemo(
-    () => [codeLineStyles.gutterText, { color: baseColor }],
-    [baseColor],
-  );
   const keyedTokens = useMemo(
     () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
     [tokens],
@@ -118,17 +101,13 @@ const CodeLine = React.memo(function CodeLine({
   return (
     <View style={codeLineStyles.line}>
       <View style={gutterStyle}>
-        <Text numberOfLines={1} style={gutterTextStyle}>
+        <Text numberOfLines={1} style={codeLineStyles.gutterText}>
           {String(lineNumber)}
         </Text>
       </View>
       <Text selectable style={codeLineStyles.lineText}>
         {keyedTokens.map(({ key, token }) => (
-          <CodeLineToken
-            key={key}
-            color={token.style ? (colorMap[token.style] ?? baseColor) : baseColor}
-            text={token.text}
-          />
+          <CodeLineToken key={key} token={token} />
         ))}
       </Text>
     </View>
@@ -136,13 +115,11 @@ const CodeLine = React.memo(function CodeLine({
 });
 
 interface CodeLineTokenProps {
-  color: string;
-  text: string;
+  token: HighlightToken;
 }
 
-function CodeLineToken({ color, text }: CodeLineTokenProps) {
-  const style = useMemo(() => ({ color }), [color]);
-  return <Text style={style}>{text}</Text>;
+function CodeLineToken({ token }: CodeLineTokenProps) {
+  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
 }
 
 const codeLineStyles = StyleSheet.create((theme) => ({
@@ -155,6 +132,7 @@ const codeLineStyles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   gutterText: {
+    color: theme.colors.foreground,
     fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.45,
@@ -178,9 +156,6 @@ function FilePreviewBody({
   imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
-  const isDark = theme.colorScheme === "dark";
-  const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
-  const baseColor = isDark ? "#c9d1d9" : "#24292f";
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
   const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
   const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
@@ -258,14 +233,7 @@ function FilePreviewBody({
     const codeLines = (
       <View>
         {keyedLines.map(({ key, tokens, lineNumber }) => (
-          <CodeLine
-            key={key}
-            tokens={tokens}
-            lineNumber={lineNumber}
-            gutterWidth={gutterWidth}
-            colorMap={colorMap}
-            baseColor={baseColor}
-          />
+          <CodeLine key={key} tokens={tokens} lineNumber={lineNumber} gutterWidth={gutterWidth} />
         ))}
       </View>
     );

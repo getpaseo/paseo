@@ -54,11 +54,7 @@ import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { DiffScroll } from "@/components/diff-scroll";
-import {
-  darkHighlightColors,
-  lightHighlightColors,
-  type HighlightStyle as HighlightStyleKey,
-} from "@getpaseo/highlight";
+import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/git/diff-scroll";
@@ -136,8 +132,6 @@ function expandAllButtonStyle({
   return [styles.expandAllButton, (Boolean(hovered) || pressed) && styles.diffStatusRowHovered];
 }
 
-type HighlightStyle = NonNullable<HighlightToken["style"]>;
-
 interface HighlightedTextProps {
   tokens: HighlightToken[];
   wrapLines?: boolean;
@@ -157,30 +151,13 @@ function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefine
     : { whiteSpace: "pre", overflowWrap: "normal" };
 }
 
-function HighlightedToken({
-  text,
-  color,
-  lineHeight,
-}: {
-  text: string;
-  color: string;
-  lineHeight: number;
-}) {
-  const tokenStyle = useMemo(() => ({ color, lineHeight }), [color, lineHeight]);
-  return <Text style={tokenStyle}>{text}</Text>;
+function HighlightedToken({ token }: { token: HighlightToken }) {
+  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
 }
 
 function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   const { theme } = useUnistyles();
-  const isDark = theme.colorScheme === "dark";
   const lineHeight = theme.lineHeight.diff;
-
-  const getTokenColor = (style: HighlightStyle | null): string => {
-    const baseColor = isDark ? "#c9d1d9" : "#24292f";
-    if (!style) return baseColor;
-    const colors = isDark ? darkHighlightColors : lightHighlightColors;
-    return colors[style as HighlightStyleKey] ?? baseColor;
-  };
 
   const containerStyle = useMemo(
     () => [styles.diffLineText, { lineHeight, ...getWrappedTextStyle(wrapLines) }],
@@ -195,12 +172,7 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   return (
     <Text style={containerStyle}>
       {keyedTokens.map(({ key, token }) => (
-        <HighlightedToken
-          key={key}
-          text={token.text}
-          color={getTokenColor(token.style)}
-          lineHeight={lineHeight}
-        />
+        <HighlightedToken key={key} token={token} />
       ))}
     </Text>
   );

@@ -74,6 +74,7 @@ import { getMarkdownListMarker, getMarkdownNextSiblingType } from "@/utils/markd
 import { type AssistantFileLinkSource } from "@/utils/assistant-file-link-resolver";
 import { useAssistantFileLinkResolver } from "@/hooks/use-assistant-file-link-resolver";
 import type { ToastApi } from "@/components/toast-host";
+import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import {
@@ -1650,13 +1651,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <MarkdownInheritedText
+        <HighlightedCodeBlock
           key={node.key}
+          code={node.content}
+          language={null}
           inheritedStyles={inheritedStyles}
           textStyle={styles.code_block}
-        >
-          {node.content}
-        </MarkdownInheritedText>
+        />
       ),
       fence: (
         node: ASTNode,
@@ -1665,13 +1666,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <MarkdownInheritedText
+        <HighlightedCodeBlock
           key={node.key}
+          code={node.content}
+          language={node.sourceInfo}
           inheritedStyles={inheritedStyles}
           textStyle={styles.fence}
-        >
-          {node.content}
-        </MarkdownInheritedText>
+        />
       ),
       code_inline: (
         node: ASTNode,
