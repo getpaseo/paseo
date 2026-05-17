@@ -64,7 +64,7 @@ render_flow_tree() {
 
 if [ ! -f "$CLIENT_EXPORTS" ]; then
   echo "Missing client build artifact: $CLIENT_EXPORTS" >&2
-  echo "Run: npm run build --workspace=@getpaseo/client" >&2
+  echo "Run: npm run build:client" >&2
   exit 1
 fi
 

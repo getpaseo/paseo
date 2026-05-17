@@ -45,12 +45,6 @@ Write-Host @"
 # Allow any origin in dev so Electron on random ports all work.
 # SECURITY: wildcard CORS is unsafe in production — only acceptable here because
 # the daemon binds to localhost and this script is never used for production.
-# Build dependencies required by the daemon (they only ship dist/)
-Write-Host "Building @getpaseo/highlight..."
-npm run build --workspace=@getpaseo/highlight
-Write-Host "Building @getpaseo/relay..."
-npm run build --workspace=@getpaseo/relay
-
 $env:PASEO_CORS_ORIGINS = "*"
 
 # Configure the app to auto-connect to this daemon on localhost

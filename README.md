@@ -134,8 +134,8 @@ npm run dev:app
 npm run dev:desktop
 npm run dev:website
 
-# build the daemon
-npm run build:daemon
+# build the server stack
+npm run build:server
 
 # repo-wide checks
 npm run typecheck

@@ -9,7 +9,7 @@
 // installPhase copies each path to $out/lib/paseo/<path>, preserving the
 // directory structure node's module resolution expects.
 //
-// Run from the repo root, after `npm run build:daemon`. Requires
+// Run from the repo root, after `npm run build:server`. Requires
 // node_modules populated (the Nix build invokes this post-configHook).
 
 import { nodeFileTrace } from "@vercel/nft";
