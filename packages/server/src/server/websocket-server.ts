@@ -1670,10 +1670,13 @@ export class VoiceAssistantWebSocketServer {
       nowMs,
     });
 
-    if (plan.shouldPush) {
-      void this.pushNotificationSender.send(notification).catch((err) => {
-        this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
-      });
+    const shouldSendServerChan = this.pushNotificationSender.serverChanEnabled === true;
+    if (plan.shouldPush || shouldSendServerChan) {
+      void this.pushNotificationSender
+        .send(notification, { expo: plan.shouldPush, serverChan: shouldSendServerChan })
+        .catch((err) => {
+          this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
+        });
     }
 
     for (const [clientIndex, { ws }] of clientEntries.entries()) {

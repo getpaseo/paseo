@@ -66,14 +66,24 @@ function createLogger() {
 
 class RecordingPushNotificationSender implements PushNotificationSender {
   readonly sent: PushPayload[] = [];
+  readonly options: Array<Parameters<PushNotificationSender["send"]>[1]> = [];
 
-  async send(payload: PushPayload): Promise<void> {
+  constructor(readonly serverChanEnabled = false) {}
+
+  async send(
+    payload: PushPayload,
+    options?: Parameters<PushNotificationSender["send"]>[1],
+  ): Promise<void> {
     this.sent.push(payload);
+    this.options.push(options);
   }
 }
 
-function createServer(agentManagerOverrides?: Record<string, unknown>) {
-  const pushNotifications = new RecordingPushNotificationSender();
+function createServer(
+  agentManagerOverrides?: Record<string, unknown>,
+  options: { serverChanEnabled?: boolean } = {},
+) {
+  const pushNotifications = new RecordingPushNotificationSender(options.serverChanEnabled);
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
     getAgent: vi.fn(() => null),
@@ -285,6 +295,26 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
     expect(readAttentionRequiredMessage(firefoxWs).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toEqual([]);
+  });
+
+  it("sends ServerChan when Expo push is suppressed by a present client", async () => {
+    const { server, pushNotifications } = createServer(undefined, { serverChanEnabled: true });
+    const nowMs = Date.now();
+    connectClient(server, {
+      deviceType: "mobile",
+      appVisible: true,
+      focusedAgentId: "agent-present",
+      lastActivityAt: new Date(nowMs - 5_000),
+    });
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "agent-present",
+      provider: "claude",
+      reason: "finished",
+    });
+
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(pushNotifications.options).toEqual([{ expo: false, serverChan: true }]);
   });
 
   it("pushes non-error attention when the only connected client has never sent a heartbeat", async () => {
