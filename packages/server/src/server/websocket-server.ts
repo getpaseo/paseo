@@ -332,6 +332,18 @@ export class VoiceAssistantWebSocketServer {
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
   private readonly serverId: string;
   private readonly daemonVersion: string;
+  private readonly daemonRuntimeConfig:
+    | {
+        listen: string | null;
+        relay: {
+          enabled: boolean;
+          endpoint: string;
+          publicEndpoint: string;
+          useTls: boolean;
+          publicUseTls: boolean;
+        };
+      }
+    | undefined;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
@@ -416,6 +428,16 @@ export class VoiceAssistantWebSocketServer {
     workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
     pushNotificationSender?: PushNotificationSender,
+    daemonRuntimeConfig?: {
+      listen: string | null;
+      relay: {
+        enabled: boolean;
+        endpoint: string;
+        publicEndpoint: string;
+        useTls: boolean;
+        publicUseTls: boolean;
+      };
+    },
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -423,6 +445,7 @@ export class VoiceAssistantWebSocketServer {
       throw new MissingDaemonVersionError();
     }
     this.daemonVersion = daemonVersion.trim();
+    this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -921,6 +944,9 @@ export class VoiceAssistantWebSocketServer {
       agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
       providerOverrides: this.providerOverrides,
       isDev: this.isDev,
+      serverId: this.serverId,
+      daemonVersion: this.daemonVersion,
+      daemonRuntimeConfig: this.daemonRuntimeConfig,
     });
 
     connection = {
@@ -1053,6 +1079,8 @@ export class VoiceAssistantWebSocketServer {
         providersSnapshot: true,
         // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75, remove gate after 2026-11-13.
         checkoutGithubSetAutoMerge: true,
+        // COMPAT(daemonStatusRpc): added in v0.1.78, remove gate after 2026-11-18.
+        daemonStatusRpc: true,
       },
     };
   }

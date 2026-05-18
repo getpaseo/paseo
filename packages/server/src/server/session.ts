@@ -47,6 +47,8 @@ import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js"
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
 import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
+import { getPidLockInfo } from "./pid-lock.js";
+import { generateLocalPairingOffer } from "./pairing-offer.js";
 import {
   DictationStreamManager,
   type DictationStreamOutboundMessage,
@@ -595,6 +597,18 @@ export interface SessionOptions {
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   isDev?: boolean;
+  serverId?: string;
+  daemonVersion?: string;
+  daemonRuntimeConfig?: {
+    listen: string | null;
+    relay: {
+      enabled: boolean;
+      endpoint: string;
+      publicEndpoint: string;
+      useTls: boolean;
+      publicUseTls: boolean;
+    } | null;
+  };
 }
 
 export type SessionLifecycleIntent =
@@ -805,6 +819,9 @@ export class Session {
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
+  private readonly serverId: string | undefined;
+  private readonly daemonVersion: string | undefined;
+  private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -850,6 +867,9 @@ export class Session {
       agentProviderRuntimeSettings,
       providerOverrides,
       isDev,
+      serverId,
+      daemonVersion,
+      daemonRuntimeConfig,
     } = options;
     this.clientId = clientId;
     this.appVersion = appVersion ?? null;
@@ -901,6 +921,9 @@ export class Session {
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
     this.isDev = isDev === true;
+    this.serverId = serverId;
+    this.daemonVersion = daemonVersion;
+    this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.abortController = new AbortController();
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
@@ -1864,6 +1887,10 @@ export class Session {
           payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
         });
         return undefined;
+      case "daemon.status.request":
+        return this.handleDaemonStatusRequest(msg);
+      case "daemon.pairing_offer.request":
+        return this.handleDaemonPairingOfferRequest(msg);
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",
@@ -3808,6 +3835,86 @@ export class Session {
           error: getErrorMessage(error),
           fetchedAt,
           requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  private async handleDaemonStatusRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.status.request" }>,
+  ): Promise<void> {
+    try {
+      const pidInfo = await getPidLockInfo(this.paseoHome);
+      const providers = (await this.agentManager.listProviderAvailability()).map((p) => ({
+        provider: p.provider,
+        available: p.available,
+        error: p.error ?? null,
+      }));
+      this.emit({
+        type: "daemon.status.response",
+        payload: {
+          requestId: msg.requestId,
+          serverId: this.serverId ?? "",
+          version: this.daemonVersion ?? null,
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: pidInfo?.startedAt ?? null,
+          listen: this.daemonRuntimeConfig?.listen ?? null,
+          relay: this.daemonRuntimeConfig?.relay ?? null,
+          providers,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle daemon status request");
+      this.emit({
+        type: "daemon.status.response",
+        payload: {
+          requestId: msg.requestId,
+          serverId: this.serverId ?? "",
+          version: this.daemonVersion ?? null,
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: null,
+          listen: null,
+          relay: null,
+          providers: [],
+        },
+      });
+    }
+  }
+
+  private async handleDaemonPairingOfferRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.pairing_offer.request" }>,
+  ): Promise<void> {
+    try {
+      const relay = this.daemonRuntimeConfig?.relay;
+      const pairing = await generateLocalPairingOffer({
+        paseoHome: this.paseoHome,
+        relayEnabled: relay?.enabled ?? true,
+        relayEndpoint: relay?.endpoint,
+        relayPublicEndpoint: relay?.publicEndpoint,
+        relayUseTls: relay?.useTls,
+        relayPublicUseTls: relay?.publicUseTls,
+        includeQr: true,
+        logger: this.sessionLogger,
+      });
+      this.emit({
+        type: "daemon.pairing_offer.response",
+        payload: {
+          requestId: msg.requestId,
+          url: pairing.url ?? "",
+          qr: pairing.qr ?? null,
+          relayEnabled: pairing.relayEnabled,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle daemon pairing offer request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: "daemon.pairing_offer.request",
+          error: error instanceof Error ? error.message : String(error),
         },
       });
     }

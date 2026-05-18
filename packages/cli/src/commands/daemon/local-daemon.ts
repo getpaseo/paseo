@@ -395,6 +395,11 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
     PASEO_LISTEN: undefined,
     PASEO_HOSTNAMES: undefined,
     PASEO_ALLOWED_HOSTS: undefined,
+    PASEO_RELAY_ENABLED: undefined,
+    PASEO_RELAY_ENDPOINT: undefined,
+    PASEO_RELAY_PUBLIC_ENDPOINT: undefined,
+    PASEO_RELAY_USE_TLS: undefined,
+    PASEO_RELAY_PUBLIC_USE_TLS: undefined,
   };
   const home = resolvePaseoHome(env);
   const config = loadConfig(home, { env });

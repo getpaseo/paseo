@@ -10,6 +10,7 @@ interface ProviderBinaryStatus {
   label: string;
   path: string | null;
   version: string | null;
+  source?: "daemon" | "local";
 }
 
 interface DaemonStatus {
@@ -99,7 +100,7 @@ function createStatusSchema(status: DaemonStatus): OutputSchema<StatusRow> {
             return "red";
           }
           if (item.key.startsWith("  ")) {
-            if (item.value === "not found") return "red";
+            if (item.value === "not found" || item.value === "not found (daemon)") return "red";
             if (item.value.endsWith("(--version failed)")) return "yellow";
             return "green";
           }
@@ -149,7 +150,13 @@ function toStatusRows(status: DaemonStatus): StatusRow[] {
   rows.push({ key: "", value: "" });
   rows.push({ key: "Providers", value: "" });
   for (const provider of status.providers) {
-    if (!provider.path) {
+    if (provider.source === "daemon") {
+      if (!provider.path) {
+        rows.push({ key: `  ${provider.label}`, value: "not found (daemon)" });
+      } else {
+        rows.push({ key: `  ${provider.label}`, value: `${provider.path} (daemon)` });
+      }
+    } else if (!provider.path) {
       rows.push({ key: `  ${provider.label}`, value: "not found" });
     } else if (!provider.version) {
       rows.push({ key: `  ${provider.label}`, value: `${provider.path} (--version failed)` });
@@ -210,6 +217,7 @@ interface DaemonProbeResult {
   runningAgents?: number;
   idleAgents?: number;
   daemonNodeOverride?: string;
+  daemonProviders?: ProviderBinaryStatus[];
   note?: string;
 }
 
@@ -231,11 +239,29 @@ async function probeDaemonOverWebsocket(args: {
   }
 
   const daemonVersion = client.getLastServerInfoMessage()?.version ?? null;
+  const supportsDaemonStatusRpc =
+    client.getLastServerInfoMessage()?.features?.daemonStatusRpc === true;
   try {
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
     const agents = agentsPayload.entries.map((entry) => entry.agent);
     const runningAgents = agents.filter((a) => a.status === "running").length;
     const idleAgents = agents.filter((a) => a.status === "idle").length;
+
+    let daemonProviders: ProviderBinaryStatus[] | undefined;
+    if (supportsDaemonStatusRpc) {
+      try {
+        const statusPayload = await client.getDaemonStatus();
+        const labelMap = new Map(PROVIDER_BINARIES.map((p) => [p.binary, p.label]));
+        daemonProviders = statusPayload.providers.map((p) => ({
+          label: labelMap.get(p.provider) ?? p.provider,
+          path: p.available ? "available" : null,
+          version: p.available ? null : (p.error ?? null),
+          source: "daemon" as const,
+        }));
+      } catch {
+        // Non-fatal: fall through to local provider check
+      }
+    }
 
     if (!state.running) {
       return {
@@ -244,6 +270,7 @@ async function probeDaemonOverWebsocket(args: {
         runningAgents,
         idleAgents,
         daemonNodeOverride: "unknown (API reachable, PID unresolved)",
+        daemonProviders,
         note: state.pidInfo
           ? `Connected daemon is reachable at ${host} even though local daemon PID ${state.pidInfo.pid} is stale`
           : `Connected daemon is reachable at ${host} but no local daemon PID file was found`,
@@ -255,6 +282,7 @@ async function probeDaemonOverWebsocket(args: {
       daemonVersion,
       runningAgents,
       idleAgents,
+      daemonProviders,
     };
   } catch {
     return {
@@ -278,6 +306,7 @@ interface ProbeMergeState {
   daemonVersion: string | null;
   runningAgents: number | null;
   idleAgents: number | null;
+  daemonProviders: ProviderBinaryStatus[] | undefined;
   note: string | undefined;
 }
 
@@ -290,6 +319,7 @@ function applyProbeToStatus(input: ProbeMergeState): Omit<ProbeMergeState, "prob
     daemonVersion: probe.daemonVersion !== undefined ? probe.daemonVersion : input.daemonVersion,
     runningAgents: probe.runningAgents !== undefined ? probe.runningAgents : input.runningAgents,
     idleAgents: probe.idleAgents !== undefined ? probe.idleAgents : input.idleAgents,
+    daemonProviders: probe.daemonProviders ?? input.daemonProviders,
     note: probe.note ? appendNote(input.note, probe.note) : input.note,
   };
 }
@@ -338,6 +368,7 @@ export async function runStatusCommand(
   let runningAgents: number | null = null;
   let idleAgents: number | null = null;
   let daemonVersion: string | null = null;
+  let daemonProviders: ProviderBinaryStatus[] | undefined;
   let note: string | undefined;
 
   if (!state.running && state.stalePidFile && state.pidInfo) {
@@ -347,17 +378,26 @@ export async function runStatusCommand(
 
   if (host) {
     const probe = await probeDaemonOverWebsocket({ host, state });
-    ({ connectedDaemon, localDaemon, daemonNode, daemonVersion, runningAgents, idleAgents, note } =
-      applyProbeToStatus({
-        probe,
-        connectedDaemon,
-        localDaemon,
-        daemonNode,
-        daemonVersion,
-        runningAgents,
-        idleAgents,
-        note,
-      }));
+    ({
+      connectedDaemon,
+      localDaemon,
+      daemonNode,
+      daemonVersion,
+      runningAgents,
+      idleAgents,
+      daemonProviders,
+      note,
+    } = applyProbeToStatus({
+      probe,
+      connectedDaemon,
+      localDaemon,
+      daemonNode,
+      daemonVersion,
+      runningAgents,
+      idleAgents,
+      daemonProviders,
+      note,
+    }));
   } else {
     note = appendNote(note, "Daemon is configured for unix socket listen; API probe skipped");
   }
@@ -370,7 +410,7 @@ export async function runStatusCommand(
     note = appendNote(note, serverIdResult.error);
   }
 
-  const providers = await checkProviderBinaries();
+  const providers = daemonProviders ?? (await checkProviderBinaries());
 
   const daemonStatus: DaemonStatus = {
     serverId,

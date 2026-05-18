@@ -936,6 +936,16 @@ export async function createPaseoDaemon(
             workspaceGitService,
             github,
             config.pushNotificationSender,
+            {
+              listen: formatListenTarget(boundListenTarget ?? listenTarget),
+              relay: {
+                enabled: relayEnabled,
+                endpoint: relayEndpoint,
+                publicEndpoint: relayPublicEndpoint,
+                useTls: relayUseTls,
+                publicUseTls: relayPublicUseTls,
+              },
+            },
           );
 
           if (relayEnabled) {

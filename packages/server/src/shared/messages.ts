@@ -979,6 +979,16 @@ export const WaitForFinishRequestSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+export const DaemonStatusRequestSchema = z.object({
+  type: z.literal("daemon.status.request"),
+  requestId: z.string(),
+});
+
+export const DaemonPairingOfferRequestSchema = z.object({
+  type: z.literal("daemon.pairing_offer.request"),
+  requestId: z.string(),
+});
+
 export const GetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("get_daemon_config_request"),
   requestId: z.string(),
@@ -1764,6 +1774,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
+  DaemonStatusRequestSchema,
+  DaemonPairingOfferRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -2026,6 +2038,7 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         providersSnapshot: z.boolean().optional(),
         checkoutGithubSetAutoMerge: z.boolean().optional(),
+        daemonStatusRpc: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2582,6 +2595,50 @@ export const GetDaemonConfigResponseMessageSchema = z.object({
     .object({
       requestId: z.string(),
       config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
+});
+
+export const DaemonStatusResponseSchema = z.object({
+  type: z.literal("daemon.status.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      serverId: z.string(),
+      version: z.string().nullable().optional(),
+      pid: z.number(),
+      nodePath: z.string(),
+      startedAt: z.string().nullable().optional(),
+      listen: z.string().nullable(),
+      relay: z
+        .object({
+          enabled: z.boolean(),
+          endpoint: z.string(),
+          publicEndpoint: z.string(),
+          useTls: z.boolean(),
+          publicUseTls: z.boolean(),
+        })
+        .nullable()
+        .optional(),
+      providers: z.array(
+        z.object({
+          provider: z.string(),
+          available: z.boolean(),
+          error: z.string().nullable().optional(),
+        }),
+      ),
+    })
+    .passthrough(),
+});
+
+export const DaemonPairingOfferResponseSchema = z.object({
+  type: z.literal("daemon.pairing_offer.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      url: z.string(),
+      qr: z.string().nullable().optional(),
+      relayEnabled: z.boolean(),
     })
     .passthrough(),
 });
@@ -3481,6 +3538,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ClearAgentAttentionResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
+  DaemonStatusResponseSchema,
+  DaemonPairingOfferResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
@@ -3643,6 +3702,8 @@ export type ListProviderFeaturesResponseMessage = z.infer<
   typeof ListProviderFeaturesResponseMessageSchema
 >;
 export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvidersResponseSchema>;
+export type DaemonStatusResponse = z.infer<typeof DaemonStatusResponseSchema>;
+export type DaemonPairingOfferResponse = z.infer<typeof DaemonPairingOfferResponseSchema>;
 export type GetProvidersSnapshotResponseMessage = z.infer<
   typeof GetProvidersSnapshotResponseMessageSchema
 >;
