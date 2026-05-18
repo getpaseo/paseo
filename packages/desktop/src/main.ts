@@ -19,7 +19,7 @@ import {
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
-  setupDarwinPaintRefresh,
+  setupDarwinCompositorWatchdog,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
@@ -398,7 +398,7 @@ async function createMainWindow(): Promise<void> {
     app.dock?.setBadge(devWorktreeName);
   }
 
-  setupDarwinPaintRefresh(mainWindow);
+  setupDarwinCompositorWatchdog(mainWindow);
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);

@@ -43,6 +43,21 @@ In any worktree-style or portless setup, never assume default ports.
 `http://127.0.0.1:9223` so renderer CPU profiles can be captured through CDP.
 Override the port with `PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when `9223` is busy.
 
+### Desktop macOS compositor watchdog
+
+macOS display sleep can leave Chromium's GPU-process display link — the vsync
+source that drives frame production — stuck on a stale display. The compositor
+then stops producing frames and the window looks frozen: unresponsive to clicks
+and keys even though the renderer and every process stay alive. It self-recovers
+after a few minutes, which is too long for a foreground app.
+
+`setupDarwinCompositorWatchdog` (`packages/desktop/src/window/window-manager.ts`)
+guards against this. It polls the renderer for frame production every couple of
+seconds and, after a sustained stall while the window is visible and unlocked,
+restarts the GPU process so Chromium rebuilds the display link. The probe is
+skipped while the screen is locked or the window is hidden or minimized, since a
+window legitimately stops producing frames then.
+
 ### Daemon logs
 
 Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set
