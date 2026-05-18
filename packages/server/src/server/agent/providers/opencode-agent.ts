@@ -20,6 +20,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
@@ -1191,6 +1192,26 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
+  async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
+    const openCodeConfig = this.assertConfig(config);
+    const acquisition = await this.runtime.acquireServer({ force: false });
+    const { url } = acquisition.server;
+    const client = this.runtime.createClient({
+      baseUrl: url,
+      directory: openCodeConfig.cwd,
+    });
+
+    try {
+      return await listOpenCodeCommandsFromSdk(client, openCodeConfig.cwd);
+    } finally {
+      acquisition.release();
+    }
+  }
+
+  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return [];
+  }
+
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
@@ -1389,6 +1410,29 @@ function stringifyStructuredAssistantMessage(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+async function listOpenCodeCommandsFromSdk(
+  client: Pick<OpencodeClient, "command">,
+  directory: string,
+): Promise<AgentSlashCommand[]> {
+  const result = await client.command.list({ directory });
+  const commandsByName = new Map(
+    OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS.map((command) => [command.name, command]),
+  );
+  if (result.error || !result.data) {
+    return Array.from(commandsByName.values());
+  }
+
+  for (const cmd of result.data) {
+    commandsByName.set(cmd.name, {
+      name: cmd.name,
+      description: cmd.description ?? "",
+      argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+    });
+  }
+
+  return Array.from(commandsByName.values());
 }
 
 function readOpenCodeRecord(value: unknown): Record<string, unknown> | null {
@@ -2905,25 +2949,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    const result = await this.client.command.list({
-      directory: this.config.cwd,
-    });
-
-    const commandsByName = new Map(
-      OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS.map((command) => [command.name, command]),
-    );
-    if (result.error || !result.data) {
-      return Array.from(commandsByName.values());
-    }
-
-    for (const cmd of result.data) {
-      commandsByName.set(cmd.name, {
-        name: cmd.name,
-        description: cmd.description ?? "",
-        argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
-      });
-    }
-    return Array.from(commandsByName.values());
+    return await listOpenCodeCommandsFromSdk(this.client, this.config.cwd);
   }
 
   async setMode(modeId: string): Promise<void> {

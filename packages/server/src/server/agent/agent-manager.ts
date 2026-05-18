@@ -715,6 +715,10 @@ export class AgentManager {
       );
     }
 
+    if (client.listCommands) {
+      return await client.listCommands(normalizedConfig);
+    }
+
     const session = await client.createSession(normalizedConfig);
     try {
       if (!session.listCommands) {
@@ -743,6 +747,10 @@ export class AgentManager {
       throw new Error(
         `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
       );
+    }
+
+    if (client.listFeatures) {
+      return await client.listFeatures(normalizedConfig);
     }
 
     const session = await client.createSession(normalizedConfig);

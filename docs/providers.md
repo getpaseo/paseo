@@ -16,6 +16,8 @@ Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.
 
 Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`pi-direct-agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
+Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.listModels`, `listModes`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs.
+
 ---
 
 ## Provider Snapshot Refresh Contract

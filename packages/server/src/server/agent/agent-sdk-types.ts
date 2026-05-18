@@ -578,6 +578,8 @@ export interface AgentClient {
   ): Promise<AgentSession>;
   listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listModes?(options: ListModesOptions): Promise<AgentMode[]>;
+  listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
+  listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
   /**
    * Check if this provider is available (CLI binary is installed).
