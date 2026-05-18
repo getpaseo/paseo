@@ -1,25 +1,5 @@
 import { describe, expect, it } from "vitest";
-
-// getDateBucket is a private function in left-sidebar.tsx.
-// Replicate the logic here for unit-testability.
-// If it's ever extracted to a shared util, swap the import.
-type DateBucket = "today" | "yesterday" | "this-week" | "this-month" | "older";
-
-function getDateBucket(activityAt: string | null): DateBucket {
-  if (!activityAt) return "older";
-  const date = new Date(activityAt);
-  if (isNaN(date.getTime())) return "older";
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays === 0 && date.toDateString() === now.toDateString()) return "today";
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return "yesterday";
-  if (diffDays < 7) return "this-week";
-  if (diffDays < 30) return "this-month";
-  return "older";
-}
+import { getDateBucket, groupByDate, getDateBucketLabel } from "./date-grouping";
 
 describe("getDateBucket", () => {
   it("returns 'today' for a timestamp from today", () => {
@@ -63,5 +43,42 @@ describe("getDateBucket", () => {
 
   it("returns 'older' for empty string", () => {
     expect(getDateBucket("")).toBe("older");
+  });
+});
+
+describe("groupByDate", () => {
+  it("groups items by date bucket in chronological order", () => {
+    const now = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(12, 0, 0, 0);
+
+    const items = [
+      { id: "a", date: now.toISOString() },
+      { id: "b", date: yesterday.toISOString() },
+      { id: "c", date: now.toISOString() },
+    ];
+
+    const result = groupByDate(items, (item) => item.date);
+    expect(result).toHaveLength(2);
+    expect(result[0].bucket).toBe("today");
+    expect(result[0].items).toHaveLength(2);
+    expect(result[1].bucket).toBe("yesterday");
+    expect(result[1].items).toHaveLength(1);
+  });
+
+  it("returns empty array for empty input", () => {
+    const result = groupByDate([], () => null);
+    expect(result).toHaveLength(0);
+  });
+});
+
+describe("getDateBucketLabel", () => {
+  it("returns human-readable labels", () => {
+    expect(getDateBucketLabel("today")).toBe("Today");
+    expect(getDateBucketLabel("yesterday")).toBe("Yesterday");
+    expect(getDateBucketLabel("this-week")).toBe("Previous 7 Days");
+    expect(getDateBucketLabel("this-month")).toBe("Previous 30 Days");
+    expect(getDateBucketLabel("older")).toBe("Older");
   });
 });

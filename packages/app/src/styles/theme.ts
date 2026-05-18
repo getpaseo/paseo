@@ -676,6 +676,7 @@ export const soiferLightTheme = {
   colors: {
     ...soiferLightSemanticColors,
     palette: baseColors,
+    syntax: lightHighlightColors,
   },
   shadow: {
     sm: {
@@ -781,6 +782,7 @@ export const lightClaudeTheme = {
   colors: {
     ...lightClaudeSemanticColors,
     palette: baseColors,
+    syntax: lightHighlightColors,
   },
   shadow: {
     sm: {

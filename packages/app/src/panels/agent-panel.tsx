@@ -592,6 +592,7 @@ function ChatAgentContent({
   const { isArchivingAgent } = useArchiveAgent();
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
+  const composerSetTextRef = useRef<((text: string) => void) | null>(null);
   const clearOnAgentBlurRef = useRef<() => void>(() => {});
   const wasPaneFocusedRef = useRef(isPaneFocused);
   const reconnectToastArmedRef = useRef(false);
@@ -606,6 +607,14 @@ function ChatAgentContent({
 
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
     addImagesRef.current = addImages;
+  }, []);
+
+  const handleSuggestionPress = useCallback((text: string) => {
+    composerSetTextRef.current?.(text);
+  }, []);
+
+  const handleComposerSetText = useCallback((setText: (text: string) => void) => {
+    composerSetTextRef.current = setText;
   }, []);
 
   const agentState = useSessionStore(
@@ -966,6 +975,7 @@ function ChatAgentContent({
                 hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
                 toast={panelToast.api}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onSuggestionPress={handleSuggestionPress}
               />
             </ReanimatedAnimated.View>
           </View>
@@ -981,6 +991,7 @@ function ChatAgentContent({
             onAttentionInputFocus={attentionController.clearOnInputFocus}
             onAttentionPromptSend={attentionController.clearOnPromptSend}
             onAddImages={handleAddImagesCallback}
+            onComposerSetText={handleComposerSetText}
             onComposerHeightChange={handleComposerHeightChange}
             onMessageSent={handleMessageSent}
           />
@@ -1024,6 +1035,7 @@ function AgentStreamSection({
   hasAppliedAuthoritativeHistory,
   toast,
   onOpenWorkspaceFile,
+  onSuggestionPress,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   serverId: string;
@@ -1036,6 +1048,7 @@ function AgentStreamSection({
   hasAppliedAuthoritativeHistory: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onSuggestionPress?: (text: string) => void;
 }) {
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
@@ -1171,6 +1184,7 @@ function AgentStreamSection({
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onSuggestionPress={onSuggestionPress}
     />
   );
 }
@@ -1186,6 +1200,7 @@ function AgentComposerSection({
   onAttentionInputFocus,
   onAttentionPromptSend,
   onAddImages,
+  onComposerSetText,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1199,6 +1214,7 @@ function AgentComposerSection({
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
+  onComposerSetText?: (setText: (text: string) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1222,6 +1238,7 @@ function AgentComposerSection({
       onAttentionInputFocus={onAttentionInputFocus}
       onAttentionPromptSend={onAttentionPromptSend}
       onAddImages={onAddImages}
+      onComposerSetText={onComposerSetText}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
     />
@@ -1237,6 +1254,7 @@ function ActiveAgentComposer({
   onAttentionInputFocus,
   onAttentionPromptSend,
   onAddImages,
+  onComposerSetText,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1248,6 +1266,7 @@ function ActiveAgentComposer({
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
+  onComposerSetText?: (setText: (text: string) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1276,6 +1295,11 @@ function ActiveAgentComposer({
       agentId,
     }),
   });
+
+  useEffect(() => {
+    onComposerSetText?.(agentInputDraft.setText);
+  }, [onComposerSetText, agentInputDraft.setText]);
+
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd,

@@ -1,6 +1,11 @@
 import * as Sentry from "@sentry/node";
 import type { ErrorRequestHandler } from "express";
 
+// tsgo doesn't see isInitialized in the @sentry/node type exports — cast through unknown
+const isSentryReady = (): boolean =>
+  typeof (Sentry as unknown as Record<string, unknown>).isInitialized === "function" &&
+  (Sentry as unknown as { isInitialized: () => boolean }).isInitialized();
+
 export interface SentryConfig {
   dsn: string | undefined;
   environment: string;
@@ -33,7 +38,7 @@ export function initSentry(config: SentryConfig): void {
  */
 export function sentryErrorHandler(): ErrorRequestHandler {
   return (err, _req, res, next) => {
-    if (Sentry.isInitialized()) {
+    if (isSentryReady()) {
       Sentry.captureException(err);
     }
     // If headers already sent, delegate to Express default handler
@@ -49,7 +54,7 @@ export function sentryErrorHandler(): ErrorRequestHandler {
  * Flush pending Sentry events before shutdown.
  */
 export async function flushSentry(timeoutMs = 2000): Promise<void> {
-  if (Sentry.isInitialized()) {
+  if (isSentryReady()) {
     await Sentry.flush(timeoutMs);
   }
 }

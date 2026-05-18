@@ -21,7 +21,7 @@ import {
   Paperclip,
 } from "lucide-react-native";
 import Animated from "react-native-reanimated";
-import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH, useMaxContentWidth } from "@/constants/layout";
 import {
   AgentStatusBar,
   DraftAgentStatusBar,
@@ -853,6 +853,15 @@ export function Composer({
   });
 
   const { settings: appSettings } = useAppSettings();
+  const dynamicMaxContentWidth = useMaxContentWidth();
+  const inputAreaContentStyle = useMemo(
+    () => [
+      styles.inputAreaContent,
+      { maxWidth: dynamicMaxContentWidth },
+      appSettings.layoutMode === "claude-desktop" && styles.inputAreaContentClaudeDesktop,
+    ],
+    [dynamicMaxContentWidth, appSettings.layoutMode],
+  );
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
 
@@ -1604,7 +1613,7 @@ export function Composer({
       <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
       {/* Input area */}
       <View style={inputAreaContainerStyle}>
-        <View style={styles.inputAreaContent}>
+        <View style={inputAreaContentStyle}>
           {queueList}
           {sendErrorNode}
 
@@ -1700,6 +1709,15 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     gap: theme.spacing[3],
+  },
+  inputAreaContentClaudeDesktop: {
+    borderRadius: theme.borderRadius["2xl"],
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    ...theme.shadow.md,
   },
   messageInputContainer: {
     position: "relative",

@@ -50,6 +50,7 @@ function createWorkspace(): WorkspaceDescriptor {
     name: "worktree",
     status: "done",
     archivingAt: null,
+    activityAt: null,
     diffStat: null,
     scripts: [],
   };

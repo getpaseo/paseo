@@ -62,11 +62,58 @@ import {
   buildSettingsRoute,
   mapPathnameToServer,
 } from "@/utils/host-routes";
+import { useAppSettings } from "@/hooks/use-settings";
+import { useSettingsModalStore } from "@/stores/settings-modal-store";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
+import { SidebarDateGroupedList } from "./sidebar-date-grouped-list";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 const MIN_CHAT_WIDTH = 400;
+
+/** Avoids nested ternary lint violation in both mobile + desktop sidebars. */
+function SidebarListContent({
+  isInitialLoad,
+  layoutMode,
+  activeServerId,
+  projects,
+  collapsedProjectKeys,
+  shortcutIndexByWorkspaceKey,
+  toggleProjectCollapsed,
+  isRefreshing,
+  onRefresh,
+  onAddProject,
+}: {
+  isInitialLoad: boolean;
+  layoutMode: string;
+  activeServerId: string | null;
+  projects: SidebarProjectEntry[];
+  collapsedProjectKeys: SidebarShortcutModel["collapsedProjectKeys"];
+  shortcutIndexByWorkspaceKey: SidebarShortcutModel["shortcutIndexByWorkspaceKey"];
+  toggleProjectCollapsed: SidebarShortcutModel["toggleProjectCollapsed"];
+  isRefreshing: boolean;
+  onRefresh: () => void;
+  onAddProject: () => void;
+}) {
+  if (isInitialLoad) {
+    return <SidebarAgentListSkeleton />;
+  }
+  if (layoutMode === "claude-desktop" && activeServerId) {
+    return <SidebarDateGroupedList projects={projects} serverId={activeServerId} />;
+  }
+  return (
+    <SidebarWorkspaceList
+      serverId={activeServerId}
+      collapsedProjectKeys={collapsedProjectKeys}
+      onToggleProjectCollapsed={toggleProjectCollapsed}
+      shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+      projects={projects}
+      isRefreshing={isRefreshing}
+      onRefresh={onRefresh}
+      onAddProject={onAddProject}
+    />
+  );
+}
 
 type SidebarShortcutModel = ReturnType<typeof useSidebarShortcutModel>;
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
@@ -204,6 +251,10 @@ export const LeftSidebar = memo(function LeftSidebar({
   }, [isRevalidating, isManualRefresh]);
 
   const openProjectPicker = useOpenProjectPicker(activeServerId);
+  const {
+    settings: { layoutMode },
+  } = useAppSettings();
+  const openSettingsModal = useSettingsModalStore((s) => s.open);
 
   const handleOpenProjectMobile = useCallback(() => {
     showMobileAgent();
@@ -215,13 +266,22 @@ export const LeftSidebar = memo(function LeftSidebar({
   }, [openProjectPicker]);
 
   const handleSettingsMobile = useCallback(() => {
-    showMobileAgent();
-    router.push(buildSettingsRoute());
-  }, [showMobileAgent]);
+    if (layoutMode === "claude-desktop") {
+      showMobileAgent();
+      openSettingsModal();
+    } else {
+      showMobileAgent();
+      router.push(buildSettingsRoute());
+    }
+  }, [showMobileAgent, layoutMode, openSettingsModal]);
 
   const handleSettingsDesktop = useCallback(() => {
-    router.push(buildSettingsRoute());
-  }, []);
+    if (layoutMode === "claude-desktop") {
+      openSettingsModal();
+    } else {
+      router.push(buildSettingsRoute());
+    }
+  }, [layoutMode, openSettingsModal]);
 
   const handleViewMoreNavigate = useCallback(() => {
     if (!activeServerId) {
@@ -511,6 +571,9 @@ function MobileSidebar({
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
   const {
+    settings: { layoutMode: mobileLayoutMode },
+  } = useAppSettings();
+  const {
     translateX,
     backdropOpacity,
     windowWidth,
@@ -544,10 +607,6 @@ function MobileSidebar({
     translateX,
     windowWidth,
   ]);
-
-  const handleWorkspacePress = useCallback(() => {
-    closeToAgent();
-  }, [closeToAgent]);
 
   const closeGesture = useMemo(
     () =>
@@ -700,22 +759,18 @@ function MobileSidebar({
               )}
             </Pressable>
 
-            {isInitialLoad ? (
-              <SidebarAgentListSkeleton />
-            ) : (
-              <SidebarWorkspaceList
-                serverId={activeServerId}
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                projects={projects}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={handleWorkspacePress}
-                onAddProject={handleOpenProject}
-                parentGestureRef={closeGestureRef}
-              />
-            )}
+            <SidebarListContent
+              isInitialLoad={isInitialLoad}
+              layoutMode={mobileLayoutMode}
+              activeServerId={activeServerId}
+              projects={projects}
+              collapsedProjectKeys={collapsedProjectKeys}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              toggleProjectCollapsed={toggleProjectCollapsed}
+              isRefreshing={isManualRefresh && isRevalidating}
+              onRefresh={handleRefresh}
+              onAddProject={handleOpenProject}
+            />
 
             <SidebarFooter
               theme={theme}
@@ -765,6 +820,9 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
+  const {
+    settings: { layoutMode: desktopLayoutMode },
+  } = useAppSettings();
   const padding = useWindowControlsPadding("sidebar");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -842,20 +900,18 @@ function DesktopSidebar({
           />
         </View>
 
-        {isInitialLoad ? (
-          <SidebarAgentListSkeleton />
-        ) : (
-          <SidebarWorkspaceList
-            serverId={activeServerId}
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            projects={projects}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onAddProject={handleOpenProject}
-          />
-        )}
+        <SidebarListContent
+          isInitialLoad={isInitialLoad}
+          layoutMode={desktopLayoutMode}
+          activeServerId={activeServerId}
+          projects={projects}
+          collapsedProjectKeys={collapsedProjectKeys}
+          shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+          toggleProjectCollapsed={toggleProjectCollapsed}
+          isRefreshing={isManualRefresh && isRevalidating}
+          onRefresh={handleRefresh}
+          onAddProject={handleOpenProject}
+        />
 
         <SidebarCalloutSlot />
 

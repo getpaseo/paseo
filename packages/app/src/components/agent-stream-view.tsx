@@ -21,7 +21,11 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsCompactFormFactor, useMaxContentWidth } from "@/constants/layout";
+import { useAppSettings } from "@/hooks/use-settings";
+import { WelcomeEmptyState } from "@/components/welcome-empty-state";
+import { AssistantAvatarRow } from "@/components/message-avatar";
+import { MessageHoverActions } from "@/components/message-hover-actions";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { Check, ChevronDown, X } from "lucide-react-native";
@@ -92,6 +96,21 @@ interface StreamItemBoundarySeams {
   suppressTurnFooter?: boolean;
 }
 
+function ContentWidthWrapper({
+  children,
+  style,
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const dynamicMaxWidth = useMaxContentWidth();
+  const combined = useMemo(
+    () => [stylesheet.contentWrapper, { maxWidth: dynamicMaxWidth }, style],
+    [dynamicMaxWidth, style],
+  );
+  return <View style={combined}>{children}</View>;
+}
+
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
   turnFooter: ReactNode;
@@ -103,9 +122,9 @@ function renderLiveAuxiliaryNode(input: {
     <>
       {input.turnFooter}
       {input.pendingPermissions ? (
-        <View style={stylesheet.contentWrapper}>
+        <ContentWidthWrapper>
           <View style={stylesheet.listHeaderContent}>{input.pendingPermissions}</View>
-        </View>
+        </ContentWidthWrapper>
       ) : null}
     </>
   );
@@ -167,22 +186,37 @@ function renderStreamItemWithTurnFooter(input: {
   );
 }
 
-function renderListEmptyComponent(input: {
+function ListEmptyComponent({
+  renderModel,
+  emptyStateStyle,
+  isClaudeDesktop,
+  onSuggestionPress,
+}: {
   renderModel: AgentStreamRenderModel;
   emptyStateStyle: StyleProp<ViewStyle>;
+  isClaudeDesktop: boolean;
+  onSuggestionPress?: (text: string) => void;
 }): ReactNode {
   if (
-    input.renderModel.boundary.hasVirtualizedHistory ||
-    input.renderModel.boundary.hasMountedHistory ||
-    input.renderModel.boundary.hasLiveHead ||
-    input.renderModel.auxiliary.pendingPermissions ||
-    input.renderModel.auxiliary.turnFooter
+    renderModel.boundary.hasVirtualizedHistory ||
+    renderModel.boundary.hasMountedHistory ||
+    renderModel.boundary.hasLiveHead ||
+    renderModel.auxiliary.pendingPermissions ||
+    renderModel.auxiliary.turnFooter
   ) {
     return null;
   }
 
+  if (isClaudeDesktop) {
+    return (
+      <View style={emptyStateStyle}>
+        <WelcomeEmptyState onSuggestionPress={onSuggestionPress} />
+      </View>
+    );
+  }
+
   return (
-    <View style={input.emptyStateStyle}>
+    <View style={emptyStateStyle}>
       <Text style={stylesheet.emptyStateText}>Start chatting with this agent...</Text>
     </View>
   );
@@ -248,6 +282,7 @@ export interface AgentStreamViewProps {
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onSuggestionPress?: (text: string) => void;
 }
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
@@ -264,11 +299,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       isAuthoritativeHistoryReady = true,
       toast,
       onOpenWorkspaceFile,
+      onSuggestionPress,
     },
     ref,
   ) {
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const isMobile = useIsCompactFormFactor();
+    const maxContentWidth = useMaxContentWidth();
+    const scrollToBottomInnerStyle = useMemo(
+      () => [stylesheet.scrollToBottomInner, { maxWidth: maxContentWidth }],
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- stylesheet is stable (unistyles)
+      [maxContentWidth],
+    );
     const streamRenderStrategy = useMemo(
       () =>
         resolveStreamRenderStrategy({
@@ -479,6 +521,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [streamRenderStrategy],
     );
 
+    const { settings: agentStreamSettings } = useAppSettings();
+    const isClaudeDesktopEmpty = agentStreamSettings.layoutMode === "claude-desktop";
+
     const renderAssistantMessageItem = useCallback(
       (
         item: Extract<StreamItem, { kind: "assistant_message" }>,
@@ -509,7 +554,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           aboveItem,
           belowItem,
         });
-        return (
+        const assistantNode = (
           <AssistantMessage
             message={item.text}
             timestamp={item.timestamp.getTime()}
@@ -521,8 +566,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             spacing={spacing}
           />
         );
+        if (isClaudeDesktopEmpty) {
+          return (
+            <MessageHoverActions messageText={item.text}>
+              <AssistantAvatarRow>{assistantNode}</AssistantAvatarRow>
+            </MessageHoverActions>
+          );
+        }
+        return assistantNode;
       },
-      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client, toast],
+      [
+        handleInlinePathPress,
+        streamRenderStrategy,
+        workspaceRoot,
+        serverId,
+        client,
+        toast,
+        isClaudeDesktopEmpty,
+      ],
     );
 
     const renderThoughtItem = useCallback(
@@ -534,6 +595,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           relation: "below",
         });
         const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+        const thinkingDurationSeconds =
+          item.status === "ready"
+            ? Math.round((item.timestamp.getTime() - item.startedAt.getTime()) / 1000)
+            : undefined;
+        /* oxlint-disable react-perf/jsx-no-new-object-as-prop -- computed per-item in list callback */
+        const thinkingMeta =
+          thinkingDurationSeconds !== undefined ? { thinkingDurationSeconds } : undefined;
         return (
           <ToolCallSlot
             itemId={item.id}
@@ -542,8 +610,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             args={item.text}
             status={item.status === "ready" ? "completed" : "executing"}
             isLastInSequence={isLastInSequence}
+            metadata={thinkingMeta}
           />
         );
+        /* oxlint-enable react-perf/jsx-no-new-object-as-prop */
       },
       [streamRenderStrategy, setInlineDetailsExpanded],
     );
@@ -753,10 +823,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       };
     }, [baseRenderModel, pendingPermissionsNode, turnFooterNode]);
 
-    const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
+    const emptyStateStyle = useMemo(
+      () => [stylesheet.emptyState, stylesheet.contentWrapper, { maxWidth: maxContentWidth }],
+      [maxContentWidth],
+    );
     const listEmptyComponent = useMemo(
-      () => renderListEmptyComponent({ renderModel, emptyStateStyle }),
-      [renderModel, emptyStateStyle],
+      () => (
+        <ListEmptyComponent
+          renderModel={renderModel}
+          emptyStateStyle={emptyStateStyle}
+          isClaudeDesktop={isClaudeDesktopEmpty}
+          onSuggestionPress={onSuggestionPress}
+        />
+      ),
+      [renderModel, emptyStateStyle, isClaudeDesktopEmpty, onSuggestionPress],
     );
 
     const historyItems = renderModel.history;
@@ -867,7 +947,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               entering={scrollIndicatorFadeIn}
               exiting={scrollIndicatorFadeOut}
             >
-              <View style={stylesheet.scrollToBottomInner}>
+              <View style={scrollToBottomInnerStyle}>
                 <Pressable
                   style={stylesheet.scrollToBottomButton}
                   onPress={scrollToBottom}
@@ -1347,9 +1427,10 @@ interface StreamItemWrapperProps {
 }
 
 function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+  const dynamicMaxWidth = useMaxContentWidth();
   const wrapperStyle = useMemo(
-    () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
-    [gapBelow],
+    () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow, maxWidth: dynamicMaxWidth }],
+    [gapBelow, dynamicMaxWidth],
   );
   return <View style={wrapperStyle}>{children}</View>;
 }

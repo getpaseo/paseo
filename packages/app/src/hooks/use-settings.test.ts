@@ -89,6 +89,7 @@ describe("use-settings", () => {
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
       terminalScrollbackLines: 10_000,
+      layoutMode: "workspace",
       releaseChannel: "stable",
     });
   });
@@ -133,6 +134,7 @@ describe("use-settings", () => {
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
       terminalScrollbackLines: 10_000,
+      layoutMode: "workspace",
     });
     expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
       mod.APP_SETTINGS_KEY,
@@ -173,6 +175,7 @@ describe("use-settings", () => {
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
       terminalScrollbackLines: 10_000,
+      layoutMode: "workspace",
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
     });
@@ -193,6 +196,7 @@ describe("use-settings", () => {
       sendBehavior: "interrupt",
       serviceUrlBehavior: "ask",
       terminalScrollbackLines: 10_000,
+      layoutMode: "workspace",
       manageBuiltInDaemon: true,
       releaseChannel: "stable",
     });

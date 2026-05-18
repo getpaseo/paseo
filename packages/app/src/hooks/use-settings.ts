@@ -18,9 +18,11 @@ const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 export type SendBehavior = "interrupt" | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
+export type LayoutMode = "workspace" | "claude-desktop";
 
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
+const VALID_LAYOUT_MODES = new Set<LayoutMode>(["workspace", "claude-desktop"]);
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
@@ -30,6 +32,7 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
+  layoutMode: LayoutMode;
 }
 
 export interface Settings extends AppSettings {
@@ -42,6 +45,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  layoutMode: "workspace",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -194,7 +198,12 @@ export async function loadAppSettingsFromStorage(): Promise<AppSettings> {
     const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<AppSettings>;
-      return { ...DEFAULT_CLIENT_SETTINGS, ...pickAppSettings(parsed) };
+      const result = { ...DEFAULT_CLIENT_SETTINGS, ...pickAppSettings(parsed) };
+      // Auto-migrate theme to claudeLight when claude-desktop layout is active
+      if (result.layoutMode === "claude-desktop") {
+        result.theme = "claudeLight";
+      }
+      return result;
     }
 
     const legacyStored = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
@@ -259,6 +268,12 @@ function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
   const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
   if (terminalScrollbackLines !== null) {
     result.terminalScrollbackLines = terminalScrollbackLines;
+  }
+  if (
+    typeof stored.layoutMode === "string" &&
+    VALID_LAYOUT_MODES.has(stored.layoutMode as LayoutMode)
+  ) {
+    result.layoutMode = stored.layoutMode as LayoutMode;
   }
   return result;
 }

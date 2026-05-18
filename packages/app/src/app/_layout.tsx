@@ -6,7 +6,9 @@ import * as Notifications from "expo-notifications";
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import {
   createContext,
+  lazy,
   type ReactNode,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -28,6 +30,7 @@ import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
+import { SettingsModal } from "@/components/settings-modal";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
@@ -72,6 +75,7 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore } from "@/stores/panel-store";
+import { useSettingsModalStore } from "@/stores/settings-modal-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { resolveActiveHost } from "@/utils/active-host";
@@ -387,6 +391,20 @@ interface AppContainerProps {
 
 const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
 
+const LazySettingsScreen = lazy(() => import("@/screens/settings-screen"));
+const SETTINGS_ROOT_VIEW = { kind: "root" } as const;
+
+function SettingsModalOverlay({ visible, onDismiss }: { visible: boolean; onDismiss: () => void }) {
+  if (!visible) return null;
+  return (
+    <SettingsModal visible={visible} onDismiss={onDismiss}>
+      <Suspense fallback={null}>
+        <LazySettingsScreen view={SETTINGS_ROOT_VIEW} />
+      </Suspense>
+    </SettingsModal>
+  );
+}
+
 function AppContainer({
   children,
   selectedAgentId,
@@ -401,6 +419,8 @@ function AppContainer({
   const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const settingsModalVisible = useSettingsModalStore((s) => s.visible);
+  const closeSettingsModal = useSettingsModalStore((s) => s.close);
 
   const cycleTheme = useCallback(() => {
     const currentIndex = THEME_CYCLE_ORDER.indexOf(settings.theme as ThemeName);
@@ -471,6 +491,9 @@ function AppContainer({
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
       <QuittingOverlay />
+      {settings.layoutMode === "claude-desktop" && (
+        <SettingsModalOverlay visible={settingsModalVisible} onDismiss={closeSettingsModal} />
+      )}
     </View>
   );
 
