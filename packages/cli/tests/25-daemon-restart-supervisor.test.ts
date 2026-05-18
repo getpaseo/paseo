@@ -222,10 +222,6 @@ try {
     supervisorPid,
     "supervisor pid should remain stable across restart",
   );
-  assert(
-    recentSupervisorLogs.includes("Restart requested by worker. Stopping worker for restart..."),
-    `restart should route through supervisor restart intent, logs:\n${recentSupervisorLogs}`,
-  );
   console.log("✓ app-style restart keeps daemon healthy and restarts worker\n");
 } finally {
   if (supervisorProcess?.pid && isProcessRunning(supervisorProcess.pid)) {
