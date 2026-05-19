@@ -1,6 +1,5 @@
 export {
   AssistantInlineCodePathLink,
-  AssistantInlinePathLink,
   AssistantMarkdownCodeLink,
   AssistantMarkdownLink,
 } from "./link";
@@ -10,4 +9,4 @@ export {
   type InlinePathTarget,
 } from "./parse";
 export type { AssistantFileLinkSource } from "./resolver";
-export { useAssistantFileLinkResolver } from "./use-resolver";
+export { useAssistantFileLinkResolver, useAssistantFileLinkTarget } from "./use-resolver";

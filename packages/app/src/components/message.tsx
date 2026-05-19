@@ -1597,12 +1597,6 @@ export const AssistantMessage = memo(function AssistantMessage({
     },
     [fileLinkResolver],
   );
-  const handleLinkPrefetch = useCallback(
-    (source: AssistantFileLinkSource) => {
-      fileLinkResolver.prefetch({ source });
-    },
-    [fileLinkResolver],
-  );
   const handleMarkdownLinkPress = useCallback(
     (url: string) => {
       fileLinkResolver.open({ source: { href: url }, disposition: "main" });
@@ -1700,7 +1694,8 @@ export const AssistantMessage = memo(function AssistantMessage({
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
-              onPrefetch={handleLinkPrefetch}
+              client={client}
+              serverId={serverId}
               workspaceRoot={workspaceRoot}
             />
           );
@@ -1720,7 +1715,8 @@ export const AssistantMessage = memo(function AssistantMessage({
               codeInlineStyle={styles.code_inline}
               linkStyle={styles.link}
               onPress={handleLinkPress}
-              onPrefetch={handleLinkPrefetch}
+              client={client}
+              serverId={serverId}
               workspaceRoot={workspaceRoot}
             >
               {content}
@@ -1801,7 +1797,8 @@ export const AssistantMessage = memo(function AssistantMessage({
           source={getMarkdownLinkSource(node)}
           style={styles.link}
           onPress={handleLinkPress}
-          onPrefetch={handleLinkPrefetch}
+          client={client}
+          serverId={serverId}
           workspaceRoot={workspaceRoot}
         >
           {Children.map(children, (child) => {
@@ -1841,15 +1838,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [
-    client,
-    handleLinkPrefetch,
-    handleLinkPress,
-    markdownParser,
-    onInlinePathPress,
-    serverId,
-    workspaceRoot,
-  ]);
+  }, [client, handleLinkPress, markdownParser, onInlinePathPress, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(

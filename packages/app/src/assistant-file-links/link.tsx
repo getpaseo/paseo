@@ -3,8 +3,8 @@ import {
   useMemo,
   useState,
   type CSSProperties,
-  type ReactNode,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import {
   Pressable,
@@ -19,66 +19,17 @@ import { isNative, isWeb } from "@/constants/platform";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { classifyAssistantFileLink, type InlinePathTarget } from "./parse";
+import type { DaemonClient } from "@server/client/daemon-client";
+import type { InlinePathTarget } from "./parse";
 import type { AssistantFileLinkSource } from "./resolver";
-
-interface AssistantInlinePathLinkProps {
-  content: string;
-  parsed: InlinePathTarget;
-  onPress: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
-  workspaceRoot?: string;
-  style: StyleProp<TextStyle>;
-}
-
-export function AssistantInlinePathLink({
-  content,
-  parsed,
-  onPress,
-  workspaceRoot,
-  style,
-}: AssistantInlinePathLinkProps) {
-  const handlePress = useCallback(() => onPress(parsed, "main"), [onPress, parsed]);
-  const handleAnchorClickCapture = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      if (!isModifiedOpenEvent(event)) {
-        return;
-      }
-      event.stopPropagation();
-      onPress(parsed, "side");
-    },
-    [onPress, parsed],
-  );
-
-  if (!isNative) {
-    return (
-      <FileLinkHoverTooltip filePath={formatInlinePathTargetForTooltip(parsed, workspaceRoot)}>
-        <a
-          href={parsed.path}
-          onClickCapture={handleAnchorClickCapture}
-          onAuxClickCapture={preventAnchorNavigation}
-          style={LINK_ANCHOR_STYLE}
-        >
-          <Text onPress={handlePress} selectable={isWeb ? undefined : false} style={style}>
-            {content}
-          </Text>
-        </a>
-      </FileLinkHoverTooltip>
-    );
-  }
-
-  return (
-    <Text onPress={handlePress} selectable={isWeb ? undefined : false} style={style}>
-      {content}
-    </Text>
-  );
-}
+import { useAssistantFileLinkTarget } from "./use-resolver";
 
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
   onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  onPrefetch: (source: AssistantFileLinkSource) => void;
+  client?: DaemonClient | null;
+  serverId?: string;
   workspaceRoot?: string;
   children: ReactNode;
 }
@@ -87,12 +38,17 @@ export function AssistantMarkdownLink({
   source,
   style,
   onPress,
-  onPrefetch,
+  client,
+  serverId,
   workspaceRoot,
   children,
 }: AssistantMarkdownLinkProps) {
   const [hovered, setHovered] = useState(false);
-  const href = source.href;
+  const target = useAssistantFileLinkTarget({ source, client, serverId, workspaceRoot });
+  const tooltipPath = useMemo(
+    () => (target ? formatInlinePathTargetForTooltip(target, workspaceRoot) : null),
+    [target, workspaceRoot],
+  );
   const handlePress = useCallback(() => onPress(source, "main"), [onPress, source]);
   const handleAnchorClickCapture = useCallback(
     (event: MouseEvent<HTMLAnchorElement>) => {
@@ -105,20 +61,13 @@ export function AssistantMarkdownLink({
     },
     [onPress, source],
   );
-  const handlePrefetch = useCallback(() => onPrefetch(source), [onPrefetch, source]);
-  const handleHoverIn = useCallback(() => {
-    setHovered(true);
-    handlePrefetch();
-  }, [handlePrefetch]);
+  const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
   const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
     () => [style, hovered && { textDecorationLine: "underline" as const }],
     [style, hovered],
   );
-  const tooltipFilePath = useMemo(
-    () => getMarkdownLinkTooltipFilePath(source.href, workspaceRoot),
-    [source.href, workspaceRoot],
-  );
+
   if (isNative) {
     return (
       <Text accessibilityRole="link" onPress={handlePress} style={style}>
@@ -129,7 +78,7 @@ export function AssistantMarkdownLink({
 
   const anchor = (
     <a
-      href={href}
+      href={source.href}
       onClickCapture={handleAnchorClickCapture}
       onAuxClickCapture={preventAnchorNavigation}
       style={LINK_ANCHOR_STYLE}
@@ -137,7 +86,6 @@ export function AssistantMarkdownLink({
       <Pressable
         accessibilityRole="link"
         onPress={handlePress}
-        onFocus={handlePrefetch}
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >
@@ -146,8 +94,8 @@ export function AssistantMarkdownLink({
     </a>
   );
 
-  if (tooltipFilePath) {
-    return <FileLinkHoverTooltip filePath={tooltipFilePath}>{anchor}</FileLinkHoverTooltip>;
+  if (tooltipPath) {
+    return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
   }
   return anchor;
 }
@@ -158,7 +106,8 @@ interface AssistantMarkdownCodeLinkProps {
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
   onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  onPrefetch: (source: AssistantFileLinkSource) => void;
+  client?: DaemonClient | null;
+  serverId?: string;
   workspaceRoot?: string;
   children: ReactNode;
 }
@@ -169,7 +118,8 @@ export function AssistantMarkdownCodeLink({
   codeInlineStyle,
   linkStyle,
   onPress,
-  onPrefetch,
+  client,
+  serverId,
   workspaceRoot,
   children,
 }: AssistantMarkdownCodeLinkProps) {
@@ -182,7 +132,8 @@ export function AssistantMarkdownCodeLink({
       source={source}
       style={style}
       onPress={onPress}
-      onPrefetch={onPrefetch}
+      client={client}
+      serverId={serverId}
       workspaceRoot={workspaceRoot}
     >
       {children}
@@ -196,7 +147,8 @@ interface AssistantInlineCodePathLinkProps {
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
   onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  onPrefetch: (source: AssistantFileLinkSource) => void;
+  client?: DaemonClient | null;
+  serverId?: string;
   workspaceRoot?: string;
 }
 
@@ -206,7 +158,8 @@ export function AssistantInlineCodePathLink({
   codeInlineStyle,
   linkStyle,
   onPress,
-  onPrefetch,
+  client,
+  serverId,
   workspaceRoot,
 }: AssistantInlineCodePathLinkProps) {
   const source = useMemo<AssistantFileLinkSource>(
@@ -225,23 +178,13 @@ export function AssistantInlineCodePathLink({
       codeInlineStyle={codeInlineStyle}
       linkStyle={linkStyle}
       onPress={onPress}
-      onPrefetch={onPrefetch}
+      client={client}
+      serverId={serverId}
       workspaceRoot={workspaceRoot}
     >
       {content}
     </AssistantMarkdownCodeLink>
   );
-}
-
-function getMarkdownLinkTooltipFilePath(
-  href: string,
-  workspaceRoot: string | undefined,
-): string | null {
-  const classification = classifyAssistantFileLink(href, { workspaceRoot });
-  if (classification?.kind !== "directFile") {
-    return null;
-  }
-  return formatInlinePathTargetForTooltip(classification.target, workspaceRoot);
 }
 
 function formatInlinePathTargetForTooltip(
