@@ -125,7 +125,6 @@ export function AdaptiveRenameModal({
           initialValue={initialValue}
           onChangeText={handleChange}
           placeholder={placeholder}
-          placeholderTextColor={styles.placeholderColor.color}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!isPending}
@@ -184,9 +183,6 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.sm,
-  },
-  placeholderColor: {
-    color: theme.colors.foregroundMuted,
   },
   actions: {
     flexDirection: "row",
