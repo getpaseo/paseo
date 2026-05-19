@@ -11,7 +11,7 @@ The namespace reads left to right:
 
 - Domain: `checkout`
 - Provider or subsystem: `github`
-- Operation: `set_auto_merge`
+- Operation: `set_auto_merge`; this segment is a verb, not a noun. If you would name an RPC `noun.request`, name it `get_noun.request` instead.
 - Direction: `request` or `response`
 
 Use dots, not slashes. Dots are protocol namespaces; slashes imply paths or transport routing.

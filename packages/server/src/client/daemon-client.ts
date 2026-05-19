@@ -60,8 +60,8 @@ import type {
   GetProvidersSnapshotResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
-  DaemonStatusResponse,
-  DaemonPairingOfferResponse,
+  DaemonGetStatusResponse,
+  DaemonGetPairingOfferResponse,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -319,8 +319,8 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
-type DaemonStatusPayload = DaemonStatusResponse["payload"];
-type DaemonPairingOfferPayload = DaemonPairingOfferResponse["payload"];
+type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
+type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3306,9 +3306,9 @@ export class DaemonClient {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "daemon.status.request",
+        type: "daemon.get_status.request",
       },
-      responseType: "daemon.status.response",
+      responseType: "daemon.get_status.response",
       timeout: 10000,
     });
   }
@@ -3317,9 +3317,9 @@ export class DaemonClient {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "daemon.pairing_offer.request",
+        type: "daemon.get_pairing_offer.request",
       },
-      responseType: "daemon.pairing_offer.response",
+      responseType: "daemon.get_pairing_offer.response",
       timeout: 10000,
     });
   }

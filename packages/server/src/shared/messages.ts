@@ -979,13 +979,13 @@ export const WaitForFinishRequestSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
-export const DaemonStatusRequestSchema = z.object({
-  type: z.literal("daemon.status.request"),
+export const DaemonGetStatusRequestSchema = z.object({
+  type: z.literal("daemon.get_status.request"),
   requestId: z.string(),
 });
 
-export const DaemonPairingOfferRequestSchema = z.object({
-  type: z.literal("daemon.pairing_offer.request"),
+export const DaemonGetPairingOfferRequestSchema = z.object({
+  type: z.literal("daemon.get_pairing_offer.request"),
   requestId: z.string(),
 });
 
@@ -1774,8 +1774,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
-  DaemonStatusRequestSchema,
-  DaemonPairingOfferRequestSchema,
+  DaemonGetStatusRequestSchema,
+  DaemonGetPairingOfferRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -2599,8 +2599,8 @@ export const GetDaemonConfigResponseMessageSchema = z.object({
     .passthrough(),
 });
 
-export const DaemonStatusResponseSchema = z.object({
-  type: z.literal("daemon.status.response"),
+export const DaemonGetStatusResponseSchema = z.object({
+  type: z.literal("daemon.get_status.response"),
   payload: z
     .object({
       requestId: z.string(),
@@ -2631,8 +2631,8 @@ export const DaemonStatusResponseSchema = z.object({
     .passthrough(),
 });
 
-export const DaemonPairingOfferResponseSchema = z.object({
-  type: z.literal("daemon.pairing_offer.response"),
+export const DaemonGetPairingOfferResponseSchema = z.object({
+  type: z.literal("daemon.get_pairing_offer.response"),
   payload: z
     .object({
       requestId: z.string(),
@@ -3538,8 +3538,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ClearAgentAttentionResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
-  DaemonStatusResponseSchema,
-  DaemonPairingOfferResponseSchema,
+  DaemonGetStatusResponseSchema,
+  DaemonGetPairingOfferResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
@@ -3702,8 +3702,8 @@ export type ListProviderFeaturesResponseMessage = z.infer<
   typeof ListProviderFeaturesResponseMessageSchema
 >;
 export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvidersResponseSchema>;
-export type DaemonStatusResponse = z.infer<typeof DaemonStatusResponseSchema>;
-export type DaemonPairingOfferResponse = z.infer<typeof DaemonPairingOfferResponseSchema>;
+export type DaemonGetStatusResponse = z.infer<typeof DaemonGetStatusResponseSchema>;
+export type DaemonGetPairingOfferResponse = z.infer<typeof DaemonGetPairingOfferResponseSchema>;
 export type GetProvidersSnapshotResponseMessage = z.infer<
   typeof GetProvidersSnapshotResponseMessageSchema
 >;

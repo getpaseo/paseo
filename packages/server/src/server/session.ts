@@ -1887,10 +1887,10 @@ export class Session {
           payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
         });
         return undefined;
-      case "daemon.status.request":
-        return this.handleDaemonStatusRequest(msg);
-      case "daemon.pairing_offer.request":
-        return this.handleDaemonPairingOfferRequest(msg);
+      case "daemon.get_status.request":
+        return this.handleDaemonGetStatusRequest(msg);
+      case "daemon.get_pairing_offer.request":
+        return this.handleDaemonGetPairingOfferRequest(msg);
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",
@@ -3840,8 +3840,8 @@ export class Session {
     }
   }
 
-  private async handleDaemonStatusRequest(
-    msg: Extract<SessionInboundMessage, { type: "daemon.status.request" }>,
+  private async handleDaemonGetStatusRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.get_status.request" }>,
   ): Promise<void> {
     try {
       const pidInfo = await getPidLockInfo(this.paseoHome);
@@ -3851,7 +3851,7 @@ export class Session {
         error: p.error ?? null,
       }));
       this.emit({
-        type: "daemon.status.response",
+        type: "daemon.get_status.response",
         payload: {
           requestId: msg.requestId,
           serverId: this.serverId ?? "",
@@ -3867,7 +3867,7 @@ export class Session {
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to handle daemon status request");
       this.emit({
-        type: "daemon.status.response",
+        type: "daemon.get_status.response",
         payload: {
           requestId: msg.requestId,
           serverId: this.serverId ?? "",
@@ -3883,8 +3883,8 @@ export class Session {
     }
   }
 
-  private async handleDaemonPairingOfferRequest(
-    msg: Extract<SessionInboundMessage, { type: "daemon.pairing_offer.request" }>,
+  private async handleDaemonGetPairingOfferRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.get_pairing_offer.request" }>,
   ): Promise<void> {
     try {
       const relay = this.daemonRuntimeConfig?.relay;
@@ -3899,7 +3899,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       this.emit({
-        type: "daemon.pairing_offer.response",
+        type: "daemon.get_pairing_offer.response",
         payload: {
           requestId: msg.requestId,
           url: pairing.url ?? "",
@@ -3913,7 +3913,7 @@ export class Session {
         type: "rpc_error",
         payload: {
           requestId: msg.requestId,
-          requestType: "daemon.pairing_offer.request",
+          requestType: "daemon.get_pairing_offer.request",
           error: error instanceof Error ? error.message : String(error),
         },
       });
