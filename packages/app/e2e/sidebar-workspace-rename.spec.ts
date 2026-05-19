@@ -68,7 +68,7 @@ test.describe("Sidebar workspace rename", () => {
 
       const renameRequests = captureWsSessionFrames(
         page,
-        "checkout_rename_branch_request",
+        "checkout.rename_branch.request",
         (inner) => ({
           branch: String(inner.branch ?? ""),
           cwd: String(inner.cwd ?? ""),

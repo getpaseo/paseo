@@ -4,7 +4,7 @@ import { connectTerminalClient, navigateToTerminal } from "./helpers/terminal-pe
 import { captureWsSessionFrames, renameModalInput, renameModalSubmit } from "./helpers/rename";
 
 test.describe("Workspace terminal tab rename", () => {
-  test("right-click rename sends rename_terminal_request and updates the tab label", async ({
+  test("right-click rename sends terminal.rename.request and updates the tab label", async ({
     page,
   }) => {
     test.setTimeout(60_000);
@@ -25,7 +25,7 @@ test.describe("Workspace terminal tab rename", () => {
       }
       const terminalId = created.terminal.id;
 
-      const renameFrames = captureWsSessionFrames(page, "rename_terminal_request", (inner) => ({
+      const renameFrames = captureWsSessionFrames(page, "terminal.rename.request", (inner) => ({
         terminalId: String(inner.terminalId ?? ""),
         title: String(inner.title ?? ""),
         requestId: String(inner.requestId ?? ""),
