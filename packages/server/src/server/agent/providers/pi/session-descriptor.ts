@@ -72,7 +72,11 @@ function resolveRealpath(value: string): string | null {
   try {
     return realpathSync.native(value);
   } catch {
-    return null;
+    try {
+      return realpathSync(value);
+    } catch {
+      return null;
+    }
   }
 }
 
