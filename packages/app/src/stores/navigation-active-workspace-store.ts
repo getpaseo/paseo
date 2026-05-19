@@ -28,6 +28,7 @@ const LAST_WORKSPACE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selecti
 let lastWorkspaceSelection: ActiveWorkspaceSelection | null = null;
 let lastWorkspaceSelectionHydrated = false;
 let lastWorkspaceSelectionHydrationPromise: Promise<void> | null = null;
+let lastWorkspaceSelectionRevision = 0;
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void): () => void {
@@ -79,6 +80,7 @@ function setLastWorkspaceSelection(next: ActiveWorkspaceSelection) {
     return;
   }
   lastWorkspaceSelection = normalized;
+  lastWorkspaceSelectionRevision += 1;
   notifyListeners();
   void AsyncStorage.setItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY, JSON.stringify(normalized)).catch(
     () => {},
@@ -89,15 +91,20 @@ export function hydrateLastWorkspaceSelection(): Promise<void> {
   if (lastWorkspaceSelectionHydrationPromise) {
     return lastWorkspaceSelectionHydrationPromise;
   }
+  const hydrationRevision = lastWorkspaceSelectionRevision;
   lastWorkspaceSelectionHydrationPromise = AsyncStorage.getItem(
     LAST_WORKSPACE_SELECTION_STORAGE_KEY,
   )
     .then((stored) => {
-      lastWorkspaceSelection = parseStoredWorkspaceSelection(stored);
+      if (lastWorkspaceSelectionRevision === hydrationRevision) {
+        lastWorkspaceSelection = parseStoredWorkspaceSelection(stored);
+      }
       return undefined;
     })
     .catch(() => {
-      lastWorkspaceSelection = null;
+      if (lastWorkspaceSelectionRevision === hydrationRevision) {
+        lastWorkspaceSelection = null;
+      }
     })
     .finally(() => {
       lastWorkspaceSelectionHydrated = true;
