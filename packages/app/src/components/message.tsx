@@ -69,6 +69,7 @@ import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownNextSiblingType } from "@/utils/markdown-list";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
@@ -1577,15 +1578,12 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, []);
 
   const fileLinkActions = useAssistantFileLinkActions();
-  const handleMarkdownLinkPress = useCallback(
-    (url: string) => {
-      fileLinkActions.open({ href: url }, "main");
-      // react-native-markdown-display opens the link itself when this returns true.
-      // We already handled it above, so return false to avoid duplicate opens.
-      return false;
-    },
-    [fileLinkActions],
-  );
+  const handleMarkdownLinkPress = useStableEvent((url: string) => {
+    fileLinkActions.open({ href: url }, "main");
+    // react-native-markdown-display opens the link itself when this returns true.
+    // We already handled it above, so return false to avoid duplicate opens.
+    return false;
+  });
 
   const markdownRules = useMemo<RenderRules>(() => {
     return {

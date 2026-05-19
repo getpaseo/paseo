@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type CSSProperties,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import {
   Pressable,
   Text,
@@ -18,6 +11,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
@@ -31,27 +25,25 @@ interface AssistantMarkdownLinkProps {
 export function AssistantMarkdownLink({ source, style, children }: AssistantMarkdownLinkProps) {
   const [hovered, setHovered] = useState(false);
   const { target, onHoverIn, onPress, onAuxPress } = useFileLink(source);
-  const { config } = useAssistantFileLinkResolverContext();
+  const { configRef } = useAssistantFileLinkResolverContext();
+  const workspaceRoot = configRef.current.workspaceRoot;
   const tooltipPath = useMemo(
-    () => (target ? formatInlinePathTargetForTooltip(target, config.workspaceRoot) : null),
-    [config.workspaceRoot, target],
+    () => (target ? formatInlinePathTargetForTooltip(target, workspaceRoot) : null),
+    [target, workspaceRoot],
   );
-  const handleAnchorClickCapture = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      if (!isModifiedOpenEvent(event)) {
-        return;
-      }
-      event.stopPropagation();
-      onAuxPress();
-    },
-    [onAuxPress],
-  );
-  const handleHoverIn = useCallback(() => {
+  const handleAnchorClickCapture = useStableEvent((event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (!isModifiedOpenEvent(event)) {
+      return;
+    }
+    event.stopPropagation();
+    onAuxPress();
+  });
+  const handleHoverIn = useStableEvent(() => {
     setHovered(true);
     onHoverIn();
-  }, [onHoverIn]);
-  const handleHoverOut = useCallback(() => setHovered(false), []);
+  });
+  const handleHoverOut = useStableEvent(() => setHovered(false));
   const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
     () => [style, hovered && { textDecorationLine: "underline" as const }],
     [style, hovered],

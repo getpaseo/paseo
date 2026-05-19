@@ -98,6 +98,47 @@ function createWrapper(input: {
 }
 
 describe("useFileLink", () => {
+  it("returns the same object across no-op parent rerenders", () => {
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const queryClient = createQueryClient();
+    const Provider = AssistantFileLinkResolverProvider as React.ComponentType<
+      Omit<React.ComponentProps<typeof AssistantFileLinkResolverProvider>, "children"> & {
+        children?: ReactNode;
+      }
+    >;
+
+    function ChurningProviderWrapper({ children }: { children: ReactNode }) {
+      return React.createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        React.createElement(
+          Provider,
+          {
+            client: { getDirectorySuggestions },
+            serverId: "server-1",
+            workspaceRoot: "/Users/test/project",
+            onOpenWorkspaceFile: () => {},
+            toast: { show: vi.fn(), copied: vi.fn(), error: vi.fn() },
+          },
+          children,
+        ),
+      );
+    }
+
+    const { result, rerender } = renderHook(() => useFileLink({ ...SOURCE }), {
+      wrapper: ChurningProviderWrapper,
+    });
+    const first = result.current;
+
+    rerender();
+
+    expect(result.current).toBe(first);
+    expect(result.current.onHoverIn).toBe(first.onHoverIn);
+    expect(result.current.onPress).toBe(first.onPress);
+    expect(result.current.onAuxPress).toBe(first.onAuxPress);
+    expect(result.current.open).toBe(first.open);
+  });
+
   it("does not cache unresolved lookups forever", async () => {
     const getDirectorySuggestions = vi
       .fn()

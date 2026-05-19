@@ -4,8 +4,8 @@ import {
   useContext,
   useMemo,
   useRef,
+  type MutableRefObject,
   type ReactNode,
-  type RefObject,
 } from "react";
 import React from "react";
 import type { ToastApi } from "@/components/toast-host";
@@ -30,8 +30,7 @@ export interface AssistantFileLinkResolverProviderProps extends AssistantFileLin
 }
 
 export interface AssistantFileLinkResolverContextValue {
-  config: AssistantFileLinkResolverConfig;
-  configRef: RefObject<AssistantFileLinkResolverConfig>;
+  configRef: MutableRefObject<AssistantFileLinkResolverConfig>;
   getDirectorySuggestions: GetDirectorySuggestions;
 }
 
@@ -46,12 +45,14 @@ export function AssistantFileLinkResolverProvider({
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
-  const config = useMemo<AssistantFileLinkResolverConfig>(
-    () => ({ client, serverId, workspaceRoot, onOpenWorkspaceFile, toast }),
-    [client, serverId, workspaceRoot, onOpenWorkspaceFile, toast],
-  );
-  const configRef = useRef(config);
-  configRef.current = config;
+  const configRef = useRef<AssistantFileLinkResolverConfig>({
+    client,
+    serverId,
+    workspaceRoot,
+    onOpenWorkspaceFile,
+    toast,
+  });
+  configRef.current = { client, serverId, workspaceRoot, onOpenWorkspaceFile, toast };
 
   const getDirectorySuggestions = useCallback<GetDirectorySuggestions>(async (input) => {
     const activeClient = configRef.current.client;
@@ -64,8 +65,8 @@ export function AssistantFileLinkResolverProvider({
   }, []);
 
   const value = useMemo<AssistantFileLinkResolverContextValue>(
-    () => ({ config, configRef, getDirectorySuggestions }),
-    [config, getDirectorySuggestions],
+    () => ({ configRef, getDirectorySuggestions }),
+    [getDirectorySuggestions],
   );
 
   return (

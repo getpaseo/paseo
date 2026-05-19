@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
 import type { InlinePathTarget } from "./parse";
@@ -42,23 +43,26 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   const context = useAssistantFileLinkResolverContext();
   const queryClient = useQueryClient();
   const stableSource = useStableSource(source);
+  const activeConfig = context.configRef.current;
+  const workspaceRoot = activeConfig.workspaceRoot;
+  const serverId = activeConfig.serverId;
   const resolution = useMemo(
     () =>
       classifyForResolution(stableSource, {
-        workspaceRoot: context.config.workspaceRoot,
+        workspaceRoot,
       }),
-    [stableSource, context.config.workspaceRoot],
+    [stableSource, workspaceRoot],
   );
   const queryKey = useMemo(
     () =>
       resolution.kind === "needsLookup"
         ? assistantFileLinkQueryKey({
-            serverId: context.config.serverId,
-            workspaceRoot: context.config.workspaceRoot,
+            serverId,
+            workspaceRoot,
             ambiguousQuery: resolution.ambiguousQuery,
           })
         : DISABLED_QUERY_KEY,
-    [resolution, context.config.serverId, context.config.workspaceRoot],
+    [resolution, serverId, workspaceRoot],
   );
 
   const query = useQuery({
@@ -71,7 +75,7 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
         ambiguousQuery: resolution.ambiguousQuery,
         token: resolution.token,
         target: resolution.target,
-        workspaceRoot: context.config.workspaceRoot,
+        workspaceRoot,
         getDirectorySuggestions: context.getDirectorySuggestions,
       });
     },
@@ -80,69 +84,18 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     staleTime: Infinity,
   });
 
-  const open = useCallback(
+  const open = useStableEvent(
     (nextSource: AssistantFileLinkSource, disposition: OpenFileDisposition) => {
-      const capturedConfig = context.configRef.current;
-      const capturedResolution = classifyForResolution(nextSource, {
-        workspaceRoot: capturedConfig.workspaceRoot,
+      openAssistantFileLink({
+        source: nextSource,
+        disposition,
+        context,
+        queryClient,
       });
-
-      if (capturedResolution.kind === "resolved") {
-        void dispatchResolvedLink({
-          resolution: capturedResolution,
-          disposition,
-          capturedServerId: capturedConfig.serverId,
-          capturedWorkspaceRoot: capturedConfig.workspaceRoot,
-          context,
-        });
-        return;
-      }
-
-      const capturedQueryKey = assistantFileLinkQueryKey({
-        serverId: capturedConfig.serverId,
-        workspaceRoot: capturedConfig.workspaceRoot,
-        ambiguousQuery: capturedResolution.ambiguousQuery,
-      });
-
-      const run = async () => {
-        try {
-          const target = await queryClient.fetchQuery({
-            queryKey: capturedQueryKey,
-            queryFn: () =>
-              fetchDaemonResolution({
-                ambiguousQuery: capturedResolution.ambiguousQuery,
-                token: capturedResolution.token,
-                target: capturedResolution.target,
-                workspaceRoot: capturedConfig.workspaceRoot,
-                getDirectorySuggestions: context.getDirectorySuggestions,
-              }),
-            retry: 0,
-            staleTime: Infinity,
-          });
-          await dispatchFileTarget({
-            target,
-            disposition,
-            capturedServerId: capturedConfig.serverId,
-            capturedWorkspaceRoot: capturedConfig.workspaceRoot,
-            context,
-          });
-        } catch (error) {
-          await dispatchUnresolvedError({
-            error,
-            fallbackToken: capturedResolution.token,
-            capturedServerId: capturedConfig.serverId,
-            capturedWorkspaceRoot: capturedConfig.workspaceRoot,
-            context,
-          });
-        }
-      };
-
-      void run();
     },
-    [context, queryClient],
   );
 
-  const onHoverIn = useCallback(() => {
+  const onHoverIn = useStableEvent(() => {
     if (resolution.kind !== "needsLookup") {
       return;
     }
@@ -154,26 +107,20 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
           ambiguousQuery: resolution.ambiguousQuery,
           token: resolution.token,
           target: resolution.target,
-          workspaceRoot: context.config.workspaceRoot,
+          workspaceRoot,
           getDirectorySuggestions: context.getDirectorySuggestions,
         }),
       retry: 0,
       staleTime: Infinity,
     });
-  }, [
-    context.config.workspaceRoot,
-    context.getDirectorySuggestions,
-    queryClient,
-    queryKey,
-    resolution,
-  ]);
+  });
 
-  const onPress = useCallback(() => {
+  const onPress = useStableEvent(() => {
     open(stableSource, "main");
-  }, [open, stableSource]);
-  const onAuxPress = useCallback(() => {
+  });
+  const onAuxPress = useStableEvent(() => {
     open(stableSource, "side");
-  }, [open, stableSource]);
+  });
 
   const target = useMemo(() => {
     if (resolution.kind === "resolved") {
@@ -191,30 +138,104 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
 export function useAssistantFileLinkActions(): AssistantFileLinkActions {
   const context = useAssistantFileLinkResolverContext();
   const actionLink = useFileLink(ACTION_LINK_SOURCE);
-  const workspaceRoot = context.config.workspaceRoot;
 
-  const open = useCallback(
+  const open = useStableEvent(
     (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => {
       actionLink.open(source, disposition);
     },
-    [actionLink],
   );
   const canOpen = useCallback(
-    (source: AssistantFileLinkSource) => {
-      const resolution = classifyForResolution(source, { workspaceRoot });
-      return resolution.kind === "needsLookup" || resolution.value.kind !== "ignored";
-    },
-    [workspaceRoot],
+    (source: AssistantFileLinkSource) =>
+      canOpenAssistantFileLink(source, context.configRef.current.workspaceRoot),
+    [context.configRef],
   );
   const canResolveFile = useCallback(
-    (source: AssistantFileLinkSource) => {
-      const resolution = classifyForResolution(source, { workspaceRoot });
-      return resolution.kind === "needsLookup" || resolution.value.kind === "file";
-    },
-    [workspaceRoot],
+    (source: AssistantFileLinkSource) =>
+      canResolveAssistantFileLinkToFile(source, context.configRef.current.workspaceRoot),
+    [context.configRef],
   );
 
   return useMemo(() => ({ open, canOpen, canResolveFile }), [open, canOpen, canResolveFile]);
+}
+
+function openAssistantFileLink(input: {
+  source: AssistantFileLinkSource;
+  disposition: OpenFileDisposition;
+  context: AssistantFileLinkResolverContextValue;
+  queryClient: ReturnType<typeof useQueryClient>;
+}): void {
+  const capturedConfig = input.context.configRef.current;
+  const capturedResolution = classifyForResolution(input.source, {
+    workspaceRoot: capturedConfig.workspaceRoot,
+  });
+
+  if (capturedResolution.kind === "resolved") {
+    void dispatchResolvedLink({
+      resolution: capturedResolution,
+      disposition: input.disposition,
+      capturedServerId: capturedConfig.serverId,
+      capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+      context: input.context,
+    });
+    return;
+  }
+
+  const capturedQueryKey = assistantFileLinkQueryKey({
+    serverId: capturedConfig.serverId,
+    workspaceRoot: capturedConfig.workspaceRoot,
+    ambiguousQuery: capturedResolution.ambiguousQuery,
+  });
+
+  const run = async () => {
+    try {
+      const target = await input.queryClient.fetchQuery({
+        queryKey: capturedQueryKey,
+        queryFn: () =>
+          fetchDaemonResolution({
+            ambiguousQuery: capturedResolution.ambiguousQuery,
+            token: capturedResolution.token,
+            target: capturedResolution.target,
+            workspaceRoot: capturedConfig.workspaceRoot,
+            getDirectorySuggestions: input.context.getDirectorySuggestions,
+          }),
+        retry: 0,
+        staleTime: Infinity,
+      });
+      await dispatchFileTarget({
+        target,
+        disposition: input.disposition,
+        capturedServerId: capturedConfig.serverId,
+        capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+        context: input.context,
+      });
+    } catch (error) {
+      await dispatchUnresolvedError({
+        error,
+        fallbackToken: capturedResolution.token,
+        capturedServerId: capturedConfig.serverId,
+        capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+        context: input.context,
+      });
+    }
+  };
+
+  void run();
+}
+
+function canOpenAssistantFileLink(
+  source: AssistantFileLinkSource,
+  workspaceRoot: string | undefined,
+): boolean {
+  const resolution = classifyForResolution(source, { workspaceRoot });
+  return resolution.kind === "needsLookup" || resolution.value.kind !== "ignored";
+}
+
+function canResolveAssistantFileLinkToFile(
+  source: AssistantFileLinkSource,
+  workspaceRoot: string | undefined,
+): boolean {
+  const resolution = classifyForResolution(source, { workspaceRoot });
+  return resolution.kind === "needsLookup" || resolution.value.kind === "file";
 }
 
 function useStableSource(source: AssistantFileLinkSource): AssistantFileLinkSource {
