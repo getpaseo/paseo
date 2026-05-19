@@ -473,6 +473,11 @@ export interface AgentSessionConfig {
    * Mapped by each provider to its native instruction field.
    */
   systemPrompt?: string;
+  /**
+   * Daemon-level instructions appended at runtime. This is deliberately not
+   * persisted into agent config so daemon setting changes apply cleanly.
+   */
+  daemonAppendSystemPrompt?: string;
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;

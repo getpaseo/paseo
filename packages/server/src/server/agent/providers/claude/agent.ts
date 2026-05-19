@@ -82,6 +82,7 @@ import { findExecutable, isCommandAvailable } from "../../../../utils/executable
 import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../../orchestrator-instructions.js";
+import { composeSystemPromptParts } from "../../system-prompt.js";
 
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
@@ -2314,9 +2315,13 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildAppendedSystemPrompt(): string {
-    return [getOrchestratorModeInstructions(), this.config.systemPrompt?.trim()]
-      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-      .join("\n\n");
+    return (
+      composeSystemPromptParts(
+        getOrchestratorModeInstructions(),
+        this.config.systemPrompt,
+        this.config.daemonAppendSystemPrompt,
+      ) ?? ""
+    );
   }
 
   private buildSdkEnv(extraClaudeOptions: Partial<ClaudeOptions> | undefined): NodeJS.ProcessEnv {

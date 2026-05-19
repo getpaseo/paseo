@@ -4,6 +4,7 @@ import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { SettingsTextArea } from "@/components/settings-textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
@@ -382,6 +383,7 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
       <SettingsSection title="Operations">
         <RestartDaemonCard host={host} />
         <InjectPaseoToolsCard serverId={host.serverId} />
+        <AppendSystemPromptCard serverId={host.serverId} />
       </SettingsSection>
       {isLocalDaemon ? (
         <SettingsSection title="Pair devices">
@@ -554,6 +556,73 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
           onValueChange={handleValueChange}
           accessibilityLabel="Inject Paseo tools"
         />
+      </View>
+    </View>
+  );
+}
+
+function AppendSystemPromptCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const persistedPrompt = config?.appendSystemPrompt ?? "";
+  const [draft, setDraft] = useState(persistedPrompt);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(persistedPrompt);
+  }, [persistedPrompt]);
+
+  const hasChanges = draft !== persistedPrompt;
+
+  const handleSave = useCallback(() => {
+    setIsSaving(true);
+    void patchConfig({ appendSystemPrompt: draft })
+      .catch((error) => {
+        console.error("[HostPage] Failed to save append system prompt", error);
+      })
+      .finally(() => setIsSaving(false));
+  }, [draft, patchConfig]);
+
+  const handleReset = useCallback(() => {
+    setDraft(persistedPrompt);
+  }, [persistedPrompt]);
+
+  if (!isConnected) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-append-system-prompt-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Append system prompt</Text>
+          <Text style={settingsStyles.rowHint}>Added to new and resumed agents on this daemon</Text>
+        </View>
+      </View>
+      <SettingsTextArea
+        testID="host-page-append-system-prompt-input"
+        accessibilityLabel="Append system prompt"
+        value={draft}
+        onChangeText={setDraft}
+        placeholder="Always keep replies concise."
+      />
+      <View style={styles.appendPromptActions}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={handleReset}
+          disabled={!hasChanges || isSaving}
+          testID="host-page-append-system-prompt-reset"
+        >
+          Reset
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          onPress={handleSave}
+          disabled={!hasChanges || isSaving}
+          testID="host-page-append-system-prompt-save"
+        >
+          {isSaving ? "Saving..." : "Save"}
+        </Button>
       </View>
     </View>
   );
@@ -754,6 +823,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     marginTop: theme.spacing[4],
+  },
+  appendPromptActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[3],
   },
   emptyCard: {
     padding: theme.spacing[4],

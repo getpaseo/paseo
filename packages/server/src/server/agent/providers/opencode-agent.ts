@@ -60,6 +60,7 @@ import {
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { composeSystemPromptParts } from "../system-prompt.js";
 import {
   createSdkOpenCodeClient,
   type OpenCodeRuntime,
@@ -2589,6 +2590,10 @@ class OpenCodeAgentSession implements AgentSession {
           partTypes: parts.map((p) => p.type),
         });
         try {
+          const systemPrompt = composeSystemPromptParts(
+            this.config.systemPrompt,
+            this.config.daemonAppendSystemPrompt,
+          );
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
             directory: this.config.cwd,
@@ -2601,7 +2606,7 @@ class OpenCodeAgentSession implements AgentSession {
                   },
                 }
               : {}),
-            ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
+            ...(systemPrompt ? { system: systemPrompt } : {}),
             ...(model ? { model } : {}),
             ...(effectiveMode ? { agent: effectiveMode } : {}),
             ...(effectiveVariant ? { variant: effectiveVariant } : {}),

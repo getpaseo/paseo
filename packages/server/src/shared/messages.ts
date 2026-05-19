@@ -114,6 +114,7 @@ export const MutableDaemonConfigSchema = z
       .passthrough(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     autoArchiveAfterMerge: z.boolean().default(false),
+    appendSystemPrompt: z.string().default(""),
   })
   .passthrough();
 
@@ -124,6 +125,7 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
+    appendSystemPrompt: z.string().optional(),
   })
   .partial()
   .passthrough();

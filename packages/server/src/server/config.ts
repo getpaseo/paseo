@@ -256,6 +256,10 @@ function resolveAuthConfig(
     : undefined;
 }
 
+function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
+  return persisted.daemon?.appendSystemPrompt ?? "";
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -266,6 +270,7 @@ function resolveStaticLoadConfigSettings(
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
+    appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
@@ -286,8 +291,14 @@ export function loadConfig(
   const persisted = loadPersistedConfig(paseoHome);
 
   const listen = resolveListenAddress(env, options?.cli, persisted);
-  const { mcpEnabled, mcpInjectIntoAgents, autoArchiveAfterMerge, hostnames, appBaseUrl } =
-    resolveStaticLoadConfigSettings(env, options?.cli, persisted);
+  const {
+    mcpEnabled,
+    mcpInjectIntoAgents,
+    autoArchiveAfterMerge,
+    appendSystemPrompt,
+    hostnames,
+    appBaseUrl,
+  } = resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
   const relay = resolveRelayConfig({
     env,
@@ -315,6 +326,7 @@ export function loadConfig(
     mcpEnabled,
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
+    appendSystemPrompt,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),

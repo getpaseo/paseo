@@ -251,6 +251,7 @@ export const PersistedConfigSchema = z
           .passthrough()
           .optional(),
         autoArchiveAfterMerge: z.boolean().optional(),
+        appendSystemPrompt: z.string().optional(),
         cors: z
           .object({
             allowedOrigins: z.array(z.string()).optional(),

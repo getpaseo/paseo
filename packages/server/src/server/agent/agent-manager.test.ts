@@ -100,12 +100,15 @@ function expectArchivedAgentRecord(
 class TestAgentClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities = TEST_CAPABILITIES;
+  readonly createdConfigs: AgentSessionConfig[] = [];
+  readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
 
   async isAvailable(): Promise<boolean> {
     return true;
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.createdConfigs.push(config);
     return new TestAgentSession(config);
   }
 
@@ -135,9 +138,11 @@ class TestAgentClient implements AgentClient {
     config?: Partial<AgentSessionConfig>,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    this.resumeOverrides.push(config);
     return new TestAgentSession({
       provider: "codex",
       cwd: config?.cwd ?? process.cwd(),
+      daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
     });
   }
 }
@@ -389,6 +394,62 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto");
+});
+
+test("createAgent injects daemon append system prompt at runtime only", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "  Daemon instructions.  ",
+    idFactory: () => "00000000-0000-4000-8000-000000000103",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    systemPrompt: "Agent instructions.",
+  });
+  const record = await storage.get(snapshot.id);
+
+  expect(client.createdConfigs[0]?.systemPrompt).toBe("Agent instructions.");
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe("Daemon instructions.");
+  expect(snapshot.config.daemonAppendSystemPrompt).toBe("Daemon instructions.");
+  expect(record?.config?.systemPrompt).toBe("Agent instructions.");
+  expect(record?.config).not.toHaveProperty("daemonAppendSystemPrompt");
+});
+
+test("daemon append system prompt is not injected into Pi", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      pi: client as unknown as AgentClient,
+    },
+    providerDefinitions: {
+      pi: { enabled: true },
+    },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Daemon instructions.",
+    idFactory: () => "00000000-0000-4000-8000-000000000104",
+  });
+
+  await manager.createAgent({
+    provider: "pi",
+    cwd: workdir,
+    systemPrompt: "Agent instructions.",
+  });
+
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBeUndefined();
 });
 
 test("setAgentMode persists the selected mode across session reload", async () => {

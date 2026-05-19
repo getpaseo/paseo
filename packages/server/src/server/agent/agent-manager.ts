@@ -173,6 +173,7 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -438,6 +439,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -448,6 +450,7 @@ export class AgentManager {
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -500,6 +503,10 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  setAppendSystemPrompt(prompt: string | null | undefined): void {
+    this.appendSystemPrompt = prompt ?? "";
   }
 
   public getMetricsSnapshot(): AgentMetricsSnapshot {
@@ -816,7 +823,9 @@ export class AgentManager {
             },
           };
     this.requireEnabledProvider(injectedConfig.provider);
-    const normalizedConfig = await this.normalizeConfig(injectedConfig);
+    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
+      await this.normalizeConfig(injectedConfig),
+    );
     const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = await this.requireAvailableClient({
       provider: normalizedConfig.provider,
@@ -860,7 +869,9 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const normalizedConfig = await this.normalizeConfig(mergedConfig);
+    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
+      await this.normalizeConfig(mergedConfig),
+    );
     const resumeOverrides: Partial<AgentSessionConfig> = { ...overrides };
     let hasResumeOverrides = overrides !== undefined;
 
@@ -871,6 +882,11 @@ export class AgentManager {
 
     if (normalizedConfig.modeId !== mergedConfig.modeId) {
       resumeOverrides.modeId = normalizedConfig.modeId;
+      hasResumeOverrides = true;
+    }
+
+    if (metadata.daemonAppendSystemPrompt !== normalizedConfig.daemonAppendSystemPrompt) {
+      resumeOverrides.daemonAppendSystemPrompt = normalizedConfig.daemonAppendSystemPrompt;
       hasResumeOverrides = true;
     }
 
@@ -919,7 +935,9 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const normalizedConfig = await this.normalizeConfig(refreshConfig);
+    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
+      await this.normalizeConfig(refreshConfig),
+    );
     const launchContext = this.buildLaunchContext(agentId);
 
     const session = handle
@@ -3435,6 +3453,26 @@ export class AgentManager {
     }
 
     return normalized;
+  }
+
+  private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
+    if (config.provider === "pi") {
+      const next = { ...config };
+      delete next.daemonAppendSystemPrompt;
+      return next;
+    }
+
+    const trimmed = this.appendSystemPrompt.trim();
+    if (!trimmed) {
+      const next = { ...config };
+      delete next.daemonAppendSystemPrompt;
+      return next;
+    }
+
+    return {
+      ...config,
+      daemonAppendSystemPrompt: trimmed,
+    };
   }
 
   private buildLaunchContext(agentId: string): AgentLaunchContext {

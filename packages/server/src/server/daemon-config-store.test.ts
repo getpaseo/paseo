@@ -107,6 +107,28 @@ describe("DaemonConfigStore", () => {
     });
   });
 
+  test("patch persists append system prompt into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({
+      appendSystemPrompt: "Prefer terse replies.",
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
+  });
+
   test("patch persists provider additional models into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

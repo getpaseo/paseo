@@ -186,6 +186,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
       autoArchiveAfterMerge: mutable.autoArchiveAfterMerge,
+      appendSystemPrompt: mutable.appendSystemPrompt,
     },
     agents:
       providerOverrides && Object.keys(providerOverrides).length > 0

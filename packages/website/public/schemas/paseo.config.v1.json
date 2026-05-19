@@ -54,6 +54,12 @@
               },
               "additionalProperties": true
             },
+            "autoArchiveAfterMerge": {
+              "type": "boolean"
+            },
+            "appendSystemPrompt": {
+              "type": "string"
+            },
             "cors": {
               "type": "object",
               "properties": {
@@ -77,6 +83,22 @@
                 },
                 "publicEndpoint": {
                   "type": "string"
+                },
+                "useTls": {
+                  "type": "boolean"
+                },
+                "publicUseTls": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "auth": {
+              "type": "object",
+              "properties": {
+                "password": {
+                  "type": "string",
+                  "pattern": "^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$"
                 }
               },
               "additionalProperties": false
@@ -248,6 +270,10 @@
                       "type": "string",
                       "minLength": 1
                     },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1
+                    },
                     "confidenceThreshold": {
                       "type": "number"
                     }
@@ -283,6 +309,10 @@
                       "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
                     },
                     "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "language": {
                       "type": "string",
                       "minLength": 1
                     }
