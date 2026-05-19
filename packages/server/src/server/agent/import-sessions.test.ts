@@ -13,6 +13,8 @@ import {
   normalizeImportAgentRequest,
 } from "./import-sessions.js";
 
+const directorySymlinkType = process.platform === "win32" ? "junction" : "dir";
+
 const TEST_CAPABILITIES = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -283,7 +285,7 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
   const realCwd = path.join(root, "real-project");
   const linkedCwd = path.join(root, "linked-project");
   mkdirSync(realCwd, { recursive: true });
-  symlinkSync(realCwd, linkedCwd);
+  symlinkSync(realCwd, linkedCwd, directorySymlinkType);
   const persistedCwd = realpathSync(linkedCwd);
 
   const result = await listImportableProviderSessions({

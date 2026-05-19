@@ -5,6 +5,8 @@ import { describe, expect, test } from "vitest";
 
 import { listPiPersistedAgents } from "./session-descriptor.js";
 
+const directorySymlinkType = process.platform === "win32" ? "junction" : "dir";
+
 function tempRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "paseo-pi-sessions-"));
 }
@@ -207,7 +209,7 @@ describe("listPiPersistedAgents", () => {
     const realCwd = path.join(root, "real-project");
     const linkedCwd = path.join(root, "linked-project");
     mkdirSync(realCwd, { recursive: true });
-    symlinkSync(realCwd, linkedCwd);
+    symlinkSync(realCwd, linkedCwd, directorySymlinkType);
     const persistedCwd = realpathSync(linkedCwd);
     const sessionsDir = path.join(root, "agent", "sessions");
     writeJsonl(
