@@ -8,7 +8,7 @@ import {
   mergeProviderPreferences,
   type FormPreferences,
   type ProviderPreferences,
-} from "./use-form-preferences";
+} from "@/hooks/use-form-preferences";
 
 export interface FormInitialValues {
   serverId?: string | null;

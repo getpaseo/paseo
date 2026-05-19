@@ -9,9 +9,9 @@ import type {
 import { useHosts } from "@/runtime/host-runtime";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
-  buildSelectableModelSelectorProviders,
-  type ModelSelectorProvider,
-} from "@/components/combined-model-selector.utils";
+  buildSelectableProviderSelectorProviders,
+  type ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
@@ -32,9 +32,9 @@ import {
   SELECTABLE_PROVIDER_STATUSES,
   type FormInitialValues,
   type FormState,
-} from "./resolve-agent-form";
+} from "@/provider-selection/resolve-agent-form";
 
-export type { FormInitialValues } from "./resolve-agent-form";
+export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
 
 export interface UseAgentFormStateOptions {
   initialServerId?: string | null;
@@ -67,7 +67,7 @@ export interface UseAgentFormStateResult {
   modeOptions: AgentMode[];
   availableModels: AgentModelDefinition[];
   allProviderModels: Map<string, AgentModelDefinition[]>;
-  modelSelectorProviders: ModelSelectorProvider[];
+  modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
   availableThinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   isModelLoading: boolean;
@@ -243,7 +243,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [snapshotEntries],
   );
   const snapshotModelSelectorProviders = useMemo(
-    () => buildSelectableModelSelectorProviders(snapshotEntries),
+    () => buildSelectableProviderSelectorProviders(snapshotEntries),
     [snapshotEntries],
   );
   const snapshotSelectedEntry = useMemo(

@@ -33,9 +33,9 @@ import {
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
-  buildModelSelectorProviders,
-  type ModelSelectorProvider,
-} from "@/components/combined-model-selector.utils";
+  buildProviderSelectorProviders,
+  type ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -97,7 +97,7 @@ interface ControlledAgentStatusBarProps {
   disabled?: boolean;
   isModelLoading?: boolean;
   providerDefinitions: AgentProviderDefinition[];
-  modelSelectorProviders?: ModelSelectorProvider[];
+  modelSelectorProviders?: ProviderSelectorProvider[];
   favoriteKeys?: Set<string>;
   onToggleFavoriteModel?: (provider: string, modelId: string) => void;
   features?: AgentFeature[];
@@ -117,7 +117,7 @@ export interface DraftAgentStatusBarProps {
   selectedModel: string;
   onSelectModel: (modelId: string) => void;
   isModelLoading: boolean;
-  modelSelectorProviders: ModelSelectorProvider[];
+  modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
   onSelectProviderAndModel: (provider: AgentProvider, modelId: string) => void;
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
@@ -237,7 +237,7 @@ function toComboboxOptions(options: StatusOption[] | undefined): ComboboxOption[
 function buildFallbackModelSelectorProviders(
   provider: string,
   modelOptions: StatusOption[] | undefined,
-): ModelSelectorProvider[] {
+): ProviderSelectorProvider[] {
   if (!modelOptions || modelOptions.length === 0) {
     return [];
   }
@@ -245,13 +245,16 @@ function buildFallbackModelSelectorProviders(
     {
       id: provider,
       label: provider,
-      rows: modelOptions.map((option) => ({
-        favoriteKey: buildFavoriteModelKey({ provider, modelId: option.id }),
-        provider,
-        providerLabel: provider,
-        modelId: option.id,
-        modelLabel: option.label,
-      })),
+      modelSelection: {
+        kind: "models",
+        rows: modelOptions.map((option) => ({
+          favoriteKey: buildFavoriteModelKey({ provider, modelId: option.id }),
+          provider,
+          providerLabel: provider,
+          modelId: option.id,
+          modelLabel: option.label,
+        })),
+      },
     },
   ];
 }
@@ -794,7 +797,7 @@ interface DesktopStatusBarContentProps {
   canSelectMode: boolean;
   canSelectModel: boolean;
   canSelectThinking: boolean;
-  modelSelectorProviders: ModelSelectorProvider[];
+  modelSelectorProviders: ProviderSelectorProvider[];
   modelDisabled: boolean;
   comboboxProviderOptions: ComboboxOption[];
   comboboxModeOptions: ComboboxOption[];
@@ -1058,7 +1061,7 @@ interface SheetStatusBarContentProps {
   canSelectMode: boolean;
   canSelectModel: boolean;
   canSelectThinking: boolean;
-  modelSelectorProviders: ModelSelectorProvider[];
+  modelSelectorProviders: ProviderSelectorProvider[];
   modelDisabled: boolean;
   comboboxModeOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
@@ -1662,7 +1665,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     [agent?.provider, models],
   );
   const agentModelSelectorProviders = useMemo(
-    () => buildModelSelectorProviders(agentProviderDefinitions, agentProviderModels),
+    () =>
+      buildProviderSelectorProviders({
+        providerDefinitions: agentProviderDefinitions,
+        modelsByProvider: agentProviderModels,
+      }),
     [agentProviderDefinitions, agentProviderModels],
   );
 

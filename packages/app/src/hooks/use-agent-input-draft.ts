@@ -10,14 +10,17 @@ import {
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import {
   areAttachmentsEqual,
-  buildDraftComposerCommandConfig,
   buildDraftStatusControls,
   hasDraftContent,
   resolveDraftKey,
-  resolveEffectiveComposerModelId,
-  resolveEffectiveComposerThinkingOptionId,
   type DraftKeyInput,
 } from "@/hooks/use-agent-input-draft-core";
+import {
+  buildDraftCommandConfig,
+  resolveEffectiveComposerModelId,
+  resolveEffectiveComposerThinkingOptionId,
+  type ProviderSelectionState,
+} from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
 
 type AttachmentUpdater =
@@ -199,23 +202,33 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     formState.setWorkingDir(lockedWorkingDir);
   }, [composerOptions, formState, lockedWorkingDir]);
 
+  const providerSelection = useMemo<ProviderSelectionState>(
+    () => ({
+      provider: formState.selectedProvider,
+      modelId: formState.selectedModel,
+      modeId: formState.selectedMode,
+      thinkingOptionId: formState.selectedThinkingOptionId,
+      availableModels: formState.availableModels,
+      modeOptions: formState.modeOptions,
+    }),
+    [
+      formState.availableModels,
+      formState.modeOptions,
+      formState.selectedMode,
+      formState.selectedModel,
+      formState.selectedProvider,
+      formState.selectedThinkingOptionId,
+    ],
+  );
+
   const effectiveModelId = useMemo(
-    () =>
-      resolveEffectiveComposerModelId({
-        selectedModel: formState.selectedModel,
-        availableModels: formState.availableModels,
-      }),
-    [formState.availableModels, formState.selectedModel],
+    () => resolveEffectiveComposerModelId(providerSelection),
+    [providerSelection],
   );
 
   const effectiveThinkingOptionId = useMemo(
-    () =>
-      resolveEffectiveComposerThinkingOptionId({
-        selectedThinkingOptionId: formState.selectedThinkingOptionId,
-        availableModels: formState.availableModels,
-        effectiveModelId,
-      }),
-    [effectiveModelId, formState.availableModels, formState.selectedThinkingOptionId],
+    () => resolveEffectiveComposerThinkingOptionId(providerSelection, effectiveModelId),
+    [effectiveModelId, providerSelection],
   );
 
   const workingDir = lockedWorkingDir || formState.workingDir;
@@ -236,11 +249,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const commandDraftConfig = useMemo(
     () =>
       composerOptions
-        ? buildDraftComposerCommandConfig({
-            provider: formState.selectedProvider,
+        ? buildDraftCommandConfig({
+            selection: providerSelection,
             cwd: workingDir,
-            modeOptions: formState.modeOptions,
-            selectedMode: formState.selectedMode,
             effectiveModelId,
             effectiveThinkingOptionId,
             featureValues: draftFeatureValues,
@@ -251,10 +262,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModelId,
       effectiveThinkingOptionId,
       draftFeatureValues,
+      providerSelection,
       workingDir,
-      formState.modeOptions,
-      formState.selectedMode,
-      formState.selectedProvider,
     ],
   );
 
@@ -303,6 +312,7 @@ export const __private__ = {
   resolveDraftKey,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
-  buildDraftComposerCommandConfig,
+  buildDraftCommandConfig,
+  buildDraftComposerCommandConfig: buildDraftCommandConfig,
   buildDraftStatusControls,
 };

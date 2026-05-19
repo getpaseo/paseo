@@ -1,8 +1,6 @@
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentStatusBarProps } from "@/components/agent-status-bar";
-import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import type { UseAgentFormStateResult } from "@/hooks/use-agent-form-state";
-import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 export interface DraftKeyContext {
   selectedServerId: string | null;
@@ -18,56 +16,6 @@ export function resolveDraftKey(input: {
     return input.draftKey({ selectedServerId: input.selectedServerId });
   }
   return input.draftKey;
-}
-
-export function resolveEffectiveComposerModelId(input: {
-  selectedModel: string;
-  availableModels: AgentModelDefinition[];
-}): string {
-  return input.selectedModel.trim();
-}
-
-export function resolveEffectiveComposerThinkingOptionId(input: {
-  selectedThinkingOptionId: string;
-  availableModels: AgentModelDefinition[];
-  effectiveModelId: string;
-}): string {
-  const selectedThinkingOptionId = input.selectedThinkingOptionId.trim();
-  if (selectedThinkingOptionId) {
-    return selectedThinkingOptionId;
-  }
-
-  const selectedModelDefinition =
-    input.availableModels.find((model) => model.id === input.effectiveModelId) ?? null;
-  return selectedModelDefinition?.defaultThinkingOptionId ?? "";
-}
-
-export function buildDraftComposerCommandConfig(input: {
-  provider: AgentProvider | null;
-  cwd: string;
-  modeOptions: DraftAgentStatusBarProps["modeOptions"];
-  selectedMode: string;
-  effectiveModelId: string;
-  effectiveThinkingOptionId: string;
-  featureValues?: Record<string, unknown>;
-}): DraftCommandConfig | undefined {
-  const cwd = input.cwd.trim();
-  if (!input.provider || !cwd) {
-    return undefined;
-  }
-
-  return {
-    provider: input.provider,
-    cwd,
-    ...(input.modeOptions.length > 0 && input.selectedMode !== ""
-      ? { modeId: input.selectedMode }
-      : {}),
-    ...(input.effectiveModelId ? { model: input.effectiveModelId } : {}),
-    ...(input.effectiveThinkingOptionId
-      ? { thinkingOptionId: input.effectiveThinkingOptionId }
-      : {}),
-    ...(input.featureValues ? { featureValues: input.featureValues } : {}),
-  };
 }
 
 export function buildDraftStatusControls(input: {

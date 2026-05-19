@@ -5,12 +5,14 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import {
-  buildModelSelectorProviders,
-  buildSelectableModelSelectorProviders,
+  buildProviderSelectorProviders,
+  buildSelectableProviderSelectorProviders,
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
-  matchesSearch,
-} from "./combined-model-selector.utils";
+  matchesModelSearch,
+  resolveSelectedModelLabel,
+  resolveSubmissionReadiness,
+} from "./provider-selection";
 
 describe("combined model selector data", () => {
   const codexModel: AgentModelDefinition = {
@@ -37,7 +39,7 @@ describe("combined model selector data", () => {
 
   it("builds selector providers from ready enabled snapshot entries", () => {
     expect(
-      buildSelectableModelSelectorProviders([
+      buildSelectableProviderSelectorProviders([
         snapshotEntry({
           provider: "codex",
           label: "Codex",
@@ -48,24 +50,27 @@ describe("combined model selector data", () => {
       {
         id: "codex",
         label: "Codex",
-        rows: [
-          {
-            favoriteKey: "codex:gpt-5.4",
-            provider: "codex",
-            providerLabel: "Codex",
-            modelId: "gpt-5.4",
-            modelLabel: "GPT-5.4",
-            description: undefined,
-            isDefault: undefined,
-          },
-        ],
+        modelSelection: {
+          kind: "models",
+          rows: [
+            {
+              favoriteKey: "codex:gpt-5.4",
+              provider: "codex",
+              providerLabel: "Codex",
+              modelId: "gpt-5.4",
+              modelLabel: "GPT-5.4",
+              description: undefined,
+              isDefault: undefined,
+            },
+          ],
+        },
       },
     ]);
   });
 
-  it("keeps ready enabled providers with no models as model-less providers", () => {
+  it("represents ready enabled providers without explicit models as provider-default selection", () => {
     expect(
-      buildSelectableModelSelectorProviders([
+      buildSelectableProviderSelectorProviders([
         snapshotEntry({
           provider: "deepseek-tui",
           label: "DeepSeek TUI",
@@ -76,14 +81,14 @@ describe("combined model selector data", () => {
       {
         id: "deepseek-tui",
         label: "DeepSeek TUI",
-        rows: [],
+        modelSelection: { kind: "providerDefault", label: "Default" },
       },
     ]);
   });
 
   it("excludes disabled providers from selector data", () => {
     expect(
-      buildSelectableModelSelectorProviders([
+      buildSelectableProviderSelectorProviders([
         snapshotEntry({
           provider: "deepseek-tui",
           label: "DeepSeek TUI",
@@ -96,7 +101,7 @@ describe("combined model selector data", () => {
 
   it("excludes providers that are not ready", () => {
     expect(
-      buildSelectableModelSelectorProviders([
+      buildSelectableProviderSelectorProviders([
         snapshotEntry({ provider: "loading-provider", status: "loading", models: [] }),
         snapshotEntry({ provider: "error-provider", status: "error", models: [] }),
         snapshotEntry({ provider: "unavailable-provider", status: "unavailable", models: [] }),
@@ -116,19 +121,25 @@ describe("combined model selector data", () => {
     ];
 
     expect(
-      buildModelSelectorProviders(providerDefinitions, new Map([["codex", [codexModel]]])),
+      buildProviderSelectorProviders({
+        providerDefinitions,
+        modelsByProvider: new Map([["codex", [codexModel]]]),
+      }),
     ).toEqual([
       {
         id: "codex",
         label: "Codex",
-        rows: [
-          expect.objectContaining({
-            provider: "codex",
-            providerLabel: "Codex",
-            modelId: "gpt-5.4",
-            modelLabel: "GPT-5.4",
-          }),
-        ],
+        modelSelection: {
+          kind: "models",
+          rows: [
+            expect.objectContaining({
+              provider: "codex",
+              providerLabel: "Codex",
+              modelId: "gpt-5.4",
+              modelLabel: "GPT-5.4",
+            }),
+          ],
+        },
       },
     ]);
   });
@@ -143,10 +154,10 @@ describe("combined model selector data", () => {
       description: "OpenCode Zen - kimi",
     };
 
-    expect(matchesSearch(row, "kimi zen")).toBe(true);
-    expect(matchesSearch(row, "zen kimi")).toBe(true);
-    expect(matchesSearch(row, "k2.5 zen")).toBe(true);
-    expect(matchesSearch(row, "kimi gemini")).toBe(false);
+    expect(matchesModelSearch(row, "kimi zen")).toBe(true);
+    expect(matchesModelSearch(row, "zen kimi")).toBe(true);
+    expect(matchesModelSearch(row, "k2.5 zen")).toBe(true);
+    expect(matchesModelSearch(row, "kimi gemini")).toBe(false);
   });
 
   it("ranks model search results by fuzzy match quality", () => {
@@ -179,5 +190,76 @@ describe("combined model selector data", () => {
 
   it("keeps the selected trigger label model-only", () => {
     expect(buildSelectedTriggerLabel("GPT-5.4")).toBe("GPT-5.4");
+  });
+
+  it("resolves selected labels from explicit provider model-selection state", () => {
+    const providers = buildSelectableProviderSelectorProviders([
+      snapshotEntry({
+        provider: "codex",
+        label: "Codex",
+        models: [codexModel],
+      }),
+      snapshotEntry({
+        provider: "deepseek-tui",
+        label: "DeepSeek TUI",
+        models: [],
+      }),
+    ]);
+
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "codex",
+        selectedModel: "gpt-5.4",
+        isLoading: false,
+      }),
+    ).toBe("GPT-5.4");
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "deepseek-tui",
+        selectedModel: "",
+        isLoading: false,
+      }),
+    ).toBe("Default");
+  });
+
+  it("returns observable submission readiness reasons", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: "codex",
+          modelId: "",
+          availableModels: [codexModel],
+          isModelLoading: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "No model is available for the selected provider",
+    });
+
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: "deepseek-tui",
+          modelId: "",
+          availableModels: [],
+          isModelLoading: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({ ok: true });
   });
 });

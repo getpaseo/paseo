@@ -47,9 +47,13 @@ import { getProviderIcon } from "@/components/provider-icons";
 import {
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
-  type ModelSelectorProvider,
-  type SelectorModelRow,
-} from "./combined-model-selector.utils";
+  getAllProviderModelRows,
+  getProviderDefaultLabel,
+  getProviderModelRows,
+  resolveSelectedModelLabel,
+  type ProviderSelectionModelRow,
+  type ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 
 // TODO: this should be configured per provider in the provider manifest
 const PROVIDERS_WITH_MODEL_DESCRIPTIONS = new Set(["opencode", "pi"]);
@@ -59,7 +63,7 @@ type SelectorView =
   | { kind: "provider"; providerId: string; providerLabel: string };
 
 interface CombinedModelSelectorProps {
-  providers: ModelSelectorProvider[];
+  providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   onSelect: (provider: AgentProvider, modelId: string) => void;
@@ -79,7 +83,7 @@ interface CombinedModelSelectorProps {
 
 interface SelectorContentProps {
   view: SelectorView;
-  providers: ModelSelectorProvider[];
+  providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   searchQuery: string;
@@ -89,23 +93,16 @@ interface SelectorContentProps {
   onDrillDown: (providerId: string, providerLabel: string) => void;
 }
 
-function resolveDefaultModelLabel(rows: SelectorModelRow[] | undefined): string {
-  if (!rows || rows.length === 0) {
-    return "Select model";
-  }
-  return (rows.find((row) => row.isDefault) ?? rows[0])?.modelLabel ?? "Select model";
-}
-
 function normalizeSearchQuery(value: string): string {
   return value.trim().toLowerCase();
 }
 
 function sortFavoritesFirst(
-  rows: SelectorModelRow[],
+  rows: ProviderSelectionModelRow[],
   favoriteKeys: Set<string>,
-): SelectorModelRow[] {
-  const favorites: SelectorModelRow[] = [];
-  const rest: SelectorModelRow[] = [];
+): ProviderSelectionModelRow[] {
+  const favorites: ProviderSelectionModelRow[] = [];
+  const rest: ProviderSelectionModelRow[] = [];
   for (const row of rows) {
     if (favoriteKeys.has(row.favoriteKey)) {
       favorites.push(row);
@@ -124,7 +121,7 @@ function ModelRow({
   onPress,
   onToggleFavorite,
 }: {
-  row: SelectorModelRow;
+  row: ProviderSelectionModelRow;
   isSelected: boolean;
   isFavorite: boolean;
   elevated?: boolean;
@@ -200,7 +197,7 @@ function ModelRow({
 }
 
 interface SelectableModelRowProps {
-  row: SelectorModelRow;
+  row: ProviderSelectionModelRow;
   isSelected: boolean;
   isFavorite: boolean;
   elevated?: boolean;
@@ -239,7 +236,7 @@ function FavoritesSection({
   onSelect,
   onToggleFavorite,
 }: {
-  favoriteRows: SelectorModelRow[];
+  favoriteRows: ProviderSelectionModelRow[];
   selectedProvider: string;
   selectedModel: string;
   favoriteKeys: Set<string>;
@@ -274,7 +271,7 @@ interface GroupProviderButtonProps {
   providerId: string;
   providerLabel: string;
   rowCount: number;
-  hasNoModels: boolean;
+  defaultLabel: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   onSelectDefault: (providerId: string) => void;
 }
@@ -283,28 +280,28 @@ function GroupProviderButton({
   providerId,
   providerLabel,
   rowCount,
-  hasNoModels,
+  defaultLabel,
   onDrillDown,
   onSelectDefault,
 }: GroupProviderButtonProps) {
   const { theme } = useUnistyles();
   const ProvIcon = getProviderIcon(providerId);
   const handlePress = useCallback(() => {
-    if (hasNoModels) {
+    if (defaultLabel) {
       onSelectDefault(providerId);
       return;
     }
     onDrillDown(providerId, providerLabel);
-  }, [hasNoModels, onDrillDown, onSelectDefault, providerId, providerLabel]);
+  }, [defaultLabel, onDrillDown, onSelectDefault, providerId, providerLabel]);
   return (
     <Pressable onPress={handlePress} style={drillDownRowStyle}>
       <ProvIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       <Text style={styles.drillDownText}>{providerLabel}</Text>
       <View style={styles.drillDownTrailing}>
         <Text style={styles.drillDownCount}>
-          {hasNoModels ? "Default" : `${rowCount} ${rowCount === 1 ? "model" : "models"}`}
+          {defaultLabel ?? `${rowCount} ${rowCount === 1 ? "model" : "models"}`}
         </Text>
-        {hasNoModels ? null : (
+        {defaultLabel ? null : (
           <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
         )}
       </View>
@@ -317,22 +314,23 @@ function GroupedProviderRows({
   onDrillDown,
   onSelectDefault,
 }: {
-  providers: ModelSelectorProvider[];
+  providers: ProviderSelectorProvider[];
   onDrillDown: (providerId: string, providerLabel: string) => void;
   onSelectDefault: (providerId: string) => void;
 }) {
   return (
     <View>
       {providers.map((provider, index) => {
-        const hasNoModels = provider.rows.length === 0;
+        const rows = getProviderModelRows(provider);
+        const defaultLabel = getProviderDefaultLabel(provider);
         return (
           <View key={provider.id}>
             {index > 0 ? <View style={styles.separator} /> : null}
             <GroupProviderButton
               providerId={provider.id}
               providerLabel={provider.label}
-              rowCount={provider.rows.length}
-              hasNoModels={hasNoModels}
+              rowCount={rows.length}
+              defaultLabel={defaultLabel}
               onDrillDown={onDrillDown}
               onSelectDefault={onSelectDefault}
             />
@@ -381,7 +379,7 @@ function ProviderModelRows({
   onToggleFavorite,
   normalizedQuery,
 }: {
-  rows: SelectorModelRow[];
+  rows: ProviderSelectionModelRow[];
   selectedProvider: string;
   selectedModel: string;
   favoriteKeys: Set<string>;
@@ -396,7 +394,7 @@ function ProviderModelRows({
     [favoriteKeys, normalizedQuery, rows],
   );
   const renderItem = useCallback(
-    ({ item }: { item: SelectorModelRow }) => (
+    ({ item }: { item: ProviderSelectionModelRow }) => (
       <SelectableModelRow
         row={item}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
@@ -407,7 +405,7 @@ function ProviderModelRows({
     ),
     [favoriteKeys, onSelect, onToggleFavorite, selectedModel, selectedProvider],
   );
-  const keyExtractor = useCallback((row: SelectorModelRow) => row.favoriteKey, []);
+  const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
 
   if (useVirtualizedList) {
     return (
@@ -455,15 +453,12 @@ function SelectorContent({
   const visibleRows = useMemo(
     () =>
       selectedViewProvider
-        ? filterAndRankModelRows(selectedViewProvider.rows, normalizedQuery)
+        ? filterAndRankModelRows(getProviderModelRows(selectedViewProvider), normalizedQuery)
         : [],
     [normalizedQuery, selectedViewProvider],
   );
   const favoriteRows = useMemo(
-    () =>
-      providers.flatMap((provider) =>
-        provider.rows.filter((row) => favoriteKeys.has(row.favoriteKey)),
-      ),
+    () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
     [favoriteKeys, providers],
   );
   const handleSelectDefaultProvider = useCallback(
@@ -485,7 +480,7 @@ function SelectorContent({
       return emptyState;
     }
 
-    if (selectedViewProvider.rows.length === 0 && !normalizedQuery) {
+    if (getProviderDefaultLabel(selectedViewProvider) && !normalizedQuery) {
       return (
         <DefaultProviderRow
           providerId={view.providerId}
@@ -607,30 +602,20 @@ export function CombinedModelSelector({
   const ProviderIcon = hasSelectedProvider ? getProviderIcon(selectedProvider) : null;
 
   const selectedModelLabel = useMemo(() => {
-    if (!selectedModel) {
-      if (!hasSelectedProvider) {
-        return "Select model";
-      }
-      const provider = providers.find((entry) => entry.id === selectedProvider);
-      if (provider?.rows.length === 0) {
-        return "Default";
-      }
-      return isLoading ? "Loading..." : "Select model";
-    }
-    const provider = providers.find((entry) => entry.id === selectedProvider);
-    if (!provider) {
-      return isLoading ? "Loading..." : "Select model";
-    }
-    const model = provider.rows.find((entry) => entry.modelId === selectedModel);
-    return model?.modelLabel ?? resolveDefaultModelLabel(provider.rows);
-  }, [hasSelectedProvider, isLoading, providers, selectedModel, selectedProvider]);
+    return resolveSelectedModelLabel({
+      providers,
+      selectedProvider,
+      selectedModel,
+      isLoading,
+    });
+  }, [isLoading, providers, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {
       return undefined;
     }
-    const modelCount =
-      providers.find((provider) => provider.id === view.providerId)?.rows.length ?? 0;
+    const provider = providers.find((entry) => entry.id === view.providerId);
+    const modelCount = provider ? getProviderModelRows(provider).length : 0;
     return Math.min(80 + modelCount * 40, 400);
   }, [providers, view]);
 

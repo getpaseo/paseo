@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { resolveDraftKey } from "./use-agent-input-draft-core";
 import {
-  buildDraftComposerCommandConfig,
-  resolveDraftKey,
+  buildDraftCommandConfig,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
-} from "./use-agent-input-draft-core";
+} from "@/provider-selection/provider-selection";
 
 describe("resolveDraftKey", () => {
   it("returns a string draft key unchanged", () => {
@@ -30,8 +30,12 @@ describe("resolveEffectiveComposerModelId", () => {
   it("returns the selected model trimmed", () => {
     expect(
       resolveEffectiveComposerModelId({
-        selectedModel: "  gpt-5.4-mini  ",
+        provider: "codex",
+        modelId: "  gpt-5.4-mini  ",
+        modeId: "",
+        thinkingOptionId: "",
         availableModels: [],
+        modeOptions: [],
       }),
     ).toBe("gpt-5.4-mini");
   });
@@ -39,8 +43,12 @@ describe("resolveEffectiveComposerModelId", () => {
   it("returns empty string when no model selected", () => {
     expect(
       resolveEffectiveComposerModelId({
-        selectedModel: "",
+        provider: "codex",
+        modelId: "",
+        modeId: "",
+        thinkingOptionId: "",
         availableModels: [],
+        modeOptions: [],
       }),
     ).toBe("");
   });
@@ -63,21 +71,33 @@ describe("resolveEffectiveComposerThinkingOptionId", () => {
 
   it("prefers the selected thinking option when present", () => {
     expect(
-      resolveEffectiveComposerThinkingOptionId({
-        selectedThinkingOptionId: "medium",
-        availableModels: models,
-        effectiveModelId: "gpt-5.4",
-      }),
+      resolveEffectiveComposerThinkingOptionId(
+        {
+          provider: "codex",
+          modelId: "gpt-5.4",
+          modeId: "",
+          thinkingOptionId: "medium",
+          availableModels: models,
+          modeOptions: [],
+        },
+        "gpt-5.4",
+      ),
     ).toBe("medium");
   });
 
   it("falls back to the model default thinking option", () => {
     expect(
-      resolveEffectiveComposerThinkingOptionId({
-        selectedThinkingOptionId: "",
-        availableModels: models,
-        effectiveModelId: "gpt-5.4",
-      }),
+      resolveEffectiveComposerThinkingOptionId(
+        {
+          provider: "codex",
+          modelId: "gpt-5.4",
+          modeId: "",
+          thinkingOptionId: "",
+          availableModels: models,
+          modeOptions: [],
+        },
+        "gpt-5.4",
+      ),
     ).toBe("high");
   });
 });
@@ -85,11 +105,16 @@ describe("resolveEffectiveComposerThinkingOptionId", () => {
 describe("buildDraftComposerCommandConfig", () => {
   it("returns undefined when cwd is empty", () => {
     expect(
-      buildDraftComposerCommandConfig({
-        provider: "codex",
+      buildDraftCommandConfig({
+        selection: {
+          provider: "codex",
+          modelId: "gpt-5.4",
+          modeId: "",
+          thinkingOptionId: "",
+          availableModels: [],
+          modeOptions: [],
+        },
         cwd: "  ",
-        modeOptions: [],
-        selectedMode: "",
         effectiveModelId: "gpt-5.4",
         effectiveThinkingOptionId: "high",
       }),
@@ -98,11 +123,16 @@ describe("buildDraftComposerCommandConfig", () => {
 
   it("builds the draft command config from derived composer state", () => {
     expect(
-      buildDraftComposerCommandConfig({
-        provider: "codex",
+      buildDraftCommandConfig({
+        selection: {
+          provider: "codex",
+          modelId: "gpt-5.4",
+          modeId: "auto",
+          thinkingOptionId: "high",
+          availableModels: [],
+          modeOptions: [{ id: "auto", label: "Auto" }],
+        },
         cwd: "/repo",
-        modeOptions: [{ id: "auto", label: "Auto" }],
-        selectedMode: "auto",
         effectiveModelId: "gpt-5.4",
         effectiveThinkingOptionId: "high",
       }),
