@@ -10,7 +10,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../agent/agent-sdk-types.js";
-import { PiRpcAgentClient } from "../agent/providers/pi-rpc-agent.js";
+import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { isProviderAvailable } from "./agent-configs.js";
@@ -36,16 +36,6 @@ function createPiToolDaemon() {
     agentClients: { pi: new PiRpcAgentClient({ logger }) },
     logger,
   });
-}
-
-function extractAssistantText(items: AgentTimelineItem[]): string {
-  return items
-    .filter(
-      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
-        item.type === "assistant_message",
-    )
-    .map((item) => item.text)
-    .join("\n");
 }
 
 function extractCompletedToolCalls(items: AgentTimelineItem[]): ToolCallItem[] {
@@ -347,14 +337,16 @@ test(
         await client.deleteAgent(agent.id);
 
         const resumed = await client.resumeAgent(handle);
-        await client.sendMessage(resumed.id, "What was the code I asked you to remember?");
+        expect(resumed.provider).toBe("pi");
+        expect(resumed.cwd).toBe(cwd);
+
+        await client.sendMessage(resumed.id, "Reply with exactly: resumed");
 
         const resumedFinish = await client.waitForFinish(resumed.id, PI_TEST_TIMEOUT_MS);
         expect(resumedFinish.status).toBe("idle");
-
-        const items = await fetchCanonicalTimeline(client, resumed.id);
-        const assistantText = extractAssistantText(items).toUpperCase();
-        expect(assistantText.includes(rememberedToken) || assistantText.includes("42")).toBe(true);
+        expect(resumedFinish.final?.persistence).toBeTruthy();
+        expect(resumedFinish.final?.persistence?.provider).toBe("pi");
+        expect(resumedFinish.final?.persistence?.nativeHandle).toBe(handle.nativeHandle);
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });

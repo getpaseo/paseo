@@ -25,21 +25,21 @@ import {
   type AgentUsage,
   type ListModesOptions,
   type ListModelsOptions,
-} from "../agent-sdk-types.js";
-import { runProviderTurn } from "./provider-runner.js";
-import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
-import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
-import { findExecutable } from "../../../utils/executable.js";
+} from "../../agent-sdk-types.js";
+import { runProviderTurn } from "../provider-runner.js";
+import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { findExecutable } from "../../../../utils/executable.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
-} from "./diagnostic-utils.js";
-import { streamPiHistory } from "./pi/history-mapper.js";
-import { PiCliRuntime } from "./pi/cli-runtime.js";
-import type { PiRuntime, PiRuntimeSession } from "./pi/runtime.js";
+} from "../diagnostic-utils.js";
+import { streamPiHistory } from "./history-mapper.js";
+import { PiCliRuntime } from "./cli-runtime.js";
+import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
   PiAgentMessage,
@@ -49,14 +49,14 @@ import type {
   PiSessionStats,
   PiSessionState,
   PiThinkingLevel,
-} from "./pi/rpc-types.js";
+} from "./rpc-types.js";
 import {
   mapToolDetail,
   parseToolArgs,
   parseToolResult,
   type PiToolResult,
   type PiTrackedToolCall,
-} from "./pi/tool-call-mapper.js";
+} from "./tool-call-mapper.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";

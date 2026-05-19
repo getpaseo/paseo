@@ -1,9 +1,9 @@
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import type { AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
-import { FakePi } from "./pi/test-utils/fake-pi.js";
-import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./pi-rpc-agent.js";
+import type { AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
+import { FakePi } from "./test-utils/fake-pi.js";
 
 function createClient(pi = new FakePi()): PiRpcAgentClient {
   return new PiRpcAgentClient({
