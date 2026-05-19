@@ -8,5 +8,9 @@ export {
   normalizeInlinePathTarget,
   type InlinePathTarget,
 } from "./parse";
+export {
+  AssistantFileLinkResolverProvider,
+  type AssistantFileLinkResolverProviderProps,
+} from "./provider";
 export type { AssistantFileLinkSource } from "./resolver";
-export { useAssistantFileLinkResolver, useAssistantFileLinkTarget } from "./use-resolver";
+export { useAssistantFileLinkActions } from "./use-file-link";

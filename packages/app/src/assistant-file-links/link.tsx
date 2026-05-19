@@ -16,45 +16,26 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
-import type { OpenFileDisposition } from "@/workspace/file-open";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { DaemonClient } from "@server/client/daemon-client";
-import type { InlinePathTarget } from "./parse";
+import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
-import { useAssistantFileLinkTarget } from "./use-resolver";
+import { useFileLink } from "./use-file-link";
 
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
-  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  client?: DaemonClient | null;
-  serverId?: string;
-  workspaceRoot?: string;
   children: ReactNode;
 }
 
-export function AssistantMarkdownLink({
-  source,
-  style,
-  onPress,
-  client,
-  serverId,
-  workspaceRoot,
-  children,
-}: AssistantMarkdownLinkProps) {
+export function AssistantMarkdownLink({ source, style, children }: AssistantMarkdownLinkProps) {
   const [hovered, setHovered] = useState(false);
-  const { target, prefetch } = useAssistantFileLinkTarget({
-    source,
-    client,
-    serverId,
-    workspaceRoot,
-  });
+  const { target, onHoverIn, onPress, onAuxPress } = useFileLink(source);
+  const { config } = useAssistantFileLinkResolverContext();
   const tooltipPath = useMemo(
-    () => (target ? formatInlinePathTargetForTooltip(target, workspaceRoot) : null),
-    [target, workspaceRoot],
+    () => (target ? formatInlinePathTargetForTooltip(target, config.workspaceRoot) : null),
+    [config.workspaceRoot, target],
   );
-  const handlePress = useCallback(() => onPress(source, "main"), [onPress, source]);
   const handleAnchorClickCapture = useCallback(
     (event: MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault();
@@ -62,14 +43,14 @@ export function AssistantMarkdownLink({
         return;
       }
       event.stopPropagation();
-      onPress(source, "side");
+      onAuxPress();
     },
-    [onPress, source],
+    [onAuxPress],
   );
   const handleHoverIn = useCallback(() => {
     setHovered(true);
-    prefetch();
-  }, [prefetch]);
+    onHoverIn();
+  }, [onHoverIn]);
   const handleHoverOut = useCallback(() => setHovered(false), []);
   const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
     () => [style, hovered && { textDecorationLine: "underline" as const }],
@@ -78,9 +59,11 @@ export function AssistantMarkdownLink({
 
   if (isNative) {
     return (
-      <Text accessibilityRole="link" onPress={handlePress} style={style}>
-        {children}
-      </Text>
+      <FileLinkHoverTooltip filePath={tooltipPath}>
+        <Text accessibilityRole="link" onPress={onPress} style={style}>
+          {children}
+        </Text>
+      </FileLinkHoverTooltip>
     );
   }
 
@@ -93,7 +76,7 @@ export function AssistantMarkdownLink({
     >
       <Pressable
         accessibilityRole="link"
-        onPress={handlePress}
+        onPress={onPress}
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >
@@ -110,10 +93,6 @@ interface AssistantMarkdownCodeLinkProps {
   inheritedStyles: TextStyle;
   codeInlineStyle: TextStyle;
   linkStyle: TextStyle;
-  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  client?: DaemonClient | null;
-  serverId?: string;
-  workspaceRoot?: string;
   children: ReactNode;
 }
 
@@ -122,10 +101,6 @@ export function AssistantMarkdownCodeLink({
   inheritedStyles,
   codeInlineStyle,
   linkStyle,
-  onPress,
-  client,
-  serverId,
-  workspaceRoot,
   children,
 }: AssistantMarkdownCodeLinkProps) {
   const style = useMemo(
@@ -133,67 +108,14 @@ export function AssistantMarkdownCodeLink({
     [inheritedStyles, codeInlineStyle, linkStyle],
   );
   return (
-    <AssistantMarkdownLink
-      source={source}
-      style={style}
-      onPress={onPress}
-      client={client}
-      serverId={serverId}
-      workspaceRoot={workspaceRoot}
-    >
+    <AssistantMarkdownLink source={source} style={style}>
       {children}
     </AssistantMarkdownLink>
   );
 }
 
-interface AssistantInlineCodePathLinkProps {
-  content: string;
-  inheritedStyles: TextStyle;
-  codeInlineStyle: TextStyle;
-  linkStyle: TextStyle;
-  onPress: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
-  client?: DaemonClient | null;
-  serverId?: string;
-  workspaceRoot?: string;
-}
-
-export function AssistantInlineCodePathLink({
-  content,
-  inheritedStyles,
-  codeInlineStyle,
-  linkStyle,
-  onPress,
-  client,
-  serverId,
-  workspaceRoot,
-}: AssistantInlineCodePathLinkProps) {
-  const source = useMemo<AssistantFileLinkSource>(
-    () => ({
-      href: content,
-      text: content,
-      sourceType: "inline-code",
-    }),
-    [content],
-  );
-
-  return (
-    <AssistantMarkdownCodeLink
-      source={source}
-      inheritedStyles={inheritedStyles}
-      codeInlineStyle={codeInlineStyle}
-      linkStyle={linkStyle}
-      onPress={onPress}
-      client={client}
-      serverId={serverId}
-      workspaceRoot={workspaceRoot}
-    >
-      {content}
-    </AssistantMarkdownCodeLink>
-  );
-}
-
 function formatInlinePathTargetForTooltip(
-  target: InlinePathTarget,
+  target: { path: string; lineStart?: number; lineEnd?: number },
   workspaceRoot: string | undefined,
 ): string {
   let result = relativizePathToWorkspace(target.path, workspaceRoot);
@@ -222,6 +144,40 @@ function relativizePathToWorkspace(filePath: string, workspaceRoot: string | und
     return filePath.slice(prefix.length);
   }
   return filePath;
+}
+
+interface AssistantInlineCodePathLinkProps {
+  content: string;
+  inheritedStyles: TextStyle;
+  codeInlineStyle: TextStyle;
+  linkStyle: TextStyle;
+}
+
+export function AssistantInlineCodePathLink({
+  content,
+  inheritedStyles,
+  codeInlineStyle,
+  linkStyle,
+}: AssistantInlineCodePathLinkProps) {
+  const source = useMemo<AssistantFileLinkSource>(
+    () => ({
+      href: content,
+      text: content,
+      sourceType: "inline-code",
+    }),
+    [content],
+  );
+
+  return (
+    <AssistantMarkdownCodeLink
+      source={source}
+      inheritedStyles={inheritedStyles}
+      codeInlineStyle={codeInlineStyle}
+      linkStyle={linkStyle}
+    >
+      {content}
+    </AssistantMarkdownCodeLink>
+  );
 }
 
 const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {

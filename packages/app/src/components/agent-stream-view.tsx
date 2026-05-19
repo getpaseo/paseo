@@ -74,7 +74,10 @@ import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
-import { normalizeInlinePathTarget } from "@/assistant-file-links";
+import {
+  AssistantFileLinkResolverProvider,
+  normalizeInlinePathTarget,
+} from "@/assistant-file-links";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -510,19 +513,25 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           belowItem,
         });
         return (
-          <AssistantMessage
-            message={item.text}
-            timestamp={item.timestamp.getTime()}
-            onInlinePathPress={handleInlinePathPress}
-            workspaceRoot={workspaceRoot}
-            serverId={serverId}
+          <AssistantFileLinkResolverProvider
             client={client}
+            serverId={resolvedServerId}
+            workspaceRoot={workspaceRoot}
+            onOpenWorkspaceFile={handleInlinePathPress}
             toast={toast}
-            spacing={spacing}
-          />
+          >
+            <AssistantMessage
+              message={item.text}
+              timestamp={item.timestamp.getTime()}
+              workspaceRoot={workspaceRoot}
+              serverId={resolvedServerId}
+              client={client}
+              spacing={spacing}
+            />
+          </AssistantFileLinkResolverProvider>
         );
       },
-      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client, toast],
+      [client, handleInlinePathPress, resolvedServerId, streamRenderStrategy, toast, workspaceRoot],
     );
 
     const renderThoughtItem = useCallback(

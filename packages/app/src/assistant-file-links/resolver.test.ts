@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  classifyForResolution,
+  fetchDaemonResolution,
   getAssistantFileLinkToken,
-  resolveAssistantFileLink,
-  resolveAssistantFileLinkSync,
+  UnresolvedFileLinkError,
   type AssistantFileLinkContext,
   type DirectorySuggestionEntry,
   type DirectorySuggestionResult,
 } from "./resolver";
 
 const CONTEXT: AssistantFileLinkContext = {
-  serverId: "server-1",
   workspaceRoot: "/Users/test/project",
 };
 
@@ -55,54 +55,104 @@ function suggestionsFromMap(entriesByQuery: Record<string, DirectorySuggestionEn
   return { getDirectorySuggestions, searches };
 }
 
-describe("resolveAssistantFileLink", () => {
-  it("resolves a direct workspace file without querying suggestions", async () => {
-    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+describe("classifyForResolution", () => {
+  it("returns the directFile target synchronously", () => {
+    const result = classifyForResolution({ href: "src/components/message.tsx#L33" }, CONTEXT);
 
-    const result = await resolveAssistantFileLink({
-      source: { href: "src/components/message.tsx#L33" },
-      context: CONTEXT,
-      getDirectorySuggestions,
-    });
-
-    expect(getDirectorySuggestions).not.toHaveBeenCalled();
     expect(result).toEqual({
-      kind: "file",
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: {
+          raw: "src/components/message.tsx#L33",
+          path: "/Users/test/project/src/components/message.tsx",
+          lineStart: 33,
+          lineEnd: undefined,
+        },
+      },
+    });
+  });
+
+  it("preserves line ranges on direct workspace files", () => {
+    const result = classifyForResolution({ href: "src/components/message.tsx:33-40" }, CONTEXT);
+
+    expect(result).toEqual({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: {
+          raw: "src/components/message.tsx:33-40",
+          path: "/Users/test/project/src/components/message.tsx",
+          lineStart: 33,
+          lineEnd: 40,
+        },
+      },
+    });
+  });
+
+  it("flags basename inline-code as a daemon lookup keyed by suggestion query", () => {
+    const result = classifyForResolution(
+      { href: "file.ts:12", text: "file.ts:12", sourceType: "inline-code" },
+      CONTEXT,
+    );
+
+    expect(result).toEqual({
+      kind: "needsLookup",
+      ambiguousQuery: "file.ts",
+      token: "file.ts:12",
       target: {
-        raw: "src/components/message.tsx#L33",
-        path: "/Users/test/project/src/components/message.tsx",
-        lineStart: 33,
+        raw: "file.ts:12",
+        path: "/Users/test/project/file.ts",
+        lineStart: 12,
         lineEnd: undefined,
       },
     });
   });
 
-  it("preserves line ranges on direct workspace files", async () => {
-    const result = await resolveAssistantFileLink({
-      source: { href: "src/components/message.tsx:33-40" },
-      context: CONTEXT,
-      getDirectorySuggestions: vi.fn(async () => resolvedSuggestions([])),
-    });
+  it("keeps explicit external URLs external", () => {
+    const result = classifyForResolution({ href: "http://dumm.md", text: "dumm.md" }, CONTEXT);
 
     expect(result).toEqual({
-      kind: "file",
-      target: {
-        raw: "src/components/message.tsx:33-40",
-        path: "/Users/test/project/src/components/message.tsx",
-        lineStart: 33,
-        lineEnd: 40,
-      },
+      kind: "resolved",
+      value: { kind: "external", url: "http://dumm.md" },
     });
   });
 
-  it("resolves a basename inline-code through the daemon", async () => {
+  it("keeps auto-linkified normal domains external", () => {
+    const result = classifyForResolution(
+      { href: "http://google.com", text: "google.com", markup: "linkify" },
+      CONTEXT,
+    );
+
+    expect(result).toEqual({
+      kind: "resolved",
+      value: { kind: "external", url: "http://google.com" },
+    });
+  });
+
+  it("returns ignored for non-file-looking content", () => {
+    const result = classifyForResolution({ href: "" }, CONTEXT);
+
+    expect(result).toEqual({ kind: "resolved", value: { kind: "ignored" } });
+  });
+});
+
+describe("fetchDaemonResolution", () => {
+  it("resolves daemon suggestions into workspace file targets", async () => {
     const { getDirectorySuggestions, searches } = suggestionsFromMap({
       "file.ts": [{ path: "packages/app/src/file.ts", kind: "file" }],
     });
 
-    const result = await resolveAssistantFileLink({
-      source: { href: "file.ts:12", text: "file.ts:12", sourceType: "inline-code" },
-      context: CONTEXT,
+    const result = await fetchDaemonResolution({
+      ambiguousQuery: "file.ts",
+      token: "file.ts:12",
+      target: {
+        raw: "file.ts:12",
+        path: "/Users/test/project/file.ts",
+        lineStart: 12,
+        lineEnd: undefined,
+      },
+      workspaceRoot: "/Users/test/project",
       getDirectorySuggestions,
     });
 
@@ -115,135 +165,51 @@ describe("resolveAssistantFileLink", () => {
       },
     ]);
     expect(result).toEqual({
-      kind: "file",
-      target: {
-        raw: "file.ts:12",
-        path: "/Users/test/project/packages/app/src/file.ts",
-        lineStart: 12,
-        lineEnd: undefined,
-      },
+      raw: "file.ts:12",
+      path: "/Users/test/project/packages/app/src/file.ts",
+      lineStart: 12,
+      lineEnd: undefined,
     });
   });
 
-  it("returns unresolvedFileCandidate when the daemon finds no match", async () => {
+  it("throws a typed unresolved error when the daemon finds no match", async () => {
     const { getDirectorySuggestions } = suggestionsFromMap({});
 
-    const result = await resolveAssistantFileLink({
-      source: { href: "src/file.ts", text: "src/file.ts", sourceType: "inline-code" },
-      context: CONTEXT,
-      getDirectorySuggestions,
-    });
-
-    expect(result).toEqual({
-      kind: "unresolvedFileCandidate",
-      token: "src/file.ts",
-    });
-  });
-
-  it("returns unresolvedFileCandidate when the daemon throws", async () => {
-    const result = await resolveAssistantFileLink({
-      source: { href: "http://dumm.md", text: "dumm.md", markup: "linkify" },
-      context: CONTEXT,
-      getDirectorySuggestions: vi.fn(async () => {
-        throw new Error("daemon unavailable");
-      }),
-    });
-
-    expect(result).toEqual({
-      kind: "unresolvedFileCandidate",
-      token: "dumm.md",
-    });
-  });
-
-  it("keeps explicit external URLs external", async () => {
-    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
-
-    const result = await resolveAssistantFileLink({
-      source: { href: "http://dumm.md", text: "dumm.md" },
-      context: CONTEXT,
-      getDirectorySuggestions,
-    });
-
-    expect(getDirectorySuggestions).not.toHaveBeenCalled();
-    expect(result).toEqual({ kind: "external", url: "http://dumm.md" });
-  });
-
-  it("keeps auto-linkified normal domains external", async () => {
-    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
-
-    const result = await resolveAssistantFileLink({
-      source: { href: "http://google.com", text: "google.com", markup: "linkify" },
-      context: CONTEXT,
-      getDirectorySuggestions,
-    });
-
-    expect(getDirectorySuggestions).not.toHaveBeenCalled();
-    expect(result).toEqual({ kind: "external", url: "http://google.com" });
-  });
-
-  it("returns unresolvedFileCandidate for linkified filenames the daemon can't find", async () => {
-    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
-
-    const result = await resolveAssistantFileLink({
-      source: { href: "http://dumm.md", text: "dumm.md", sourceInfo: "auto" },
-      context: CONTEXT,
-      getDirectorySuggestions,
-    });
-
-    expect(result).toEqual({ kind: "unresolvedFileCandidate", token: "dumm.md" });
-  });
-
-  it("returns ignored for non-file-looking content", async () => {
-    const result = await resolveAssistantFileLink({
-      source: { href: "" },
-      context: CONTEXT,
-      getDirectorySuggestions: vi.fn(async () => resolvedSuggestions([])),
-    });
-
-    expect(result).toEqual({ kind: "ignored" });
-  });
-});
-
-describe("resolveAssistantFileLinkSync", () => {
-  it("returns the directFile target synchronously", () => {
-    const result = resolveAssistantFileLinkSync({
-      source: { href: "src/components/message.tsx#L33" },
-      context: CONTEXT,
-    });
-
-    expect(result).toEqual({
-      kind: "resolved",
-      resolved: {
-        kind: "file",
+    await expect(
+      fetchDaemonResolution({
+        ambiguousQuery: "src/file.ts",
+        token: "src/file.ts",
         target: {
-          raw: "src/components/message.tsx#L33",
-          path: "/Users/test/project/src/components/message.tsx",
-          lineStart: 33,
+          raw: "src/file.ts",
+          path: "/Users/test/project/src/file.ts",
+          lineStart: undefined,
           lineEnd: undefined,
         },
-      },
-    });
+        workspaceRoot: "/Users/test/project",
+        getDirectorySuggestions,
+      }),
+    ).rejects.toEqual(new UnresolvedFileLinkError("src/file.ts"));
   });
 
-  it("flags ambiguous basenames as needsLookup", () => {
-    const result = resolveAssistantFileLinkSync({
-      source: { href: "file.ts:12", text: "file.ts:12", sourceType: "inline-code" },
-      context: CONTEXT,
+  it("throws a typed unresolved error when the daemon throws", async () => {
+    const getDirectorySuggestions = vi.fn(async () => {
+      throw new Error("daemon unavailable");
     });
 
-    expect(result.kind).toBe("needsLookup");
-  });
-
-  it("returns external synchronously", () => {
-    const result = resolveAssistantFileLinkSync({
-      source: { href: "http://google.com" },
-      context: CONTEXT,
-    });
-
-    expect(result).toEqual({
-      kind: "resolved",
-      resolved: { kind: "external", url: "http://google.com" },
-    });
+    await expect(
+      fetchDaemonResolution({
+        ambiguousQuery: "dumm.md",
+        token: "dumm.md",
+        target: {
+          raw: "dumm.md",
+          path: "/Users/test/project/dumm.md",
+          lineStart: undefined,
+          lineEnd: undefined,
+        },
+        workspaceRoot: "/Users/test/project",
+        getDirectorySuggestions,
+      }),
+    ).rejects.toEqual(new UnresolvedFileLinkError("dumm.md"));
   });
 });
 

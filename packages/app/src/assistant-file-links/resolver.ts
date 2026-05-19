@@ -14,7 +14,6 @@ export interface AssistantFileLinkSource {
 }
 
 export interface AssistantFileLinkContext {
-  serverId?: string;
   workspaceRoot?: string;
 }
 
@@ -40,91 +39,110 @@ export type GetDirectorySuggestions = (input: {
 export type ResolvedAssistantFileLink =
   | { kind: "external"; url: string }
   | { kind: "file"; target: InlinePathTarget }
-  | { kind: "unresolvedFileCandidate"; token: string }
   | { kind: "ignored" };
 
-export interface ResolveAssistantFileLinkInput {
-  source: AssistantFileLinkSource;
-  context: AssistantFileLinkContext;
+export type AssistantFileLinkResolution =
+  | { kind: "resolved"; value: ResolvedAssistantFileLink }
+  | {
+      kind: "needsLookup";
+      ambiguousQuery: string;
+      token: string;
+      target: InlinePathTarget;
+    };
+
+export interface FetchDaemonResolutionInput {
+  ambiguousQuery: string;
+  token: string;
+  target: InlinePathTarget;
+  workspaceRoot?: string;
   getDirectorySuggestions: GetDirectorySuggestions;
 }
 
-export async function resolveAssistantFileLink(
-  input: ResolveAssistantFileLinkInput,
-): Promise<ResolvedAssistantFileLink> {
-  const synchronous = resolveAssistantFileLinkSync(input);
-  if (synchronous.kind !== "needsLookup") {
-    return synchronous.resolved;
+export class UnresolvedFileLinkError extends Error {
+  constructor(readonly token: string) {
+    super(`No file found for ${token}`);
+    this.name = "UnresolvedFileLinkError";
+  }
+}
+
+export async function fetchDaemonResolution({
+  ambiguousQuery,
+  token,
+  target,
+  workspaceRoot,
+  getDirectorySuggestions,
+}: FetchDaemonResolutionInput): Promise<InlinePathTarget> {
+  const trimmedRoot = workspaceRoot?.trim();
+  if (!trimmedRoot) {
+    throw new UnresolvedFileLinkError(token);
   }
 
-  const workspaceRoot = input.context.workspaceRoot?.trim();
-  if (!workspaceRoot) {
-    return { kind: "unresolvedFileCandidate", token: synchronous.token };
-  }
-
-  const query = getAmbiguousSuggestionQuery(synchronous.target, workspaceRoot);
   let suggestions: DirectorySuggestionResult;
   try {
-    suggestions = await input.getDirectorySuggestions({
-      query,
-      cwd: workspaceRoot,
+    suggestions = await getDirectorySuggestions({
+      query: ambiguousQuery,
+      cwd: trimmedRoot,
       includeFiles: true,
       includeDirectories: false,
       matchMode: "suffix",
       limit: 1,
     });
   } catch {
-    return { kind: "unresolvedFileCandidate", token: synchronous.token };
+    throw new UnresolvedFileLinkError(token);
   }
 
   const match = suggestions.entries.find((entry) => entry.kind === "file");
   if (!match || suggestions.error) {
-    return { kind: "unresolvedFileCandidate", token: synchronous.token };
+    throw new UnresolvedFileLinkError(token);
   }
 
   return {
-    kind: "file",
-    target: {
-      ...synchronous.target,
-      path: joinWorkspacePath(workspaceRoot, match.path),
-    },
+    ...target,
+    path: joinWorkspacePath(trimmedRoot, match.path),
   };
 }
 
-type SyncResolution =
-  | { kind: "resolved"; resolved: ResolvedAssistantFileLink }
-  | { kind: "needsLookup"; token: string; target: InlinePathTarget };
-
-export function resolveAssistantFileLinkSync(input: {
-  source: AssistantFileLinkSource;
-  context: AssistantFileLinkContext;
-}): SyncResolution {
-  const token = getAssistantFileLinkToken(input.source).trim();
+export function classifyForResolution(
+  source: AssistantFileLinkSource,
+  context: AssistantFileLinkContext,
+): AssistantFileLinkResolution {
+  const token = getAssistantFileLinkToken(source).trim();
   if (!token) {
-    return { kind: "resolved", resolved: { kind: "ignored" } };
+    return { kind: "resolved", value: { kind: "ignored" } };
   }
 
   const classification = classifyAssistantFileLink(token, {
-    workspaceRoot: input.context.workspaceRoot,
+    workspaceRoot: context.workspaceRoot,
   });
   if (!classification) {
-    return { kind: "resolved", resolved: { kind: "ignored" } };
+    return { kind: "resolved", value: { kind: "ignored" } };
   }
   if (classification.kind === "external") {
-    return { kind: "resolved", resolved: { kind: "external", url: classification.raw } };
+    return { kind: "resolved", value: { kind: "external", url: classification.raw } };
   }
   if (
     classification.kind === "directFile" &&
     !shouldResolveDirectFileThroughSuggestions({
-      context: input.context,
-      source: input.source,
+      context,
+      source,
       token,
       target: classification.target,
     })
   ) {
-    return { kind: "resolved", resolved: { kind: "file", target: classification.target } };
+    return { kind: "resolved", value: { kind: "file", target: classification.target } };
   }
-  return { kind: "needsLookup", token, target: classification.target };
+
+  const workspaceRoot = context.workspaceRoot?.trim();
+  if (!workspaceRoot) {
+    return { kind: "resolved", value: { kind: "ignored" } };
+  }
+
+  return {
+    kind: "needsLookup",
+    ambiguousQuery: getAmbiguousSuggestionQuery(classification.target, workspaceRoot),
+    token,
+    target: classification.target,
+  };
 }
 
 export function getAssistantFileLinkToken(source: AssistantFileLinkSource): string {
@@ -138,7 +156,10 @@ export function getAssistantFileLinkToken(source: AssistantFileLinkSource): stri
   return source.href;
 }
 
-function getAmbiguousSuggestionQuery(target: InlinePathTarget, workspaceRoot: string): string {
+export function getAmbiguousSuggestionQuery(
+  target: InlinePathTarget,
+  workspaceRoot: string,
+): string {
   const normalizedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
   const normalizedPath = target.path.replace(/\\/g, "/");
   const prefix = `${normalizedRoot}/`;
@@ -150,7 +171,7 @@ function getAmbiguousSuggestionQuery(target: InlinePathTarget, workspaceRoot: st
   return lastSlash >= 0 ? normalizedPath.slice(lastSlash + 1) : normalizedPath;
 }
 
-function shouldResolveDirectFileThroughSuggestions(input: {
+export function shouldResolveDirectFileThroughSuggestions(input: {
   context: AssistantFileLinkContext;
   source: AssistantFileLinkSource;
   token: string;
