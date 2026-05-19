@@ -16,6 +16,7 @@ All Pi provider code lives in one module directory:
 - `packages/server/src/server/agent/providers/pi/rpc-types.ts` - Pi RPC data shapes
 - `packages/server/src/server/agent/providers/pi/tool-call-mapper.ts` - pure tool-call mapping
 - `packages/server/src/server/agent/providers/pi/history-mapper.ts` - pure history replay mapping
+- `packages/server/src/server/agent/providers/pi/session-descriptor.ts` - persisted session discovery for import
 - `packages/server/src/server/agent/providers/pi/test-utils/fake-pi.ts` - provider-test substitute at the runtime port
 
 The server package does not depend on `@earendil-works/pi-*`. Users must have Pi installed and configured locally.
@@ -53,6 +54,8 @@ The seam must stay thin. It may hide transport mechanics, but it must not become
 - history replay through `get_messages`
 
 Pure mapper modules own conversions from Pi RPC data to Paseo timeline, tool-call, usage, and history shapes.
+
+Import discovery reads Pi's persisted JSONL session files because Pi RPC does not expose a session-list command. Resume and full history hydration still go through `pi --mode rpc` using the discovered session file as `nativeHandle`.
 
 ## Compatibility
 

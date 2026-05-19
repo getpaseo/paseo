@@ -5,13 +5,15 @@ import type { CommandError, CommandOptions, SingleResult } from "../../output/in
 import { agentRunSchema, type AgentRunResult } from "./run.js";
 import type { AgentSnapshotPayload } from "@getpaseo/server";
 
-const IMPORT_PROVIDERS = new Set(["claude", "codex", "opencode", "acp"]);
+const IMPORT_PROVIDER_LIST = ["claude", "codex", "opencode", "pi", "acp"] as const;
+const IMPORT_PROVIDERS = new Set<string>(IMPORT_PROVIDER_LIST);
+const IMPORT_PROVIDER_HELP = IMPORT_PROVIDER_LIST.join(", ");
 
 export function addImportOptions(cmd: Command): Command {
   return cmd
     .description("Import an existing provider session as a Paseo agent")
     .argument("<id>", "Provider session/thread ID to import")
-    .requiredOption("--provider <provider>", "Agent provider: claude, codex, opencode, or acp")
+    .requiredOption("--provider <provider>", `Agent provider: ${IMPORT_PROVIDER_HELP}`)
     .option("--cwd <path>", "Working directory for providers that require it")
     .option(
       "--label <key=value>",
@@ -54,7 +56,7 @@ function parseImportProvider(provider: string | undefined): string {
     throw {
       code: "INVALID_PROVIDER",
       message: `Unsupported provider: ${normalizedProvider}`,
-      details: "Supported providers: claude, codex, opencode, acp",
+      details: `Supported providers: ${IMPORT_PROVIDER_HELP}`,
     } satisfies CommandError;
   }
 

@@ -3,4 +3,4 @@
  * providers (gemini, copilot, generic acp) are excluded because they either
  * don't expose persisted history quickly or duplicate other providers.
  */
-export const IMPORTABLE_PROVIDERS = ["claude", "codex", "opencode"] as const;
+export const IMPORTABLE_PROVIDERS = ["claude", "codex", "opencode", "pi"] as const;

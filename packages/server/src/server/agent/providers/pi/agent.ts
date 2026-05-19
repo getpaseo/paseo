@@ -23,8 +23,10 @@ import {
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentUsage,
+  type ListPersistedAgentsOptions,
   type ListModesOptions,
   type ListModelsOptions,
+  type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
 import { runProviderTurn } from "../provider-runner.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -39,6 +41,7 @@ import {
 } from "../diagnostic-utils.js";
 import { streamPiHistory } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
+import { listPiPersistedAgents } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -810,6 +813,15 @@ export class PiRpcAgentClient implements AgentClient {
 
   async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
     return [];
+  }
+
+  async listPersistedAgents(
+    options?: ListPersistedAgentsOptions,
+  ): Promise<PersistedAgentDescriptor[]> {
+    return await listPiPersistedAgents({
+      ...options,
+      runtimeSettings: this.runtimeSettings,
+    });
   }
 
   async isAvailable(): Promise<boolean> {

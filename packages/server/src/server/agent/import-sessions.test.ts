@@ -1,4 +1,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "../../shared/messages.js";
@@ -273,6 +276,39 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
   expect(result.entries).toHaveLength(1);
   expect(result.entries[0].providerHandleId).toBe("real-handle");
   expect(result.filteredAlreadyImportedCount).toBe(0);
+});
+
+test("listImportableProviderSessions keeps realpath-equivalent cwd matches", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-import-cwd-"));
+  const realCwd = path.join(root, "real-project");
+  const linkedCwd = path.join(root, "linked-project");
+  mkdirSync(realCwd, { recursive: true });
+  symlinkSync(realCwd, linkedCwd);
+  const persistedCwd = realpathSync(linkedCwd);
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ cwd: linkedCwd, providers: ["pi"] }),
+    agentManager: {
+      listAgents: () => [],
+      listImportablePersistedAgents: async () => [
+        makeDescriptor({
+          provider: "pi",
+          sessionId: "pi-session",
+          nativeHandle: "pi-handle",
+          cwd: persistedCwd,
+          title: "Pi session",
+          lastActivityAt: "2026-04-30T12:00:00.000Z",
+          firstPrompt: "remember this",
+        }),
+      ],
+    } satisfies Pick<AgentManager, "listAgents" | "listImportablePersistedAgents">,
+    agentStorage: {
+      list: async () => [],
+    } satisfies Pick<AgentStorage, "list">,
+    providerRegistry: { pi: { label: "Pi" } },
+  });
+
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["pi-handle"]);
 });
 
 test("listImportableProviderSessions rejects invalid since values", async () => {

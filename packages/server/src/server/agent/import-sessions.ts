@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { Logger } from "pino";
+import { realpath } from "node:fs/promises";
 import type { ProviderDefinition } from "./provider-registry.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
@@ -112,7 +113,7 @@ export async function listImportableProviderSessions(
   });
   let filteredAlreadyImportedCount = 0;
   const candidates: PersistedAgentDescriptor[] = [];
-  const matchesRequestCwd = request.cwd ? createPathEquivalenceMatcher(request.cwd) : null;
+  const matchesRequestCwd = request.cwd ? await createCwdMatcher(request.cwd) : null;
   for (const descriptor of descriptors) {
     if (matchesRequestCwd && !matchesRequestCwd(descriptor.cwd)) {
       continue;
@@ -142,6 +143,16 @@ export async function listImportableProviderSessions(
     );
 
   return { entries, filteredAlreadyImportedCount };
+}
+
+async function createCwdMatcher(cwd: string): Promise<(candidate: string) => boolean> {
+  const primaryMatcher = createPathEquivalenceMatcher(cwd);
+  const resolvedCwd = await realpath(cwd).catch(() => null);
+  if (!resolvedCwd || primaryMatcher(resolvedCwd)) {
+    return primaryMatcher;
+  }
+  const realpathMatcher = createPathEquivalenceMatcher(resolvedCwd);
+  return (candidate) => primaryMatcher(candidate) || realpathMatcher(candidate);
 }
 
 export async function importProviderSession(

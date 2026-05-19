@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
@@ -9,6 +12,14 @@ function createClient(pi = new FakePi()): PiRpcAgentClient {
   return new PiRpcAgentClient({
     logger: pino({ level: "silent" }),
     runtime: pi,
+  });
+}
+
+function createClientWithPiAgentDir(agentDir: string): PiRpcAgentClient {
+  return new PiRpcAgentClient({
+    logger: pino({ level: "silent" }),
+    runtime: new FakePi(),
+    runtimeSettings: { env: { PI_CODING_AGENT_DIR: agentDir } },
   });
 }
 
@@ -244,6 +255,51 @@ describe("PiRpcAgentClient", () => {
       { name: "review", description: "Review changes", argumentHint: "" },
       { name: "fix-tests", description: "Fix tests", argumentHint: "" },
       { name: "skill:docs", description: "Read docs", argumentHint: "" },
+    ]);
+  });
+
+  test("lists persisted Pi sessions from the configured Pi agent directory", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-client-"));
+    const cwd = path.join(root, "workspace");
+    const agentDir = path.join(root, "agent");
+    const sessionsDir = path.join(agentDir, "sessions", "--workspace--");
+    mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, "20260101_session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-session",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          cwd,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          parentId: null,
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: { role: "user", content: "remember this" },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const client = createClientWithPiAgentDir(agentDir);
+
+    await expect(client.listPersistedAgents({ cwd })).resolves.toMatchObject([
+      {
+        provider: "pi",
+        sessionId: "pi-session",
+        cwd,
+        persistence: {
+          provider: "pi",
+          sessionId: "pi-session",
+          nativeHandle: sessionFile,
+          metadata: { provider: "pi", cwd },
+        },
+        timeline: [{ type: "user_message", text: "remember this" }],
+      },
     ]);
   });
 });
