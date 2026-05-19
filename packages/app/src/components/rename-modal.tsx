@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  AdaptiveTextInput,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { isWeb } from "@/constants/platform";
 
@@ -123,7 +127,7 @@ export function AdaptiveRenameModal({
       testID={testID}
     >
       <View style={styles.body}>
-        <TextInput
+        <AdaptiveTextInput
           ref={inputRef}
           value={draft}
           onChangeText={handleChange}
