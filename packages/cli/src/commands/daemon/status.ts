@@ -259,7 +259,9 @@ async function probeDaemonOverWebsocket(args: {
           source: "daemon" as const,
         }));
       } catch {
-        // Non-fatal: fall through to local provider check
+        // COMPAT(daemon-rpc-rollout): fall back to CLI-side provider resolution while
+        // old daemons lack daemonStatusRpc. Remove once the daemon floor is past
+        // v0.1.76; status should come from daemon.get_status.
       }
     }
 

@@ -43,7 +43,9 @@ export async function runPairCommand(options: PairOptions): Promise<void> {
           );
           return;
         } catch {
-          // Fall through to local generation
+          // COMPAT(daemon-rpc-rollout): fall back to CLI-side pairing generation while
+          // old daemons lack daemonStatusRpc. Remove once the daemon floor is past
+          // v0.1.76; pairing should come from daemon.get_pairing_offer.
         }
       }
       await client.close().catch(() => {});
