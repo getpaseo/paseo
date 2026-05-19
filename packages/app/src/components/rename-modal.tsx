@@ -18,7 +18,6 @@ export interface AdaptiveRenameModalProps {
   onClose: () => void;
   onSubmit: (value: string) => Promise<void> | void;
   validate?: (value: string) => string | null;
-  transform?: (value: string) => string;
   maxLength?: number;
   testID?: string;
 }
@@ -32,7 +31,6 @@ export function AdaptiveRenameModal({
   onClose,
   onSubmit,
   validate,
-  transform,
   maxLength,
   testID,
 }: AdaptiveRenameModalProps) {
@@ -40,10 +38,6 @@ export function AdaptiveRenameModal({
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
-  // AdaptiveTextInput is intentionally uncontrolled. Bumping resetKey remounts
-  // the native input with a new defaultValue — used to write a transformed
-  // value (e.g. slugified branch name) back to what the user sees.
-  const [resetKey, setResetKey] = useState(0);
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -77,20 +71,10 @@ export function AdaptiveRenameModal({
     [validate],
   );
 
-  const handleChange = useCallback(
-    (value: string) => {
-      const next = transform ? transform(value) : value;
-      setDraft(next);
-      setError(null);
-      // Only remount when the transform rewrote the typed value. Without this
-      // guard every keystroke would remount the native input and the cursor
-      // would jump to the end mid-edit.
-      if (next !== value) {
-        setResetKey((k) => k + 1);
-      }
-    },
-    [transform],
-  );
+  const handleChange = useCallback((value: string) => {
+    setDraft(value);
+    setError(null);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (isPending) return;
@@ -139,8 +123,7 @@ export function AdaptiveRenameModal({
       <View style={styles.body}>
         <AdaptiveTextInput
           ref={inputRef}
-          initialValue={draft}
-          resetKey={resetKey}
+          initialValue={initialValue}
           onChangeText={handleChange}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.foregroundMuted}

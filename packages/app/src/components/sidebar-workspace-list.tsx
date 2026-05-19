@@ -1658,13 +1658,13 @@ function WorkspaceRowWithMenu({
 
   const handleSubmitRename = useCallback(
     async (value: string) => {
-      await renameMutation.mutateAsync(value);
+      await renameMutation.mutateAsync(slugify(value));
     },
     [renameMutation],
   );
 
   const validateRenameSlug = useCallback((value: string): string | null => {
-    const result = validateBranchSlug(value);
+    const result = validateBranchSlug(slugify(value));
     if (result.valid) return null;
     return result.error ?? "Invalid branch name";
   }, []);
@@ -1715,7 +1715,6 @@ function WorkspaceRowWithMenu({
         initialValue={workspace.name}
         placeholder="branch-name"
         submitLabel="Rename"
-        transform={slugify}
         validate={validateRenameSlug}
         maxLength={MAX_SLUG_LENGTH}
         onClose={handleCloseRename}

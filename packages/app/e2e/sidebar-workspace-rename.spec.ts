@@ -83,7 +83,6 @@ test.describe("Sidebar workspace rename", () => {
       const input = await openRenameModal(page, workspace.id);
       await expect(input).toHaveValue("main");
       await input.fill("Feature Rename 2");
-      await expect(input).toHaveValue("feature-rename-2");
 
       await page.getByTestId(workspaceRenameModalTestId(workspace.id, "submit")).click();
 

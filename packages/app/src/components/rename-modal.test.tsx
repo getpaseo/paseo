@@ -76,7 +76,6 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       const p = props as {
         initialValue?: string;
         defaultValue?: string;
-        resetKey?: string | number;
         editable?: boolean;
         maxLength?: number;
         testID?: string;
@@ -89,7 +88,6 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       };
       return ReactModule.createElement("input", {
         ref,
-        key: p.resetKey,
         defaultValue: p.initialValue ?? p.defaultValue ?? "",
         disabled: p.editable === false,
         maxLength: p.maxLength,
@@ -176,7 +174,6 @@ interface RenderOptions {
   onClose?: () => void;
   onSubmit?: (value: string) => Promise<void> | void;
   validate?: (value: string) => string | null;
-  transform?: (value: string) => string;
   maxLength?: number;
 }
 
@@ -190,7 +187,6 @@ function renderModal(options: RenderOptions = {}): void {
     onClose = vi.fn(),
     onSubmit = vi.fn(),
     validate,
-    transform,
     maxLength,
   } = options;
   act(() => {
@@ -204,7 +200,6 @@ function renderModal(options: RenderOptions = {}): void {
         onClose={onClose}
         onSubmit={onSubmit}
         validate={validate}
-        transform={transform}
         maxLength={maxLength}
         testID="rename-modal"
       />,
@@ -331,22 +326,6 @@ describe("RenameModal", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     const errorNode = queryError();
     expect(errorNode?.textContent).toContain("Invalid name");
-  });
-
-  it("applies the transform live and passes the transformed value to onSubmit", async () => {
-    const onSubmit = vi.fn();
-    const transform = (value: string) => value.toLowerCase().replace(/\s+/g, "-");
-    renderModal({ initialValue: "", transform, onSubmit });
-
-    typeInto("Foo Bar");
-    await flush();
-    expect(queryInput()?.value).toBe("foo-bar");
-
-    click(querySubmit());
-    await flush();
-
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit).toHaveBeenCalledWith("foo-bar");
   });
 
   it("disables the submit button while onSubmit is pending", async () => {
