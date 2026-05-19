@@ -3180,7 +3180,7 @@ describe("session checkout rename branch handling", () => {
     const session = createSessionForTest({ workspaceGitService, messages });
 
     await session.handleMessage({
-      type: "checkout_rename_branch_request",
+      type: "checkout.rename_branch.request",
       cwd: "/tmp/repo",
       branch: "Feature Name",
       requestId: "request-rename-invalid",
@@ -3189,7 +3189,7 @@ describe("session checkout rename branch handling", () => {
     expect(checkoutGitMocks.renameCurrentBranch).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
-      type: "checkout_rename_branch_response",
+      type: "checkout.rename_branch.response",
       payload: {
         cwd: "/tmp/repo",
         success: false,
@@ -3214,7 +3214,7 @@ describe("session checkout rename branch handling", () => {
     checkoutGitMocks.renameCurrentBranch.mockRejectedValue(new Error("branch already exists"));
 
     await session.handleMessage({
-      type: "checkout_rename_branch_request",
+      type: "checkout.rename_branch.request",
       cwd: "/tmp/repo",
       branch: "feature/new-name",
       requestId: "request-rename-failure",
@@ -3227,7 +3227,7 @@ describe("session checkout rename branch handling", () => {
     expect(workspaceGitService.peekSnapshot).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
-      type: "checkout_rename_branch_response",
+      type: "checkout.rename_branch.response",
       payload: {
         cwd: "/tmp/repo",
         success: false,
@@ -3266,7 +3266,7 @@ describe("session checkout rename branch handling", () => {
     });
 
     await session.handleMessage({
-      type: "checkout_rename_branch_request",
+      type: "checkout.rename_branch.request",
       cwd: "/tmp/repo",
       branch: "feature/new-name",
       requestId: "request-rename-success",
@@ -3282,7 +3282,7 @@ describe("session checkout rename branch handling", () => {
     });
     expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
     expect(messages).toContainEqual({
-      type: "checkout_rename_branch_response",
+      type: "checkout.rename_branch.response",
       payload: {
         cwd: "/tmp/repo",
         success: true,
@@ -3301,7 +3301,7 @@ describe("session terminal rename handling", () => {
     const session = createSessionForTest({ terminalManager, messages });
 
     await session.handleMessage({
-      type: "rename_terminal_request",
+      type: "terminal.rename.request",
       terminalId: "terminal-1",
       title: "   ",
       requestId: "request-empty-title",
@@ -3309,7 +3309,7 @@ describe("session terminal rename handling", () => {
 
     expect(terminalManager.setTerminalTitle).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
-      type: "rename_terminal_response",
+      type: "terminal.rename.response",
       payload: {
         requestId: "request-empty-title",
         success: false,
@@ -3326,7 +3326,7 @@ describe("session terminal rename handling", () => {
     const session = createSessionForTest({ terminalManager, messages });
 
     await session.handleMessage({
-      type: "rename_terminal_request",
+      type: "terminal.rename.request",
       terminalId: "missing-terminal",
       title: "Renamed terminal",
       requestId: "request-missing-terminal",
@@ -3337,7 +3337,7 @@ describe("session terminal rename handling", () => {
       "Renamed terminal",
     );
     expect(messages).toContainEqual({
-      type: "rename_terminal_response",
+      type: "terminal.rename.response",
       payload: {
         requestId: "request-missing-terminal",
         success: false,
@@ -3354,7 +3354,7 @@ describe("session terminal rename handling", () => {
     const session = createSessionForTest({ terminalManager, messages });
 
     await session.handleMessage({
-      type: "rename_terminal_request",
+      type: "terminal.rename.request",
       terminalId: "terminal-1",
       title: "  Renamed terminal  ",
       requestId: "request-title-success",
@@ -3362,7 +3362,7 @@ describe("session terminal rename handling", () => {
 
     expect(terminalManager.setTerminalTitle).toHaveBeenCalledWith("terminal-1", "Renamed terminal");
     expect(messages).toContainEqual({
-      type: "rename_terminal_response",
+      type: "terminal.rename.response",
       payload: {
         requestId: "request-title-success",
         success: true,

@@ -1777,13 +1777,13 @@ test("renames a branch via RPC", async () => {
   const request = JSON.parse(mock.sent[0]) as {
     type: "session";
     message: {
-      type: "checkout_rename_branch_request";
+      type: "checkout.rename_branch.request";
       cwd: string;
       branch: string;
       requestId: string;
     };
   };
-  expect(request.message.type).toBe("checkout_rename_branch_request");
+  expect(request.message.type).toBe("checkout.rename_branch.request");
   expect(request.message.cwd).toBe("/tmp/project");
   expect(request.message.branch).toBe("feature/new-name");
   expect(request.message.requestId).toBe("req-rename-branch");
@@ -1792,7 +1792,7 @@ test("renames a branch via RPC", async () => {
     JSON.stringify({
       type: "session",
       message: {
-        type: "checkout_rename_branch_response",
+        type: "checkout.rename_branch.response",
         payload: {
           requestId: "req-rename-branch",
           success: true,
@@ -1842,7 +1842,7 @@ test("returns renameBranch business failures", async () => {
     JSON.stringify({
       type: "session",
       message: {
-        type: "checkout_rename_branch_response",
+        type: "checkout.rename_branch.response",
         payload: {
           requestId: "req-rename-branch-fail",
           success: false,

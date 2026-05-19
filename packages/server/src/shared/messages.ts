@@ -1390,7 +1390,7 @@ export const CheckoutSwitchBranchRequestSchema = z.object({
 });
 
 export const CheckoutRenameBranchRequestSchema = z.object({
-  type: z.literal("checkout_rename_branch_request"),
+  type: z.literal("checkout.rename_branch.request"),
   cwd: z.string(),
   branch: z.string(),
   requestId: z.string(),
@@ -1714,7 +1714,7 @@ export const CreateTerminalRequestSchema = z.object({
 });
 
 export const RenameTerminalRequestSchema = z.object({
-  type: z.literal("rename_terminal_request"),
+  type: z.literal("terminal.rename.request"),
   terminalId: z.string(),
   title: z.string(),
   requestId: z.string(),
@@ -3122,7 +3122,7 @@ export const CheckoutSwitchBranchResponseSchema = z.object({
 });
 
 export const CheckoutRenameBranchResponseSchema = z.object({
-  type: z.literal("checkout_rename_branch_response"),
+  type: z.literal("checkout.rename_branch.response"),
   payload: z.object({
     requestId: z.string(),
     success: z.boolean(),
@@ -3487,7 +3487,7 @@ export const CreateTerminalResponseSchema = z.object({
 });
 
 export const RenameTerminalResponseSchema = z.object({
-  type: z.literal("rename_terminal_response"),
+  type: z.literal("terminal.rename.response"),
   payload: z.object({
     requestId: z.string(),
     success: z.boolean(),

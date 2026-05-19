@@ -59,17 +59,17 @@ describe("rename entity message schemas", () => {
 
   test("old unions without rename variants reject rename messages and still parse existing messages", () => {
     const legacyInboundSchema = schemaWithoutMessageTypes(SessionInboundMessageSchema, [
-      "rename_terminal_request",
-      "checkout_rename_branch_request",
+      "terminal.rename.request",
+      "checkout.rename_branch.request",
     ]);
     const legacyOutboundSchema = schemaWithoutMessageTypes(SessionOutboundMessageSchema, [
-      "rename_terminal_response",
-      "checkout_rename_branch_response",
+      "terminal.rename.response",
+      "checkout.rename_branch.response",
     ]);
 
     expect(
       legacyInboundSchema.safeParse({
-        type: "rename_terminal_request",
+        type: "terminal.rename.request",
         terminalId: "terminal-1",
         title: "Server logs",
         requestId: "request-terminal-rename",
@@ -77,7 +77,7 @@ describe("rename entity message schemas", () => {
     ).toBe(false);
     expect(
       legacyInboundSchema.safeParse({
-        type: "checkout_rename_branch_request",
+        type: "checkout.rename_branch.request",
         cwd: "/tmp/repo",
         branch: "feature/new-name",
         requestId: "request-branch-rename",
@@ -85,7 +85,7 @@ describe("rename entity message schemas", () => {
     ).toBe(false);
     expect(
       legacyOutboundSchema.safeParse({
-        type: "rename_terminal_response",
+        type: "terminal.rename.response",
         payload: {
           requestId: "request-terminal-rename",
           success: true,
@@ -95,7 +95,7 @@ describe("rename entity message schemas", () => {
     ).toBe(false);
     expect(
       legacyOutboundSchema.safeParse({
-        type: "checkout_rename_branch_response",
+        type: "checkout.rename_branch.response",
         payload: {
           requestId: "request-branch-rename",
           success: true,

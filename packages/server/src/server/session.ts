@@ -2050,7 +2050,7 @@ export class Session {
         return undefined;
       case "checkout_switch_branch_request":
         return this.handleCheckoutSwitchBranchRequest(msg);
-      case "checkout_rename_branch_request":
+      case "checkout.rename_branch.request":
         return this.handleCheckoutRenameBranchRequest(msg);
       case "checkout_commit_request":
         return this.handleCheckoutCommitRequest(msg);
@@ -5106,7 +5106,7 @@ export class Session {
 
     if (!validation.valid) {
       this.emit({
-        type: "checkout_rename_branch_response",
+        type: "checkout.rename_branch.response",
         payload: {
           cwd,
           success: false,
@@ -5129,7 +5129,7 @@ export class Session {
       await this.emitWorkspaceUpdateForCwd(cwd);
 
       this.emit({
-        type: "checkout_rename_branch_response",
+        type: "checkout.rename_branch.response",
         payload: {
           cwd,
           success: true,
@@ -5140,7 +5140,7 @@ export class Session {
       });
     } catch (error) {
       this.emit({
-        type: "checkout_rename_branch_response",
+        type: "checkout.rename_branch.response",
         payload: {
           cwd,
           success: false,

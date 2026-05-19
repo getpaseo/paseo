@@ -78,7 +78,7 @@ const TERMINAL_MESSAGE_TYPES: ReadonlySet<TerminalDispatchableMessage["type"]> =
   "terminal_input",
   "kill_terminal_request",
   "capture_terminal_request",
-  "rename_terminal_request",
+  "terminal.rename.request",
 ]);
 
 export class TerminalSessionController {
@@ -148,7 +148,7 @@ export class TerminalSessionController {
         return this.handleKillTerminalRequest(msg);
       case "capture_terminal_request":
         return this.handleCaptureTerminalRequest(msg);
-      case "rename_terminal_request":
+      case "terminal.rename.request":
         return this.handleRenameTerminalRequest(msg);
       default:
         return undefined;
@@ -438,7 +438,7 @@ export class TerminalSessionController {
   private async handleRenameTerminalRequest(msg: RenameTerminalRequest): Promise<void> {
     const respond = (success: boolean, error: string | null): void => {
       this.emit({
-        type: "rename_terminal_response",
+        type: "terminal.rename.response",
         payload: { requestId: msg.requestId, success, error },
       });
     };

@@ -2951,11 +2951,11 @@ export class DaemonClient {
     return this.sendCorrelatedSessionRequest({
       requestId: input.requestId,
       message: {
-        type: "checkout_rename_branch_request",
+        type: "checkout.rename_branch.request",
         cwd: input.cwd,
         branch: input.branch,
       },
-      responseType: "checkout_rename_branch_response",
+      responseType: "checkout.rename_branch.response",
       timeout: 30000,
     });
   }
@@ -3692,11 +3692,11 @@ export class DaemonClient {
     return this.sendCorrelatedSessionRequest({
       requestId: input.requestId,
       message: {
-        type: "rename_terminal_request",
+        type: "terminal.rename.request",
         terminalId: input.terminalId,
         title: input.title,
       },
-      responseType: "rename_terminal_response",
+      responseType: "terminal.rename.response",
       timeout: 10000,
     });
   }
