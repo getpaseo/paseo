@@ -94,10 +94,7 @@ export function AssistantMarkdownLink({
     </a>
   );
 
-  if (tooltipPath) {
-    return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
-  }
-  return anchor;
+  return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
 }
 
 interface AssistantMarkdownCodeLinkProps {
@@ -227,7 +224,13 @@ const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
 
 const FILE_LINK_TOOLTIP_MOD_KEYS = ["mod"];
 
-function FileLinkHoverTooltip({ filePath, children }: { filePath: string; children: ReactNode }) {
+function FileLinkHoverTooltip({
+  filePath,
+  children,
+}: {
+  filePath: string | null;
+  children: ReactNode;
+}) {
   if (!isWeb) {
     return children;
   }
@@ -236,19 +239,21 @@ function FileLinkHoverTooltip({ filePath, children }: { filePath: string; childr
       <TooltipTrigger asChild>
         <View style={FILE_LINK_TOOLTIP_TRIGGER_STYLE}>{children}</View>
       </TooltipTrigger>
-      <TooltipContent side="top" align="start" maxWidth={520}>
-        <View style={styles.tooltipBody}>
-          <Text selectable={false} style={styles.tooltipPath}>
-            {filePath}
-          </Text>
-          <View style={styles.tooltipHintRow}>
-            <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
-            <Text selectable={false} style={styles.tooltipHintText}>
-              click for side pane
+      {filePath ? (
+        <TooltipContent side="top" align="start" maxWidth={520}>
+          <View style={styles.tooltipBody}>
+            <Text selectable={false} style={styles.tooltipPath}>
+              {filePath}
             </Text>
+            <View style={styles.tooltipHintRow}>
+              <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
+              <Text selectable={false} style={styles.tooltipHintText}>
+                click for side pane
+              </Text>
+            </View>
           </View>
-        </View>
-      </TooltipContent>
+        </TooltipContent>
+      ) : null}
     </Tooltip>
   );
 }
