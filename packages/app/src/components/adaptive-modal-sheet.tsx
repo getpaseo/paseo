@@ -202,6 +202,9 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
     gap: theme.spacing[4],
   },
+  adaptiveInputOutline: {
+    outlineColor: theme.colors.accent,
+  },
 }));
 
 const SEARCH_INPUT_STYLE = [styles.searchInput, isWeb && { outlineStyle: "none" }];
@@ -234,10 +237,14 @@ export type AdaptiveTextInputProps = TextInputProps & {
 export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
   function AdaptiveTextInputInner(props, ref) {
     const isMobile = useIsCompactFormFactor();
-    const { value: _value, initialValue, resetKey, defaultValue, ...inputProps } = props;
+    const { value: _value, initialValue, resetKey, defaultValue, style, ...inputProps } = props;
+    // Recolor the browser's :focus-visible outline (defined in public/index.html)
+    // so it matches the active theme's accent instead of its hard-coded fallback.
+    // Consumer style wins if it sets outlineColor explicitly.
     const textInputProps = {
       ...inputProps,
       defaultValue: initialValue ?? defaultValue,
+      style: [styles.adaptiveInputOutline, style],
     };
 
     if (isMobile && isNative) {
