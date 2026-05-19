@@ -40,6 +40,10 @@ export function AdaptiveRenameModal({
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
+  // AdaptiveTextInput is intentionally uncontrolled. Bumping resetKey remounts
+  // the native input with a new defaultValue — used to write a transformed
+  // value (e.g. slugified branch name) back to what the user sees.
+  const [resetKey, setResetKey] = useState(0);
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -78,6 +82,12 @@ export function AdaptiveRenameModal({
       const next = transform ? transform(value) : value;
       setDraft(next);
       setError(null);
+      // Only remount when the transform rewrote the typed value. Without this
+      // guard every keystroke would remount the native input and the cursor
+      // would jump to the end mid-edit.
+      if (next !== value) {
+        setResetKey((k) => k + 1);
+      }
     },
     [transform],
   );
@@ -129,7 +139,8 @@ export function AdaptiveRenameModal({
       <View style={styles.body}>
         <AdaptiveTextInput
           ref={inputRef}
-          value={draft}
+          initialValue={draft}
+          resetKey={resetKey}
           onChangeText={handleChange}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.foregroundMuted}

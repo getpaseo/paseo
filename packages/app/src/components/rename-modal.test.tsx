@@ -68,10 +68,15 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       children,
     );
   };
+  // Mirrors production AdaptiveTextInput: native-owned input seeded by
+  // initialValue, remounted (via key) when resetKey changes so the new
+  // initialValue takes effect.
   const AdaptiveTextInput = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>(
     (props, ref) => {
       const p = props as {
-        value?: string;
+        initialValue?: string;
+        defaultValue?: string;
+        resetKey?: string | number;
         editable?: boolean;
         maxLength?: number;
         testID?: string;
@@ -84,7 +89,8 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       };
       return ReactModule.createElement("input", {
         ref,
-        value: p.value ?? "",
+        key: p.resetKey,
+        defaultValue: p.initialValue ?? p.defaultValue ?? "",
         disabled: p.editable === false,
         maxLength: p.maxLength,
         "data-testid": p.testID,
