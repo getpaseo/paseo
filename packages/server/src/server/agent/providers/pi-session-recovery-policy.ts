@@ -30,7 +30,7 @@ export interface PiSessionRecoveryResult {
 }
 
 // COMPAT(piCopilot413): added 2026-05-13 for Pi <= 0.73.1; target removal
-// 2026-11-13, once upstream @mariozechner/pi-ai recognizes this overflow.
+// 2026-11-13, once upstream @earendil-works/pi-ai recognizes this overflow.
 const PI_COPILOT_SHORT_413_OVERFLOW_PATTERN = /^413\s+failed to parse request$/i;
 
 const PI_SESSION_RECOVERY_POLICIES: readonly PiSessionRecoveryPolicy[] = [

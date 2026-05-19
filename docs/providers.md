@@ -16,6 +16,8 @@ Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.
 
 Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`pi-direct-agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
+Pi direct embeds Pi's SDK through the `@earendil-works/pi-*` packages. Keep those dependencies in sync with the Pi package-manager behavior expected by current user installs: Pi 0.75+ loads user-scoped npm packages from `~/.pi/agent/npm/`, while older `@mariozechner/pi-coding-agent` releases looked in npm's global package root and can miss or load stale extensions.
+
 Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.listModels`, `listModes`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs.
 
 ---
