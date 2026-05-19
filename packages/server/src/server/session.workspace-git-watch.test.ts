@@ -612,7 +612,7 @@ describe("workspace git watch targets", () => {
   test("checkout_pr_status_request reads pull request status from the workspace git service snapshot", async () => {
     const { session, emitted, workspaceGitService } = createSessionForWorkspaceGitWatchTests();
 
-    workspaceGitService.peekSnapshot.mockReturnValue(
+    workspaceGitService.getSnapshot.mockResolvedValue(
       createWorkspaceRuntimeSnapshot(REPO_CWD, {
         github: {
           featuresEnabled: true,
@@ -634,8 +634,7 @@ describe("workspace git watch targets", () => {
       requestId: "req-pr-status",
     });
 
-    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith(REPO_CWD);
-    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REPO_CWD);
     expect(
       emitted.find((message) => message.type === "checkout_pr_status_response")?.payload,
     ).toEqual({
@@ -672,8 +671,7 @@ describe("workspace git watch targets", () => {
     });
 
     expect(workspaceGitService.refresh).not.toHaveBeenCalled();
-    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith(REPO_CWD);
-    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REPO_CWD);
     expect(emitted.find((message) => message.type === "checkout_pr_status_response")).toBeDefined();
   });
 });

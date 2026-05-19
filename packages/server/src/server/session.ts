@@ -5622,9 +5622,7 @@ export class Session {
     const { cwd, requestId } = msg;
 
     try {
-      const snapshot =
-        this.workspaceGitService.peekSnapshot(cwd) ??
-        (await this.workspaceGitService.getSnapshot(cwd));
+      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
       this.emit({
         type: "checkout_pr_status_response",
         payload: buildCheckoutPrStatusPayloadFromSnapshot({

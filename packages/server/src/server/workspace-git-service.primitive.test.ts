@@ -269,7 +269,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     vi.useRealTimers();
   });
 
-  test("getSnapshot returns cached warm value without shelling out within consumer TTL", async () => {
+  test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService({
@@ -411,7 +411,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     service.dispose();
   });
 
-  test("warm non-forced getSnapshot calls attach to an in-flight refresh instead of returning stale cache", async () => {
+  test("non-forced getSnapshot returns the current snapshot during an in-flight refresh", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const refreshStatus = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
@@ -434,24 +434,34 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       }),
     );
 
-    nowMs += 16_000;
-    const first = service.getSnapshot(REPO_CWD);
+    const initialSnapshot = createSnapshot(REPO_CWD, {
+      git: { diffStat: { additions: 4, deletions: 2 } },
+    });
+
+    nowMs += 3_000;
+    const refresh = service.refresh(REPO_CWD);
     await flushPromises();
-    const second = service.getSnapshot(REPO_CWD);
-    await flushPromises();
+    const directRead = service.getSnapshot(REPO_CWD);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getCheckoutShortstat).toHaveBeenCalledTimes(1);
+    await expect(directRead).resolves.toEqual(initialSnapshot);
 
     refreshStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
-
-    const freshSnapshot = createSnapshot(REPO_CWD, {
-      git: {
-        currentBranch: "feature",
-        diffStat: { additions: 4, deletions: 2 },
-      },
-    });
-    await expect(Promise.all([first, second])).resolves.toEqual([freshSnapshot, freshSnapshot]);
+    await refresh;
+    expect(service.peekSnapshot(REPO_CWD)).toEqual(
+      createSnapshot(REPO_CWD, {
+        git: {
+          currentBranch: "feature",
+          diffStat: { additions: 4, deletions: 2 },
+        },
+        github: {
+          featuresEnabled: false,
+          pullRequest: null,
+          error: null,
+        },
+      }),
+    );
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
 
@@ -634,7 +644,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     service.dispose();
   });
 
-  test("consumer TTL triggers cold-load after expiry on getSnapshot", async () => {
+  test("non-forced getSnapshot keeps returning the current snapshot after time passes", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService({
@@ -646,7 +656,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     nowMs = 16_000;
     await service.getSnapshot(REPO_CWD);
 
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
   });
@@ -1001,7 +1011,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(0);
   });
 
-  test("self-heal poll coalesces with a concurrent direct getSnapshot call", async () => {
+  test("direct getSnapshot returns current snapshot during a self-heal refresh", async () => {
     let nowMs = 0;
     const selfHealRefresh = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi
@@ -1022,9 +1032,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    await expect(directRead).resolves.toEqual(createSnapshot(REPO_CWD));
 
     selfHealRefresh.resolve(createCheckoutStatus(REPO_CWD));
-    await directRead;
+    await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
 

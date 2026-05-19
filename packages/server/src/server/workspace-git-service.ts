@@ -41,8 +41,8 @@ const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
 const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
 export const WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS = 60_000;
 const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
-// Consumer reads may reuse cached values within this window; older peeks cold-load through the service.
-const WORKSPACE_GIT_CONSUMER_TTL_MS = 15_000;
+// Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
+const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 const LINUX_WATCH_MAX_DIRS = 5_000;
@@ -413,7 +413,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd = normalizeWorkspaceId(cwd);
     const request = this.normalizeRefreshRequest(options, "getSnapshot", true);
     const target = this.ensureWorkspaceTarget(cwd);
-    if (!request.force && this.isSnapshotWarm(target)) {
+    if (!request.force && target.latestSnapshot) {
       return target.latestSnapshot;
     }
 
@@ -702,7 +702,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const nowMs = this.deps.now().getTime();
     if (!options?.force && entry.value !== null && entry.loadedAtMs !== null) {
       const ageMs = nowMs - entry.loadedAtMs;
-      if (ageMs <= WORKSPACE_GIT_CONSUMER_TTL_MS) {
+      if (ageMs <= WORKSPACE_GIT_AUXILIARY_READ_TTL_MS) {
         return Promise.resolve(entry.value);
       }
       if (
@@ -1395,17 +1395,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       reason: options?.reason ?? defaultReason,
       notify,
     };
-  }
-
-  private isSnapshotWarm(target: WorkspaceGitTarget): target is WorkspaceGitTarget & {
-    latestSnapshot: WorkspaceGitRuntimeSnapshot;
-    latestGitLoadedAtMs: number;
-  } {
-    if (!target.latestSnapshot || target.latestGitLoadedAtMs === null) {
-      return false;
-    }
-
-    return this.deps.now().getTime() - target.latestGitLoadedAtMs <= WORKSPACE_GIT_CONSUMER_TTL_MS;
   }
 
   private async resolveGitHubRemoteForTarget(
