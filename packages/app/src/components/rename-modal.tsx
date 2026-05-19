@@ -38,6 +38,7 @@ export function AdaptiveRenameModal({
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -112,6 +113,18 @@ export function AdaptiveRenameModal({
   const submitTestID = testID ? `${testID}-submit` : undefined;
   const cancelTestID = testID ? `${testID}-cancel` : undefined;
   const sheetHeader = useMemo<SheetHeader>(() => ({ title }), [title]);
+  const inputStyle = useMemo(
+    () => [
+      styles.input,
+      isFocused ? { borderColor: theme.colors.accent } : null,
+      // outlineStyle is web-only and not in RN TextStyle; matches the codebase
+      // pattern used in adaptive-modal-sheet for the same reason.
+      isWeb ? ({ outlineStyle: "none" } as Record<string, unknown>) : null,
+    ],
+    [isFocused, theme.colors.accent],
+  );
+  const handleInputFocus = useCallback(() => setIsFocused(true), []);
+  const handleInputBlur = useCallback(() => setIsFocused(false), []);
 
   return (
     <AdaptiveModalSheet
@@ -125,6 +138,8 @@ export function AdaptiveRenameModal({
           ref={inputRef}
           initialValue={initialValue}
           onChangeText={handleChange}
+          onFocus={handleInputFocus}
+          onBlur={handleInputBlur}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.foregroundMuted}
           autoCapitalize="none"
@@ -132,7 +147,7 @@ export function AdaptiveRenameModal({
           editable={!isPending}
           maxLength={maxLength}
           onSubmitEditing={handleSubmitVoid}
-          style={styles.input}
+          style={inputStyle}
           testID={inputTestID}
         />
         {error ? (
@@ -152,6 +167,7 @@ export function AdaptiveRenameModal({
             Cancel
           </Button>
           <Button
+            variant="default"
             size="sm"
             style={styles.actionButton}
             onPress={handleSubmitVoid}
