@@ -176,8 +176,8 @@ async function generateTitlePromptWithConfig(config: unknown): Promise<{ prompt:
     writeFileSync(path.join(repoRoot, "paseo.json"), `${JSON.stringify(config)}\n`);
   }
 
-  const setTitle = vi.fn().mockResolvedValue(undefined);
-  const manager = { setTitle } as unknown as AgentManager;
+  const setGeneratedTitleIfUnset = vi.fn().mockResolvedValue(undefined);
+  const manager = { setGeneratedTitleIfUnset } as unknown as AgentManager;
   const generateStructured = vi.fn().mockResolvedValue({ title: "Generated title" }) as NonNullable<
     AgentMetadataGeneratorDeps["generateStructuredAgentResponseWithFallback"]
   >;
