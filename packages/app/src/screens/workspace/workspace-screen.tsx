@@ -11,7 +11,7 @@ import {
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
 import { ActivityIndicator, BackHandler, Keyboard, Pressable, Text, View } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { DiffStat } from "@/components/diff-stat";
@@ -1547,6 +1547,7 @@ function WorkspaceScreenContent({
     openWorkspaceTabFocused,
     toast,
   });
+  const queryClient = useQueryClient();
   const {
     createMutation: createTerminalMutation,
     createTerminal,
@@ -1558,6 +1559,7 @@ function WorkspaceScreenContent({
     liveTerminalIds,
     pendingCreateInput: pendingTerminalCreateInput,
     query: terminalsQuery,
+    queryKey: terminalsQueryKey,
     removeTerminalFromCache,
     standaloneTerminalIds,
     terminals,

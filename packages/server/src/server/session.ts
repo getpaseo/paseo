@@ -20,8 +20,6 @@ import {
   type FileExplorerRequest,
   type FileDownloadTokenRequest,
   type GitSetupOptions,
-  type CheckoutPrStatusResponse,
-  type CheckoutStatusResponse,
   type CheckoutRenameBranchRequest,
   type StartWorkspaceScriptRequest,
   type CloseItemsRequest,
