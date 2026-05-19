@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, TextInput, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import {
   AdaptiveModalSheet,
   AdaptiveTextInput,
@@ -34,7 +34,6 @@ export function AdaptiveRenameModal({
   maxLength,
   testID,
 }: AdaptiveRenameModalProps) {
-  const { theme } = useUnistyles();
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -126,7 +125,7 @@ export function AdaptiveRenameModal({
           initialValue={initialValue}
           onChangeText={handleChange}
           placeholder={placeholder}
-          placeholderTextColor={theme.colors.foregroundMuted}
+          placeholderTextColor={styles.placeholderColor.color}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!isPending}
@@ -185,6 +184,9 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.sm,
+  },
+  placeholderColor: {
+    color: theme.colors.foregroundMuted,
   },
   actions: {
     flexDirection: "row",
