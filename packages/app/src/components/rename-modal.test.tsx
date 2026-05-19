@@ -37,6 +37,48 @@ vi.mock("@/constants/platform", () => ({
   isNative: false,
 }));
 
+vi.mock("react-native", async () => {
+  const ReactModule = await import("react");
+  const TextInput = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>(
+    (props, ref) => {
+      const p = props as {
+        value?: string;
+        editable?: boolean;
+        maxLength?: number;
+        testID?: string;
+        onChangeText?: (next: string) => void;
+        onSubmitEditing?: () => void;
+      };
+      adaptiveInputState.latestProps = {
+        onChangeText: p.onChangeText,
+        onSubmitEditing: p.onSubmitEditing,
+      };
+      return ReactModule.createElement("input", {
+        ref,
+        value: p.value ?? "",
+        disabled: p.editable === false,
+        maxLength: p.maxLength,
+        "data-testid": p.testID,
+        onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
+        onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            p.onSubmitEditing?.();
+          }
+        },
+      });
+    },
+  );
+  const RNView = ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
+    ReactModule.createElement("div", testID ? { "data-testid": testID } : null, children);
+  return {
+    Text: RNView,
+    View: RNView,
+    TextInput,
+    StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1 },
+  };
+});
+
 vi.mock("@/components/adaptive-modal-sheet", async () => {
   const ReactModule = await import("react");
   const AdaptiveModalSheet = ({
@@ -68,37 +110,7 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       children,
     );
   };
-  const AdaptiveTextInput = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>(
-    (props, ref) => {
-      const p = props as {
-        value?: string;
-        editable?: boolean;
-        maxLength?: number;
-        testID?: string;
-        onChangeText?: (next: string) => void;
-        onSubmitEditing?: () => void;
-      };
-      adaptiveInputState.latestProps = {
-        onChangeText: p.onChangeText,
-        onSubmitEditing: p.onSubmitEditing,
-      };
-      return ReactModule.createElement("input", {
-        ref,
-        value: p.value ?? "",
-        disabled: p.editable === false,
-        maxLength: p.maxLength,
-        "data-testid": p.testID,
-        onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
-        onKeyDown: (e: { key: string; preventDefault: () => void }) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            p.onSubmitEditing?.();
-          }
-        },
-      });
-    },
-  );
-  return { AdaptiveModalSheet, AdaptiveTextInput };
+  return { AdaptiveModalSheet };
 });
 
 vi.mock("@/components/ui/button", async () => {
