@@ -101,6 +101,26 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("passes an MCP config path to Pi", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = createRuntime(child, launches);
+
+    await runtime.startSession({
+      cwd: "/workspace/project",
+      mcpConfigPath: "/tmp/paseo-pi-mcp/mcp.json",
+    });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        mcpConfigPath: "/tmp/paseo-pi-mcp/mcp.json",
+        argv: ["pi", "--mode", "rpc", "--mcp-config", "/tmp/paseo-pi-mcp/mcp.json"],
+      }),
+    ]);
+  });
+
   test("delivers events separately from command responses", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({ models: [] }));

@@ -15,6 +15,7 @@ import type {
   PiModel,
   PiRpcCommand,
   PiRpcResponse,
+  PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
@@ -147,15 +148,9 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return (await this.request({ type: "get_session_stats" })) as PiSessionStats;
   }
 
-  async getCommands(): Promise<
-    Array<{ name: string; description?: string; source: "extension" | "prompt" | "skill" }>
-  > {
+  async getCommands(): Promise<PiRpcSlashCommand[]> {
     const data = (await this.request({ type: "get_commands" })) as {
-      commands?: Array<{
-        name: string;
-        description?: string;
-        source: "extension" | "prompt" | "skill";
-      }>;
+      commands?: PiRpcSlashCommand[];
     };
     return data.commands ?? [];
   }

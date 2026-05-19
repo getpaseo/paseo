@@ -7,6 +7,7 @@ import type {
 import type {
   PiAgentMessage,
   PiModel,
+  PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
@@ -17,6 +18,7 @@ export class FakePi implements PiRuntime {
   readonly recordedLaunches: PiRuntimeLaunch[] = [];
   private readonly sessions: FakePiSession[] = [];
   private readonly command: [string, ...string[]];
+  private readonly queuedCommands: PiRpcSlashCommand[][] = [];
 
   constructor(command: [string, ...string[]] = ["pi"]) {
     this.command = command;
@@ -29,8 +31,13 @@ export class FakePi implements PiRuntime {
     });
     this.recordedLaunches.push(launch);
     const session = new FakePiSession(launch);
+    session.commands = this.queuedCommands.shift() ?? [];
     this.sessions.push(session);
     return session;
+  }
+
+  queueCommands(commands: PiRpcSlashCommand[]): void {
+    this.queuedCommands.push(commands);
   }
 
   latestSession(): FakePiSession {
@@ -55,11 +62,7 @@ export class FakePiSession implements PiRuntimeSession {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
   };
-  commands: Array<{
-    name: string;
-    description?: string;
-    source: "extension" | "prompt" | "skill";
-  }> = [];
+  commands: PiRpcSlashCommand[] = [];
   state: PiSessionState;
 
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
@@ -123,9 +126,7 @@ export class FakePiSession implements PiRuntimeSession {
     return this.stats;
   }
 
-  async getCommands(): Promise<
-    Array<{ name: string; description?: string; source: "extension" | "prompt" | "skill" }>
-  > {
+  async getCommands(): Promise<PiRpcSlashCommand[]> {
     return this.commands;
   }
 

@@ -59,6 +59,10 @@ interface PiToolResultObject {
 
 interface PiToolResultDetails {
   diff?: string;
+  mode?: string;
+  server?: string;
+  tool?: string;
+  mcpResult?: unknown;
 }
 
 interface PiToolResultTextContent {
@@ -172,6 +176,14 @@ const PiToolResultObjectSchema = z
 
 const PiToolResultSchema = z.union([z.string(), PiToolResultObjectSchema, z.null()]);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
 const BashToolInputSchema: z.ZodType<BashToolInput> = z.object({
   command: z.string(),
   timeout: z.number().optional(),
@@ -273,6 +285,41 @@ export function parseToolArgs(toolName: string, rawArgs: unknown): PiTrackedTool
     }
   }
   return { kind: "unknown", toolName, args: rawArgs ?? null };
+}
+
+function stripMcpProxyPrefix(toolName: string, serverName: string): string {
+  const prefix = `${serverName}_`;
+  return toolName.startsWith(prefix) ? toolName.slice(prefix.length) : toolName;
+}
+
+export function resolveToolCallName(toolCall: PiTrackedToolCall, result?: PiToolResult): string {
+  if (toolCall.toolName !== "mcp") {
+    return toolCall.toolName;
+  }
+
+  if (result && typeof result !== "string") {
+    const serverName = readNonEmptyString(result.details?.server);
+    const toolName = readNonEmptyString(result.details?.tool);
+    if (serverName && toolName) {
+      return `${serverName}.${toolName}`;
+    }
+  }
+
+  if (isRecord(toolCall.args)) {
+    const requestedTool = readNonEmptyString(toolCall.args.tool);
+    const requestedServer = readNonEmptyString(toolCall.args.server);
+    if (requestedTool && requestedServer) {
+      return `${requestedServer}.${stripMcpProxyPrefix(requestedTool, requestedServer)}`;
+    }
+    if (requestedTool) {
+      const [serverName, ...toolParts] = requestedTool.split("_");
+      if (serverName && toolParts.length > 0) {
+        return `${serverName}.${toolParts.join("_")}`;
+      }
+    }
+  }
+
+  return toolCall.toolName;
 }
 
 export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult): ToolCallDetail {

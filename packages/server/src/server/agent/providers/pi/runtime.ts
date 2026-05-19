@@ -1,6 +1,7 @@
 import type {
   PiAgentMessage,
   PiModel,
+  PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
@@ -15,6 +16,7 @@ export interface PiRuntimeLaunch {
   thinkingOptionId?: string;
   session?: string;
   systemPrompt?: string;
+  mcpConfigPath?: string;
 }
 
 export interface PiStartSessionInput {
@@ -23,6 +25,7 @@ export interface PiStartSessionInput {
   thinkingOptionId?: string;
   session?: string;
   systemPrompt?: string;
+  mcpConfigPath?: string;
 }
 
 export interface PiRuntimeSession {
@@ -38,13 +41,7 @@ export interface PiRuntimeSession {
   setModel(provider: string, modelId: string): Promise<PiModel>;
   setThinkingLevel(level: string): Promise<void>;
   getSessionStats(): Promise<PiSessionStats>;
-  getCommands(): Promise<
-    Array<{
-      name: string;
-      description?: string;
-      source: "extension" | "prompt" | "skill";
-    }>
-  >;
+  getCommands(): Promise<PiRpcSlashCommand[]>;
   cancelExtensionUiRequest(id: string): void;
   close(): Promise<void>;
 }
@@ -79,6 +76,9 @@ export function buildPiLaunch(input: {
   if (input.session.systemPrompt?.trim()) {
     argv.push("--append-system-prompt", input.session.systemPrompt);
   }
+  if (input.session.mcpConfigPath) {
+    argv.push("--mcp-config", input.session.mcpConfigPath);
+  }
 
   return {
     cwd: input.session.cwd,
@@ -88,6 +88,7 @@ export function buildPiLaunch(input: {
     thinkingOptionId: input.session.thinkingOptionId,
     session: input.session.session,
     systemPrompt: input.session.systemPrompt,
+    mcpConfigPath: input.session.mcpConfigPath,
   };
 }
 

@@ -3,7 +3,11 @@ import { z } from "zod";
 import { ensureValidJson } from "../json-utils.js";
 import type { Logger } from "pino";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolResult,
+  ServerNotification,
+  ServerRequest,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, WaitForAgentResult } from "./agent-manager.js";
@@ -152,6 +156,54 @@ function mapModeAcrossProviders(
   }
 
   return sourceMode;
+}
+
+function addModelVisibleStructuredContent(result: CallToolResult): CallToolResult {
+  if (result.structuredContent === undefined || result.content.length > 0) {
+    return result;
+  }
+
+  return {
+    ...result,
+    content: [
+      {
+        type: "text",
+        text: formatStructuredContentForModel(result.structuredContent),
+      },
+    ],
+  };
+}
+
+function formatStructuredContentForModel(structuredContent: unknown): string {
+  if (
+    !structuredContent ||
+    typeof structuredContent !== "object" ||
+    Array.isArray(structuredContent)
+  ) {
+    return JSON.stringify(structuredContent, null, 2);
+  }
+
+  const record = structuredContent as Record<string, unknown>;
+  const summary: string[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (!Array.isArray(value)) {
+      continue;
+    }
+    summary.push(`${key}_count=${value.length}`);
+    const ids = value
+      .map((item) =>
+        item && typeof item === "object" && !Array.isArray(item)
+          ? (item as Record<string, unknown>).id
+          : null,
+      )
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    if (ids.length === value.length && ids.length > 0) {
+      summary.push(`${key}_ids=${ids.join(",")}`);
+    }
+  }
+
+  const json = JSON.stringify(structuredContent, null, 2);
+  return summary.length > 0 ? `${summary.join("\n")}\n\n${json}` : json;
 }
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -454,6 +506,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     name: "agent-mcp",
     version: "2.0.0",
   });
+  const registerRawTool = server.registerTool.bind(server);
+  const registerTool: McpServer["registerTool"] = (name, config, handler) =>
+    registerRawTool(name, config, (async (args: never, extra: never) =>
+      addModelVisibleStructuredContent(await handler(args, extra))) as typeof handler);
 
   const resolveCallerAgent = () => {
     if (!callerAgentId) {
@@ -750,7 +806,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   };
 
   if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
-    server.registerTool(
+    registerTool(
       "speak",
       {
         title: "Speak",
@@ -954,7 +1010,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     };
   };
 
-  server.registerTool(
+  registerTool(
     "create_agent",
     {
       title: "Create agent",
@@ -1099,7 +1155,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "wait_for_agent",
     {
       title: "Wait for agent",
@@ -1176,7 +1232,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "send_agent_prompt",
     {
       title: "Send agent prompt",
@@ -1277,7 +1333,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "get_agent_status",
     {
       title: "Get agent status",
@@ -1327,7 +1383,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_agents",
     {
       title: "List agents",
@@ -1386,7 +1442,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "cancel_agent",
     {
       title: "Cancel agent run",
@@ -1410,7 +1466,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "archive_agent",
     {
       title: "Archive agent",
@@ -1433,7 +1489,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "kill_agent",
     {
       title: "Kill agent",
@@ -1455,7 +1511,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "update_agent",
     {
       title: "Update agent",
@@ -1513,7 +1569,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_terminals",
     {
       title: "List terminals",
@@ -1561,7 +1617,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "create_terminal",
     {
       title: "Create terminal",
@@ -1596,7 +1652,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "kill_terminal",
     {
       title: "Kill terminal",
@@ -1627,7 +1683,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "capture_terminal",
     {
       title: "Capture terminal",
@@ -1671,7 +1727,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "send_terminal_keys",
     {
       title: "Send terminal keys",
@@ -1707,7 +1763,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "create_schedule",
     {
       title: "Create schedule",
@@ -1788,7 +1844,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_schedules",
     {
       title: "List schedules",
@@ -1813,7 +1869,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "inspect_schedule",
     {
       title: "Inspect schedule",
@@ -1836,7 +1892,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "pause_schedule",
     {
       title: "Pause schedule",
@@ -1861,7 +1917,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "resume_schedule",
     {
       title: "Resume schedule",
@@ -1886,7 +1942,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "delete_schedule",
     {
       title: "Delete schedule",
@@ -1911,7 +1967,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "update_schedule",
     {
       title: "Update schedule",
@@ -1973,7 +2029,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "schedule_logs",
     {
       title: "Schedule logs",
@@ -1998,7 +2054,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_providers",
     {
       title: "List providers",
@@ -2021,7 +2077,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_models",
     {
       title: "List models",
@@ -2058,7 +2114,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "inspect_provider",
     {
       title: "Inspect provider",
@@ -2122,7 +2178,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_worktrees",
     {
       title: "List worktrees",
@@ -2153,7 +2209,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "create_worktree",
     {
       title: "Create worktree",
@@ -2218,7 +2274,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "archive_worktree",
     {
       title: "Archive worktree",
@@ -2310,7 +2366,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "get_agent_activity",
     {
       title: "Get agent activity",
@@ -2366,7 +2422,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "set_agent_mode",
     {
       title: "Set agent session mode",
@@ -2390,7 +2446,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_pending_permissions",
     {
       title: "List pending permissions",
@@ -2424,7 +2480,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
   );
 
-  server.registerTool(
+  registerTool(
     "respond_to_permission",
     {
       title: "Respond to permission",

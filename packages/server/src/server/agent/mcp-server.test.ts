@@ -1987,6 +1987,7 @@ describe("provider listing MCP tool", () => {
     });
     const tool = registeredTool(server, "list_providers");
     const response = await tool.handler({});
+    const modelVisibleText = String(response.content[0]?.text);
 
     expect(response.structuredContent).toEqual({
       providers: [
@@ -2008,6 +2009,9 @@ describe("provider listing MCP tool", () => {
         },
       ],
     });
+    expect(modelVisibleText).toContain("providers_count=2");
+    expect(modelVisibleText).toContain("providers_ids=claude,zai");
+    expect(modelVisibleText).toContain('"providers"');
   });
 
   it("returns disabled providers with metadata without checking availability", async () => {

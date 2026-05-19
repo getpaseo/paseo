@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -256,6 +256,98 @@ describe("PiRpcAgentClient", () => {
       { name: "fix-tests", description: "Fix tests", argumentHint: "" },
       { name: "skill:docs", description: "Read docs", argumentHint: "" },
     ]);
+  });
+
+  test("injects MCP servers through pi-mcp-adapter when the extension is loaded", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([
+      {
+        name: "mcp",
+        description: "Show MCP server status",
+        source: "extension",
+        sourceInfo: { source: "npm:pi-mcp-adapter" },
+      },
+    ]);
+    const client = createClient(pi);
+
+    const session = await client.createSession(
+      createConfig({
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+          localSecret: {
+            type: "stdio",
+            command: "node",
+            args: ["secret-server.js"],
+            env: { SECRET_NUMBER: "314159" },
+          },
+        },
+      }),
+    );
+
+    expect(pi.recordedLaunches).toHaveLength(2);
+    expect(pi.recordedLaunches[0]).toMatchObject({
+      cwd: "/tmp/paseo-pi-rpc-test",
+      argv: ["pi", "--mode", "rpc"],
+    });
+    const actualLaunch = pi.recordedLaunches[1];
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--thinking",
+      "medium",
+      "--mcp-config",
+      actualLaunch.mcpConfigPath,
+    ]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+
+    const configPath = actualLaunch.mcpConfigPath;
+    expect(configPath).toEqual(expect.any(String));
+    const injectedConfig = JSON.parse(readFileSync(configPath!, "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(injectedConfig).toEqual({
+      mcpServers: {
+        paseo: {
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          auth: false,
+          oauth: false,
+        },
+        localSecret: {
+          command: "node",
+          args: ["secret-server.js"],
+          env: { SECRET_NUMBER: "314159" },
+        },
+      },
+    });
+
+    await session.close();
+    expect(existsSync(configPath!)).toBe(false);
+  });
+
+  test("does not pass MCP config when pi-mcp-adapter is not loaded", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([]);
+    const client = createClient(pi);
+
+    const session = await client.createSession(
+      createConfig({
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+        },
+      }),
+    );
+
+    expect(pi.recordedLaunches).toHaveLength(2);
+    expect(pi.recordedLaunches[1]?.argv).toEqual(["pi", "--mode", "rpc", "--thinking", "medium"]);
+    expect(pi.recordedLaunches[1]?.mcpConfigPath).toBeUndefined();
+    expect(session.capabilities.supportsMcpServers).toBe(false);
   });
 
   test("lists persisted Pi sessions from the configured Pi agent directory", async () => {
