@@ -44,7 +44,12 @@ export function AssistantMarkdownLink({
   children,
 }: AssistantMarkdownLinkProps) {
   const [hovered, setHovered] = useState(false);
-  const target = useAssistantFileLinkTarget({ source, client, serverId, workspaceRoot });
+  const { target, prefetch } = useAssistantFileLinkTarget({
+    source,
+    client,
+    serverId,
+    workspaceRoot,
+  });
   const tooltipPath = useMemo(
     () => (target ? formatInlinePathTargetForTooltip(target, workspaceRoot) : null),
     [target, workspaceRoot],
@@ -61,7 +66,10 @@ export function AssistantMarkdownLink({
     },
     [onPress, source],
   );
-  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverIn = useCallback(() => {
+    setHovered(true);
+    prefetch();
+  }, [prefetch]);
   const handleHoverOut = useCallback(() => setHovered(false), []);
   const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
     () => [style, hovered && { textDecorationLine: "underline" as const }],

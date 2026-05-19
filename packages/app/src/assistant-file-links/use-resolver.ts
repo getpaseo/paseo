@@ -50,33 +50,88 @@ export interface UseAssistantFileLinkTargetOptions {
   workspaceRoot?: string;
 }
 
+export interface UseAssistantFileLinkTargetResult {
+  target: InlinePathTarget | null;
+  prefetch: () => void;
+}
+
 export function useAssistantFileLinkTarget({
   source,
   client,
   serverId,
   workspaceRoot,
-}: UseAssistantFileLinkTargetOptions): InlinePathTarget | null {
+}: UseAssistantFileLinkTargetOptions): UseAssistantFileLinkTargetResult {
+  const queryClient = useQueryClient();
+
+  // Memo keys reference primitives, not source identity, so identical-content
+  // sources reconstructed each render do not bust the memo.
+  const href = source.href;
+  const text = source.text;
+  const markup = source.markup;
+  const sourceInfo = source.sourceInfo;
+  const sourceType = source.sourceType;
+
+  const stableSource = useMemo<AssistantFileLinkSource>(
+    () => ({ href, text, markup, sourceInfo, sourceType }),
+    [href, text, markup, sourceInfo, sourceType],
+  );
+
+  const token = useMemo(() => getAssistantFileLinkToken(stableSource).trim(), [stableSource]);
+
   const context = useMemo<AssistantFileLinkContext>(
     () => ({ serverId, workspaceRoot }),
     [serverId, workspaceRoot],
   );
-  const token = useMemo(() => getAssistantFileLinkToken(source).trim(), [source]);
-  const initialData = useMemo(() => synchronousResolution(source, context), [source, context]);
 
+  const initialData = useMemo(
+    () => synchronousResolution(stableSource, context),
+    [stableSource, context],
+  );
+
+  const queryKey = useMemo(
+    () => assistantFileLinkQueryKey(serverId, workspaceRoot, token),
+    [serverId, workspaceRoot, token],
+  );
+
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  // Subscribe to the cache without auto-firing the queryFn. prefetch() (on hover)
+  // and the click action (via queryClient.fetchQuery) are the only paths that
+  // trigger the RPC. initialData seeds the cache for synchronously-resolvable
+  // references (directFile / external / ignored) so they render immediately.
   const { data } = useQuery({
-    queryKey: assistantFileLinkQueryKey(serverId, workspaceRoot, token),
+    queryKey,
     queryFn: () =>
       resolveAssistantFileLink({
-        source,
+        source: stableSource,
         context,
-        getDirectorySuggestions: makeGetDirectorySuggestions(client),
+        getDirectorySuggestions: makeGetDirectorySuggestions(clientRef.current),
       }),
-    enabled: !!token && !initialData,
+    enabled: false,
     initialData,
     staleTime: Infinity,
   });
 
-  return data?.kind === "file" ? data.target : null;
+  const prefetch = useCallback(() => {
+    if (!token || initialData) {
+      return;
+    }
+    void queryClient.prefetchQuery({
+      queryKey,
+      queryFn: () =>
+        resolveAssistantFileLink({
+          source: stableSource,
+          context,
+          getDirectorySuggestions: makeGetDirectorySuggestions(clientRef.current),
+        }),
+      staleTime: Infinity,
+    });
+  }, [queryClient, queryKey, token, initialData, stableSource, context]);
+
+  const target = useMemo(() => (data?.kind === "file" ? data.target : null), [data]);
+
+  return useMemo(() => ({ target, prefetch }), [target, prefetch]);
 }
 
 export interface UseAssistantFileLinkResolverOptions {
