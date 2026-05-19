@@ -383,8 +383,8 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
       <SettingsSection title="Operations">
         <RestartDaemonCard host={host} />
         <InjectPaseoToolsCard serverId={host.serverId} />
-        <AppendSystemPromptCard serverId={host.serverId} />
       </SettingsSection>
+      <AppendSystemPromptSection serverId={host.serverId} />
       {isLocalDaemon ? (
         <SettingsSection title="Pair devices">
           <PairDeviceRow />
@@ -561,7 +561,7 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
   );
 }
 
-function AppendSystemPromptCard({ serverId }: { serverId: string }) {
+function AppendSystemPromptSection({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const persistedPrompt = config?.appendSystemPrompt ?? "";
@@ -590,41 +590,37 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
   if (!isConnected) return null;
 
   return (
-    <View style={settingsStyles.card} testID="host-page-append-system-prompt-card">
-      <View style={settingsStyles.row}>
-        <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Append system prompt</Text>
-          <Text style={settingsStyles.rowHint}>Added to new and resumed agents on this daemon</Text>
+    <SettingsSection title="Append system prompt" testID="host-page-append-system-prompt-section">
+      <View style={settingsStyles.card} testID="host-page-append-system-prompt-card">
+        <SettingsTextArea
+          testID="host-page-append-system-prompt-input"
+          accessibilityLabel="Append system prompt"
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Always keep replies concise."
+        />
+        <View style={styles.appendPromptActions}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onPress={handleReset}
+            disabled={!hasChanges || isSaving}
+            testID="host-page-append-system-prompt-reset"
+          >
+            Reset
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onPress={handleSave}
+            disabled={!hasChanges || isSaving}
+            testID="host-page-append-system-prompt-save"
+          >
+            {isSaving ? "Saving..." : "Save"}
+          </Button>
         </View>
       </View>
-      <SettingsTextArea
-        testID="host-page-append-system-prompt-input"
-        accessibilityLabel="Append system prompt"
-        value={draft}
-        onChangeText={setDraft}
-        placeholder="Always keep replies concise."
-      />
-      <View style={styles.appendPromptActions}>
-        <Button
-          variant="ghost"
-          size="sm"
-          onPress={handleReset}
-          disabled={!hasChanges || isSaving}
-          testID="host-page-append-system-prompt-reset"
-        >
-          Reset
-        </Button>
-        <Button
-          variant="default"
-          size="sm"
-          onPress={handleSave}
-          disabled={!hasChanges || isSaving}
-          testID="host-page-append-system-prompt-save"
-        >
-          {isSaving ? "Saving..." : "Save"}
-        </Button>
-      </View>
-    </View>
+    </SettingsSection>
   );
 }
 

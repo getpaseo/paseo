@@ -1,7 +1,8 @@
 import type { StyleProp, TextStyle } from "react-native";
 import { useMemo } from "react";
-import { TextInput } from "react-native";
+import { TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { settingsStyles } from "@/styles/settings";
 
 interface SettingsTextAreaProps {
   accessibilityLabel: string;
@@ -34,6 +35,14 @@ export function SettingsTextArea({
       placeholderTextColor={theme.colors.foregroundMuted}
       style={inputStyle}
     />
+  );
+}
+
+export function SettingsTextAreaCard(props: SettingsTextAreaProps) {
+  return (
+    <View style={settingsStyles.card}>
+      <SettingsTextArea {...props} />
+    </View>
   );
 }
 
