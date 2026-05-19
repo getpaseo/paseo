@@ -13,11 +13,19 @@ const pathnameState = vi.hoisted(() => ({
 const localParamsState = vi.hoisted(() => ({
   value: {} as { serverId?: string | string[]; workspaceId?: string | string[] },
 }));
+const asyncStorageMock = vi.hoisted(() => ({
+  getItem: vi.fn(async () => null as string | null),
+  setItem: vi.fn(async () => undefined),
+}));
 
 vi.mock("expo-router", () => ({
   router: routerMock,
   useLocalSearchParams: () => localParamsState.value,
   usePathname: () => pathnameState.value,
+}));
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: asyncStorageMock,
 }));
 
 import {
@@ -29,6 +37,7 @@ import {
 describe("workspace navigation", () => {
   beforeEach(() => {
     routerMock.dismissTo.mockReset();
+    asyncStorageMock.setItem.mockClear();
     pathnameState.value = "/";
     localParamsState.value = {};
   });
@@ -41,6 +50,10 @@ describe("workspace navigation", () => {
     navigateToWorkspace("server-1", "workspace-a");
 
     expect(routerMock.dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
+    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
+      "paseo:last-workspace-route-selection",
+      JSON.stringify({ serverId: "server-1", workspaceId: "workspace-a" }),
+    );
   });
 
   it("reads the active workspace from the current route", () => {

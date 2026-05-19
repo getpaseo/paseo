@@ -79,11 +79,7 @@ export function resolveStartupWorkspaceSelection(
   if (!input.isWorkspaceSelectionLoaded) {
     return null;
   }
-  if (
-    !input.anyOnlineHostServerId ||
-    !input.workspaceSelection ||
-    input.workspaceSelection.serverId !== input.anyOnlineHostServerId
-  ) {
+  if (!input.workspaceSelection) {
     return null;
   }
   return input.workspaceSelection;

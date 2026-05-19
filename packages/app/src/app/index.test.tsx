@@ -18,6 +18,7 @@ const { navigateToWorkspaceMock, redirectMock, state } = vi.hoisted(() => {
       storeReady: false,
     } as HostRuntimeBootstrapState,
     anyOnlineHostServerId: null as string | null,
+    isWorkspaceSelectionLoaded: true,
     workspaceSelection: null as ActiveWorkspaceSelection | null,
   };
 
@@ -51,7 +52,8 @@ vi.mock("@/screens/startup-splash-screen", () => ({
 
 vi.mock("@/stores/navigation-active-workspace-store", () => ({
   navigateToWorkspace: navigateToWorkspaceMock,
-  useActiveWorkspaceSelection: () => state.workspaceSelection,
+  useIsLastWorkspaceSelectionHydrated: () => state.isWorkspaceSelectionLoaded,
+  useLastWorkspaceSelection: () => state.workspaceSelection,
 }));
 
 describe("Index route startup navigation", () => {
@@ -68,6 +70,7 @@ describe("Index route startup navigation", () => {
       storeReady: false,
     };
     state.anyOnlineHostServerId = null;
+    state.isWorkspaceSelectionLoaded = true;
     state.workspaceSelection = null;
     navigateToWorkspaceMock.mockReset();
     redirectMock.mockReset();
@@ -98,6 +101,17 @@ describe("Index route startup navigation", () => {
     expect(redirectMock).not.toHaveBeenCalled();
   });
 
+  it("shows the startup splash while the persisted workspace selection has not loaded", async () => {
+    state.anyOnlineHostServerId = "server-1";
+    state.isWorkspaceSelectionLoaded = false;
+
+    await renderIndex();
+
+    expect(container.querySelector("[data-testid='startup-splash']")).not.toBeNull();
+    expect(navigateToWorkspaceMock).not.toHaveBeenCalled();
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
   it("restores the persisted workspace when the online host matches its server id", async () => {
     state.anyOnlineHostServerId = "server-1";
     state.workspaceSelection = { serverId: "server-1", workspaceId: "workspace-a" };
@@ -111,13 +125,16 @@ describe("Index route startup navigation", () => {
     expect(container.querySelector("[data-testid='startup-splash']")).not.toBeNull();
   });
 
-  it("navigates to the host root when the persisted workspace targets a different server", async () => {
+  it("restores the persisted workspace even when the first online host is different", async () => {
     state.anyOnlineHostServerId = "server-2";
     state.workspaceSelection = { serverId: "server-1", workspaceId: "workspace-a" };
 
     await renderIndex();
 
-    expect(redirectMock).toHaveBeenCalledWith("/h/server-2");
+    expect(navigateToWorkspaceMock).toHaveBeenCalledWith("server-1", "workspace-a", {
+      currentPathname: "/",
+    });
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 
   it("navigates to the host root when no persisted workspace exists", async () => {

@@ -8,7 +8,8 @@ import {
 } from "@/app/host-runtime-bootstrap";
 import {
   navigateToWorkspace,
-  useActiveWorkspaceSelection,
+  useIsLastWorkspaceSelectionHydrated,
+  useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 
@@ -18,20 +19,21 @@ export default function Index() {
   const pathname = usePathname();
   const bootstrapState = useHostRuntimeBootstrapState();
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
-  const workspaceSelection = useActiveWorkspaceSelection();
+  const workspaceSelection = useLastWorkspaceSelection();
+  const isWorkspaceSelectionLoaded = useIsLastWorkspaceSelectionHydrated();
 
   const redirectRoute = resolveStartupRedirectRoute({
     pathname,
     anyOnlineHostServerId,
     workspaceSelection,
-    isWorkspaceSelectionLoaded: true,
+    isWorkspaceSelectionLoaded,
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });
   const startupWorkspaceSelection = resolveStartupWorkspaceSelection({
     pathname,
     anyOnlineHostServerId,
     workspaceSelection,
-    isWorkspaceSelectionLoaded: true,
+    isWorkspaceSelectionLoaded,
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });
 

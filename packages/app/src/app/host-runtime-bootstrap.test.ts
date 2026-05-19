@@ -171,14 +171,24 @@ describe("resolveStartupRedirectRoute", () => {
       expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
     });
 
-    it("redirects to the host root when the persisted workspace targets a different server", () => {
+    it("leaves persisted workspace navigation to the workspace navigator when another host is first online", () => {
       const route = resolveStartupRedirectRoute({
         ...baseInput,
         anyOnlineHostServerId: "server-2",
         workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
       });
 
-      expect(route).toBe("/h/server-2");
+      expect(route).toBeNull();
+    });
+
+    it("resolves the persisted workspace when another host is first online", () => {
+      const selection = resolveStartupWorkspaceSelection({
+        ...baseInput,
+        anyOnlineHostServerId: "server-2",
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+      });
+
+      expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
     });
 
     it("redirects to the host root when no persisted workspace exists", () => {
