@@ -10,7 +10,7 @@ export const Route = createFileRoute("/agents")({
   head: () => ({
     meta: pageMeta(
       "Supported agents – Every coding agent Paseo runs | Paseo",
-      "Run Claude Code, Codex, OpenCode, Cursor CLI, Gemini CLI, Hermes Agent, Qwen Code, Kimi Code, and 28 more coding agents from your phone. Self-hosted, your code stays on your machine.",
+      "Run Claude Code, Codex, OpenCode, Cursor CLI, Gemini CLI, Hermes Agent, Qwen Code, Kimi Code, DeepSeek TUI, and 28 more coding agents from your phone. Self-hosted, your code stays on your machine.",
     ),
   }),
   component: AgentsPage,

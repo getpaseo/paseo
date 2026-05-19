@@ -188,6 +188,16 @@ export const AGENT_PAGES = [
       "Run the LangChain DeepAgents coding agent from your phone. Launch sessions, monitor progress, and ship code from anywhere.",
   },
   {
+    slug: "deepseek-tui",
+    name: "DeepSeek TUI",
+    title: "DeepSeek TUI from your phone",
+    subtitle:
+      "Run the DeepSeek V4 terminal coding agent on your machine, then drive it from anywhere.",
+    metaTitle: "DeepSeek TUI Mobile App – Run DeepSeek TUI from anywhere | Paseo",
+    metaDescription:
+      "Drive DeepSeek TUI from your phone. Launch coding sessions on your machine, monitor progress, and ship from anywhere.",
+  },
+  {
     slug: "dimcode",
     name: "DimCode",
     title: "DimCode from anywhere",

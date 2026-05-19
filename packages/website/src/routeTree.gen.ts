@@ -34,6 +34,7 @@ import { Route as DownloadRouteImport } from "./routes/download";
 import { Route as DocsRouteImport } from "./routes/docs";
 import { Route as DiracRouteImport } from "./routes/dirac";
 import { Route as DimcodeRouteImport } from "./routes/dimcode";
+import { Route as DeepseekTuiRouteImport } from "./routes/deepseek-tui";
 import { Route as DeepagentsRouteImport } from "./routes/deepagents";
 import { Route as CursorRouteImport } from "./routes/cursor";
 import { Route as CrowRouteImport } from "./routes/crow";
@@ -183,6 +184,11 @@ const DimcodeRoute = DimcodeRouteImport.update({
   path: "/dimcode",
   getParentRoute: () => rootRouteImport,
 } as any);
+const DeepseekTuiRoute = DeepseekTuiRouteImport.update({
+  id: "/deepseek-tui",
+  path: "/deepseek-tui",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DeepagentsRoute = DeepagentsRouteImport.update({
   id: "/deepagents",
   path: "/deepagents",
@@ -319,6 +325,7 @@ export interface FileRoutesByFullPath {
   "/crow": typeof CrowRoute;
   "/cursor": typeof CursorRoute;
   "/deepagents": typeof DeepagentsRoute;
+  "/deepseek-tui": typeof DeepseekTuiRoute;
   "/dimcode": typeof DimcodeRoute;
   "/dirac": typeof DiracRoute;
   "/docs": typeof DocsRouteWithChildren;
@@ -368,6 +375,7 @@ export interface FileRoutesByTo {
   "/crow": typeof CrowRoute;
   "/cursor": typeof CursorRoute;
   "/deepagents": typeof DeepagentsRoute;
+  "/deepseek-tui": typeof DeepseekTuiRoute;
   "/dimcode": typeof DimcodeRoute;
   "/dirac": typeof DiracRoute;
   "/download": typeof DownloadRoute;
@@ -418,6 +426,7 @@ export interface FileRoutesById {
   "/crow": typeof CrowRoute;
   "/cursor": typeof CursorRoute;
   "/deepagents": typeof DeepagentsRoute;
+  "/deepseek-tui": typeof DeepseekTuiRoute;
   "/dimcode": typeof DimcodeRoute;
   "/dirac": typeof DiracRoute;
   "/docs": typeof DocsRouteWithChildren;
@@ -470,6 +479,7 @@ export interface FileRouteTypes {
     | "/crow"
     | "/cursor"
     | "/deepagents"
+    | "/deepseek-tui"
     | "/dimcode"
     | "/dirac"
     | "/docs"
@@ -519,6 +529,7 @@ export interface FileRouteTypes {
     | "/crow"
     | "/cursor"
     | "/deepagents"
+    | "/deepseek-tui"
     | "/dimcode"
     | "/dirac"
     | "/download"
@@ -568,6 +579,7 @@ export interface FileRouteTypes {
     | "/crow"
     | "/cursor"
     | "/deepagents"
+    | "/deepseek-tui"
     | "/dimcode"
     | "/dirac"
     | "/docs"
@@ -619,6 +631,7 @@ export interface RootRouteChildren {
   CrowRoute: typeof CrowRoute;
   CursorRoute: typeof CursorRoute;
   DeepagentsRoute: typeof DeepagentsRoute;
+  DeepseekTuiRoute: typeof DeepseekTuiRoute;
   DimcodeRoute: typeof DimcodeRoute;
   DiracRoute: typeof DiracRoute;
   DocsRoute: typeof DocsRouteWithChildren;
@@ -821,6 +834,13 @@ declare module "@tanstack/react-router" {
       path: "/dimcode";
       fullPath: "/dimcode";
       preLoaderRoute: typeof DimcodeRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/deepseek-tui": {
+      id: "/deepseek-tui";
+      path: "/deepseek-tui";
+      fullPath: "/deepseek-tui";
+      preLoaderRoute: typeof DeepseekTuiRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/deepagents": {
@@ -1031,6 +1051,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrowRoute: CrowRoute,
   CursorRoute: CursorRoute,
   DeepagentsRoute: DeepagentsRoute,
+  DeepseekTuiRoute: DeepseekTuiRoute,
   DimcodeRoute: DimcodeRoute,
   DiracRoute: DiracRoute,
   DocsRoute: DocsRouteWithChildren,
