@@ -19,12 +19,12 @@ import {
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
-  setupDarwinCompositorWatchdog,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
+import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
