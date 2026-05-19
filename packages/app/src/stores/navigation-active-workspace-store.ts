@@ -1,6 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams, usePathname, type Href } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
+import {
+  createLastWorkspaceSelectionStore,
+  type ActiveWorkspaceSelection,
+  type LastWorkspaceSelectionStorage,
+} from "@/stores/last-workspace-selection";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { pickAttentionAgent } from "@/utils/agent-attention";
@@ -14,10 +19,7 @@ import {
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-execution";
 
-export interface ActiveWorkspaceSelection {
-  serverId: string;
-  workspaceId: string;
-}
+export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
 interface NavigateToWorkspaceOptions {
   currentPathname?: string | null;
@@ -25,100 +27,25 @@ interface NavigateToWorkspaceOptions {
 
 const LAST_WORKSPACE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
 
-let lastWorkspaceSelection: ActiveWorkspaceSelection | null = null;
-let lastWorkspaceSelectionHydrated = false;
-let lastWorkspaceSelectionHydrationPromise: Promise<void> | null = null;
-let lastWorkspaceSelectionRevision = 0;
-const listeners = new Set<() => void>();
+const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
+  read: () => AsyncStorage.getItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY),
+  write: (value) => AsyncStorage.setItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY, value),
+};
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function notifyListeners() {
-  for (const listener of listeners) {
-    listener();
-  }
-}
-
-function normalizeWorkspaceSelection(input: unknown): ActiveWorkspaceSelection | null {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return null;
-  }
-  const record = input as Record<string, unknown>;
-  const serverId = typeof record.serverId === "string" ? record.serverId.trim() : "";
-  const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
-  if (!serverId || !workspaceId) {
-    return null;
-  }
-  return { serverId, workspaceId };
-}
-
-function parseStoredWorkspaceSelection(stored: string | null): ActiveWorkspaceSelection | null {
-  if (!stored) {
-    return null;
-  }
-  try {
-    return normalizeWorkspaceSelection(JSON.parse(stored));
-  } catch {
-    return null;
-  }
-}
-
-function setLastWorkspaceSelection(next: ActiveWorkspaceSelection) {
-  const normalized = normalizeWorkspaceSelection(next);
-  if (!normalized) {
-    return;
-  }
-  if (
-    lastWorkspaceSelection?.serverId === normalized.serverId &&
-    lastWorkspaceSelection.workspaceId === normalized.workspaceId
-  ) {
-    return;
-  }
-  lastWorkspaceSelection = normalized;
-  lastWorkspaceSelectionRevision += 1;
-  notifyListeners();
-  void AsyncStorage.setItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY, JSON.stringify(normalized)).catch(
-    () => {},
-  );
-}
+const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
+  lastWorkspaceSelectionStorage,
+);
 
 export function hydrateLastWorkspaceSelection(): Promise<void> {
-  if (lastWorkspaceSelectionHydrationPromise) {
-    return lastWorkspaceSelectionHydrationPromise;
-  }
-  const hydrationRevision = lastWorkspaceSelectionRevision;
-  lastWorkspaceSelectionHydrationPromise = AsyncStorage.getItem(
-    LAST_WORKSPACE_SELECTION_STORAGE_KEY,
-  )
-    .then((stored) => {
-      if (lastWorkspaceSelectionRevision === hydrationRevision) {
-        lastWorkspaceSelection = parseStoredWorkspaceSelection(stored);
-      }
-      return undefined;
-    })
-    .catch(() => {
-      if (lastWorkspaceSelectionRevision === hydrationRevision) {
-        lastWorkspaceSelection = null;
-      }
-    })
-    .finally(() => {
-      lastWorkspaceSelectionHydrated = true;
-      notifyListeners();
-    });
-  return lastWorkspaceSelectionHydrationPromise;
+  return lastWorkspaceSelectionStore.hydrate();
 }
 
 export function getLastWorkspaceSelection(): ActiveWorkspaceSelection | null {
-  return lastWorkspaceSelection;
+  return lastWorkspaceSelectionStore.getSelection();
 }
 
 export function getIsLastWorkspaceSelectionHydrated(): boolean {
-  return lastWorkspaceSelectionHydrated;
+  return lastWorkspaceSelectionStore.isHydrated();
 }
 
 function getParamValue(value: string | string[] | undefined): string {
@@ -172,16 +99,17 @@ export function navigateToWorkspace(
     });
   }
 
-  setLastWorkspaceSelection({ serverId, workspaceId });
+  lastWorkspaceSelectionStore.remember({ serverId, workspaceId });
   const route = buildHostWorkspaceRoute(serverId, workspaceId) as Href;
   router.dismissTo(route);
 }
 
 export function navigateToLastWorkspace(): boolean {
-  if (!lastWorkspaceSelection) {
+  const selection = lastWorkspaceSelectionStore.getSelection();
+  if (!selection) {
     return false;
   }
-  navigateToWorkspace(lastWorkspaceSelection.serverId, lastWorkspaceSelection.workspaceId);
+  navigateToWorkspace(selection.serverId, selection.workspaceId);
   return true;
 }
 
@@ -199,18 +127,22 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
     if (!serverId || !workspaceId) {
       return;
     }
-    setLastWorkspaceSelection({ serverId, workspaceId });
+    lastWorkspaceSelectionStore.remember({ serverId, workspaceId });
   }, [serverId, workspaceId]);
   return selection;
 }
 
 export function useLastWorkspaceSelection(): ActiveWorkspaceSelection | null {
-  return useSyncExternalStore(subscribe, getLastWorkspaceSelection, getLastWorkspaceSelection);
+  return useSyncExternalStore(
+    lastWorkspaceSelectionStore.subscribe,
+    getLastWorkspaceSelection,
+    getLastWorkspaceSelection,
+  );
 }
 
 export function useIsLastWorkspaceSelectionHydrated(): boolean {
   return useSyncExternalStore(
-    subscribe,
+    lastWorkspaceSelectionStore.subscribe,
     getIsLastWorkspaceSelectionHydrated,
     getIsLastWorkspaceSelectionHydrated,
   );
