@@ -73,8 +73,9 @@ export function buildPiLaunch(input: {
   if (input.session.session) {
     argv.push("--session", input.session.session);
   }
-  if (input.session.systemPrompt?.trim()) {
-    argv.push("--append-system-prompt", input.session.systemPrompt);
+  const systemPrompt = input.session.systemPrompt?.trim();
+  if (systemPrompt) {
+    argv.push("--append-system-prompt", systemPrompt);
   }
   if (input.session.mcpConfigPath) {
     argv.push("--mcp-config", input.session.mcpConfigPath);
@@ -87,7 +88,7 @@ export function buildPiLaunch(input: {
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     session: input.session.session,
-    systemPrompt: input.session.systemPrompt,
+    systemPrompt,
     mcpConfigPath: input.session.mcpConfigPath,
   };
 }

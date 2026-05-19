@@ -194,6 +194,77 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("creates Pi sessions with agent and daemon system prompts appended", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await client.createSession(
+      createConfig({
+        systemPrompt: "Agent prompt",
+        daemonAppendSystemPrompt: "Daemon prompt",
+      }),
+    );
+
+    expect(pi.recordedLaunches[0]).toEqual(
+      expect.objectContaining({
+        cwd: "/tmp/paseo-pi-rpc-test",
+        systemPrompt: "Agent prompt\n\nDaemon prompt",
+        argv: [
+          "pi",
+          "--mode",
+          "rpc",
+          "--thinking",
+          "medium",
+          "--append-system-prompt",
+          "Agent prompt\n\nDaemon prompt",
+        ],
+      }),
+    );
+  });
+
+  test("resumes Pi sessions with daemon system prompts appended", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session.jsonl",
+        metadata: {
+          cwd: "/workspace/project",
+          model: "openrouter/model-a",
+          thinkingOptionId: "high",
+          systemPrompt: "Agent prompt",
+        },
+      },
+      {
+        daemonAppendSystemPrompt: "Daemon prompt",
+      },
+    );
+
+    expect(pi.recordedLaunches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        session: "/tmp/native-pi-session.jsonl",
+        systemPrompt: "Agent prompt\n\nDaemon prompt",
+        argv: [
+          "pi",
+          "--mode",
+          "rpc",
+          "--model",
+          "openrouter/model-a",
+          "--thinking",
+          "high",
+          "--session",
+          "/tmp/native-pi-session.jsonl",
+          "--append-system-prompt",
+          "Agent prompt\n\nDaemon prompt",
+        ],
+      }),
+    ]);
+  });
+
   test("updates model and thinking through Pi runtime commands", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();

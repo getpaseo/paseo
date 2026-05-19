@@ -32,6 +32,7 @@ import {
 import { runProviderTurn } from "../provider-runner.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { composeSystemPromptParts } from "../../system-prompt.js";
 import { findExecutable } from "../../../../utils/executable.js";
 import {
   formatDiagnosticStatus,
@@ -111,6 +112,7 @@ interface PiPersistenceMetadata {
   cwd?: string;
   model?: string;
   thinkingOptionId?: string;
+  systemPrompt?: string;
 }
 
 interface StartTurnResult {
@@ -299,6 +301,7 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): PiPersis
     ...(typeof metadata.thinkingOptionId === "string"
       ? { thinkingOptionId: metadata.thinkingOptionId }
       : {}),
+    ...(typeof metadata.systemPrompt === "string" ? { systemPrompt: metadata.systemPrompt } : {}),
   };
 }
 
@@ -320,6 +323,7 @@ function buildResumeConfig(
       cwd,
       model,
       thinkingOptionId,
+      systemPrompt: overrideConfig.systemPrompt ?? metadata.systemPrompt,
     },
   };
 }
@@ -849,7 +853,10 @@ export class PiRpcAgentClient implements AgentClient {
         model: config.model,
         thinkingOptionId:
           normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
-        systemPrompt: config.systemPrompt,
+        systemPrompt: composeSystemPromptParts(
+          config.systemPrompt,
+          config.daemonAppendSystemPrompt,
+        ),
         mcpConfigPath: mcpConfig?.path,
       });
     } catch (error) {
@@ -892,7 +899,10 @@ export class PiRpcAgentClient implements AgentClient {
         session: sessionFile,
         model: resumeConfig.model,
         thinkingOptionId: normalizePiThinkingOption(resumeConfig.thinkingOptionId) ?? undefined,
-        systemPrompt: resumeConfig.config.systemPrompt,
+        systemPrompt: composeSystemPromptParts(
+          resumeConfig.config.systemPrompt,
+          resumeConfig.config.daemonAppendSystemPrompt,
+        ),
         mcpConfigPath: mcpConfig?.path,
       });
     } catch (error) {

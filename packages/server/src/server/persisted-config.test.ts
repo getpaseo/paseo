@@ -63,6 +63,18 @@ describe("PersistedConfigSchema daemon relay config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon append system prompt", () => {
+  test("accepts optional append system prompt", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        appendSystemPrompt: "Prefer terse replies.",
+      },
+    });
+
+    expect(parsed.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
+  });
+});
+
 describe("PersistedConfigSchema agent provider runtime settings", () => {
   test("legacy append entries are skipped during migration", () => {
     const parsed = PersistedConfigSchema.parse({

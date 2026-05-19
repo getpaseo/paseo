@@ -425,7 +425,7 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
   expect(record?.config).not.toHaveProperty("daemonAppendSystemPrompt");
 });
 
-test("daemon append system prompt is not injected into Pi", async () => {
+test("daemon append system prompt is injected into Pi configs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -449,7 +449,7 @@ test("daemon append system prompt is not injected into Pi", async () => {
     systemPrompt: "Agent instructions.",
   });
 
-  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBeUndefined();
+  expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe("Daemon instructions.");
 });
 
 test("setAgentMode persists the selected mode across session reload", async () => {

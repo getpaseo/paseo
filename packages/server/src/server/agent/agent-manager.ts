@@ -1073,6 +1073,7 @@ export class AgentManager {
     }
 
     const { archivedAt } = await this.markRecordArchived(stored);
+    agent.updatedAt = new Date(archivedAt);
     await this.closeAgent(agentId);
 
     await this.cascadeArchiveChildren(agentId);
@@ -3456,23 +3457,16 @@ export class AgentManager {
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
-    if (config.provider === "pi") {
-      const next = { ...config };
-      delete next.daemonAppendSystemPrompt;
-      return next;
-    }
+    const daemonAppendSystemPrompt = this.appendSystemPrompt.trim();
+    const next = { ...config };
+    delete next.daemonAppendSystemPrompt;
 
-    const trimmed = this.appendSystemPrompt.trim();
-    if (!trimmed) {
-      const next = { ...config };
-      delete next.daemonAppendSystemPrompt;
-      return next;
-    }
-
-    return {
-      ...config,
-      daemonAppendSystemPrompt: trimmed,
-    };
+    return daemonAppendSystemPrompt
+      ? {
+          ...next,
+          daemonAppendSystemPrompt,
+        }
+      : next;
   }
 
   private buildLaunchContext(agentId: string): AgentLaunchContext {
