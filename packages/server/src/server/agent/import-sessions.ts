@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { Logger } from "pino";
-import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import type { ProviderDefinition } from "./provider-registry.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
@@ -147,12 +147,20 @@ export async function listImportableProviderSessions(
 
 async function createCwdMatcher(cwd: string): Promise<(candidate: string) => boolean> {
   const primaryMatcher = createPathEquivalenceMatcher(cwd);
-  const resolvedCwd = await realpath(cwd).catch(() => null);
+  const resolvedCwd = resolveRealpath(cwd);
   if (!resolvedCwd || primaryMatcher(resolvedCwd)) {
     return primaryMatcher;
   }
   const realpathMatcher = createPathEquivalenceMatcher(resolvedCwd);
   return (candidate) => primaryMatcher(candidate) || realpathMatcher(candidate);
+}
+
+function resolveRealpath(value: string): string | null {
+  try {
+    return realpathSync.native(value);
+  } catch {
+    return null;
+  }
 }
 
 export async function importProviderSession(
