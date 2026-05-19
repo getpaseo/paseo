@@ -6,6 +6,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import type { ReactElement, ReactNode } from "react";
 import {
@@ -858,7 +859,7 @@ interface DesktopContainerStyleInput {
   availableHeight: number | undefined;
 }
 
-function buildDesktopContainerStyle(input: DesktopContainerStyleInput) {
+function buildNativeDesktopContainerStyle(input: DesktopContainerStyleInput) {
   const {
     desktopMinWidth,
     referenceWidth,
@@ -888,6 +889,30 @@ function buildDesktopContainerStyle(input: DesktopContainerStyleInput) {
     hiddenStyle,
     availableHeightStyle,
   ];
+}
+
+function buildWebDesktopWrapperStyle(input: DesktopContainerStyleInput): CSSProperties {
+  const {
+    desktopMinWidth,
+    referenceWidth,
+    desktopFixedHeight,
+    desktopPositionStyle,
+    shouldHideDesktopContent,
+    availableHeight,
+  } = input;
+
+  return {
+    position: "absolute",
+    minWidth: desktopMinWidth ?? referenceWidth ?? 200,
+    maxWidth: Math.max(400, desktopMinWidth ?? 0),
+    minHeight: desktopFixedHeight,
+    maxHeight:
+      typeof availableHeight === "number"
+        ? Math.min(availableHeight, desktopFixedHeight ?? 400)
+        : desktopFixedHeight,
+    opacity: shouldHideDesktopContent ? 0 : undefined,
+    ...(desktopPositionStyle as CSSProperties),
+  };
 }
 
 function isDesktopKey(key: string): key is DesktopKey {
@@ -1071,6 +1096,7 @@ interface DesktopBodyProps {
   refs: ReturnType<typeof useFloating>["refs"];
   shouldUseDesktopFade: boolean;
   desktopContainerStyle: unknown;
+  desktopWrapperStyle: CSSProperties | null;
   handleDesktopContentLayout: (event: LayoutChangeEvent) => void;
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
@@ -1182,6 +1208,44 @@ function DesktopComboboxOptionsBody(props: {
 }
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
+  const body = (
+    <Animated.View
+      testID="combobox-desktop-container"
+      entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
+      exiting={props.shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
+      style={IS_WEB ? styles.desktopContainer : (props.desktopContainerStyle as never)}
+      ref={IS_WEB ? undefined : props.refs.setFloating}
+      collapsable={false}
+      onLayout={props.handleDesktopContentLayout}
+    >
+      {props.hasChildren ? (
+        <DesktopComboboxChildrenBody header={props.header} stickyHeader={props.stickyHeader}>
+          {props.children}
+        </DesktopComboboxChildrenBody>
+      ) : (
+        <DesktopComboboxOptionsBody
+          header={props.header}
+          stickyHeader={props.stickyHeader}
+          searchable={props.searchable}
+          searchPlaceholder={props.searchPlaceholder}
+          searchQuery={props.searchQuery}
+          setSearchQueryWithCallback={props.setSearchQueryWithCallback}
+          handleSubmitSearch={props.handleSubmitSearch}
+          effectiveOptionsPosition={props.effectiveOptionsPosition}
+          desktopOptionsScrollRef={props.desktopOptionsScrollRef}
+          desktopAboveSearchContentContainerStyle={props.desktopAboveSearchContentContainerStyle}
+          handleDesktopOptionsContentSizeChange={props.handleDesktopOptionsContentSizeChange}
+          orderedVisibleOptions={props.orderedVisibleOptions}
+          value={props.value}
+          activeIndex={props.activeIndex}
+          emptyText={props.emptyText}
+          handleSelect={props.handleSelect}
+          renderOption={props.renderOption}
+        />
+      )}
+    </Animated.View>
+  );
+
   return (
     <Modal
       transparent
@@ -1191,43 +1255,13 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
     >
       <View ref={props.refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
         <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
-        <Animated.View
-          testID="combobox-desktop-container"
-          entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
-          exiting={props.shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
-          style={props.desktopContainerStyle as never}
-          ref={props.refs.setFloating}
-          collapsable={false}
-          onLayout={props.handleDesktopContentLayout}
-        >
-          {props.hasChildren ? (
-            <DesktopComboboxChildrenBody header={props.header} stickyHeader={props.stickyHeader}>
-              {props.children}
-            </DesktopComboboxChildrenBody>
-          ) : (
-            <DesktopComboboxOptionsBody
-              header={props.header}
-              stickyHeader={props.stickyHeader}
-              searchable={props.searchable}
-              searchPlaceholder={props.searchPlaceholder}
-              searchQuery={props.searchQuery}
-              setSearchQueryWithCallback={props.setSearchQueryWithCallback}
-              handleSubmitSearch={props.handleSubmitSearch}
-              effectiveOptionsPosition={props.effectiveOptionsPosition}
-              desktopOptionsScrollRef={props.desktopOptionsScrollRef}
-              desktopAboveSearchContentContainerStyle={
-                props.desktopAboveSearchContentContainerStyle
-              }
-              handleDesktopOptionsContentSizeChange={props.handleDesktopOptionsContentSizeChange}
-              orderedVisibleOptions={props.orderedVisibleOptions}
-              value={props.value}
-              activeIndex={props.activeIndex}
-              emptyText={props.emptyText}
-              handleSelect={props.handleSelect}
-              renderOption={props.renderOption}
-            />
-          )}
-        </Animated.View>
+        {props.desktopWrapperStyle ? (
+          <div ref={props.refs.setFloating} style={props.desktopWrapperStyle}>
+            {body}
+          </div>
+        ) : (
+          body
+        )}
       </View>
     </Modal>
   );
@@ -1494,7 +1528,7 @@ export function Combobox({
 
   const desktopContainerStyle = useMemo(
     () =>
-      buildDesktopContainerStyle({
+      buildNativeDesktopContainerStyle({
         desktopMinWidth,
         referenceWidth,
         desktopFixedHeight,
@@ -1502,6 +1536,27 @@ export function Combobox({
         shouldHideDesktopContent,
         availableHeight: availableSize?.height,
       }),
+    [
+      desktopMinWidth,
+      referenceWidth,
+      desktopFixedHeight,
+      desktopPositionStyle,
+      shouldHideDesktopContent,
+      availableSize?.height,
+    ],
+  );
+  const desktopWrapperStyle = useMemo(
+    () =>
+      IS_WEB
+        ? buildWebDesktopWrapperStyle({
+            desktopMinWidth,
+            referenceWidth,
+            desktopFixedHeight,
+            desktopPositionStyle,
+            shouldHideDesktopContent,
+            availableHeight: availableSize?.height,
+          })
+        : null,
     [
       desktopMinWidth,
       referenceWidth,
@@ -1562,6 +1617,7 @@ export function Combobox({
       refs={refs}
       shouldUseDesktopFade={shouldUseDesktopFade}
       desktopContainerStyle={desktopContainerStyle}
+      desktopWrapperStyle={desktopWrapperStyle}
       handleDesktopContentLayout={handleDesktopContentLayout}
       header={header}
       stickyHeader={stickyHeader}

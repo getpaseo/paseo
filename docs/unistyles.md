@@ -80,6 +80,12 @@ The important detail: the automatic native path tracks `props.style`. It does no
 
 [`useUnistyles()`](https://www.unistyl.es/v3/references/use-unistyles) is different. It gives React access to the current theme/runtime and can make a component re-render when those values change. Use it for values that must be rendered through React props, such as icon colors or small escape hatches. Do not expect direct reads from `UnistylesRuntime` to re-render a component; [issue #817](https://github.com/jpudysz/react-native-unistyles/issues/817) is a useful reminder of that invariant.
 
+## Dynamic Pixel Styles On Web
+
+Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and appends a CSS rule to `#unistyles-web`; those rules are not reclaimed during the page lifetime, so pointer-driven positioning can turn into steady stylesheet growth.
+
+For floating UI on web, put moving geometry on a raw DOM wrapper (`<div style={{ position: "absolute", top, left }}>`) and keep the inner Unistyles surface static. For dynamic dimensions on web, prefer the same raw wrapper or another non-Unistyles element that owns the changing `maxHeight` / `minWidth`.
+
 ## Main Gotcha: `contentContainerStyle`
 
 `ScrollView.contentContainerStyle` is the canonical trap. It looks like a style prop, but it is not the same prop that Unistyles' remapped native component registers by default. The upstream tutorial calls this out directly in its [ScrollView Background Issue](https://www.unistyl.es/v3/tutorial/settings-screen#scrollview-background-issue) section.

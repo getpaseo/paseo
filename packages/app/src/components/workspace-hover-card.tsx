@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PropsWithChildren,
   type ReactElement,
   type ReactNode,
@@ -254,56 +255,54 @@ function WorkspaceHoverCardContent({
     [],
   );
 
-  const cardStyle = useMemo(
-    () => [
-      styles.card,
-      {
-        width: HOVER_CARD_WIDTH,
-        position: "absolute" as const,
-        top: position?.y ?? -9999,
-        left: position?.x ?? -9999,
-      },
-    ],
+  const webPositionStyle = useMemo<CSSProperties>(
+    () => ({
+      position: "absolute",
+      top: position?.y ?? -9999,
+      left: position?.x ?? -9999,
+    }),
     [position?.x, position?.y],
   );
 
   return (
     <Portal hostName={bottomSheetInternal?.hostName}>
       <View pointerEvents="box-none" style={styles.portalOverlay}>
-        <Animated.View
-          ref={contentRef}
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          onLayout={handleLayout}
-          accessibilityRole="menu"
-          accessibilityLabel="Workspace scripts"
-          testID="workspace-hover-card"
-          style={cardStyle}
-        >
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle} numberOfLines={1} testID="hover-card-workspace-name">
-              {workspace.name}
-            </Text>
-          </View>
-          {prHint || workspace.diffStat ? (
-            <View style={styles.cardMetaRow}>
-              {workspace.diffStat ? (
-                <DiffStat
-                  additions={workspace.diffStat.additions}
-                  deletions={workspace.diffStat.deletions}
-                />
-              ) : null}
-              {prHint ? <PrBadge hint={prHint} /> : null}
+        <div style={webPositionStyle}>
+          <Animated.View
+            ref={contentRef}
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            onLayout={handleLayout}
+            accessibilityRole="menu"
+            accessibilityLabel="Workspace scripts"
+            testID="workspace-hover-card"
+            style={styles.card}
+          >
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle} numberOfLines={1} testID="hover-card-workspace-name">
+                {workspace.name}
+              </Text>
             </View>
-          ) : null}
-          {prHint?.checks && prHint.checks.length > 0 ? (
-            <>
-              <View style={styles.separator} />
-              <ChecksSummaryPressable checks={prHint.checks} url={prHint.url} />
-            </>
-          ) : null}
-        </Animated.View>
+            {prHint || workspace.diffStat ? (
+              <View style={styles.cardMetaRow}>
+                {workspace.diffStat ? (
+                  <DiffStat
+                    additions={workspace.diffStat.additions}
+                    deletions={workspace.diffStat.deletions}
+                  />
+                ) : null}
+                {prHint ? <PrBadge hint={prHint} /> : null}
+              </View>
+            ) : null}
+            {prHint?.checks && prHint.checks.length > 0 ? (
+              <>
+                <View style={styles.separator} />
+                <ChecksSummaryPressable checks={prHint.checks} url={prHint.url} />
+              </>
+            ) : null}
+          </Animated.View>
+        </div>
       </View>
     </Portal>
   );
@@ -441,6 +440,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
     borderRadius: theme.borderRadius.lg,
     paddingTop: theme.spacing[2],
+    width: HOVER_CARD_WIDTH,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,

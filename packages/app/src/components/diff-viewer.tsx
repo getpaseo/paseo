@@ -1,4 +1,4 @@
-import React from "react";
+import React, { type CSSProperties } from "react";
 import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
@@ -95,7 +95,7 @@ export function DiffViewer({
   const outerScrollStyle = React.useMemo(
     () => [
       styles.verticalScroll,
-      maxHeight !== undefined && { maxHeight },
+      !isWeb && maxHeight !== undefined && { maxHeight },
       fillAvailableHeight && styles.fillHeight,
       webScrollbarStyle,
     ],
@@ -109,6 +109,30 @@ export function DiffViewer({
     () => diffLines.map((line, index) => ({ key: `${index}-${line.type}-${line.content}`, line })),
     [diffLines],
   );
+  const webVerticalViewportStyle = React.useMemo<CSSProperties | undefined>(() => {
+    if (!isWeb) return undefined;
+    const { scrollbarColor, scrollbarWidth } = webScrollbarStyle as {
+      scrollbarColor?: string;
+      scrollbarWidth?: CSSProperties["scrollbarWidth"];
+    };
+    return {
+      scrollbarColor,
+      scrollbarWidth,
+      maxHeight,
+      overflowY: "auto",
+      overflowX: "hidden",
+      flex: fillAvailableHeight ? 1 : undefined,
+      minHeight: fillAvailableHeight ? 0 : undefined,
+    };
+  }, [maxHeight, fillAvailableHeight, webScrollbarStyle]);
+  const webLinesWrapperStyle = React.useMemo<CSSProperties | undefined>(() => {
+    if (!isWeb || scrollViewWidth <= 0) return undefined;
+    return { minWidth: scrollViewWidth };
+  }, [scrollViewWidth]);
+  const webVerticalContentStyle = React.useMemo(
+    () => [styles.verticalContent, fillAvailableHeight && styles.fillHeight],
+    [fillAvailableHeight],
+  );
 
   if (!diffLines.length) {
     return (
@@ -118,29 +142,51 @@ export function DiffViewer({
     );
   }
 
-  return (
+  const lines = isWeb ? (
+    <div style={webLinesWrapperStyle}>
+      <View style={styles.linesContainer}>
+        {keyedDiffLines.map(({ key, line }) => (
+          <DiffLineRow key={key} line={line} />
+        ))}
+      </View>
+    </div>
+  ) : (
+    <View style={linesContainerStyle}>
+      {keyedDiffLines.map(({ key, line }) => (
+        <DiffLineRow key={key} line={line} />
+      ))}
+    </View>
+  );
+
+  const horizontalScroll = (
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator
+      style={webScrollbarStyle}
+      contentContainerStyle={styles.horizontalContent}
+      onLayout={handleInnerLayout}
+    >
+      {lines}
+    </ScrollView>
+  );
+
+  const content = isWeb ? (
+    <div style={webVerticalViewportStyle}>
+      <View style={webVerticalContentStyle}>{horizontalScroll}</View>
+    </div>
+  ) : (
     <ScrollView
       style={outerScrollStyle}
       contentContainerStyle={styles.verticalContent}
       nestedScrollEnabled
       showsVerticalScrollIndicator
     >
-      <ScrollView
-        horizontal
-        nestedScrollEnabled
-        showsHorizontalScrollIndicator
-        style={webScrollbarStyle}
-        contentContainerStyle={styles.horizontalContent}
-        onLayout={handleInnerLayout}
-      >
-        <View style={linesContainerStyle}>
-          {keyedDiffLines.map(({ key, line }) => (
-            <DiffLineRow key={key} line={line} />
-          ))}
-        </View>
-      </ScrollView>
+      {horizontalScroll}
     </ScrollView>
   );
+
+  return content;
 }
 
 const styles = StyleSheet.create((theme) => {

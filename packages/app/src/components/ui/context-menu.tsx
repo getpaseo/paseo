@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PropsWithChildren,
   type ReactElement,
   type ReactNode,
@@ -498,7 +499,7 @@ export function ContextMenuContent({
     [],
   );
 
-  const animatedContentStyle = useMemo(() => {
+  const nativeContentStyle = useMemo(() => {
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
@@ -516,6 +517,17 @@ export function ContextMenuContent({
         left: position?.x ?? -9999,
       },
     ];
+  }, [fullWidth, horizontalPadding, width, minWidth, maxWidth, position?.y, position?.x]);
+  const webWrapperStyle = useMemo<CSSProperties>(() => {
+    const { width: screenWidth } = Dimensions.get("window");
+    return {
+      position: "absolute",
+      top: position?.y ?? -9999,
+      left: position?.x ?? -9999,
+      width: fullWidth ? screenWidth - horizontalPadding * 2 : width,
+      minWidth: fullWidth ? undefined : minWidth,
+      maxWidth: fullWidth ? undefined : maxWidth,
+    };
   }, [fullWidth, horizontalPadding, width, minWidth, maxWidth, position?.y, position?.x]);
 
   if (useMobileSheet) {
@@ -566,23 +578,45 @@ export function ContextMenuContent({
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}
         />
-        <Animated.View
-          entering={FadeIn.duration(100)}
-          exiting={FadeOut.duration(100)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleContentLayout}
-          style={animatedContentStyle}
-        >
-          <ScrollView
-            bounces={false}
-            showsVerticalScrollIndicator
-            style={webScrollbarStyle}
-            contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
+        {isWeb ? (
+          <div style={webWrapperStyle}>
+            <Animated.View
+              entering={FadeIn.duration(100)}
+              exiting={FadeOut.duration(100)}
+              collapsable={false}
+              testID={testID}
+              onLayout={handleContentLayout}
+              style={styles.content}
+            >
+              <ScrollView
+                bounces={false}
+                showsVerticalScrollIndicator
+                style={webScrollbarStyle}
+                contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
+              >
+                {children}
+              </ScrollView>
+            </Animated.View>
+          </div>
+        ) : (
+          <Animated.View
+            entering={FadeIn.duration(100)}
+            exiting={FadeOut.duration(100)}
+            collapsable={false}
+            testID={testID}
+            onLayout={handleContentLayout}
+            style={nativeContentStyle}
           >
-            {children}
-          </ScrollView>
-        </Animated.View>
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator
+              style={webScrollbarStyle}
+              contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
+            >
+              {children}
+            </ScrollView>
+          </Animated.View>
+        )}
       </View>
     </Modal>
   );

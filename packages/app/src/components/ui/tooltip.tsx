@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PropsWithChildren,
   type ReactElement,
 } from "react";
@@ -494,7 +495,7 @@ export function TooltipContent({
     [],
   );
 
-  const contentStyle = useMemo(
+  const nativeContentStyle = useMemo(
     () => [
       styles.content,
       { maxWidth },
@@ -507,6 +508,16 @@ export function TooltipContent({
     ],
     [maxWidth, style, position?.x, position?.y],
   );
+  const webWrapperStyle = useMemo<CSSProperties>(
+    () => ({
+      position: "absolute",
+      top: position?.y ?? -9999,
+      left: position?.x ?? -9999,
+      maxWidth,
+    }),
+    [maxWidth, position?.x, position?.y],
+  );
+  const webContentStyle = useMemo(() => [styles.content, style], [style]);
 
   const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
 
@@ -519,17 +530,19 @@ export function TooltipContent({
     return (
       <Portal hostName={bottomSheetInternal?.hostName}>
         <View pointerEvents="none" style={styles.portalOverlay}>
-          <Animated.View
-            pointerEvents="none"
-            entering={FadeIn.duration(80)}
-            exiting={FadeOut.duration(80)}
-            collapsable={false}
-            testID={testID}
-            onLayout={handleLayout}
-            style={contentStyle}
-          >
-            {children}
-          </Animated.View>
+          <div style={webWrapperStyle}>
+            <Animated.View
+              pointerEvents="none"
+              entering={FadeIn.duration(80)}
+              exiting={FadeOut.duration(80)}
+              collapsable={false}
+              testID={testID}
+              onLayout={handleLayout}
+              style={webContentStyle}
+            >
+              {children}
+            </Animated.View>
+          </div>
         </View>
       </Portal>
     );
@@ -551,7 +564,7 @@ export function TooltipContent({
           collapsable={false}
           testID={testID}
           onLayout={handleLayout}
-          style={contentStyle}
+          style={nativeContentStyle}
         >
           {children}
         </Animated.View>
