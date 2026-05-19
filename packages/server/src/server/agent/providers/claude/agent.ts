@@ -81,7 +81,6 @@ import {
 import { findExecutable, isCommandAvailable } from "../../../../utils/executable.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { execCommand } from "../../../../utils/spawn.js";
-import { getOrchestratorModeInstructions } from "../../orchestrator-instructions.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 
 const fsPromises = promises;
@@ -2316,11 +2315,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private buildAppendedSystemPrompt(): string {
     return (
-      composeSystemPromptParts(
-        getOrchestratorModeInstructions(),
-        this.config.systemPrompt,
-        this.config.daemonAppendSystemPrompt,
-      ) ?? ""
+      composeSystemPromptParts(this.config.systemPrompt, this.config.daemonAppendSystemPrompt) ?? ""
     );
   }
 
@@ -2370,7 +2365,7 @@ class ClaudeAgentSession implements AgentSession {
       canUseTool: this.handlePermissionRequest,
       pathToClaudeCodeExecutable: claudeBinary,
       // Use Claude Code preset system prompt and load CLAUDE.md files
-      // Append provider-agnostic system prompt and orchestrator instructions for agents.
+      // Append provider-agnostic system prompts for agents.
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
