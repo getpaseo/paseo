@@ -1,4 +1,5 @@
 import os from "node:os";
+import { realpathSync } from "node:fs";
 import nodePath from "node:path";
 
 /**
@@ -44,6 +45,40 @@ export function createPathEquivalenceMatcher(target: string): (candidate: string
         : normalizePathForComparison(target, candidateCompareAsWindows);
     return normalizePathForComparison(candidate, candidateCompareAsWindows) === comparableTarget;
   };
+}
+
+export function createRealpathAwarePathMatcher(target: string): (candidate: string) => boolean {
+  const targetMatchers = collectPathVariants(target).map((variant) =>
+    createPathEquivalenceMatcher(variant),
+  );
+
+  return (candidate) => {
+    const candidateVariants = collectPathVariants(candidate);
+    return candidateVariants.some((variant) => targetMatchers.some((matches) => matches(variant)));
+  };
+}
+
+function collectPathVariants(value: string): string[] {
+  const variants = new Set<string>([value]);
+  for (const realpath of resolveRealpathVariants(value)) {
+    variants.add(realpath);
+  }
+  return Array.from(variants);
+}
+
+function resolveRealpathVariants(value: string): string[] {
+  const variants: string[] = [];
+  try {
+    variants.push(realpathSync.native(value));
+  } catch {
+    // Path may not exist, or the platform may reject this link flavor.
+  }
+  try {
+    variants.push(realpathSync(value));
+  } catch {
+    // Keep string-only comparison as the fallback.
+  }
+  return variants;
 }
 
 function shouldCompareAsWindows(left: string, right: string): boolean {

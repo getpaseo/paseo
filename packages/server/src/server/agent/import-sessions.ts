@@ -1,6 +1,5 @@
 import type { z } from "zod";
 import type { Logger } from "pino";
-import { realpathSync } from "node:fs";
 import type { ProviderDefinition } from "./provider-registry.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
@@ -21,7 +20,7 @@ import type {
   RecentProviderSessionDescriptorPayload,
 } from "../../shared/messages.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
-import { createPathEquivalenceMatcher } from "../../utils/path.js";
+import { createRealpathAwarePathMatcher } from "../../utils/path.js";
 
 type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>;
 
@@ -113,7 +112,7 @@ export async function listImportableProviderSessions(
   });
   let filteredAlreadyImportedCount = 0;
   const candidates: PersistedAgentDescriptor[] = [];
-  const matchesRequestCwd = request.cwd ? await createCwdMatcher(request.cwd) : null;
+  const matchesRequestCwd = request.cwd ? createRealpathAwarePathMatcher(request.cwd) : null;
   for (const descriptor of descriptors) {
     if (matchesRequestCwd && !matchesRequestCwd(descriptor.cwd)) {
       continue;
@@ -143,28 +142,6 @@ export async function listImportableProviderSessions(
     );
 
   return { entries, filteredAlreadyImportedCount };
-}
-
-async function createCwdMatcher(cwd: string): Promise<(candidate: string) => boolean> {
-  const primaryMatcher = createPathEquivalenceMatcher(cwd);
-  const resolvedCwd = resolveRealpath(cwd);
-  if (!resolvedCwd || primaryMatcher(resolvedCwd)) {
-    return primaryMatcher;
-  }
-  const realpathMatcher = createPathEquivalenceMatcher(resolvedCwd);
-  return (candidate) => primaryMatcher(candidate) || realpathMatcher(candidate);
-}
-
-function resolveRealpath(value: string): string | null {
-  try {
-    return realpathSync.native(value);
-  } catch {
-    try {
-      return realpathSync(value);
-    } catch {
-      return null;
-    }
-  }
 }
 
 export async function importProviderSession(

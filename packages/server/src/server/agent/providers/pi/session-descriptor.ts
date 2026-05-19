@@ -1,4 +1,3 @@
-import { realpathSync } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -10,7 +9,7 @@ import type {
   PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { createPathEquivalenceMatcher } from "../../../../utils/path.js";
+import { createRealpathAwarePathMatcher } from "../../../../utils/path.js";
 
 const PI_PROVIDER = "pi";
 const PI_CONFIG_DIR_NAME = ".pi";
@@ -43,7 +42,7 @@ export async function listPiPersistedAgents(
 ): Promise<PersistedAgentDescriptor[]> {
   const sessionsDir = await resolvePiSessionsDir(options);
   const files = await walkJsonlFiles(sessionsDir);
-  const matchesCwd = options.cwd ? await createCwdMatcher(options.cwd) : null;
+  const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
   const limit = options.limit ?? 20;
   const descriptors: PersistedAgentDescriptor[] = [];
 
@@ -57,27 +56,6 @@ export async function listPiPersistedAgents(
   return descriptors
     .sort((left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime())
     .slice(0, limit);
-}
-
-async function createCwdMatcher(cwd: string): Promise<(candidate: string) => boolean> {
-  const matchers = [createPathEquivalenceMatcher(cwd)];
-  const resolvedCwd = resolveRealpath(cwd);
-  if (resolvedCwd && !createPathEquivalenceMatcher(cwd)(resolvedCwd)) {
-    matchers.push(createPathEquivalenceMatcher(resolvedCwd));
-  }
-  return (candidate) => matchers.some((matches) => matches(candidate));
-}
-
-function resolveRealpath(value: string): string | null {
-  try {
-    return realpathSync.native(value);
-  } catch {
-    try {
-      return realpathSync(value);
-    } catch {
-      return null;
-    }
-  }
 }
 
 async function resolvePiSessionsDir(options: PiSessionDescriptorOptions): Promise<string> {
