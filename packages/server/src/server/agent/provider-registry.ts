@@ -29,7 +29,7 @@ import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
-import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
+import { PiRpcAgentClient } from "./providers/pi-rpc-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -121,7 +121,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
   pi: (logger, runtimeSettings) =>
-    new PiDirectAgentClient({
+    new PiRpcAgentClient({
       logger,
       runtimeSettings,
     }),

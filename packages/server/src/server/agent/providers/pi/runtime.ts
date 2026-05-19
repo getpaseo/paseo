@@ -1,0 +1,104 @@
+import type {
+  PiAgentMessage,
+  PiModel,
+  PiRuntimeEvent,
+  PiSessionState,
+  PiSessionStats,
+} from "./rpc-types.js";
+import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+
+export interface PiRuntimeLaunch {
+  cwd: string;
+  argv: string[];
+  env?: Record<string, string>;
+  model?: string;
+  thinkingOptionId?: string;
+  session?: string;
+  systemPrompt?: string;
+}
+
+export interface PiStartSessionInput {
+  cwd: string;
+  model?: string;
+  thinkingOptionId?: string;
+  session?: string;
+  systemPrompt?: string;
+}
+
+export interface PiRuntimeSession {
+  onEvent(callback: (event: PiRuntimeEvent) => void): () => void;
+  prompt(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void>;
+  abort(): Promise<void>;
+  getState(): Promise<PiSessionState>;
+  getMessages(): Promise<PiAgentMessage[]>;
+  getAvailableModels(): Promise<PiModel[]>;
+  setModel(provider: string, modelId: string): Promise<PiModel>;
+  setThinkingLevel(level: string): Promise<void>;
+  getSessionStats(): Promise<PiSessionStats>;
+  getCommands(): Promise<
+    Array<{
+      name: string;
+      description?: string;
+      source: "extension" | "prompt" | "skill";
+    }>
+  >;
+  cancelExtensionUiRequest(id: string): void;
+  close(): Promise<void>;
+}
+
+export interface PiRuntime {
+  startSession(input: PiStartSessionInput): Promise<PiRuntimeSession>;
+}
+
+export function buildPiLaunch(input: {
+  command: [string, ...string[]];
+  runtimeSettings?: ProviderRuntimeSettings;
+  session: PiStartSessionInput;
+}): PiRuntimeLaunch {
+  const command =
+    input.runtimeSettings?.command?.mode === "replace" && input.runtimeSettings.command.argv[0]
+      ? input.runtimeSettings.command.argv
+      : input.command;
+  const argv = [...command];
+
+  if (!hasModeRpc(argv)) {
+    argv.push("--mode", "rpc");
+  }
+  if (input.session.model) {
+    argv.push("--model", input.session.model);
+  }
+  if (input.session.thinkingOptionId) {
+    argv.push("--thinking", input.session.thinkingOptionId);
+  }
+  if (input.session.session) {
+    argv.push("--session", input.session.session);
+  }
+  if (input.session.systemPrompt?.trim()) {
+    argv.push("--append-system-prompt", input.session.systemPrompt);
+  }
+
+  return {
+    cwd: input.session.cwd,
+    argv,
+    env: input.runtimeSettings?.env,
+    model: input.session.model,
+    thinkingOptionId: input.session.thinkingOptionId,
+    session: input.session.session,
+    systemPrompt: input.session.systemPrompt,
+  };
+}
+
+function hasModeRpc(argv: string[]): boolean {
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === "--mode" && argv[i + 1] === "rpc") {
+      return true;
+    }
+    if (argv[i] === "--mode=rpc") {
+      return true;
+    }
+  }
+  return false;
+}

@@ -193,8 +193,8 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
   },
 }));
 
-vi.mock("./providers/pi-direct-agent.js", () => ({
-  PiDirectAgentClient: class PiDirectAgentClient {
+vi.mock("./providers/pi-rpc-agent.js", () => ({
+  PiRpcAgentClient: class PiRpcAgentClient {
     readonly capabilities = {
       supportsStreaming: true,
       supportsSessionPersistence: true,
