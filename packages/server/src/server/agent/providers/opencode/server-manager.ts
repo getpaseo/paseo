@@ -21,7 +21,10 @@ export interface OpenCodeServerAcquisition {
 
 export interface OpenCodeServerManagerLike {
   ensureRunning(): Promise<{ port: number; url: string }>;
-  acquire(options: { force: boolean }): Promise<OpenCodeServerAcquisition>;
+  acquire(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition>;
 }
 
 export interface OpenCodeServerGeneration {
@@ -91,10 +94,22 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return acquisition.server;
   }
 
-  async acquire(options: { force: boolean }): Promise<OpenCodeServerAcquisition> {
+  async acquire(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition> {
+    if (options.env) {
+      const server = await this.startDedicatedServer(options.env);
+      return this.acquireServer(server);
+    }
+
     const server = options.force
       ? await this.getForcedRefreshServer()
       : await this.getCurrentServer();
+    return this.acquireServer(server);
+  }
+
+  private acquireServer(server: OpenCodeServerGeneration): OpenCodeServerAcquisition {
     server.refCount += 1;
     let released = false;
     return {
@@ -164,7 +179,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     }
   }
 
-  private async startServer(): Promise<OpenCodeServerGeneration> {
+  private async startDedicatedServer(
+    env: Record<string, string>,
+  ): Promise<OpenCodeServerGeneration> {
+    const server = await this.startServer(env);
+    server.retired = true;
+    this.retiredServers.add(server);
+    return server;
+  }
+
+  private async startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
     const port = await findAvailablePort();
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await resolveProviderCommandPrefix(
@@ -179,7 +203,10 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         {
           detached: process.platform !== "win32",
           stdio: ["ignore", "pipe", "pipe"],
-          ...createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
+          ...createProviderEnvSpec({
+            runtimeSettings: this.runtimeSettings,
+            overlays: [launchEnv],
+          }),
         },
       );
 

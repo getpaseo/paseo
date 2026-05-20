@@ -843,7 +843,7 @@ export class PiRpcAgentClient implements AgentClient {
 
   async createSession(
     config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers);
     let runtimeSession: PiRuntimeSession;
@@ -857,6 +857,7 @@ export class PiRpcAgentClient implements AgentClient {
           config.systemPrompt,
           config.daemonAppendSystemPrompt,
         ),
+        env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
       });
     } catch (error) {

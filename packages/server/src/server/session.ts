@@ -3084,6 +3084,7 @@ export class Session {
       images,
       attachments,
       labels,
+      env,
     } = msg;
     this.sessionLogger.info(
       { cwd: config.cwd, provider: config.provider, worktreeName },
@@ -3124,6 +3125,7 @@ export class Session {
         labels,
         workspaceId: resolvedWorkspace.workspaceId,
         initialPrompt: trimmedPrompt,
+        env,
       });
       await this.forwardAgentUpdate(snapshot);
 

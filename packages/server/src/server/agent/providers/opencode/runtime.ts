@@ -10,7 +10,10 @@ export interface OpenCodeServerAcquisition {
 }
 
 export interface OpenCodeRuntime {
-  acquireServer(options: { force: boolean }): Promise<OpenCodeServerAcquisition>;
+  acquireServer(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition>;
   ensureServerRunning(): Promise<{ port: number; url: string }>;
   createClient(options: { baseUrl: string; directory: string }): OpencodeClient;
   shutdown(): Promise<void>;

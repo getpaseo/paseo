@@ -2,6 +2,7 @@ import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "./ser
 
 export interface TestOpenCodeServerAcquisition {
   force: boolean;
+  env?: Record<string, string>;
   released: boolean;
 }
 
@@ -15,9 +16,13 @@ export class TestOpenCodeServerManager implements OpenCodeServerManagerLike {
     return this.server;
   }
 
-  async acquire(options: { force: boolean }): Promise<OpenCodeServerAcquisition> {
+  async acquire(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition> {
     const acquisition: TestOpenCodeServerAcquisition = {
       force: options.force,
+      env: options.env,
       released: false,
     };
     this.acquisitions.push(acquisition);

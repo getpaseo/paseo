@@ -8,7 +8,11 @@ interface OpenCodeResponse {
 }
 
 export class TestOpenCodeRuntime implements OpenCodeRuntime {
-  readonly acquisitions: Array<{ force: boolean; releaseCount: number }> = [];
+  readonly acquisitions: Array<{
+    force: boolean;
+    env?: Record<string, string>;
+    releaseCount: number;
+  }> = [];
   readonly clientCreations: Array<{ baseUrl: string; directory: string }> = [];
   private readonly clients: TestOpenCodeClient[] = [];
 
@@ -18,8 +22,11 @@ export class TestOpenCodeRuntime implements OpenCodeRuntime {
     this.clients.push(client);
   }
 
-  async acquireServer(options: { force: boolean }): Promise<OpenCodeServerAcquisition> {
-    const acquisition = { force: options.force, releaseCount: 0 };
+  async acquireServer(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition> {
+    const acquisition = { force: options.force, env: options.env, releaseCount: 0 };
     this.acquisitions.push(acquisition);
     return {
       server: this.server,

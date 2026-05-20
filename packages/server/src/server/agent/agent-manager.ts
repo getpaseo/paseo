@@ -805,6 +805,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       initialPrompt?: string;
+      env?: Record<string, string>;
       persistSession?: boolean;
     },
   ): Promise<ManagedAgent> {
@@ -826,7 +827,7 @@ export class AgentManager {
     const normalizedConfig = this.applyDaemonAppendSystemPrompt(
       await this.normalizeConfig(injectedConfig),
     );
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const launchContext = this.buildLaunchContext(resolvedAgentId, options?.env);
     const client = await this.requireAvailableClient({
       provider: normalizedConfig.provider,
     });
@@ -3469,10 +3470,11 @@ export class AgentManager {
       : next;
   }
 
-  private buildLaunchContext(agentId: string): AgentLaunchContext {
+  private buildLaunchContext(agentId: string, env?: Record<string, string>): AgentLaunchContext {
     return {
       agentId,
       env: {
+        ...env,
         PASEO_AGENT_ID: agentId,
       },
     };

@@ -961,7 +961,10 @@ interface OpenCodeAgentClientDeps {
 class ProductionOpenCodeRuntime implements OpenCodeRuntime {
   constructor(private readonly serverManager: OpenCodeServerManager) {}
 
-  async acquireServer(options: { force: boolean }): Promise<OpenCodeServerAcquisition> {
+  async acquireServer(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition> {
     return this.serverManager.acquire(options);
   }
 
@@ -1007,7 +1010,10 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.runtime.acquireServer({ force: false });
+    const acquisition = await this.runtime.acquireServer({
+      force: false,
+      env: launchContext?.env,
+    });
     const { url } = acquisition.server;
     const client = this.runtime.createClient({
       baseUrl: url,

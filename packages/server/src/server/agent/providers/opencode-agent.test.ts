@@ -1138,6 +1138,40 @@ describe("OpenCode adapter startTurn error handling", () => {
   });
 });
 
+describe("OpenCodeAgentClient env", () => {
+  test("passes launch-context env to env-specific server acquisition", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+
+    try {
+      const session = await client.createSession(
+        {
+          provider: "opencode",
+          cwd,
+        },
+        {
+          env: {
+            CHUNK14_PROBE: "expected",
+          },
+        },
+      );
+      await session.close();
+
+      expect(runtime.acquisitions[0]).toMatchObject({
+        force: false,
+        env: {
+          CHUNK14_PROBE: "expected",
+        },
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("OpenCode persisted sessions", () => {
   test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
     const runtime = new TestOpenCodeRuntime();

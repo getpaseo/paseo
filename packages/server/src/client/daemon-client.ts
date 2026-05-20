@@ -249,6 +249,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   config?: AgentSessionConfig;
   provider?: AgentProvider;
   cwd?: string;
+  env?: CreateAgentRequestMessage["env"];
   workspaceId?: string;
   initialPrompt?: string;
   clientMessageId?: string;
@@ -1837,6 +1838,7 @@ export class DaemonClient {
       type: "create_agent_request",
       requestId,
       config,
+      ...(options.env ? { env: options.env } : {}),
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
@@ -4667,6 +4669,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     config,
     provider,
     cwd,
+    env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,
     images: _images,

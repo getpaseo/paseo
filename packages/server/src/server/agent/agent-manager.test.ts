@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -144,6 +145,46 @@ class TestAgentClient implements AgentClient {
       cwd: config?.cwd ?? process.cwd(),
       daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
     });
+  }
+}
+
+class EnvProbeAgentClient extends TestAgentClient {
+  probe: Promise<{ probe: string | null; agentId: string | null }> | null = null;
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const script = `
+      process.stdout.write(JSON.stringify({
+        probe: process.env.CHUNK14_PROBE ?? null,
+        agentId: process.env.PASEO_AGENT_ID ?? null
+      }));
+    `;
+    const child = spawn(process.execPath, ["-e", script], {
+      cwd: config.cwd,
+      env: { ...process.env, ...launchContext?.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    this.probe = new Promise((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`env probe exited ${code}: ${stderr}`));
+          return;
+        }
+        resolve(JSON.parse(stdout) as { probe: string | null; agentId: string | null });
+      });
+    });
+    return new TestAgentSession(config);
   }
 }
 
@@ -371,6 +412,40 @@ test("normalizeConfig injects the provider default model when omitted", async ()
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto");
+});
+
+test("createAgent forwards request env into the spawned provider process", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-env-test-"));
+  const client = new EnvProbeAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-00000000e001",
+  });
+
+  try {
+    await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      undefined,
+      {
+        env: {
+          CHUNK14_PROBE: "expected",
+        },
+      },
+    );
+
+    await expect(client.probe).resolves.toEqual({
+      probe: "expected",
+      agentId: "00000000-0000-4000-8000-00000000e001",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("normalizeConfig strips legacy 'default' model id", async () => {

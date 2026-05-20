@@ -42,6 +42,22 @@ async function createSession(pi = new FakePi()): Promise<{
   return { pi, session, events };
 }
 
+test("forwards launch-context env to the Pi process launch", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const session = await client.createSession(createConfig(), {
+    env: {
+      CHUNK14_PROBE: "expected",
+    },
+  });
+
+  expect(pi.recordedLaunches[0]?.env).toEqual({
+    CHUNK14_PROBE: "expected",
+  });
+
+  await session.close();
+});
+
 class SessionEvents {
   private readonly events: AgentStreamEvent[] = [];
   private readonly waiters: Array<{
