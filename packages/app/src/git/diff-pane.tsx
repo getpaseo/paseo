@@ -256,7 +256,12 @@ function DiffGutterCell({
   style?: StyleProp<ViewStyle>;
 }) {
   const containerStyle = useMemo(
-    () => [styles.gutterCell, lineTypeBackground(type), { width: gutterWidth }, style],
+    () => [
+      styles.gutterCell,
+      lineTypeBackground(type),
+      inlineUnistylesStyle({ width: gutterWidth }),
+      style,
+    ],
     [type, gutterWidth, style],
   );
   const textStyle = useMemo(
@@ -526,7 +531,10 @@ function InlineReviewThreadContent({
 }) {
   const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
   const height = reservedHeight ?? threadState?.height ?? 0;
-  const placeholderStyle = useMemo<ViewStyle>(() => ({ minHeight: height }), [height]);
+  const placeholderStyle = useMemo<ViewStyle>(
+    () => inlineUnistylesStyle({ minHeight: height }),
+    [height],
+  );
   if (height === 0) {
     return null;
   }
@@ -562,7 +570,11 @@ function InlineReviewGutterSpacer({
   const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
   const height = reservedHeight ?? threadState?.height ?? 0;
   const spacerStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.inlineReviewGutterSpacer, { width: gutterWidth, minHeight: height }, style],
+    () => [
+      styles.inlineReviewGutterSpacer,
+      inlineUnistylesStyle({ width: gutterWidth, minHeight: height }),
+      style,
+    ],
     [gutterWidth, height, style],
   );
   if (height === 0) {
@@ -586,10 +598,13 @@ function InlineReviewRow({
   const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
   const height = reservedHeight ?? threadState?.height ?? 0;
   const gutterSpacerStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.inlineReviewGutterSpacer, { width: gutterWidth }],
+    () => [styles.inlineReviewGutterSpacer, inlineUnistylesStyle({ width: gutterWidth })],
     [gutterWidth],
   );
-  const placeholderStyle = useMemo<ViewStyle>(() => ({ minHeight: height }), [height]);
+  const placeholderStyle = useMemo<ViewStyle>(
+    () => inlineUnistylesStyle({ minHeight: height }),
+    [height],
+  );
   if (height === 0) {
     return null;
   }
@@ -638,7 +653,10 @@ function SplitDiffColumn({
     [showDivider],
   );
   const linesContainerRowStyle = useMemo(
-    () => [styles.linesContainer, scrollWidth > 0 && { minWidth: scrollWidth }],
+    () => [
+      styles.linesContainer,
+      scrollWidth > 0 && inlineUnistylesStyle({ minWidth: scrollWidth }),
+    ],
     [scrollWidth],
   );
 
@@ -898,7 +916,10 @@ function DiffFileBody({
 
   const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
   const linesContainerRowStyle = useMemo(
-    () => [styles.linesContainer, availableWidth > 0 && { minWidth: availableWidth }],
+    () => [
+      styles.linesContainer,
+      availableWidth > 0 && inlineUnistylesStyle({ minWidth: availableWidth }),
+    ],
     [availableWidth],
   );
 
