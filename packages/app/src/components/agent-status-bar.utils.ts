@@ -3,6 +3,13 @@ import type { AgentFeature, AgentModelDefinition } from "@server/server/agent/ag
 export type ExplainedStatusSelector = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "yellow";
 
+export function shouldGroupAgentStatusBarPreferences(input: {
+  isWeb: boolean;
+  isCompact: boolean;
+}): boolean {
+  return input.isWeb && input.isCompact;
+}
+
 export function getStatusSelectorHint(selector: ExplainedStatusSelector): string {
   switch (selector) {
     case "thinking":

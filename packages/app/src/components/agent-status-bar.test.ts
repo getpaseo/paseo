@@ -5,6 +5,7 @@ import {
   getStatusSelectorHint,
   normalizeModelId,
   resolveAgentModelSelection,
+  shouldGroupAgentStatusBarPreferences,
 } from "./agent-status-bar.utils";
 
 describe("getStatusSelectorHint", () => {
@@ -12,6 +13,15 @@ describe("getStatusSelectorHint", () => {
     expect(getStatusSelectorHint("thinking")).toBe("Thinking mode");
     expect(getStatusSelectorHint("model")).toBe("Change model");
     expect(getStatusSelectorHint("mode")).toBe("Change permission mode");
+  });
+});
+
+describe("shouldGroupAgentStatusBarPreferences", () => {
+  it("groups non-model preferences only for compact web chat bars", () => {
+    expect(shouldGroupAgentStatusBarPreferences({ isWeb: true, isCompact: true })).toBe(true);
+    expect(shouldGroupAgentStatusBarPreferences({ isWeb: true, isCompact: false })).toBe(false);
+    expect(shouldGroupAgentStatusBarPreferences({ isWeb: false, isCompact: true })).toBe(false);
+    expect(shouldGroupAgentStatusBarPreferences({ isWeb: false, isCompact: false })).toBe(false);
   });
 });
 

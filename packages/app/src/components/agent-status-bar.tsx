@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type ReactElement,
   type RefObject,
 } from "react";
@@ -67,8 +68,10 @@ import {
   getFeatureTooltip,
   getStatusSelectorHint,
   resolveAgentModelSelection,
+  shouldGroupAgentStatusBarPreferences,
 } from "@/components/agent-status-bar.utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 
@@ -206,7 +209,7 @@ function shortModelLabel(label: string): string {
   return i === -1 ? label : label.slice(i + 1);
 }
 
-type ActiveSheet = "thinking" | "mode" | "features" | null;
+type ActiveSheet = "thinking" | "mode" | "features" | "preferences" | null;
 
 function resolveHasAnyControl({
   providerOptions,
@@ -514,6 +517,10 @@ function ControlledStatusBar({
     thinkingOptions,
     features,
   });
+  const shouldGroupPreferences = shouldGroupAgentStatusBarPreferences({
+    isWeb: platformIsWeb,
+    isCompact,
+  });
 
   const modelDisabled = disabled;
 
@@ -760,6 +767,7 @@ function ControlledStatusBar({
           openSelector={openSelector}
           ProviderIcon={ProviderIcon}
           activeSheet={activeSheet}
+          groupPreferences={shouldGroupPreferences}
           handleOpenSheet={handleOpenSheet}
           handleCloseSheet={handleCloseSheet}
           handleSheetModelSelect={handleSheetModelSelect}
@@ -1070,6 +1078,7 @@ interface SheetStatusBarContentProps {
   openSelector: StatusSelector | null;
   ProviderIcon: ReturnType<typeof getProviderIcon> | null;
   activeSheet: ActiveSheet;
+  groupPreferences: boolean;
   handleOpenSheet: (sheet: Exclude<ActiveSheet, null>) => void;
   handleCloseSheet: () => void;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
@@ -1117,6 +1126,7 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     openSelector,
     ProviderIcon,
     activeSheet,
+    groupPreferences,
     handleOpenSheet,
     handleCloseSheet,
     handleSheetModelSelect,
@@ -1133,10 +1143,15 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
   const hasThinking = comboboxThinkingOptions.length > 0;
   const hasMode = Boolean(canSelectMode && comboboxModeOptions.length > 0);
   const hasFeatures = Boolean(features && features.length > 0);
+  const hasGroupedPreferences = groupPreferences && (hasThinking || hasMode || hasFeatures);
 
   const handleOpenThinking = useCallback(() => handleOpenSheet("thinking"), [handleOpenSheet]);
   const handleOpenMode = useCallback(() => handleOpenSheet("mode"), [handleOpenSheet]);
   const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
+  const handleOpenPreferences = useCallback(
+    () => handleOpenSheet("preferences"),
+    [handleOpenSheet],
+  );
   const handleThinkingSheetOpenChange = useCallback(
     (nextOpen: boolean) => {
       if (nextOpen) {
@@ -1197,116 +1212,508 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     disabled,
     activeSheet === "features",
   );
+  const preferencesButtonStyle = makeBadgePressableStyle(
+    styles.modeIconBadge,
+    styles.disabledBadge,
+    disabled || !hasGroupedPreferences,
+    activeSheet === "preferences",
+  );
 
   return (
     <>
-      {canSelectModel ? (
-        <CombinedModelSelector
-          providers={modelSelectorProviders}
-          selectedProvider={provider}
-          selectedModel={selectedModelId ?? ""}
-          onSelect={handleSheetModelSelect}
-          favoriteKeys={favoriteKeys}
-          onToggleFavorite={onToggleFavoriteModel}
-          isLoading={isModelLoading}
-          disabled={modelDisabled}
-          onOpen={onModelSelectorOpen}
-          onClose={onDropdownClose}
-          renderTrigger={renderModelTrigger}
-        />
-      ) : null}
-
-      {hasThinking ? (
-        <Pressable
-          ref={thinkingAnchorRef}
-          onPress={handleOpenThinking}
-          disabled={disabled || !canSelectThinking}
-          style={thinkingButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel="Select thinking option"
-          testID="agent-status-bar-thinking"
-        >
-          <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-        </Pressable>
-      ) : null}
-
-      {hasMode ? (
-        <Pressable
-          ref={modeAnchorRef}
-          onPress={handleOpenMode}
-          disabled={disabled || !canSelectMode}
-          style={modeButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={`Select agent mode (${selectedModeId ?? ""})`}
-          testID="agent-preferences-mode"
-        >
-          {ModeIconComponent ? (
-            <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
-          ) : (
-            <ShieldCheck size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-          )}
-        </Pressable>
-      ) : null}
-
-      {hasFeatures ? (
-        <Pressable
-          onPress={handleOpenFeatures}
-          disabled={disabled}
-          style={featuresButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel="Open agent features"
-          testID="agent-status-bar-features"
-        >
-          <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-        </Pressable>
-      ) : null}
-
-      {hasThinking ? (
-        <Combobox
-          options={comboboxThinkingOptions}
-          value={selectedThinkingOptionId ?? ""}
-          onSelect={handleSelectThinkingAndClose}
-          searchable={false}
-          title="Thinking"
-          open={activeSheet === "thinking"}
-          onOpenChange={handleThinkingSheetOpenChange}
-          anchorRef={thinkingAnchorRef}
-          renderOption={renderThinkingOption}
-        />
-      ) : null}
-
-      {hasMode ? (
-        <Combobox
-          options={comboboxModeOptions}
-          value={selectedModeId ?? ""}
-          onSelect={handleSelectModeAndClose}
-          searchable={false}
-          title="Mode"
-          open={activeSheet === "mode"}
-          onOpenChange={handleModeSheetOpenChange}
-          renderOption={renderModeOption}
-          anchorRef={modeAnchorRef}
-        />
-      ) : null}
-
-      <AdaptiveModalSheet
-        header={FEATURES_SHEET_HEADER}
+      <SheetModelControl
+        canSelectModel={canSelectModel}
+        providers={modelSelectorProviders}
+        selectedProvider={provider}
+        selectedModel={selectedModelId ?? ""}
+        onSelect={handleSheetModelSelect}
+        favoriteKeys={favoriteKeys}
+        onToggleFavorite={onToggleFavoriteModel}
+        isLoading={isModelLoading}
+        disabled={modelDisabled}
+        onOpen={onModelSelectorOpen}
+        onClose={onDropdownClose}
+        renderTrigger={renderModelTrigger}
+      />
+      <SheetPreferencesButton
+        visible={hasGroupedPreferences}
+        disabled={disabled || !hasGroupedPreferences}
+        style={preferencesButtonStyle}
+        onPress={handleOpenPreferences}
+        iconSize={theme.iconSize.md}
+        iconColor={theme.colors.foregroundMuted}
+      />
+      <SheetThinkingButton
+        visible={hasThinking && !groupPreferences}
+        anchorRef={thinkingAnchorRef}
+        disabled={disabled || !canSelectThinking}
+        style={thinkingButtonStyle}
+        onPress={handleOpenThinking}
+        iconSize={theme.iconSize.md}
+        iconColor={theme.colors.foregroundMuted}
+      />
+      <SheetModeButton
+        visible={hasMode && !groupPreferences}
+        anchorRef={modeAnchorRef}
+        disabled={disabled || !canSelectMode}
+        style={modeButtonStyle}
+        onPress={handleOpenMode}
+        selectedModeId={selectedModeId}
+        ModeIconComponent={ModeIconComponent}
+        iconColor={modeIconColor}
+        fallbackIconColor={theme.colors.foregroundMuted}
+        iconSize={theme.iconSize.md}
+      />
+      <SheetFeaturesButton
+        visible={hasFeatures && !groupPreferences}
+        disabled={disabled}
+        style={featuresButtonStyle}
+        onPress={handleOpenFeatures}
+        iconSize={theme.iconSize.md}
+        iconColor={theme.colors.foregroundMuted}
+      />
+      <SheetThinkingCombobox
+        visible={hasThinking}
+        options={comboboxThinkingOptions}
+        selectedThinkingOptionId={selectedThinkingOptionId}
+        onSelect={handleSelectThinkingAndClose}
+        open={activeSheet === "thinking"}
+        onOpenChange={handleThinkingSheetOpenChange}
+        anchorRef={thinkingAnchorRef}
+        renderOption={renderThinkingOption}
+      />
+      <SheetModeCombobox
+        visible={hasMode}
+        options={comboboxModeOptions}
+        selectedModeId={selectedModeId}
+        onSelect={handleSelectModeAndClose}
+        open={activeSheet === "mode"}
+        onOpenChange={handleModeSheetOpenChange}
+        anchorRef={modeAnchorRef}
+        renderOption={renderModeOption}
+      />
+      <SheetPreferencesSheet
+        visible={activeSheet === "preferences"}
+        onClose={handleCloseSheet}
+        hasThinking={hasThinking}
+        thinkingOptions={comboboxThinkingOptions}
+        selectedThinkingOptionId={selectedThinkingOptionId}
+        onOpenThinking={handleOpenThinking}
+        hasMode={hasMode}
+        modeOptions={comboboxModeOptions}
+        selectedModeId={selectedModeId}
+        onOpenMode={handleOpenMode}
+        ModeIconComponent={ModeIconComponent}
+        modeIconColor={modeIconColor}
+        features={features}
+        disabled={disabled}
+        openSelector={openSelector}
+        handleOpenChange={handleOpenChange}
+        onSetFeature={onSetFeature}
+      />
+      <SheetFeaturesSheet
         visible={activeSheet === "features"}
         onClose={handleCloseSheet}
-        testID="agent-features-sheet"
-      >
-        {(features ?? []).map((feature) => (
-          <SheetFeatureItem
-            key={`feature-${feature.id}`}
-            feature={feature}
-            disabled={disabled}
-            openSelector={openSelector}
-            handleOpenChange={handleOpenChange}
-            onSetFeature={onSetFeature}
-          />
-        ))}
-      </AdaptiveModalSheet>
+        features={features}
+        disabled={disabled}
+        openSelector={openSelector}
+        handleOpenChange={handleOpenChange}
+        onSetFeature={onSetFeature}
+      />
     </>
+  );
+}
+
+interface SheetModelControlProps {
+  canSelectModel: boolean;
+  providers: ProviderSelectorProvider[];
+  selectedProvider: string;
+  selectedModel: string;
+  onSelect: (providerId: string, modelId: string) => void;
+  favoriteKeys: Set<string>;
+  onToggleFavorite?: (provider: string, modelId: string) => void;
+  isLoading: boolean;
+  disabled: boolean;
+  onOpen?: () => void;
+  onClose?: () => void;
+  renderTrigger: ComponentProps<typeof CombinedModelSelector>["renderTrigger"];
+}
+
+function SheetModelControl({
+  canSelectModel,
+  providers,
+  selectedProvider,
+  selectedModel,
+  onSelect,
+  favoriteKeys,
+  onToggleFavorite,
+  isLoading,
+  disabled,
+  onOpen,
+  onClose,
+  renderTrigger,
+}: SheetModelControlProps) {
+  if (!canSelectModel) return null;
+  return (
+    <CombinedModelSelector
+      providers={providers}
+      selectedProvider={selectedProvider}
+      selectedModel={selectedModel}
+      onSelect={onSelect}
+      favoriteKeys={favoriteKeys}
+      onToggleFavorite={onToggleFavorite}
+      isLoading={isLoading}
+      disabled={disabled}
+      onOpen={onOpen}
+      onClose={onClose}
+      renderTrigger={renderTrigger}
+    />
+  );
+}
+
+interface SheetIconButtonProps {
+  visible: boolean;
+  disabled: boolean;
+  style: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  onPress: () => void;
+  iconSize: number;
+  iconColor: string;
+}
+
+function SheetPreferencesButton({
+  visible,
+  disabled,
+  style,
+  onPress,
+  iconSize,
+  iconColor,
+}: SheetIconButtonProps) {
+  if (!visible) return null;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={style}
+      accessibilityRole="button"
+      accessibilityLabel="Open agent preferences"
+      testID="agent-status-bar-preferences"
+    >
+      <Settings2 size={iconSize} color={iconColor} />
+    </Pressable>
+  );
+}
+
+const SheetThinkingButton = memo(function SheetThinkingButton({
+  visible,
+  disabled,
+  style,
+  onPress,
+  iconSize,
+  iconColor,
+  anchorRef,
+}: SheetIconButtonProps & { anchorRef: RefObject<View | null> }) {
+  if (!visible) return null;
+  return (
+    <Pressable
+      ref={anchorRef}
+      onPress={onPress}
+      disabled={disabled}
+      style={style}
+      accessibilityRole="button"
+      accessibilityLabel="Select thinking option"
+      testID="agent-status-bar-thinking"
+    >
+      <Brain size={iconSize} color={iconColor} />
+    </Pressable>
+  );
+});
+
+interface SheetModeButtonProps {
+  visible: boolean;
+  disabled: boolean;
+  style: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  onPress: () => void;
+  selectedModeId?: string;
+  ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
+  iconColor: string;
+  fallbackIconColor: string;
+  iconSize: number;
+  anchorRef: RefObject<View | null>;
+}
+
+const SheetModeButton = memo(function SheetModeButton({
+  visible,
+  disabled,
+  style,
+  onPress,
+  selectedModeId,
+  ModeIconComponent,
+  iconColor,
+  fallbackIconColor,
+  iconSize,
+  anchorRef,
+}: SheetModeButtonProps) {
+  if (!visible) return null;
+  return (
+    <Pressable
+      ref={anchorRef}
+      onPress={onPress}
+      disabled={disabled}
+      style={style}
+      accessibilityRole="button"
+      accessibilityLabel={`Select agent mode (${selectedModeId ?? ""})`}
+      testID="agent-preferences-mode"
+    >
+      {ModeIconComponent ? (
+        <ModeIconComponent size={iconSize} color={iconColor} />
+      ) : (
+        <ShieldCheck size={iconSize} color={fallbackIconColor} />
+      )}
+    </Pressable>
+  );
+});
+
+function SheetFeaturesButton({
+  visible,
+  disabled,
+  style,
+  onPress,
+  iconSize,
+  iconColor,
+}: SheetIconButtonProps) {
+  if (!visible) return null;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={style}
+      accessibilityRole="button"
+      accessibilityLabel="Open agent features"
+      testID="agent-status-bar-features"
+    >
+      <Settings2 size={iconSize} color={iconColor} />
+    </Pressable>
+  );
+}
+
+interface SheetThinkingComboboxProps {
+  visible: boolean;
+  options: ComboboxOption[];
+  selectedThinkingOptionId?: string;
+  onSelect: (thinkingOptionId: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  anchorRef: RefObject<View | null>;
+  renderOption: (args: {
+    option: ComboboxOption;
+    selected: boolean;
+    active: boolean;
+    onPress: () => void;
+  }) => ReactElement;
+}
+
+function SheetThinkingCombobox({
+  visible,
+  options,
+  selectedThinkingOptionId,
+  onSelect,
+  open,
+  onOpenChange,
+  anchorRef,
+  renderOption,
+}: SheetThinkingComboboxProps) {
+  if (!visible) return null;
+  return (
+    <Combobox
+      options={options}
+      value={selectedThinkingOptionId ?? ""}
+      onSelect={onSelect}
+      searchable={false}
+      title="Thinking"
+      open={open}
+      onOpenChange={onOpenChange}
+      anchorRef={anchorRef}
+      renderOption={renderOption}
+    />
+  );
+}
+
+interface SheetModeComboboxProps {
+  visible: boolean;
+  options: ComboboxOption[];
+  selectedModeId?: string;
+  onSelect: (modeId: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  anchorRef: RefObject<View | null>;
+  renderOption: (args: {
+    option: ComboboxOption;
+    selected: boolean;
+    active: boolean;
+    onPress: () => void;
+  }) => ReactElement;
+}
+
+function SheetModeCombobox({
+  visible,
+  options,
+  selectedModeId,
+  onSelect,
+  open,
+  onOpenChange,
+  anchorRef,
+  renderOption,
+}: SheetModeComboboxProps) {
+  if (!visible) return null;
+  return (
+    <Combobox
+      options={options}
+      value={selectedModeId ?? ""}
+      onSelect={onSelect}
+      searchable={false}
+      title="Mode"
+      open={open}
+      onOpenChange={onOpenChange}
+      renderOption={renderOption}
+      anchorRef={anchorRef}
+    />
+  );
+}
+
+interface SheetPreferencesSheetProps {
+  visible: boolean;
+  onClose: () => void;
+  hasThinking: boolean;
+  thinkingOptions: ComboboxOption[];
+  selectedThinkingOptionId?: string;
+  onOpenThinking: () => void;
+  hasMode: boolean;
+  modeOptions: ComboboxOption[];
+  selectedModeId?: string;
+  onOpenMode: () => void;
+  ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
+  modeIconColor: string;
+  features?: AgentFeature[];
+  disabled: boolean;
+  openSelector: StatusSelector | null;
+  handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
+  onSetFeature?: (featureId: string, value: unknown) => void;
+}
+
+function SheetPreferencesSheet({
+  visible,
+  onClose,
+  hasThinking,
+  thinkingOptions,
+  selectedThinkingOptionId,
+  onOpenThinking,
+  hasMode,
+  modeOptions,
+  selectedModeId,
+  onOpenMode,
+  ModeIconComponent,
+  modeIconColor,
+  features,
+  disabled,
+  openSelector,
+  handleOpenChange,
+  onSetFeature,
+}: SheetPreferencesSheetProps) {
+  const { theme } = useUnistyles();
+  const thinkingIcon = useMemo(
+    () => <Brain size={16} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const modeIcon = useMemo(
+    () =>
+      ModeIconComponent ? (
+        <ModeIconComponent size={16} color={modeIconColor} />
+      ) : (
+        <ShieldCheck size={16} color={theme.colors.foregroundMuted} />
+      ),
+    [ModeIconComponent, modeIconColor, theme.colors.foregroundMuted],
+  );
+  const thinkingDescription = thinkingOptions.find((o) => o.id === selectedThinkingOptionId)?.label;
+  const modeDescription = modeOptions.find((o) => o.id === selectedModeId)?.label;
+
+  return (
+    <AdaptiveModalSheet
+      header={PREFERENCES_SHEET_HEADER}
+      visible={visible}
+      onClose={onClose}
+      testID="agent-preferences-sheet"
+    >
+      {hasThinking ? (
+        <View style={styles.sheetSection}>
+          <ComboboxItem
+            label="Thinking"
+            description={thinkingDescription}
+            onPress={onOpenThinking}
+            leadingSlot={thinkingIcon}
+          />
+        </View>
+      ) : null}
+      {hasMode ? (
+        <View style={styles.sheetSection}>
+          <ComboboxItem
+            label="Mode"
+            description={modeDescription}
+            onPress={onOpenMode}
+            leadingSlot={modeIcon}
+          />
+        </View>
+      ) : null}
+      {features?.map((feature) => (
+        <SheetFeatureItem
+          key={`preference-feature-${feature.id}`}
+          feature={feature}
+          disabled={disabled}
+          openSelector={openSelector}
+          handleOpenChange={handleOpenChange}
+          onSetFeature={onSetFeature}
+        />
+      ))}
+    </AdaptiveModalSheet>
+  );
+}
+
+interface SheetFeaturesSheetProps {
+  visible: boolean;
+  onClose: () => void;
+  features?: AgentFeature[];
+  disabled: boolean;
+  openSelector: StatusSelector | null;
+  handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
+  onSetFeature?: (featureId: string, value: unknown) => void;
+}
+
+function SheetFeaturesSheet({
+  visible,
+  onClose,
+  features,
+  disabled,
+  openSelector,
+  handleOpenChange,
+  onSetFeature,
+}: SheetFeaturesSheetProps) {
+  return (
+    <AdaptiveModalSheet
+      header={FEATURES_SHEET_HEADER}
+      visible={visible}
+      onClose={onClose}
+      testID="agent-features-sheet"
+    >
+      {(features ?? []).map((feature) => (
+        <SheetFeatureItem
+          key={`feature-${feature.id}`}
+          feature={feature}
+          disabled={disabled}
+          openSelector={openSelector}
+          handleOpenChange={handleOpenChange}
+          onSetFeature={onSetFeature}
+        />
+      ))}
+    </AdaptiveModalSheet>
   );
 }
 
@@ -1622,6 +2029,7 @@ function ModeComboboxOption({
 }
 
 const EMPTY_MODES: AgentMode[] = [];
+const PREFERENCES_SHEET_HEADER: SheetHeader = { title: "Preferences" };
 const FEATURES_SHEET_HEADER: SheetHeader = { title: "Features" };
 
 export const AgentStatusBar = memo(function AgentStatusBar({
