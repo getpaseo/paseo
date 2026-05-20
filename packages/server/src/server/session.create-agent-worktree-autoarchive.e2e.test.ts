@@ -54,6 +54,16 @@ async function expectAgentAbsentFromActiveList(agentId: string): Promise<void> {
     .toBe(false);
 }
 
+async function expectAgentPresentInActiveList(agentId: string): Promise<void> {
+  const active = await ctx.client.fetchAgents();
+  expect(active.entries.map((entry) => entry.agent.id)).toContain(agentId);
+}
+
+async function expectActiveAgentListEmpty(): Promise<void> {
+  const active = await ctx.client.fetchAgents();
+  expect(active.entries).toEqual([]);
+}
+
 async function expectWorktreeAbsentFromList(repoDir: string, worktreePath: string): Promise<void> {
   await expect
     .poll(
@@ -76,6 +86,11 @@ async function expectWorktreePresentInList(repoDir: string, worktreePath: string
       { timeout: 5000, interval: 100 },
     )
     .toBe(true);
+}
+
+async function expectWorktreeListEmpty(repoDir: string): Promise<void> {
+  const listed = await ctx.client.getPaseoWorktreeList({ cwd: repoDir });
+  expect(listed.worktrees).toEqual([]);
 }
 
 async function createAgentInBranchOffWorktree(options?: {
@@ -187,8 +202,7 @@ test("create_agent_request without autoArchive keeps today's active listing beha
 
   await ctx.client.waitForFinish(created.id, 10000);
 
-  const active = await ctx.client.fetchAgents();
-  expect(active.entries.map((entry) => entry.agent.id)).toContain(created.id);
+  await expectAgentPresentInActiveList(created.id);
 });
 
 test("create_agent_request with worktree but no autoArchive leaves agent and worktree active", async () => {
@@ -196,8 +210,7 @@ test("create_agent_request with worktree but no autoArchive leaves agent and wor
 
   await ctx.client.waitForFinish(created.agentId, 10000);
 
-  const active = await ctx.client.fetchAgents();
-  expect(active.entries.map((entry) => entry.agent.id)).toContain(created.agentId);
+  await expectAgentPresentInActiveList(created.agentId);
   await expectWorktreePresentInList(created.repoDir, created.worktreePath);
 
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
@@ -213,7 +226,33 @@ test("archiving a created worktree still archives nested agents", async () => {
   await expectWorktreeAbsentFromList(created.repoDir, created.worktreePath);
 });
 
-test("create_agent_request fails cleanly when worktree creation conflicts", async () => {
+test("create_agent_request rejects legacy git options before creating a worktree", async () => {
+  const repoDir = createGitRepo();
+
+  await expect(
+    ctx.client.createAgent({
+      config: {
+        ...getFullAccessConfig("codex"),
+        cwd: repoDir,
+      },
+      git: {
+        createNewBranch: true,
+        newBranchName: "legacy-agent-branch",
+      },
+      worktree: {
+        mode: "branch-off",
+        newBranch: "agent-lifecycle-dispatch-test",
+        base: "main",
+      },
+      initialPrompt: "Say done.",
+    }),
+  ).rejects.toThrow("worktree cannot be combined with git options");
+
+  await expectActiveAgentListEmpty();
+  await expectWorktreeListEmpty(repoDir);
+});
+
+test("create_agent_request fails cleanly when worktree creation cannot resolve target", async () => {
   const repoDir = createGitRepo();
 
   await expect(
@@ -230,8 +269,6 @@ test("create_agent_request fails cleanly when worktree creation conflicts", asyn
     }),
   ).rejects.toThrow();
 
-  const active = await ctx.client.fetchAgents();
-  expect(active.entries).toEqual([]);
-  const listed = await ctx.client.getPaseoWorktreeList({ cwd: repoDir });
-  expect(listed.worktrees).toEqual([]);
+  await expectActiveAgentListEmpty();
+  await expectWorktreeListEmpty(repoDir);
 });
