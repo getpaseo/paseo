@@ -108,7 +108,7 @@ describe("Index route startup navigation", () => {
     expect(redirectMock).not.toHaveBeenCalled();
   });
 
-  it("redirects to the persisted workspace when the online host matches its server id", async () => {
+  it("restores the persisted workspace when the online host matches its server id", async () => {
     state.anyOnlineHostServerId = "server-1";
     state.workspaceSelection = { serverId: "server-1", workspaceId: "workspace-a" };
 
@@ -118,7 +118,7 @@ describe("Index route startup navigation", () => {
     expect(container.querySelector("[data-testid='redirect']")).not.toBeNull();
   });
 
-  it("redirects to the persisted workspace even when the first online host is different", async () => {
+  it("restores the persisted workspace even when the first online host is different", async () => {
     state.anyOnlineHostServerId = "server-2";
     state.workspaceSelection = { serverId: "server-1", workspaceId: "workspace-a" };
 
