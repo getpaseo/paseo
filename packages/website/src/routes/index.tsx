@@ -5,8 +5,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: pageMeta(
-      "Paseo – Run Claude Code, Codex, and OpenCode from everywhere",
-      "A self-hosted daemon for Claude Code, Codex, and OpenCode. Agents run on your machine with your full dev environment. Connect from phone, desktop, or web.",
+      "Paseo – Run Claude Code, Codex, Copilot, OpenCode, and Pi from everywhere",
+      "A self-hosted daemon for Claude Code, Codex, Copilot, OpenCode, and Pi. Agents run on your machine with your full dev environment. Connect from phone, desktop, or web.",
     ),
   }),
   component: Home,

@@ -680,7 +680,7 @@
 
 ### Added
 
-- Pi (pi.dev) agent provider — connect Pi as a new ACP-based agent type with thinking levels and tool call support
+- Pi (pi.dev) agent provider — connect Pi as a new agent type with thinking levels and tool call support
 - Copilot agent provider re-enabled after ACP compatibility fixes
 - `paseo .` and `paseo <path>` open the desktop app with the given project, similar to `code .`
 - Provider-declared features system — providers can expose dynamic toggles and selects that the app renders automatically. First consumer: Codex fast mode

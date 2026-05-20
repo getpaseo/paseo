@@ -1473,9 +1473,9 @@ function FAQ() {
       <h2 className="text-3xl font-medium">FAQ</h2>
       <div className="space-y-6">
         <FAQItem question="Is this free?">
-          Yes. Paseo is free and open source. You need Claude Code, Codex, or OpenCode installed
-          with your own credentials. Voice is local-first by default and can optionally use OpenAI
-          speech providers if you configure them.
+          Yes. Paseo is free and open source. You need Claude Code, Codex, Copilot, OpenCode, or Pi
+          installed with your own credentials. Voice is local-first by default and can optionally
+          use OpenAI speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
           Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
@@ -1486,8 +1486,8 @@ function FAQ() {
           , connect directly over your local network, or use your own tunnel.
         </FAQItem>
         <FAQItem question="What agents does it support?">
-          Claude Code, Codex, and OpenCode. Each agent runs as its own process using its own CLI.
-          Paseo doesn&apos;t modify or wrap their behavior.
+          Claude Code, Codex, Copilot, OpenCode, and Pi. Each agent runs as its own process using
+          its own CLI or local integration. Paseo doesn&apos;t modify or wrap their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
@@ -1522,10 +1522,10 @@ function FAQ() {
         <FAQItem question="Can I get banned for using Paseo?">
           <p>We can&apos;t make promises on behalf of providers.</p>
           <p>
-            That said, Paseo launches the official first-party CLIs (Claude Code, Codex, OpenCode)
-            as subprocesses. It doesn&apos;t extract tokens or call inference APIs directly. From
-            the provider&apos;s perspective, usage through Paseo is indistinguishable from running
-            the CLI yourself.
+            That said, Paseo launches each provider&apos;s local CLI or integration (Claude Code,
+            Codex, Copilot, OpenCode, Pi) as a subprocess. It doesn&apos;t extract tokens or call
+            inference APIs directly. From the provider&apos;s perspective, usage through Paseo is
+            indistinguishable from running the provider yourself.
           </p>
           <p>I&apos;ve been using Paseo with all providers for months without issue.</p>
         </FAQItem>
