@@ -13,7 +13,6 @@ import {
   type Query,
   type SDKMessage,
   type SDKPartialAssistantMessage,
-  type SDKTaskProgressMessage,
   type SDKResultMessage,
   type SDKSystemMessage,
   type SDKUserMessage,
@@ -1442,85 +1441,12 @@ async function resolveClaudeAuth(
   }
 }
 
-function extractContextWindowSize(modelUsage: unknown): number | undefined {
-  const usageRecord = toObjectRecord(modelUsage);
-  if (!usageRecord) {
-    return undefined;
-  }
-
-  let maxContextWindow: number | undefined;
-  for (const value of Object.values(usageRecord)) {
-    const valueRecord = toObjectRecord(value);
-    if (!valueRecord) {
-      continue;
-    }
-    const contextWindow = valueRecord.contextWindow;
-    if (
-      typeof contextWindow !== "number" ||
-      !Number.isFinite(contextWindow) ||
-      contextWindow <= 0
-    ) {
-      continue;
-    }
-    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
-  }
-
-  return maxContextWindow;
+function readFiniteNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
-function readUsageTotalTokens(usage: unknown): number | undefined {
-  if (!usage || typeof usage !== "object") {
-    return undefined;
-  }
-  const totalTokens = (usage as { total_tokens?: unknown }).total_tokens;
-  if (typeof totalTokens !== "number" || !Number.isFinite(totalTokens) || totalTokens < 0) {
-    return undefined;
-  }
-  return totalTokens;
-}
-
-function readContextWindowUsedTokensFromTaskProgress(
-  message: SDKTaskProgressMessage,
-): number | undefined {
-  return readUsageTotalTokens(message.usage);
-}
-
-function readUsageFromTaskNotification(message: { usage?: unknown }): number | undefined {
-  return readUsageTotalTokens(message.usage);
-}
-
-function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
-  if (!messageUsage) {
-    return undefined;
-  }
-  const usage = messageUsage;
-  const inputTokens =
-    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
-      : undefined;
-  const cacheCreationInputTokens =
-    typeof usage.cache_creation_input_tokens === "number" &&
-    Number.isFinite(usage.cache_creation_input_tokens)
-      ? usage.cache_creation_input_tokens
-      : 0;
-  const cacheReadInputTokens =
-    typeof usage.cache_read_input_tokens === "number" &&
-    Number.isFinite(usage.cache_read_input_tokens)
-      ? usage.cache_read_input_tokens
-      : 0;
-  if (typeof inputTokens !== "number" || inputTokens < 0) {
-    return undefined;
-  }
-  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
-}
-
-function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
-  const outputTokens = toObjectRecord(event.usage)?.output_tokens;
-  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {
-    return undefined;
-  }
-  return outputTokens;
+function readFinitePositiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 class ClaudeAgentSession implements AgentSession {
@@ -1571,8 +1497,6 @@ class ClaudeAgentSession implements AgentSession {
   private activeTurnHasAssistantText = false;
   private lastContextWindowUsedTokens: number | undefined;
   private lastContextWindowMaxTokens: number | undefined;
-  private lastStreamRequestInputTokens: number | undefined;
-  private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
   private recentStderr = "";
   private closed = false;
@@ -2759,7 +2683,7 @@ class ClaudeAgentSession implements AgentSession {
       if (await this.handleMissingResumedConversation(message, activeQuery)) {
         return true;
       }
-      this.routeSdkMessageFromPump(message);
+      await this.routeSdkMessageFromPump(message, activeQuery);
       return false;
     };
     const drainActiveQuery = async (): Promise<boolean> => {
@@ -2847,7 +2771,7 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private routeSdkMessageFromPump(message: SDKMessage): void {
+  private async routeSdkMessageFromPump(message: SDKMessage, activeQuery: Query): Promise<void> {
     if (this.shouldSuppressStaleResult(message)) {
       return;
     }
@@ -2859,6 +2783,8 @@ class ClaudeAgentSession implements AgentSession {
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
       return;
     }
+
+    const contextUsageEvent = await this.readContextUsageEventForMessage(message, activeQuery);
 
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
     const identifiers = readEventIdentifiers(message);
@@ -2900,19 +2826,16 @@ class ClaudeAgentSession implements AgentSession {
       (event) => !this.isEchoedForegroundUserMessage(event),
     );
 
-    const events = [...filteredMessageEvents, ...assistantTimelineEvents];
+    const events = [
+      ...(contextUsageEvent ? [contextUsageEvent] : []),
+      ...filteredMessageEvents,
+      ...assistantTimelineEvents,
+    ];
 
     if (events.length === 0) {
       return;
     }
-    if (
-      this.pendingInterruptAbort &&
-      message.type === "result" &&
-      events.some((event) => event.type === "turn_completed" || event.type === "turn_failed") &&
-      (!this.activeForegroundTurnId || !this.foregroundHasVisibleActivity)
-    ) {
-      this.pendingInterruptAbort = false;
-      this.logger.debug("Suppressing stale Claude interrupt terminal result");
+    if (this.suppressPendingInterruptTerminalResult(message, events)) {
       return;
     }
     if (
@@ -2933,6 +2856,38 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.dispatchEvents(events);
+  }
+
+  private suppressPendingInterruptTerminalResult(
+    message: SDKMessage,
+    events: AgentStreamEvent[],
+  ): boolean {
+    if (!this.pendingInterruptAbort) {
+      return false;
+    }
+    if (message.type !== "result") {
+      return false;
+    }
+    if (!events.some((event) => event.type === "turn_completed" || event.type === "turn_failed")) {
+      return false;
+    }
+    if (this.activeForegroundTurnId && this.foregroundHasVisibleActivity) {
+      return false;
+    }
+
+    this.pendingInterruptAbort = false;
+    this.logger.debug("Suppressing stale Claude interrupt terminal result");
+    return true;
+  }
+
+  private async readContextUsageEventForMessage(
+    message: SDKMessage,
+    activeQuery: Query,
+  ): Promise<AgentStreamEvent | null> {
+    if (message.type !== "result") {
+      return null;
+    }
+    return await this.readContextUsageEvent(activeQuery);
   }
 
   private async handleMissingResumedConversation(
@@ -3095,6 +3050,10 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (message.subtype === "compact_boundary") {
       const compactMetadata = readCompactionMetadata(message);
+      if (compactMetadata?.postTokens !== undefined) {
+        this.lastContextWindowUsedTokens = compactMetadata.postTokens;
+        events.push(this.createContextUsageUpdatedEvent());
+      }
       events.push({
         type: "timeline",
         item: {
@@ -3109,14 +3068,6 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (message.subtype === "task_notification") {
       this.appendTaskNotificationEvents(message, events);
-      return;
-    }
-    if (message.subtype === "task_progress") {
-      this.lastContextWindowUsedTokens =
-        readContextWindowUsedTokensFromTaskProgress(message) ?? this.lastContextWindowUsedTokens;
-      if (typeof this.lastContextWindowUsedTokens === "number") {
-        events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
-      }
     }
   }
 
@@ -3141,11 +3092,6 @@ class ClaudeAgentSession implements AgentSession {
         item: taskNotificationItem,
         provider: "claude",
       });
-    }
-    const usage = readUsageFromTaskNotification(message);
-    if (typeof usage === "number") {
-      this.lastContextWindowUsedTokens = usage;
-      events.push(this.createUsageUpdatedEvent(usage));
     }
   }
 
@@ -3221,10 +3167,6 @@ class ClaudeAgentSession implements AgentSession {
     events: AgentStreamEvent[],
     options: { suppressAssistantText?: boolean; suppressReasoning?: boolean } | undefined,
   ): void {
-    const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
-    if (usageUpdatedEvent) {
-      events.push(usageUpdatedEvent);
-    }
     const timelineItems = this.mapPartialEvent(message.event, {
       suppressAssistantText: options?.suppressAssistantText ?? false,
       suppressReasoning: options?.suppressReasoning ?? false,
@@ -3238,7 +3180,7 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
   ): void {
-    const usage = this.convertUsage(message, message.modelUsage);
+    const usage = this.convertUsage(message);
     if (message.subtype === "success") {
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")
       // run client-side in the Claude CLI with no model turn — output_tokens
@@ -3399,7 +3341,7 @@ class ClaudeAgentSession implements AgentSession {
     return null;
   }
 
-  private convertUsage(message: SDKResultMessage, modelUsage?: unknown): AgentUsage | undefined {
+  private convertUsage(message: SDKResultMessage): AgentUsage | undefined {
     if (!message.usage) {
       return undefined;
     }
@@ -3409,89 +3351,48 @@ class ClaudeAgentSession implements AgentSession {
       outputTokens: message.usage.output_tokens,
       totalCostUsd: message.total_cost_usd,
     };
-    const contextWindowMaxTokens = extractContextWindowSize(modelUsage ?? message.modelUsage);
-    if (contextWindowMaxTokens !== undefined) {
-      this.lastContextWindowMaxTokens = contextWindowMaxTokens;
-      usage.contextWindowMaxTokens = contextWindowMaxTokens;
-    } else if (this.lastContextWindowMaxTokens !== undefined) {
-      usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
-    }
-    if (typeof this.lastContextWindowUsedTokens === "number") {
-      // task_progress.total_tokens is the accurate context window fill level.
-      // Prefer it over result.usage which contains accumulated session totals.
-      usage.contextWindowUsedTokens = this.lastContextWindowUsedTokens;
-    } else if (
-      typeof this.lastStreamRequestInputTokens === "number" &&
-      typeof this.lastStreamRequestOutputTokens === "number"
-    ) {
-      usage.contextWindowUsedTokens =
-        this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens;
-    } else if (message.usage) {
-      // Fallback: derive from result.usage when no task_progress has been
-      // received yet. These values are accumulated across all API calls, but
-      // for the first turn they equal the per-call values so the estimate is
-      // reasonable. Once a task_progress arrives it takes over permanently.
-      const usageWithCacheCreation = message.usage as typeof message.usage & {
-        cache_creation_input_tokens?: number;
-      };
-      const derived =
-        (message.usage.input_tokens ?? 0) +
-        (usageWithCacheCreation.cache_creation_input_tokens ?? 0) +
-        (message.usage.cache_read_input_tokens ?? 0) +
-        (message.usage.output_tokens ?? 0);
-      if (Number.isFinite(derived) && derived > 0) {
-        usage.contextWindowUsedTokens = derived;
-      }
-    }
+    this.addLastContextUsage(usage);
     return usage;
   }
 
-  private createUsageUpdatedEvent(contextWindowUsedTokens: number): AgentStreamEvent {
-    const usage: AgentUsage = {
-      contextWindowUsedTokens,
-    };
+  private async readContextUsageEvent(activeQuery: Query): Promise<AgentStreamEvent | null> {
+    try {
+      const contextUsage = await withTimeout(
+        activeQuery.getContextUsage(),
+        3_000,
+        "getContextUsage timeout",
+      );
+      const usedTokens = readFiniteNonNegativeNumber(contextUsage.totalTokens);
+      const maxTokens = readFinitePositiveNumber(contextUsage.maxTokens);
+      if (usedTokens === undefined || maxTokens === undefined) {
+        return null;
+      }
+      this.lastContextWindowUsedTokens = usedTokens;
+      this.lastContextWindowMaxTokens = maxTokens;
+      return this.createContextUsageUpdatedEvent();
+    } catch (error) {
+      this.logger.warn({ err: error }, "Failed to read Claude context usage");
+      return null;
+    }
+  }
+
+  private addLastContextUsage(usage: AgentUsage): void {
+    if (this.lastContextWindowUsedTokens !== undefined) {
+      usage.contextWindowUsedTokens = this.lastContextWindowUsedTokens;
+    }
     if (this.lastContextWindowMaxTokens !== undefined) {
       usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
     }
+  }
+
+  private createContextUsageUpdatedEvent(): AgentStreamEvent {
+    const usage: AgentUsage = {};
+    this.addLastContextUsage(usage);
     return {
       type: "usage_updated",
       provider: "claude",
       usage,
     };
-  }
-
-  private trackStreamEventUsage(event: unknown): AgentStreamEvent | null {
-    const streamEvent = toObjectRecord(event);
-    if (!streamEvent) {
-      return null;
-    }
-    const eventType = readTrimmedString(streamEvent.type);
-    if (eventType === "message_start") {
-      const inputTokens = readStreamRequestInputTokens(streamEvent);
-      if (typeof inputTokens !== "number") {
-        return null;
-      }
-      this.lastStreamRequestInputTokens = inputTokens;
-      this.lastStreamRequestOutputTokens = 0;
-    } else if (eventType === "message_delta") {
-      const outputTokens = readStreamRequestOutputTokens(streamEvent);
-      if (typeof outputTokens !== "number") {
-        return null;
-      }
-      this.lastStreamRequestOutputTokens = outputTokens;
-    } else {
-      return null;
-    }
-
-    if (
-      typeof this.lastStreamRequestInputTokens !== "number" ||
-      typeof this.lastStreamRequestOutputTokens !== "number"
-    ) {
-      return null;
-    }
-    return this.createUsageUpdatedEvent(
-      this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens,
-    );
   }
 
   private handlePermissionRequest: CanUseTool = async (
@@ -4365,7 +4266,9 @@ function hasToolLikeBlock(block?: ClaudeContentChunk | null): boolean {
   return type.includes("tool");
 }
 
-function readCompactionMetadata(source: unknown): { trigger?: string; preTokens?: number } | null {
+function readCompactionMetadata(
+  source: unknown,
+): { trigger?: string; preTokens?: number; postTokens?: number } | null {
   const sourceRecord = toObjectRecord(source);
   if (!sourceRecord) {
     return null;
@@ -4381,9 +4284,9 @@ function readCompactionMetadata(source: unknown): { trigger?: string; preTokens?
       continue;
     }
     const trigger = typeof metadata.trigger === "string" ? metadata.trigger : undefined;
-    const preTokensRaw = metadata.preTokens ?? metadata.pre_tokens;
-    const preTokens = typeof preTokensRaw === "number" ? preTokensRaw : undefined;
-    return { trigger, preTokens };
+    const preTokens = readFiniteNonNegativeNumber(metadata.preTokens ?? metadata.pre_tokens);
+    const postTokens = readFiniteNonNegativeNumber(metadata.postTokens ?? metadata.post_tokens);
+    return { trigger, preTokens, postTokens };
   }
   return null;
 }

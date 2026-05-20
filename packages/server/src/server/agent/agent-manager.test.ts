@@ -396,6 +396,47 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
   expect(snapshot.config.modeId).toBe("auto");
 });
 
+test("usage_updated merges into existing last usage", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000105",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const session = manager.getAgent(snapshot.id)?.session as TestAgentSession;
+
+  session.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    usage: { inputTokens: 10, outputTokens: 3, totalCostUsd: 0.25 },
+  });
+  session.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    usage: { contextWindowUsedTokens: 42_000, contextWindowMaxTokens: 200_000 },
+  });
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.lastUsage).toEqual({
+    inputTokens: 10,
+    outputTokens: 3,
+    totalCostUsd: 0.25,
+    contextWindowUsedTokens: 42_000,
+    contextWindowMaxTokens: 200_000,
+  });
+});
+
 test("createAgent injects daemon append system prompt at runtime only", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
