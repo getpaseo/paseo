@@ -242,7 +242,7 @@ async function probeDaemonOverWebsocket(args: {
   const supportsDaemonStatusRpc =
     client.getLastServerInfoMessage()?.features?.daemonStatusRpc === true;
   try {
-    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
+    const agentsPayload = await client.fetchAgents({ scope: "active" });
     const agents = agentsPayload.entries.map((entry) => entry.agent);
     const runningAgents = agents.filter((a) => a.status === "running").length;
     const idleAgents = agents.filter((a) => a.status === "idle").length;
@@ -290,10 +290,9 @@ async function probeDaemonOverWebsocket(args: {
     return {
       connectedDaemon: "reachable",
       daemonVersion,
-      localDaemonOverride: state.running ? "unresponsive" : undefined,
       note: state.running
-        ? `Local daemon PID is running but API requests to ${host} failed`
-        : `Connected daemon websocket is reachable at ${host} but fetch_agents failed`,
+        ? `Local daemon PID is running and websocket is reachable at ${host}, but active agent counts are unavailable`
+        : `Connected daemon websocket is reachable at ${host} but active agent counts are unavailable`,
     };
   } finally {
     await client.close().catch(() => {});
