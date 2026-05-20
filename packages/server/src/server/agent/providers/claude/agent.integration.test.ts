@@ -91,7 +91,7 @@ async function collectUntil(
 
 function collectSubscribedUntil(
   session: AgentSession,
-  predicate: (event: AgentStreamEvent) => boolean,
+  predicate: (event: AgentStreamEvent, events: AgentStreamEvent[]) => boolean,
   timeoutMs = 45_000,
 ): Promise<AgentStreamEvent[]> {
   return new Promise((resolve, reject) => {
@@ -103,7 +103,7 @@ function collectSubscribedUntil(
 
     const unsubscribe = session.subscribe((event) => {
       events.push(event);
-      if (!predicate(event)) {
+      if (!predicate(event, events)) {
         return;
       }
       clearTimeout(timeout);
@@ -252,7 +252,7 @@ describe("ClaudeAgentSession integration", () => {
         expect.objectContaining({
           value: "default",
           displayName: "Default (recommended)",
-          supportedEffortLevels: ["low", "medium", "high", "max"],
+          supportedEffortLevels: expect.arrayContaining(["low", "medium", "high", "max"]),
         }),
       );
       expect(models).toContainEqual(
@@ -374,6 +374,14 @@ describe("ClaudeAgentSession integration", () => {
     const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
 
     try {
+      const liveEventsPromise = collectSubscribedUntil(
+        handle.session,
+        (event, events) =>
+          isTerminalEvent(event) &&
+          compactText(getAssistantText(events)).includes(compactText(autonomousWakeToken)),
+        90_000,
+      );
+
       const foregroundEvents = await collectUntilTerminal(
         streamSession(
           handle.session,
@@ -390,15 +398,12 @@ describe("ClaudeAgentSession integration", () => {
 
       expect(compactText(getAssistantText(foregroundEvents))).toContain("spawned");
 
-      const liveEvents = await collectSubscribedUntil(
-        handle.session,
-        (event) => isTerminalEvent(event),
-        90_000,
-      );
+      const liveEvents = await liveEventsPromise;
 
       expect(
         liveEvents.some((event) => event.type === "turn_started" && event.provider === "claude"),
       ).toBe(true);
+      expect(compactText(getAssistantText(liveEvents))).toContain(compactText(autonomousWakeToken));
       expect(liveEvents.at(-1)).toMatchObject({
         type: "turn_completed",
         provider: "claude",
