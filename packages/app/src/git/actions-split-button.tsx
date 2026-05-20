@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/git/policy";
@@ -110,18 +111,20 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
   const primaryPressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.splitButtonPrimary,
-      (Boolean(hovered) || pressed) && styles.splitButtonPrimaryHovered,
+      (Boolean(hovered) || pressed) &&
+        inlineUnistylesStyle({ backgroundColor: theme.colors.surface2 }),
       primaryDisabled && styles.splitButtonPrimaryDisabled,
     ],
-    [primaryDisabled],
+    [primaryDisabled, theme.colors.surface2],
   );
 
   const caretTriggerStyle = useCallback(
     ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
       styles.splitButtonCaret,
-      (hovered || pressed || open) && styles.splitButtonCaretHovered,
+      (hovered || pressed || open) &&
+        inlineUnistylesStyle({ backgroundColor: theme.colors.surface2 }),
     ],
-    [],
+    [theme.colors.surface2],
   );
 
   return (
@@ -230,9 +233,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     position: "relative",
   },
-  splitButtonPrimaryHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
   splitButtonPrimaryDisabled: {
     opacity: 0.6,
   },
@@ -257,9 +257,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderLeftWidth: theme.borderWidth[1],
     borderLeftColor: theme.colors.borderAccent,
-  },
-  splitButtonCaretHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   iconButton: {
     width: 32,

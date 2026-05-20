@@ -78,6 +78,7 @@ import { lineNumberGutterWidth } from "@/components/code-insets";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { useGitActions } from "@/git/use-actions";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { usePanelStore } from "@/stores/panel-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import {
@@ -111,25 +112,6 @@ export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
 function fileHeaderPressableStyle({ pressed }: PressableStateCallbackType) {
   return [styles.fileHeader, pressed && styles.fileHeaderPressed];
-}
-
-function diffModeTriggerStyle({
-  hovered,
-  pressed,
-  open,
-}: PressableStateCallbackType & { hovered?: boolean; open?: boolean }) {
-  return [
-    styles.diffModeTrigger,
-    Boolean(hovered) && styles.diffModeTriggerHovered,
-    (pressed || Boolean(open)) && styles.diffModeTriggerPressed,
-  ];
-}
-
-function expandAllButtonStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.expandAllButton, (Boolean(hovered) || pressed) && styles.diffStatusRowHovered];
 }
 
 interface HighlightedTextProps {
@@ -1062,7 +1044,7 @@ interface GitDiffPaneProps {
 }
 
 type PressableStyleFn = (
-  state: PressableStateCallbackType & { hovered?: boolean },
+  state: PressableStateCallbackType & { hovered?: boolean; open?: boolean },
 ) => StyleProp<ViewStyle>;
 
 interface DiffLayoutToggleGroupProps {
@@ -1436,14 +1418,30 @@ function computePrErrorMessage(
   return prPayloadError?.message ?? null;
 }
 
+function buildDiffModeTriggerStyle(surfaceColor: string): PressableStyleFn {
+  return ({ hovered, pressed, open }) => [
+    styles.diffModeTrigger,
+    (Boolean(hovered) || pressed || Boolean(open)) &&
+      inlineUnistylesStyle({ backgroundColor: surfaceColor }),
+  ];
+}
+
+function buildExpandAllButtonStyle(surfaceColor: string): PressableStyleFn {
+  return ({ hovered, pressed }) => [
+    styles.expandAllButton,
+    (Boolean(hovered) || pressed) && inlineUnistylesStyle({ backgroundColor: surfaceColor }),
+  ];
+}
+
 function buildToggleButtonStyle(
   selected: boolean,
   baseStyles: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
+  surfaceColor: string,
 ): PressableStyleFn {
   return ({ hovered, pressed }) => [
     baseStyles,
-    selected && styles.toggleButtonSelected,
-    (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
+    (selected || Boolean(hovered) || pressed) &&
+      inlineUnistylesStyle({ backgroundColor: surfaceColor }),
   ];
 }
 
@@ -1494,32 +1492,50 @@ export function GitDiffPane({
     handleLayoutChange("split");
   }, [handleLayoutChange]);
 
+  const controlSurfaceColor = theme.colors.surface2;
+  const diffModeTriggerStyle = useMemo(
+    () => buildDiffModeTriggerStyle(controlSurfaceColor),
+    [controlSurfaceColor],
+  );
+
   const unifiedToggleStyle = useMemo(
     () =>
-      buildToggleButtonStyle(changesPreferences.layout === "unified", [
-        styles.toggleButton,
-        styles.toggleButtonGroupStart,
-      ]),
-    [changesPreferences.layout],
+      buildToggleButtonStyle(
+        changesPreferences.layout === "unified",
+        [styles.toggleButton, styles.toggleButtonGroupStart],
+        controlSurfaceColor,
+      ),
+    [changesPreferences.layout, controlSurfaceColor],
   );
 
   const splitToggleStyle = useMemo(
     () =>
-      buildToggleButtonStyle(changesPreferences.layout === "split", [
-        styles.toggleButton,
-        styles.toggleButtonGroupEnd,
-      ]),
-    [changesPreferences.layout],
+      buildToggleButtonStyle(
+        changesPreferences.layout === "split",
+        [styles.toggleButton, styles.toggleButtonGroupEnd],
+        controlSurfaceColor,
+      ),
+    [changesPreferences.layout, controlSurfaceColor],
   );
 
   const hideWhitespaceToggleStyle = useMemo(
-    () => buildToggleButtonStyle(changesPreferences.hideWhitespace, styles.expandAllButton),
-    [changesPreferences.hideWhitespace],
+    () =>
+      buildToggleButtonStyle(
+        changesPreferences.hideWhitespace,
+        styles.expandAllButton,
+        controlSurfaceColor,
+      ),
+    [changesPreferences.hideWhitespace, controlSurfaceColor],
   );
 
   const wrapLinesToggleStyle = useMemo(
-    () => buildToggleButtonStyle(wrapLines, styles.expandAllButton),
-    [wrapLines],
+    () => buildToggleButtonStyle(wrapLines, styles.expandAllButton, controlSurfaceColor),
+    [wrapLines, controlSurfaceColor],
+  );
+
+  const expandAllToggleStyle = useMemo(
+    () => buildExpandAllButtonStyle(controlSurfaceColor),
+    [controlSurfaceColor],
   );
 
   const {
@@ -2046,7 +2062,7 @@ export function GitDiffPane({
                   allExpanded={allExpanded}
                   isMobile={isMobile}
                   wrapLinesToggleStyle={wrapLinesToggleStyle}
-                  expandAllToggleStyle={expandAllButtonStyle}
+                  expandAllToggleStyle={expandAllToggleStyle}
                   onToggleWrapLines={handleToggleWrapLines}
                   onToggleExpandAll={handleToggleExpandAll}
                 />

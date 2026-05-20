@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PanResponder,
-  View,
+  type GestureResponderEvent,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type ViewStyle,
+  View,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { isWeb as platformIsWeb } from "@/constants/platform";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import {
   computeScrollOffsetFromDragDelta,
   computeVerticalScrollbarGeometry,
 } from "./web-desktop-scrollbar.math";
-import { isWeb as platformIsWeb } from "@/constants/platform";
 
 const METRICS_EPSILON = 0.5;
 const HANDLE_WIDTH_IDLE = 6;
@@ -26,6 +29,15 @@ const HANDLE_FADE_DURATION_MS = 220;
 const HANDLE_WIDTH_TRANSITION_DURATION_MS = 240;
 const HANDLE_SCROLL_VISIBILITY_MS = 1200;
 const HANDLE_SCROLL_ACTIVE_MS = 110;
+
+interface WebPointerStyle {
+  cursor?: "grab" | "grabbing";
+  touchAction?: "none";
+  userSelect?: "none";
+  transitionProperty?: string;
+  transitionDuration?: string;
+  transitionTimingFunction?: string;
+}
 
 interface PointerLikeEvent {
   clientY?: number;
@@ -57,6 +69,13 @@ function areMetricsEqual(a: ScrollbarMetrics, b: ScrollbarMetrics): boolean {
     Math.abs(a.viewportSize - b.viewportSize) <= METRICS_EPSILON &&
     Math.abs(a.contentSize - b.contentSize) <= METRICS_EPSILON
   );
+}
+
+interface WebDesktopScrollbarOverlayProps {
+  enabled: boolean;
+  metrics: ScrollbarMetrics;
+  onScrollToOffset: (offset: number) => void;
+  inverted?: boolean;
 }
 
 export function useWebDesktopScrollbarMetrics() {
@@ -113,13 +132,6 @@ export function useWebDesktopScrollbarMetrics() {
     onContentSizeChange,
     setOffset,
   };
-}
-
-interface WebDesktopScrollbarOverlayProps {
-  enabled: boolean;
-  metrics: ScrollbarMetrics;
-  onScrollToOffset: (offset: number) => void;
-  inverted?: boolean;
 }
 
 export function WebDesktopScrollbarOverlay({
@@ -273,8 +285,12 @@ export function WebDesktopScrollbarOverlay({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
+      onPanResponderGrant: (event: GestureResponderEvent) => {
+        const clientY = readClientY(event);
         dragStartOffsetRef.current = normalizedOffsetRef.current;
+        if (clientY !== null) {
+          dragStartClientYRef.current = clientY;
+        }
         setIsDragging(true);
       },
       onPanResponderMove: (_event, gestureState) => {
@@ -362,20 +378,19 @@ export function WebDesktopScrollbarOverlay({
   const thumbRegionStyle = useMemo(
     () => [
       styles.thumbRegion,
-      {
-        top: 0,
+      inlineUnistylesStyle({
         height: thumbRegionHeight,
         transform: [{ translateY: thumbRegionOffset }],
-      },
+      }),
       platformIsWeb &&
-        ({
+        inlineUnistylesStyle({
           cursor: handleCursor,
           touchAction: "none",
           userSelect: "none",
           transitionProperty: "transform",
           transitionDuration: `${handleTravelDurationMs}ms`,
           transitionTimingFunction: "linear",
-        } as object),
+        } satisfies WebPointerStyle as unknown as ViewStyle),
     ],
     [thumbRegionHeight, thumbRegionOffset, handleCursor, handleTravelDurationMs],
   );
@@ -383,19 +398,19 @@ export function WebDesktopScrollbarOverlay({
   const handleStyle = useMemo(
     () => [
       styles.handle,
-      {
+      inlineUnistylesStyle({
         marginTop: handleInsetTop,
         height: geometry.handleSize,
         width: handleWidth,
         backgroundColor: handleColor,
         opacity: handleOpacity,
-      },
+      }),
       platformIsWeb &&
-        ({
+        inlineUnistylesStyle({
           transitionProperty: "opacity, width, background-color",
           transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,
           transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
-        } as object),
+        } satisfies WebPointerStyle as unknown as ViewStyle),
     ],
     [handleInsetTop, geometry.handleSize, handleWidth, handleColor, handleOpacity],
   );
@@ -413,8 +428,6 @@ export function WebDesktopScrollbarOverlay({
         {...(platformIsWeb
           ? ({
               onPointerDown: startWebDrag,
-              onPointerEnter: handleGrabHoverIn,
-              onPointerLeave: handleGrabHoverOut,
               onMouseEnter: handleGrabHoverIn,
               onMouseLeave: handleGrabHoverOut,
             } as object)
@@ -446,5 +459,6 @@ const styles = StyleSheet.create(() => ({
     position: "absolute",
     right: -3,
     width: HANDLE_GRAB_WIDTH,
+    top: 0,
   },
 }));
