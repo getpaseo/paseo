@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type PropsWithChildren,
   type ReactElement,
   type ReactNode,
@@ -19,7 +18,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StatusBar,
   Text,
   View,
@@ -29,7 +27,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CheckCircle } from "lucide-react-native";
@@ -39,6 +37,7 @@ import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
+import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb, isNative } from "@/constants/platform";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
@@ -499,7 +498,7 @@ export function ContextMenuContent({
     [],
   );
 
-  const nativeContentStyle = useMemo(() => {
+  const frameStyle = useMemo(() => {
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
@@ -509,7 +508,6 @@ export function ContextMenuContent({
           ...(typeof maxWidth === "number" ? { maxWidth } : null),
         };
     return [
-      styles.content,
       resolvedWidthStyle,
       {
         position: "absolute" as const,
@@ -517,17 +515,6 @@ export function ContextMenuContent({
         left: position?.x ?? -9999,
       },
     ];
-  }, [fullWidth, horizontalPadding, width, minWidth, maxWidth, position?.y, position?.x]);
-  const webWrapperStyle = useMemo<CSSProperties>(() => {
-    const { width: screenWidth } = Dimensions.get("window");
-    return {
-      position: "absolute",
-      top: position?.y ?? -9999,
-      left: position?.x ?? -9999,
-      width: fullWidth ? screenWidth - horizontalPadding * 2 : width,
-      minWidth: fullWidth ? undefined : minWidth,
-      maxWidth: fullWidth ? undefined : maxWidth,
-    };
   }, [fullWidth, horizontalPadding, width, minWidth, maxWidth, position?.y, position?.x]);
 
   if (useMobileSheet) {
@@ -578,45 +565,24 @@ export function ContextMenuContent({
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}
         />
-        {isWeb ? (
-          <div style={webWrapperStyle}>
-            <Animated.View
-              entering={FadeIn.duration(100)}
-              exiting={FadeOut.duration(100)}
-              collapsable={false}
-              testID={testID}
-              onLayout={handleContentLayout}
-              style={styles.content}
-            >
-              <ScrollView
-                bounces={false}
-                showsVerticalScrollIndicator
-                style={webScrollbarStyle}
-                contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
-              >
-                {children}
-              </ScrollView>
-            </Animated.View>
-          </div>
-        ) : (
-          <Animated.View
-            entering={FadeIn.duration(100)}
-            exiting={FadeOut.duration(100)}
-            collapsable={false}
-            testID={testID}
-            onLayout={handleContentLayout}
-            style={nativeContentStyle}
+        <FloatingSurface
+          entering={FadeIn.duration(100)}
+          exiting={FadeOut.duration(100)}
+          collapsable={false}
+          testID={testID}
+          onLayout={handleContentLayout}
+          style={styles.content}
+          frameStyle={frameStyle}
+        >
+          <FloatingScrollView
+            bounces={false}
+            showsVerticalScrollIndicator
+            style={webScrollbarStyle}
+            contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
           >
-            <ScrollView
-              bounces={false}
-              showsVerticalScrollIndicator
-              style={webScrollbarStyle}
-              contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
-            >
-              {children}
-            </ScrollView>
-          </Animated.View>
-        )}
+            {children}
+          </FloatingScrollView>
+        </FloatingSurface>
       </View>
     </Modal>
   );

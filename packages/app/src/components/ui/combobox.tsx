@@ -6,7 +6,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import type { ReactElement, ReactNode } from "react";
 import {
@@ -21,6 +20,8 @@ import {
   useWindowDimensions,
   type LayoutChangeEvent,
   type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -57,6 +58,7 @@ import {
   SheetHeaderView,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
+import { FloatingSurface } from "@/components/ui/floating";
 
 const IS_WEB = isWeb;
 
@@ -859,7 +861,7 @@ interface DesktopContainerStyleInput {
   availableHeight: number | undefined;
 }
 
-function buildNativeDesktopContainerStyle(input: DesktopContainerStyleInput) {
+function buildDesktopFrameStyle(input: DesktopContainerStyleInput): StyleProp<ViewStyle> {
   const {
     desktopMinWidth,
     referenceWidth,
@@ -878,7 +880,6 @@ function buildNativeDesktopContainerStyle(input: DesktopContainerStyleInput) {
       ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
       : null;
   return [
-    styles.desktopContainer,
     {
       position: "absolute" as const,
       minWidth: desktopMinWidth ?? referenceWidth ?? 200,
@@ -889,30 +890,6 @@ function buildNativeDesktopContainerStyle(input: DesktopContainerStyleInput) {
     hiddenStyle,
     availableHeightStyle,
   ];
-}
-
-function buildWebDesktopWrapperStyle(input: DesktopContainerStyleInput): CSSProperties {
-  const {
-    desktopMinWidth,
-    referenceWidth,
-    desktopFixedHeight,
-    desktopPositionStyle,
-    shouldHideDesktopContent,
-    availableHeight,
-  } = input;
-
-  return {
-    position: "absolute",
-    minWidth: desktopMinWidth ?? referenceWidth ?? 200,
-    maxWidth: Math.max(400, desktopMinWidth ?? 0),
-    minHeight: desktopFixedHeight,
-    maxHeight:
-      typeof availableHeight === "number"
-        ? Math.min(availableHeight, desktopFixedHeight ?? 400)
-        : desktopFixedHeight,
-    opacity: shouldHideDesktopContent ? 0 : undefined,
-    ...(desktopPositionStyle as CSSProperties),
-  };
 }
 
 function isDesktopKey(key: string): key is DesktopKey {
@@ -1095,8 +1072,7 @@ interface DesktopBodyProps {
   handleClose: () => void;
   refs: ReturnType<typeof useFloating>["refs"];
   shouldUseDesktopFade: boolean;
-  desktopContainerStyle: unknown;
-  desktopWrapperStyle: CSSProperties | null;
+  desktopFrameStyle: StyleProp<ViewStyle>;
   handleDesktopContentLayout: (event: LayoutChangeEvent) => void;
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
@@ -1208,44 +1184,6 @@ function DesktopComboboxOptionsBody(props: {
 }
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
-  const body = (
-    <Animated.View
-      testID="combobox-desktop-container"
-      entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
-      exiting={props.shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
-      style={IS_WEB ? styles.desktopContainer : (props.desktopContainerStyle as never)}
-      ref={IS_WEB ? undefined : props.refs.setFloating}
-      collapsable={false}
-      onLayout={props.handleDesktopContentLayout}
-    >
-      {props.hasChildren ? (
-        <DesktopComboboxChildrenBody header={props.header} stickyHeader={props.stickyHeader}>
-          {props.children}
-        </DesktopComboboxChildrenBody>
-      ) : (
-        <DesktopComboboxOptionsBody
-          header={props.header}
-          stickyHeader={props.stickyHeader}
-          searchable={props.searchable}
-          searchPlaceholder={props.searchPlaceholder}
-          searchQuery={props.searchQuery}
-          setSearchQueryWithCallback={props.setSearchQueryWithCallback}
-          handleSubmitSearch={props.handleSubmitSearch}
-          effectiveOptionsPosition={props.effectiveOptionsPosition}
-          desktopOptionsScrollRef={props.desktopOptionsScrollRef}
-          desktopAboveSearchContentContainerStyle={props.desktopAboveSearchContentContainerStyle}
-          handleDesktopOptionsContentSizeChange={props.handleDesktopOptionsContentSizeChange}
-          orderedVisibleOptions={props.orderedVisibleOptions}
-          value={props.value}
-          activeIndex={props.activeIndex}
-          emptyText={props.emptyText}
-          handleSelect={props.handleSelect}
-          renderOption={props.renderOption}
-        />
-      )}
-    </Animated.View>
-  );
-
   return (
     <Modal
       transparent
@@ -1255,13 +1193,44 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
     >
       <View ref={props.refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
         <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
-        {props.desktopWrapperStyle ? (
-          <div ref={props.refs.setFloating} style={props.desktopWrapperStyle}>
-            {body}
-          </div>
-        ) : (
-          body
-        )}
+        <FloatingSurface
+          testID="combobox-desktop-container"
+          entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
+          exiting={props.shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
+          style={styles.desktopContainer}
+          frameStyle={props.desktopFrameStyle}
+          ref={props.refs.setFloating}
+          collapsable={false}
+          onLayout={props.handleDesktopContentLayout}
+        >
+          {props.hasChildren ? (
+            <DesktopComboboxChildrenBody header={props.header} stickyHeader={props.stickyHeader}>
+              {props.children}
+            </DesktopComboboxChildrenBody>
+          ) : (
+            <DesktopComboboxOptionsBody
+              header={props.header}
+              stickyHeader={props.stickyHeader}
+              searchable={props.searchable}
+              searchPlaceholder={props.searchPlaceholder}
+              searchQuery={props.searchQuery}
+              setSearchQueryWithCallback={props.setSearchQueryWithCallback}
+              handleSubmitSearch={props.handleSubmitSearch}
+              effectiveOptionsPosition={props.effectiveOptionsPosition}
+              desktopOptionsScrollRef={props.desktopOptionsScrollRef}
+              desktopAboveSearchContentContainerStyle={
+                props.desktopAboveSearchContentContainerStyle
+              }
+              handleDesktopOptionsContentSizeChange={props.handleDesktopOptionsContentSizeChange}
+              orderedVisibleOptions={props.orderedVisibleOptions}
+              value={props.value}
+              activeIndex={props.activeIndex}
+              emptyText={props.emptyText}
+              handleSelect={props.handleSelect}
+              renderOption={props.renderOption}
+            />
+          )}
+        </FloatingSurface>
       </View>
     </Modal>
   );
@@ -1526,9 +1495,9 @@ export function Combobox({
     [theme.colors.palette.zinc],
   );
 
-  const desktopContainerStyle = useMemo(
+  const desktopFrameStyle = useMemo(
     () =>
-      buildNativeDesktopContainerStyle({
+      buildDesktopFrameStyle({
         desktopMinWidth,
         referenceWidth,
         desktopFixedHeight,
@@ -1536,27 +1505,6 @@ export function Combobox({
         shouldHideDesktopContent,
         availableHeight: availableSize?.height,
       }),
-    [
-      desktopMinWidth,
-      referenceWidth,
-      desktopFixedHeight,
-      desktopPositionStyle,
-      shouldHideDesktopContent,
-      availableSize?.height,
-    ],
-  );
-  const desktopWrapperStyle = useMemo(
-    () =>
-      IS_WEB
-        ? buildWebDesktopWrapperStyle({
-            desktopMinWidth,
-            referenceWidth,
-            desktopFixedHeight,
-            desktopPositionStyle,
-            shouldHideDesktopContent,
-            availableHeight: availableSize?.height,
-          })
-        : null,
     [
       desktopMinWidth,
       referenceWidth,
@@ -1616,8 +1564,7 @@ export function Combobox({
       handleClose={handleClose}
       refs={refs}
       shouldUseDesktopFade={shouldUseDesktopFade}
-      desktopContainerStyle={desktopContainerStyle}
-      desktopWrapperStyle={desktopWrapperStyle}
+      desktopFrameStyle={desktopFrameStyle}
       handleDesktopContentLayout={handleDesktopContentLayout}
       header={header}
       stickyHeader={stickyHeader}
