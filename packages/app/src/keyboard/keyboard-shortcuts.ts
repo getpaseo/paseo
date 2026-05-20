@@ -1041,9 +1041,17 @@ function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): bo
     return parseDigit(event) !== null;
   }
 
+  if (combo.key !== undefined) {
+    const eventKey = event.key.toLowerCase();
+    if (eventKey === combo.key) return true;
+    if (combo.shift === true && combo.shiftedKey !== undefined && eventKey === combo.shiftedKey) {
+      return true;
+    }
+    return combo.codeFallback === true && event.code === combo.code;
+  }
+
   const codeMatch = event.code === combo.code;
-  const keyMatch = combo.key !== undefined && event.key.toLowerCase() === combo.key.toLowerCase();
-  return codeMatch || keyMatch;
+  return codeMatch;
 }
 
 function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutContext): boolean {

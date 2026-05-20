@@ -273,6 +273,12 @@ describe("keyboard-shortcuts", () => {
       action: "sidebar.toggle.both",
     },
     {
+      name: "matches Dvorak logical Cmd+. to toggle both sidebars on macOS",
+      event: { key: ".", code: "KeyE", metaKey: true },
+      context: { isMac: true },
+      action: "sidebar.toggle.both",
+    },
+    {
       name: "routes Mod+D to message-input action outside terminal",
       event: { key: "d", code: "KeyD", metaKey: true },
       context: { isMac: true, focusScope: "message-input" },
@@ -389,6 +395,11 @@ describe("keyboard-shortcuts", () => {
       name: "keeps space typing available in message input",
       event: { key: " ", code: "Space" },
       context: { focusScope: "message-input" },
+    },
+    {
+      name: "keeps Dvorak Cmd+V available for paste in message input",
+      event: { key: "v", code: "Period", metaKey: true },
+      context: { isMac: true, isDesktop: true, focusScope: "message-input" },
     },
   ];
 

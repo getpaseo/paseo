@@ -3,6 +3,8 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 export interface KeyCombo {
   code: string;
   key?: string;
+  shiftedKey?: string;
+  codeFallback?: boolean;
   meta?: true;
   ctrl?: true;
   alt?: true;
@@ -14,6 +16,8 @@ export interface KeyCombo {
 interface KeyMapping {
   code: string;
   key?: string;
+  shiftedKey?: string;
+  codeFallback?: boolean;
 }
 
 const KEY_MAP: Record<string, KeyMapping> = {};
@@ -26,18 +30,28 @@ for (let i = 0; i < 26; i++) {
 for (let i = 0; i <= 9; i++) {
   KEY_MAP[String(i)] = { code: `Digit${i}`, key: String(i) };
 }
+KEY_MAP["1"].shiftedKey = "!";
+KEY_MAP["2"].shiftedKey = "@";
+KEY_MAP["3"].shiftedKey = "#";
+KEY_MAP["4"].shiftedKey = "$";
+KEY_MAP["5"].shiftedKey = "%";
+KEY_MAP["6"].shiftedKey = "^";
+KEY_MAP["7"].shiftedKey = "&";
+KEY_MAP["8"].shiftedKey = "*";
+KEY_MAP["9"].shiftedKey = "(";
+KEY_MAP["0"].shiftedKey = ")";
 
 KEY_MAP["Digit"] = { code: "Digit" };
-KEY_MAP["\\"] = { code: "Backslash" };
-KEY_MAP["["] = { code: "BracketLeft", key: "[" };
-KEY_MAP["]"] = { code: "BracketRight", key: "]" };
-KEY_MAP[","] = { code: "Comma", key: "," };
-KEY_MAP["."] = { code: "Period", key: "." };
-KEY_MAP["`"] = { code: "Backquote", key: "`" };
-KEY_MAP["/"] = { code: "Slash" };
+KEY_MAP["\\"] = { code: "Backslash", key: "\\", shiftedKey: "|" };
+KEY_MAP["["] = { code: "BracketLeft", key: "[", shiftedKey: "{" };
+KEY_MAP["]"] = { code: "BracketRight", key: "]", shiftedKey: "}" };
+KEY_MAP[","] = { code: "Comma", key: ",", shiftedKey: "<" };
+KEY_MAP["."] = { code: "Period", key: ".", shiftedKey: ">" };
+KEY_MAP["`"] = { code: "Backquote", key: "`", shiftedKey: "~" };
+KEY_MAP["/"] = { code: "Slash", key: "/", shiftedKey: "?" };
 KEY_MAP["?"] = { code: "Slash", key: "?" };
-KEY_MAP["Space"] = { code: "Space", key: " " };
-KEY_MAP["Enter"] = { code: "Enter", key: "Enter" };
+KEY_MAP["Space"] = { code: "Space", key: " ", codeFallback: true };
+KEY_MAP["Enter"] = { code: "Enter", key: "Enter", codeFallback: true };
 KEY_MAP["Backspace"] = { code: "Backspace" };
 KEY_MAP["Escape"] = { code: "Escape" };
 KEY_MAP["ArrowLeft"] = { code: "ArrowLeft" };
@@ -110,6 +124,12 @@ export function parseShortcutString(s: string): KeyCombo {
   combo.code = mapping.code;
   if (mapping.key !== undefined) {
     combo.key = mapping.key;
+    if (mapping.shiftedKey !== undefined) {
+      combo.shiftedKey = mapping.shiftedKey;
+    }
+    if (mapping.codeFallback === true) {
+      combo.codeFallback = true;
+    }
   }
 
   return combo;
