@@ -1,6 +1,7 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
+import { spawnProcess } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
@@ -29,6 +30,14 @@ const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
+function assertChildWithPipes(
+  child: ChildProcess,
+): asserts child is ChildProcessWithoutNullStreams {
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error("Pi process was spawned without stdio streams");
+  }
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -52,11 +61,13 @@ export class PiCliRuntime implements PiRuntime {
       options.spawnProcess ??
       ((launch) => {
         const [command, ...args] = launch.argv;
-        return spawn(command, args, {
+        const child = spawnProcess(command, args, {
           cwd: launch.cwd,
-          env: launch.env ? { ...process.env, ...launch.env } : process.env,
+          envOverlay: launch.env,
           stdio: ["pipe", "pipe", "pipe"],
         });
+        assertChildWithPipes(child);
+        return child;
       });
   }
 
