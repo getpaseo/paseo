@@ -133,6 +133,19 @@ export function parseGitWorktreeList(output: string): PaseoWorktreeListEntry[] {
   return entries;
 }
 
+export function findManagedWorktreeByNameOrBranch(
+  worktrees: PaseoWorktreeListEntry[],
+  nameArg: string,
+): PaseoWorktreeListEntry | null {
+  const target = nameArg.trim();
+  return (
+    worktrees.find((worktree) => {
+      const name = basename(worktree.worktreePath);
+      return name === target || worktree.branchName === target;
+    }) ?? null
+  );
+}
+
 function resolveCreatedAt(worktreePath: string): string {
   try {
     const stats = statSync(worktreePath);
@@ -167,7 +180,7 @@ function listGitWorktreeCandidateCwds(projectDir: string): string[] {
   }
 }
 
-async function listManagedWorktrees(): Promise<PaseoWorktreeListEntry[]> {
+export async function listManagedWorktrees(): Promise<PaseoWorktreeListEntry[]> {
   const worktreesByPath = new Map<string, PaseoWorktreeListEntry>();
 
   for (const projectDir of listManagedWorktreeProjectDirs()) {

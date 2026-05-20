@@ -4,6 +4,7 @@ import assert from "node:assert";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  findManagedWorktreeByNameOrBranch,
   parseGitWorktreeList,
   resolvePaseoHomePath,
   resolvePaseoWorktreesDir,
@@ -72,6 +73,29 @@ detached
       ],
     );
     console.log("\u2713 git worktree porcelain output is parsed\n");
+  }
+
+  {
+    console.log("Test 4: resolves worktrees by directory name or branch name");
+    const entries = parseGitWorktreeList(`worktree /tmp/paseo-home/worktrees/project/feature-a
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feature-a
+
+worktree /tmp/paseo-home/worktrees/project/readable-name
+HEAD 4444444444444444444444444444444444444444
+branch refs/heads/feat/long-branch
+`);
+
+    assert.strictEqual(
+      findManagedWorktreeByNameOrBranch(entries, "feature-a")?.worktreePath,
+      "/tmp/paseo-home/worktrees/project/feature-a",
+    );
+    assert.strictEqual(
+      findManagedWorktreeByNameOrBranch(entries, "feat/long-branch")?.worktreePath,
+      "/tmp/paseo-home/worktrees/project/readable-name",
+    );
+    assert.strictEqual(findManagedWorktreeByNameOrBranch(entries, "missing"), null);
+    console.log("\u2713 worktrees resolve by directory name or branch name\n");
   }
 } finally {
   if (originalPaseoHome === undefined) {

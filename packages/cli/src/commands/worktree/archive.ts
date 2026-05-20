@@ -8,6 +8,7 @@ import type {
   OutputSchema,
   CommandError,
 } from "../../output/index.js";
+import { findManagedWorktreeByNameOrBranch, listManagedWorktrees } from "./ls.js";
 
 /** Result type for worktree archive command */
 export interface WorktreeArchiveResult {
@@ -34,6 +35,33 @@ export interface WorktreeArchiveOptions extends CommandOptions {
 }
 
 export type WorktreeArchiveCommandResult = SingleResult<WorktreeArchiveResult>;
+
+async function resolveWorktreeFromDaemon(client: DaemonClient, nameArg: string) {
+  const listResponse = await client.getPaseoWorktreeList({});
+
+  if (listResponse.error) {
+    const error: CommandError = {
+      code: "WORKTREE_LIST_FAILED",
+      message: `Failed to list worktrees: ${listResponse.error.message}`,
+    };
+    throw error;
+  }
+
+  return findManagedWorktreeByNameOrBranch(
+    listResponse.worktrees.map((worktree) => ({
+      worktreePath: worktree.worktreePath,
+      createdAt: worktree.createdAt,
+      branchName: worktree.branchName ?? null,
+      head: worktree.head ?? null,
+    })),
+    nameArg,
+  );
+}
+
+async function resolveWorktreeForArchive(client: DaemonClient, nameArg: string) {
+  const localMatch = findManagedWorktreeByNameOrBranch(await listManagedWorktrees(), nameArg);
+  return localMatch ?? (await resolveWorktreeFromDaemon(client, nameArg));
+}
 
 export async function runArchiveCommand(
   nameArg: string,
@@ -66,23 +94,7 @@ export async function runArchiveCommand(
   }
 
   try {
-    // Get the list of worktrees first to resolve the name
-    const listResponse = await client.getPaseoWorktreeList({});
-
-    if (listResponse.error) {
-      const error: CommandError = {
-        code: "WORKTREE_LIST_FAILED",
-        message: `Failed to list worktrees: ${listResponse.error.message}`,
-      };
-      throw error;
-    }
-
-    // Find the worktree by name or branch
-    const worktree = listResponse.worktrees.find((wt) => {
-      const name = path.basename(wt.worktreePath);
-      return name === nameArg || wt.branchName === nameArg;
-    });
-
+    const worktree = await resolveWorktreeForArchive(client, nameArg);
     if (!worktree) {
       const error: CommandError = {
         code: "WORKTREE_NOT_FOUND",
@@ -93,9 +105,18 @@ export async function runArchiveCommand(
     }
 
     // Archive the worktree
-    const response = await client.archivePaseoWorktree({
+    let response = await client.archivePaseoWorktree({
       worktreePath: worktree.worktreePath,
     });
+
+    if (response.error?.code === "NOT_ALLOWED") {
+      const daemonWorktree = await resolveWorktreeFromDaemon(client, nameArg);
+      if (daemonWorktree && daemonWorktree.worktreePath !== worktree.worktreePath) {
+        response = await client.archivePaseoWorktree({
+          worktreePath: daemonWorktree.worktreePath,
+        });
+      }
+    }
 
     await client.close();
 
