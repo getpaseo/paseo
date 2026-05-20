@@ -7,11 +7,11 @@ import {
   resolveStartupWorkspaceSelection,
 } from "@/app/host-runtime-bootstrap";
 import {
-  navigateToWorkspace,
   useIsLastWorkspaceSelectionHydrated,
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 const isDesktop = shouldUseDesktopDaemon();
 
@@ -37,17 +37,15 @@ export default function Index() {
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });
 
-  React.useEffect(() => {
-    if (!startupWorkspaceSelection) {
-      return;
-    }
-    navigateToWorkspace(startupWorkspaceSelection.serverId, startupWorkspaceSelection.workspaceId, {
-      currentPathname: pathname,
-    });
-  }, [pathname, startupWorkspaceSelection]);
-
   if (startupWorkspaceSelection) {
-    return <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
+    return (
+      <Redirect
+        href={buildHostWorkspaceRoute(
+          startupWorkspaceSelection.serverId,
+          startupWorkspaceSelection.workspaceId,
+        )}
+      />
+    );
   }
 
   if (redirectRoute) {
