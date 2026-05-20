@@ -17,6 +17,7 @@ import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
@@ -120,7 +121,10 @@ const CodeLine = React.memo(function CodeLine({
   gutterWidth,
   highlighted,
 }: CodeLineProps) {
-  const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
+  const gutterStyle = useMemo(
+    () => [codeLineStyles.gutter, inlineUnistylesStyle({ width: gutterWidth })],
+    [gutterWidth],
+  );
   const lineStyle = useMemo(
     () => [codeLineStyles.line, highlighted && codeLineStyles.highlightedLine],
     [highlighted],

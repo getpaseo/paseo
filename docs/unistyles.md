@@ -84,7 +84,7 @@ The important detail: the automatic native path tracks `props.style`. It does no
 
 Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and appends a CSS rule to `#unistyles-web`; those rules are not reclaimed during the page lifetime, so pointer-driven positioning can turn into steady stylesheet growth.
 
-For floating UI on web, put moving geometry on a raw DOM wrapper (`<div style={{ position: "absolute", top, left }}>`) and keep the inner Unistyles surface static. For dynamic dimensions on web, prefer the same raw wrapper or another non-Unistyles element that owns the changing `maxHeight` / `minWidth`.
+Use the inline style escape hatch below for high-churn values. Do not split a component into plain/web/native variants just to keep one measured value out of the CSS registry. Raw DOM wrappers are reserved for real DOM infrastructure, such as terminal hosts, virtualized web rows, or third-party drag wrappers.
 
 ## Inline Style Escape Hatch
 
@@ -105,6 +105,8 @@ const styles = StyleSheet.create({
 This uses Unistyles' own animated-style lane: ordinary styles still become Unistyles classes, while the marked style object stays in React Native's inline style array. Use it for measured geometry, scroll or drag transforms, and pressed/hovered/open state where generating CSS classes is the wrong ownership boundary.
 
 Do not split a component into plain and Unistyles variants just to handle one high-churn value. The component remains a normal Unistyles component; only the specific style object escapes.
+
+When a reusable component has a prop whose whole job is dynamic geometry, make that prop the seam. For example, `FloatingSurface.frameStyle` and `FloatingScrollView.style` own their own escape hatch so menu, tooltip, hover-card, and combobox callers can stay declarative instead of knowing about Unistyles internals.
 
 ## Main Gotcha: `contentContainerStyle`
 

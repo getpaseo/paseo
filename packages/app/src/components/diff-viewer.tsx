@@ -1,10 +1,11 @@
-import React, { type CSSProperties } from "react";
+import React from "react";
 import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import type { DiffLine } from "@/utils/tool-call-parsers";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
 
@@ -95,40 +96,23 @@ export function DiffViewer({
   const outerScrollStyle = React.useMemo(
     () => [
       styles.verticalScroll,
-      !isWeb && maxHeight !== undefined && { maxHeight },
+      maxHeight !== undefined && inlineUnistylesStyle({ maxHeight }),
       fillAvailableHeight && styles.fillHeight,
       webScrollbarStyle,
     ],
     [maxHeight, fillAvailableHeight, webScrollbarStyle],
   );
   const linesContainerStyle = React.useMemo(
-    () => [styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }],
+    () => [
+      styles.linesContainer,
+      scrollViewWidth > 0 && inlineUnistylesStyle({ minWidth: scrollViewWidth }),
+    ],
     [scrollViewWidth],
   );
   const keyedDiffLines = React.useMemo(
     () => diffLines.map((line, index) => ({ key: `${index}-${line.type}-${line.content}`, line })),
     [diffLines],
   );
-  const webVerticalViewportStyle = React.useMemo<CSSProperties | undefined>(() => {
-    if (!isWeb) return undefined;
-    const { scrollbarColor, scrollbarWidth } = webScrollbarStyle as {
-      scrollbarColor?: string;
-      scrollbarWidth?: CSSProperties["scrollbarWidth"];
-    };
-    return {
-      scrollbarColor,
-      scrollbarWidth,
-      maxHeight,
-      overflowY: "auto",
-      overflowX: "hidden",
-      flex: fillAvailableHeight ? 1 : undefined,
-      minHeight: fillAvailableHeight ? 0 : undefined,
-    };
-  }, [maxHeight, fillAvailableHeight, webScrollbarStyle]);
-  const webLinesWrapperStyle = React.useMemo<CSSProperties | undefined>(() => {
-    if (!isWeb || scrollViewWidth <= 0) return undefined;
-    return { minWidth: scrollViewWidth };
-  }, [scrollViewWidth]);
   const webVerticalContentStyle = React.useMemo(
     () => [styles.verticalContent, fillAvailableHeight && styles.fillHeight],
     [fillAvailableHeight],
@@ -142,15 +126,7 @@ export function DiffViewer({
     );
   }
 
-  const lines = isWeb ? (
-    <div style={webLinesWrapperStyle}>
-      <View style={styles.linesContainer}>
-        {keyedDiffLines.map(({ key, line }) => (
-          <DiffLineRow key={key} line={line} />
-        ))}
-      </View>
-    </div>
-  ) : (
+  const lines = (
     <View style={linesContainerStyle}>
       {keyedDiffLines.map(({ key, line }) => (
         <DiffLineRow key={key} line={line} />
@@ -171,14 +147,10 @@ export function DiffViewer({
     </ScrollView>
   );
 
-  const content = isWeb ? (
-    <div style={webVerticalViewportStyle}>
-      <View style={webVerticalContentStyle}>{horizontalScroll}</View>
-    </div>
-  ) : (
+  const content = (
     <ScrollView
       style={outerScrollStyle}
-      contentContainerStyle={styles.verticalContent}
+      contentContainerStyle={webVerticalContentStyle}
       nestedScrollEnabled
       showsVerticalScrollIndicator
     >

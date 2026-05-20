@@ -13,6 +13,7 @@ import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -79,7 +80,7 @@ function useDetailStyles(
   const codeVerticalScrollStyle = useMemo(
     () => [
       styles.codeVerticalScroll,
-      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
       shouldFill && styles.fillHeight,
       webScrollbarStyle,
     ],
@@ -88,7 +89,7 @@ function useDetailStyles(
   const scrollAreaFillStyle = useMemo(
     () => [
       styles.scrollArea,
-      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
       shouldFill && styles.fillHeight,
       webScrollbarStyle,
     ],
@@ -97,7 +98,7 @@ function useDetailStyles(
   const scrollAreaStyle = useMemo(
     () => [
       styles.scrollArea,
-      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
       webScrollbarStyle,
     ],
     [resolvedMaxHeight, webScrollbarStyle],

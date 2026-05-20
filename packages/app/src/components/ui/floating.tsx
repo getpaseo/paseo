@@ -1,12 +1,14 @@
 import { forwardRef, useMemo, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import {
   ScrollView,
+  StyleSheet,
   type ScrollViewProps,
   type StyleProp,
   type View,
   type ViewStyle,
 } from "react-native";
 import Animated from "react-native-reanimated";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FloatingSurfaceProps extends Omit<ComponentProps<typeof Animated.View>, "style"> {
   frameStyle?: StyleProp<ViewStyle>;
@@ -17,7 +19,11 @@ export const FloatingSurface = forwardRef<View, FloatingSurfaceProps>(function F
   { frameStyle, style, ...props },
   ref,
 ): ReactElement {
-  const surfaceStyle = useMemo(() => [style, frameStyle], [frameStyle, style]);
+  const inlineFrameStyle = useMemo(() => {
+    const flattened = StyleSheet.flatten(frameStyle);
+    return flattened ? inlineUnistylesStyle(flattened) : undefined;
+  }, [frameStyle]);
+  const surfaceStyle = useMemo(() => [style, inlineFrameStyle], [inlineFrameStyle, style]);
   return <Animated.View {...props} ref={ref} style={surfaceStyle} />;
 });
 
@@ -38,13 +44,18 @@ export function FloatingScrollView({
   showsVerticalScrollIndicator,
   style,
 }: FloatingScrollViewProps): ReactElement {
+  const inlineStyle = useMemo(() => {
+    const flattened = StyleSheet.flatten(style);
+    return flattened ? inlineUnistylesStyle(flattened) : undefined;
+  }, [style]);
+
   return (
     <ScrollView
       bounces={bounces}
       contentContainerStyle={contentContainerStyle}
       keyboardShouldPersistTaps={keyboardShouldPersistTaps}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
-      style={style}
+      style={inlineStyle}
     >
       {children}
     </ScrollView>
