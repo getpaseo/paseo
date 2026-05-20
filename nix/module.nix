@@ -124,6 +124,17 @@ in
         default = true;
         description = "Whether to use TLS when connecting to the relay. Used when `relay.mode = \"remote\"`.";
       };
+
+      publicUseTls = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = ''
+          Whether the public (client-facing) relay endpoint uses TLS.
+          When `null` (default), the daemon falls back to `relay.useTls`.
+          Override when the internal path is plain `ws://` behind a
+          TLS-terminating reverse proxy.
+        '';
+      };
     };
 
     inheritUserEnvironment = lib.mkOption {
@@ -253,6 +264,8 @@ in
       } // lib.optionalAttrs (cfg.relay.enable && cfg.relay.mode == "remote") {
         PASEO_RELAY_ENDPOINT = "${cfg.relay.host}:${toString cfg.relay.port}";
         PASEO_RELAY_USE_TLS = if cfg.relay.useTls then "true" else "false";
+      } // lib.optionalAttrs (cfg.relay.enable && cfg.relay.mode == "remote" && cfg.relay.publicUseTls != null) {
+        PASEO_RELAY_PUBLIC_USE_TLS = if cfg.relay.publicUseTls then "true" else "false";
       } // cfg.environment;
 
       serviceConfig = {
