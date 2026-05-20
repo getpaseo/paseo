@@ -703,6 +703,17 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(turnStarted);
       this.notifySubscribers(turnStarted);
 
+      if (textPrompt.toLowerCase().includes("emit a turn failure")) {
+        const failed: AgentStreamEvent = {
+          type: "turn_failed",
+          provider: this.providerName,
+          error: "Requested fake provider failure",
+        };
+        await this.appendHistoryEvent(failed);
+        this.notifySubscribers(failed);
+        return;
+      }
+
       const stress = parseAgentStreamStressPrompt(textPrompt);
       if (stress !== null) {
         await this.emitStressTurn(stress);

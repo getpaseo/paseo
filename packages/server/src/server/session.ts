@@ -20,6 +20,7 @@ import {
   type FileExplorerRequest,
   type FileDownloadTokenRequest,
   type GitSetupOptions,
+  type CreateAgentWorktreeTarget,
   type CheckoutRenameBranchRequest,
   type StartWorkspaceScriptRequest,
   type CloseItemsRequest,
@@ -251,7 +252,9 @@ import {
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
+import { archivePaseoWorktree } from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
+import { isPaseoOwnedWorktreeCwd } from "../utils/worktree.js";
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 
@@ -769,6 +772,7 @@ export class Session {
   private unsubscribeAgentEvents: (() => void) | null = null;
   private agentUpdatesSubscription: AgentUpdatesSubscriptionState | null = null;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
+  private readonly autoArchiveAgentIds = new Set<string>();
   private clientActivity: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -3081,6 +3085,8 @@ export class Session {
       clientMessageId,
       outputSchema,
       git,
+      worktree,
+      autoArchive,
       images,
       attachments,
       labels,
@@ -3093,6 +3099,8 @@ export class Session {
       }`,
     );
 
+    let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
+    let createdAgentId: string | null = null;
     try {
       const trimmedPrompt = initialPrompt?.trim();
       const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
@@ -3108,8 +3116,18 @@ export class Session {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
+      if (worktree && git) {
+        throw new Error("create_agent_request worktree cannot be combined with git options");
+      }
+      const createdWorktree = worktree
+        ? await this.createWorktreeForCreateAgentRequest(config.cwd, worktree, firstAgentContext)
+        : null;
+      createdWorktreeForCleanup = createdWorktree;
+      const createAgentConfig: AgentSessionConfig = createdWorktree
+        ? { ...resolvedConfig, cwd: createdWorktree.worktree.worktreePath }
+        : resolvedConfig;
       const { sessionConfig, setupContinuation } = await this.buildAgentSessionConfig(
-        resolvedConfig,
+        createAgentConfig,
         git,
         worktreeName,
         firstAgentContext,
@@ -3127,7 +3145,9 @@ export class Session {
         initialPrompt: trimmedPrompt,
         env,
       });
+      createdAgentId = snapshot.id;
       await this.forwardAgentUpdate(snapshot);
+      this.registerAutoArchiveIfRequested(autoArchive, snapshot.id, createdWorktree);
 
       await this.sendInitialCreateAgentPrompt({
         snapshot,
@@ -3161,6 +3181,10 @@ export class Session {
         `Created agent ${snapshot.id} (${snapshot.provider})`,
       );
     } catch (error) {
+      await this.cleanupCreatedWorktreeAfterFailedAgentCreate(
+        createdWorktreeForCleanup,
+        createdAgentId,
+      );
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
@@ -3223,6 +3247,180 @@ export class Session {
     );
     if (!started.ok) {
       throw new Error(started.error);
+    }
+  }
+
+  private registerAutoArchiveIfRequested(
+    autoArchive: boolean | undefined,
+    agentId: string,
+    createdWorktree: CreatePaseoWorktreeWorkflowResult | null,
+  ): void {
+    if (autoArchive !== true) {
+      return;
+    }
+
+    this.registerAutoArchiveOnTerminalState(agentId, {
+      worktreePath: createdWorktree?.worktree.worktreePath ?? null,
+      repoRoot: createdWorktree?.repoRoot ?? null,
+    });
+  }
+
+  private async cleanupCreatedWorktreeAfterFailedAgentCreate(
+    createdWorktree: CreatePaseoWorktreeWorkflowResult | null,
+    createdAgentId: string | null,
+  ): Promise<void> {
+    if (!createdWorktree || createdAgentId) {
+      return;
+    }
+
+    await this.archiveAutoCreatedWorktree({
+      agentId: null,
+      worktreePath: createdWorktree.worktree.worktreePath,
+      repoRoot: createdWorktree.repoRoot,
+    }).catch((archiveError) => {
+      this.sessionLogger.warn(
+        {
+          err: archiveError,
+          worktreePath: createdWorktree.worktree.worktreePath,
+        },
+        "Failed to clean up worktree after create_agent_request failed",
+      );
+    });
+  }
+
+  private async createWorktreeForCreateAgentRequest(
+    cwd: string,
+    target: CreateAgentWorktreeTarget,
+    firstAgentContext: FirstAgentContext,
+  ): Promise<CreatePaseoWorktreeWorkflowResult> {
+    const baseInput = {
+      cwd,
+      firstAgentContext,
+      runSetup: false,
+      paseoHome: this.paseoHome,
+    } as const;
+
+    switch (target.mode) {
+      case "branch-off":
+        return this.createPaseoWorktreeWorkflow(
+          {
+            ...baseInput,
+            worktreeSlug: target.newBranch,
+            action: "branch-off",
+            ...(target.base ? { refName: target.base } : {}),
+          },
+          target.base ? { resolveDefaultBranch: async () => target.base! } : undefined,
+        );
+      case "checkout-branch":
+        return this.createPaseoWorktreeWorkflow({
+          ...baseInput,
+          action: "checkout",
+          refName: target.branch,
+        });
+      case "checkout-pr":
+        return this.createPaseoWorktreeWorkflow({
+          ...baseInput,
+          action: "checkout",
+          githubPrNumber: target.prNumber,
+        });
+      default:
+        throw new Error("Unsupported create_agent_request worktree target");
+    }
+  }
+
+  private registerAutoArchiveOnTerminalState(
+    agentId: string,
+    options: { worktreePath: string | null; repoRoot: string | null },
+  ): void {
+    const unsubscribe = this.agentManager.subscribe(
+      (event) => {
+        if (event.type !== "agent_stream") {
+          return;
+        }
+        if (
+          event.event.type !== "turn_completed" &&
+          event.event.type !== "turn_failed" &&
+          event.event.type !== "turn_canceled"
+        ) {
+          return;
+        }
+        unsubscribe();
+        void this.autoArchiveAgentOnce(agentId, options);
+      },
+      { agentId, replayState: false },
+    );
+  }
+
+  private async autoArchiveAgentOnce(
+    agentId: string,
+    options: { worktreePath: string | null; repoRoot: string | null },
+  ): Promise<void> {
+    if (this.autoArchiveAgentIds.has(agentId)) {
+      return;
+    }
+    this.autoArchiveAgentIds.add(agentId);
+
+    try {
+      if (options.worktreePath) {
+        await this.archiveAutoCreatedWorktree({
+          agentId,
+          worktreePath: options.worktreePath,
+          repoRoot: options.repoRoot,
+        });
+        return;
+      }
+
+      await this.archiveAgentForClose(agentId);
+    } catch (error) {
+      this.sessionLogger.warn({ err: error, agentId }, "Failed to auto-archive agent");
+    }
+  }
+
+  private async archiveAutoCreatedWorktree(options: {
+    agentId: string | null;
+    worktreePath: string;
+    repoRoot: string | null;
+  }): Promise<void> {
+    const ownership = await isPaseoOwnedWorktreeCwd(options.worktreePath, {
+      paseoHome: this.paseoHome,
+    });
+    if (!ownership.allowed) {
+      throw new Error("Auto-created worktree is not a Paseo-owned worktree");
+    }
+
+    await archivePaseoWorktree(
+      {
+        paseoHome: this.paseoHome,
+        github: this.github,
+        workspaceGitService: this.workspaceGitService,
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        emit: (message) => this.emit(message),
+        emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+          this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+        markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+          this.markWorkspaceArchiving(workspaceIds, archivingAt),
+        clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+        isPathWithinRoot: (rootPath, candidatePath) =>
+          this.isPathWithinRoot(rootPath, candidatePath),
+        killTerminalsUnderPath: (rootPath) =>
+          this.terminalController.killTerminalsUnderPath(rootPath),
+        sessionLogger: this.sessionLogger,
+      },
+      {
+        targetPath: options.worktreePath,
+        repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
+        worktreesRoot: ownership.worktreeRoot,
+        requestId: uuidv4(),
+      },
+    );
+
+    if (options.agentId && this.agentUpdatesSubscription) {
+      this.bufferOrEmitAgentUpdate(this.agentUpdatesSubscription, {
+        kind: "remove",
+        agentId: options.agentId,
+      });
     }
   }
 

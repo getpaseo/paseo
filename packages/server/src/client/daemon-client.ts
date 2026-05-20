@@ -257,6 +257,8 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   images?: CreateAgentRequestMessage["images"];
   attachments?: CreateAgentRequestMessage["attachments"];
   git?: GitSetupOptions;
+  worktree?: CreateAgentRequestMessage["worktree"];
+  autoArchive?: CreateAgentRequestMessage["autoArchive"];
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
@@ -1848,6 +1850,8 @@ export class DaemonClient {
         ? { attachments: options.attachments }
         : {}),
       ...(options.git ? { git: options.git } : {}),
+      ...(options.worktree ? { worktree: options.worktree } : {}),
+      ...(options.autoArchive !== undefined ? { autoArchive: options.autoArchive } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
