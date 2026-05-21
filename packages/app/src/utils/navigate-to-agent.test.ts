@@ -130,4 +130,34 @@ describe("navigateToAgent", () => {
     expect(routerMock.navigate).toHaveBeenCalledWith("/h/server-1/agent/missing-agent");
     expect(routerMock.dismissTo).not.toHaveBeenCalled();
   });
+
+  it("opens subagents in their parent workspace when the child cwd is not a workspace", () => {
+    const parent = createAgent({
+      id: "parent-agent",
+      cwd: "/repo/worktree",
+      parentAgentId: null,
+    });
+    const child = createAgent({
+      id: "child-agent",
+      cwd: "/repo/worktree/packages/app",
+      parentAgentId: "parent-agent",
+    });
+    useSessionStore.getState().setAgents(
+      SERVER_ID,
+      new Map([
+        [parent.id, parent],
+        [child.id, child],
+      ]),
+    );
+
+    const route = navigateToAgent({ serverId: SERVER_ID, agentId: child.id });
+
+    expect(route).toBe("/h/server-1/workspace/workspace-1");
+    expect(routerMock.navigate).not.toHaveBeenCalled();
+    expect(routerMock.dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-1");
+    const key = `${SERVER_ID}:${WORKSPACE_ID}`;
+    expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(key)).toEqual([
+      expect.objectContaining({ target: { kind: "agent", agentId: child.id } }),
+    ]);
+  });
 });

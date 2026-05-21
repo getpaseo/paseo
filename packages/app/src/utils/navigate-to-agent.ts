@@ -14,10 +14,20 @@ interface NavigateToAgentInput {
 export function navigateToAgent(input: NavigateToAgentInput): string {
   const session = useSessionStore.getState().sessions[input.serverId];
   const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
-  const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-    workspaces: session?.workspaces.values(),
-    workspaceDirectory: agent?.cwd,
-  });
+  const workspaceId =
+    resolveWorkspaceIdByExecutionDirectory({
+      workspaces: session?.workspaces.values(),
+      workspaceDirectory: agent?.cwd,
+    }) ??
+    resolveWorkspaceIdByExecutionDirectory({
+      workspaces: session?.workspaces.values(),
+      workspaceDirectory: agent?.parentAgentId
+        ? (
+            session?.agents.get(agent.parentAgentId) ??
+            session?.agentDetails.get(agent.parentAgentId)
+          )?.cwd
+        : null,
+    });
 
   if (!workspaceId) {
     const route = buildHostAgentDetailRoute(input.serverId, input.agentId);
