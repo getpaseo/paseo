@@ -15,6 +15,11 @@ describe("create_agent_request worktree and autoArchive fields", () => {
         mode: "branch-off",
         newBranch: "agent-lifecycle-dispatch",
         base: "main",
+        gitConfig: {
+          userName: "paseo-ai[bot]",
+          userEmail: "123456+paseo-ai[bot]@users.noreply.github.com",
+          remoteUrl: "https://x-access-token:ghs_install_token@github.com/boudra/faro.git",
+        },
       },
       autoArchive: true,
     });
@@ -30,6 +35,11 @@ describe("create_agent_request worktree and autoArchive fields", () => {
         mode: "branch-off",
         newBranch: "agent-lifecycle-dispatch",
         base: "main",
+        gitConfig: {
+          userName: "paseo-ai[bot]",
+          userEmail: "123456+paseo-ai[bot]@users.noreply.github.com",
+          remoteUrl: "https://x-access-token:ghs_install_token@github.com/boudra/faro.git",
+        },
       },
       autoArchive: true,
       labels: {},

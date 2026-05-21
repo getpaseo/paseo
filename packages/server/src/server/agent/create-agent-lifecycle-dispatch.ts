@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type pino from "pino";
 
 import type { GitHubService } from "../../services/github-service.js";
+import { runGitCommand } from "../../utils/run-git-command.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import { archivePaseoWorktree } from "../paseo-worktree-archive-service.js";
 import type {
@@ -11,6 +12,7 @@ import type {
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
   CreateAgentWorktreeTarget,
+  CreateAgentWorktreeGitConfig,
   FirstAgentContext,
   SessionOutboundMessage,
 } from "../messages.js";
@@ -54,7 +56,13 @@ export class CreateAgentLifecycleDispatch {
       return null;
     }
 
-    return this.createWorktreeForTarget(input.cwd, input.target, input.firstAgentContext);
+    const createdWorktree = await this.createWorktreeForTarget(
+      input.cwd,
+      input.target,
+      input.firstAgentContext,
+    );
+    await applyWorktreeGitConfig(createdWorktree.worktree.worktreePath, input.target.gitConfig);
+    return createdWorktree;
   }
 
   registerAutoArchiveIfRequested(input: {
@@ -223,5 +231,30 @@ export class CreateAgentLifecycleDispatch {
     if (options.agentId) {
       this.dependencies.emitAgentRemove(options.agentId);
     }
+  }
+}
+
+async function applyWorktreeGitConfig(
+  worktreePath: string,
+  gitConfig: CreateAgentWorktreeGitConfig | undefined,
+): Promise<void> {
+  if (gitConfig === undefined) {
+    return;
+  }
+
+  if (gitConfig.userName !== undefined) {
+    await runGitCommand(["config", "--local", "user.name", gitConfig.userName], {
+      cwd: worktreePath,
+    });
+  }
+  if (gitConfig.userEmail !== undefined) {
+    await runGitCommand(["config", "--local", "user.email", gitConfig.userEmail], {
+      cwd: worktreePath,
+    });
+  }
+  if (gitConfig.remoteUrl !== undefined) {
+    await runGitCommand(["remote", "set-url", "origin", gitConfig.remoteUrl], {
+      cwd: worktreePath,
+    });
   }
 }

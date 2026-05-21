@@ -1058,22 +1058,32 @@ const GitSetupOptionsSchema = z.object({
 
 export type GitSetupOptions = z.infer<typeof GitSetupOptionsSchema>;
 
+export const CreateAgentWorktreeGitConfigSchema = z.object({
+  userName: z.string().min(1).optional(),
+  userEmail: z.string().min(1).optional(),
+  remoteUrl: z.string().min(1).optional(),
+});
+
 export const CreateAgentWorktreeTargetSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("branch-off"),
     newBranch: z.string().min(1),
     base: z.string().min(1).optional(),
+    gitConfig: CreateAgentWorktreeGitConfigSchema.optional(),
   }),
   z.object({
     mode: z.literal("checkout-branch"),
     branch: z.string().min(1),
+    gitConfig: CreateAgentWorktreeGitConfigSchema.optional(),
   }),
   z.object({
     mode: z.literal("checkout-pr"),
     prNumber: z.number().int().positive(),
+    gitConfig: CreateAgentWorktreeGitConfigSchema.optional(),
   }),
 ]);
 
+export type CreateAgentWorktreeGitConfig = z.infer<typeof CreateAgentWorktreeGitConfigSchema>;
 export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTargetSchema>;
 
 export const CreateAgentRequestMessageSchema = z.object({

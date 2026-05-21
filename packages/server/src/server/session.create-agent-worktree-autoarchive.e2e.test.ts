@@ -152,6 +152,50 @@ test("create_agent_request creates a worktree and auto-archives both after the f
   await expectWorktreeAbsentFromList(repoDir, created.cwd);
 }, 30000);
 
+test("create_agent_request applies worktree git config before starting the agent", async () => {
+  const repoDir = createGitRepo();
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:boudra/faro.git"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  const created = await ctx.client.createAgent({
+    config: {
+      ...getFullAccessConfig("codex"),
+      cwd: repoDir,
+    },
+    worktree: {
+      mode: "branch-off",
+      newBranch: "agent-lifecycle-git-config",
+      base: "main",
+      gitConfig: {
+        userName: "paseo-ai[bot]",
+        userEmail: "123456+paseo-ai[bot]@users.noreply.github.com",
+        remoteUrl: "https://x-access-token:ghs_install_token@github.com/boudra/faro.git",
+      },
+    },
+    initialPrompt: "Say done.",
+  });
+
+  expect(
+    execFileSync("git", ["config", "--local", "user.name"], {
+      cwd: created.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("paseo-ai[bot]");
+  expect(
+    execFileSync("git", ["config", "--local", "user.email"], {
+      cwd: created.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("123456+paseo-ai[bot]@users.noreply.github.com");
+  expect(
+    execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: created.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("https://x-access-token:ghs_install_token@github.com/boudra/faro.git");
+}, 30000);
+
 test("create_agent_request with autoArchive archives only the agent when no worktree was created", async () => {
   const repoDir = createGitRepo();
   const created = await ctx.client.createAgent({
