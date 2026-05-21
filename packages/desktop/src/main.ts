@@ -54,6 +54,8 @@ import { runDesktopStartup } from "./desktop-startup.js";
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
+const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
+const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 
 function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
   if (!value) {
@@ -108,7 +110,7 @@ const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
 ]);
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
-app.setName("Paseo");
+app.setName(APP_NAME);
 
 function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
   const prefix = "persist:paseo-browser-";
@@ -374,7 +376,7 @@ async function createMainWindow(): Promise<void> {
   const iconPath = getWindowIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
-  const title = devWorktreeName ? `Paseo (${devWorktreeName})` : "Paseo";
+  const title = devWorktreeName ? `${APP_NAME} (${devWorktreeName})` : APP_NAME;
   const mainWindow = new BrowserWindow({
     title,
     width: 1200,
@@ -522,6 +524,11 @@ function sendOpenProjectEvent(win: BrowserWindow, projectPath: string): void {
 // ---------------------------------------------------------------------------
 
 function setupSingleInstanceLock(): boolean {
+  if (DISABLE_SINGLE_INSTANCE_LOCK) {
+    log.info("[single-instance] disabled by PASEO_DISABLE_SINGLE_INSTANCE_LOCK");
+    return true;
+  }
+
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();

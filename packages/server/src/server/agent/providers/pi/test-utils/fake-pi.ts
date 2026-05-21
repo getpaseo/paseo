@@ -55,6 +55,10 @@ export class FakePiSession implements PiRuntimeSession {
   readonly setThinkingLevelRequests: string[] = [];
   abortRequested = false;
   readonly canceledExtensionUiRequests: string[] = [];
+  readonly extensionUiResponses: Array<{
+    id: string;
+    response: { value?: string; confirmed?: boolean; cancelled?: boolean };
+  }> = [];
   setModelResult: PiModel | null = null;
   models: PiModel[] = [];
   messages: PiAgentMessage[] = [];
@@ -130,8 +134,16 @@ export class FakePiSession implements PiRuntimeSession {
     return this.commands;
   }
 
+  respondToExtensionUiRequest(
+    id: string,
+    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ): void {
+    this.extensionUiResponses.push({ id, response });
+  }
+
   cancelExtensionUiRequest(id: string): void {
     this.canceledExtensionUiRequests.push(id);
+    this.respondToExtensionUiRequest(id, { cancelled: true });
   }
 
   async close(): Promise<void> {}

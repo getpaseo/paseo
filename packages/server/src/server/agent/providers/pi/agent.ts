@@ -403,6 +403,108 @@ function latestPiErrorMessage(messages: PiAgentMessage[]): string | null {
     : null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function mapExtensionUiRequestToPermission(
+  event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
+): AgentPermissionRequest | null {
+  switch (event.method) {
+    case "select":
+      return buildExtensionUiQuestionPermission(event, {
+        question: optionalString(event.title) ?? "Select an option",
+        options: Array.isArray(event.options)
+          ? event.options.filter((option): option is string => typeof option === "string")
+          : [],
+        multiSelect: false,
+      });
+    case "input":
+      return buildExtensionUiQuestionPermission(event, {
+        question: optionalString(event.title) ?? "Enter a value",
+        options: [],
+        multiSelect: false,
+      });
+    case "editor":
+      return buildExtensionUiQuestionPermission(event, {
+        question: optionalString(event.title) ?? "Edit text",
+        options: [],
+        multiSelect: false,
+      });
+    case "confirm":
+      return buildExtensionUiQuestionPermission(event, {
+        question: [optionalString(event.title), optionalString(event.message)]
+          .filter(Boolean)
+          .join("\n\n"),
+        options: ["Yes", "No"],
+        multiSelect: false,
+      });
+    default:
+      return null;
+  }
+}
+
+function buildExtensionUiQuestionPermission(
+  event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
+  input: { question: string; options: string[]; multiSelect: boolean },
+): AgentPermissionRequest {
+  const header = "Response";
+  return {
+    id: event.id,
+    provider: PI_PROVIDER,
+    name: `Pi ${event.method}`,
+    kind: "question",
+    title: input.question,
+    input: {
+      questions: [
+        {
+          question: input.question,
+          header,
+          options: input.options.map((label) => ({ label })),
+          multiSelect: input.multiSelect,
+        },
+      ],
+    },
+    metadata: {
+      extensionUiMethod: event.method,
+      answerHeader: header,
+    },
+  };
+}
+
+function firstPermissionAnswer(input: AgentMetadata | undefined): string | null {
+  const answers = isRecord(input?.answers) ? input.answers : null;
+  if (!answers) {
+    return null;
+  }
+  const first = Object.values(answers).find((value) => typeof value === "string");
+  return typeof first === "string" ? first : null;
+}
+
+function buildExtensionUiResponse(
+  request: AgentPermissionRequest,
+  response: AgentPermissionResponse,
+): { value?: string; confirmed?: boolean; cancelled?: boolean } {
+  if (response.behavior === "deny") {
+    return { cancelled: true };
+  }
+
+  const method = optionalString(request.metadata?.extensionUiMethod);
+  const answer = firstPermissionAnswer(response.updatedInput);
+  if (answer === null) {
+    return { cancelled: true };
+  }
+
+  if (method === "confirm") {
+    return { confirmed: /^yes$/i.test(answer.trim()) };
+  }
+  return { value: answer };
+}
+
 function mapPiModel(model: PiModel): AgentModelDefinition {
   return {
     provider: PI_PROVIDER,
@@ -428,6 +530,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
+  private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeTurnId: string | null = null;
   private lastKnownThinkingOptionId: string | null;
   private state: PiSessionState;
@@ -540,12 +643,27 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return [];
+    return [...this.pendingExtensionUiRequests.values()];
   }
 
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
-    void requestId;
-    void response;
+    const request = this.pendingExtensionUiRequests.get(requestId);
+    if (!request) {
+      throw new Error(`No pending permission request with id '${requestId}'`);
+    }
+    this.pendingExtensionUiRequests.delete(requestId);
+
+    this.runtimeSession.respondToExtensionUiRequest(
+      requestId,
+      buildExtensionUiResponse(request, response),
+    );
+    this.emit({
+      type: "permission_resolved",
+      provider: PI_PROVIDER,
+      requestId,
+      resolution: response,
+      turnId: this.currentTurnIdForEvent(),
+    });
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -624,9 +742,26 @@ export class PiRpcAgentSession implements AgentSession {
     return this.activeTurnId ?? undefined;
   }
 
+  private handleExtensionUiRequest(
+    event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
+  ): void {
+    const request = mapExtensionUiRequestToPermission(event);
+    if (!request) {
+      return;
+    }
+
+    this.pendingExtensionUiRequests.set(request.id, request);
+    this.emit({
+      type: "permission_requested",
+      provider: PI_PROVIDER,
+      request,
+      turnId: this.currentTurnIdForEvent(),
+    });
+  }
+
   private handleRuntimeEvent(event: PiRuntimeEvent): void {
     if (event.type === "extension_ui_request") {
-      this.runtimeSession.cancelExtensionUiRequest(event.id);
+      this.handleExtensionUiRequest(event);
       return;
     }
     if (event.type === "process_exit") {

@@ -166,8 +166,15 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return data.commands ?? [];
   }
 
+  respondToExtensionUiRequest(
+    id: string,
+    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ): void {
+    this.writeJsonLine({ type: "extension_ui_response", id, ...response });
+  }
+
   cancelExtensionUiRequest(id: string): void {
-    this.writeJsonLine({ type: "extension_ui_response", id, cancelled: true });
+    this.respondToExtensionUiRequest(id, { cancelled: true });
   }
 
   async close(): Promise<void> {

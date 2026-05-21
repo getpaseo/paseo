@@ -43,6 +43,10 @@ export interface PiRuntimeSession {
   setThinkingLevel(level: string): Promise<void>;
   getSessionStats(): Promise<PiSessionStats>;
   getCommands(): Promise<PiRpcSlashCommand[]>;
+  respondToExtensionUiRequest(
+    id: string,
+    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ): void;
   cancelExtensionUiRequest(id: string): void;
   close(): Promise<void>;
 }

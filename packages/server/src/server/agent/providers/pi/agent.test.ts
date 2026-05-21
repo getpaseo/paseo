@@ -102,6 +102,20 @@ class SessionEvents {
     );
   }
 
+  nextPermissionRequest(): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>> {
+    return this.nextEvent(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested",
+    );
+  }
+
+  nextPermissionResolution(): Promise<Extract<AgentStreamEvent, { type: "permission_resolved" }>> {
+    return this.nextEvent(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_resolved" }> =>
+        event.type === "permission_resolved",
+    );
+  }
+
   private nextEvent<T extends AgentStreamEvent>(
     predicate: (event: AgentStreamEvent) => event is T,
   ): Promise<T> {
@@ -119,6 +133,125 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("bridges Pi RPC select extension UI requests through question permissions", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Pick one",
+      options: ["A", "B"],
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request).toMatchObject({
+      id: "ui-1",
+      provider: "pi",
+      kind: "question",
+      title: "Pick one",
+      input: {
+        questions: [
+          {
+            question: "Pick one",
+            header: "Response",
+            options: [{ label: "A" }, { label: "B" }],
+            multiSelect: false,
+          },
+        ],
+      },
+      metadata: { extensionUiMethod: "select" },
+    });
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission("ui-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "B" } },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([{ id: "ui-1", response: { value: "B" } }]);
+    expect(session.getPendingPermissions()).toEqual([]);
+    await expect(events.nextPermissionResolution()).resolves.toMatchObject({
+      requestId: "ui-1",
+      resolution: { behavior: "allow" },
+    });
+  });
+
+  test("bridges Pi RPC input and confirm extension UI responses", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "input-1",
+      method: "input",
+      title: "Your name",
+      placeholder: "name",
+    });
+    await events.nextPermissionRequest();
+    await session.respondToPermission("input-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Ada" } },
+    });
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "confirm-1",
+      method: "confirm",
+      title: "Proceed?",
+    });
+    await events.nextPermissionRequest();
+    await session.respondToPermission("confirm-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "No" } },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "input-1", response: { value: "Ada" } },
+      { id: "confirm-1", response: { confirmed: false } },
+    ]);
+  });
+
+  test("cancels Pi RPC extension UI dialogs when question permission is denied", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-cancel",
+      method: "select",
+      title: "Pick one",
+      options: ["A", "B"],
+    });
+    await events.nextPermissionRequest();
+
+    await session.respondToPermission("ui-cancel", {
+      behavior: "deny",
+      message: "Dismissed by user",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-cancel", response: { cancelled: true } },
+    ]);
+  });
+
+  test("ignores Pi RPC fire-and-forget extension UI requests", async () => {
+    const { pi } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-1",
+      method: "notify",
+      message: "hello",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([]);
+    expect(fakeSession.canceledExtensionUiRequests).toEqual([]);
+  });
+
   test("streams assistant text, reasoning, and tool calls from Pi events", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
