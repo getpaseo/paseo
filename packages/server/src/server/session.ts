@@ -1201,6 +1201,76 @@ export class Session {
     });
   }
 
+  private shouldRetrySendAfterStartFailure(agentId: string): boolean {
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent || agent.session == null) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private async retrySendAgentMessageAfterSessionReload(input: {
+    agentId: string;
+    text: string;
+    prompt: AgentPromptInput;
+    messageId?: string;
+    runOptions?: AgentRunOptions;
+  }): Promise<void> {
+    this.sessionLogger.warn(
+      {
+        agentId: input.agentId,
+        messageId: input.messageId,
+      },
+      "Retrying send_agent_message after reloading stale session",
+    );
+
+    await this.agentManager.reloadAgentSession(input.agentId);
+    await sendPromptToAgent({
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      agentId: input.agentId,
+      userMessageText: input.text,
+      prompt: input.prompt,
+      messageId: input.messageId,
+      runOptions: input.runOptions,
+      recordUserMessage: false,
+      logger: this.sessionLogger,
+    });
+  }
+
+  private async dispatchAgentMessagePrompt(input: {
+    agentId: string;
+    text: string;
+    prompt: AgentPromptInput;
+    messageId?: string;
+    runOptions?: AgentRunOptions;
+    recordUserMessage?: boolean;
+  }): Promise<void> {
+    await sendPromptToAgent({
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      agentId: input.agentId,
+      userMessageText: input.text,
+      prompt: input.prompt,
+      messageId: input.messageId,
+      runOptions: input.runOptions,
+      ...(input.recordUserMessage === false ? { recordUserMessage: false } : {}),
+      logger: this.sessionLogger,
+    });
+  }
+
+  private async waitForAgentRunStartOrThrow(agentId: string): Promise<void> {
+    const startAbort = new AbortController();
+    const startTimeoutMs = 15_000;
+    const startTimeout = setTimeout(() => startAbort.abort("timeout"), startTimeoutMs);
+    try {
+      await this.agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
+    } finally {
+      clearTimeout(startTimeout);
+    }
+  }
+
   /**
    * Initialize Agent MCP client for this session using the daemon's HTTP MCP endpoint.
    */
@@ -3078,22 +3148,37 @@ export class Session {
     const prompt = this.buildAgentPrompt(promptText, images, attachments);
 
     try {
-      await sendPromptToAgent({
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        agentId,
-        userMessageText: text,
-        prompt,
-        messageId,
-        runOptions,
-        logger: this.sessionLogger,
-      });
+      await this.dispatchAgentMessagePrompt({ agentId, text, prompt, messageId, runOptions });
       return { ok: true };
     } catch (error) {
-      this.handleAgentRunError(agentId, error, "Failed to send agent message");
+      let resolvedError = error;
+      if (this.shouldRetrySendAfterStartFailure(agentId)) {
+        try {
+          await this.retrySendAgentMessageAfterSessionReload({
+            agentId,
+            text,
+            prompt,
+            messageId,
+            runOptions,
+          });
+          return { ok: true };
+        } catch (retryError) {
+          this.sessionLogger.warn(
+            {
+              agentId,
+              originalError: errorToFriendlyMessage(error),
+              retryError: errorToFriendlyMessage(retryError),
+            },
+            "send_agent_message retry after session reload failed",
+          );
+          resolvedError = retryError;
+        }
+      }
+
+      this.handleAgentRunError(agentId, resolvedError, "Failed to send agent message");
       return {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: resolvedError instanceof Error ? resolvedError.message : String(resolvedError),
       };
     }
   }
@@ -7765,24 +7850,54 @@ export class Session {
         return;
       }
 
-      const startAbort = new AbortController();
-      const startTimeoutMs = 15_000;
-      const startTimeout = setTimeout(() => startAbort.abort("timeout"), startTimeoutMs);
       try {
-        await this.agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
+        await this.waitForAgentRunStartOrThrow(agentId);
       } catch (error) {
+        let resolvedError = error;
+        if (this.shouldRetrySendAfterStartFailure(agentId)) {
+          try {
+            await this.agentManager.reloadAgentSession(agentId);
+            await this.dispatchAgentMessagePrompt({
+              agentId,
+              text: msg.text,
+              prompt,
+              messageId: msg.messageId,
+              recordUserMessage: false,
+            });
+            await this.waitForAgentRunStartOrThrow(agentId);
+            this.emit({
+              type: "send_agent_message_response",
+              payload: {
+                requestId: msg.requestId,
+                agentId,
+                accepted: true,
+                error: null,
+              },
+            });
+            return;
+          } catch (retryError) {
+            this.sessionLogger.warn(
+              {
+                agentId,
+                originalError: errorToFriendlyMessage(error),
+                retryError: errorToFriendlyMessage(retryError),
+              },
+              "send_agent_message request retry after session reload failed",
+            );
+            resolvedError = retryError;
+          }
+        }
+
         this.emit({
           type: "send_agent_message_response",
           payload: {
             requestId: msg.requestId,
             agentId,
             accepted: false,
-            error: errorToFriendlyMessage(error),
+            error: errorToFriendlyMessage(resolvedError),
           },
         });
         return;
-      } finally {
-        clearTimeout(startTimeout);
       }
 
       this.emit({

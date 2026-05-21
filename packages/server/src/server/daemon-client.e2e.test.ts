@@ -19,9 +19,7 @@ import type {
   AgentClient,
   AgentPersistenceHandle,
   AgentRunResult,
-  AgentSession,
   AgentSessionConfig,
-  AgentStreamEvent,
 } from "./agent/agent-sdk-types.js";
 
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;

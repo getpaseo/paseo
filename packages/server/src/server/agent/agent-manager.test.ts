@@ -3995,6 +3995,83 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
   );
 });
 
+test("reloadAgentSession recovers a stale session after startTurn fails before a turn id exists", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-after-start-failure-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class FailsOnceBeforeTurnSession extends TestAgentSession {
+    private attempt = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.attempt += 1;
+      if (this.attempt === 1) {
+        throw new Error("Agent session became unavailable");
+      }
+      return super.startTurn();
+    }
+  }
+
+  class FailsOnceClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsSessionPersistence: true,
+    };
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FailsOnceBeforeTurnSession(config);
+    }
+
+    async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new FailsOnceBeforeTurnSession({
+        provider: handle.provider,
+        cwd: overrides?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new FailsOnceClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  const agent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Reload after start failure",
+  });
+
+  await expect(manager.runAgent(agent.id, "fail before turn id")).rejects.toThrow(
+    "Agent session became unavailable",
+  );
+
+  await expect(manager.reloadAgentSession(agent.id)).resolves.toEqual(
+    expect.objectContaining({
+      id: agent.id,
+      lifecycle: "idle",
+    }),
+  );
+
+  await expect(manager.runAgent(agent.id, "second turn")).resolves.toEqual(
+    expect.objectContaining({
+      sessionId: expect.any(String),
+      canceled: false,
+    }),
+  );
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");
