@@ -76,6 +76,10 @@ class FakeDaemonClient {
     return { rttMs: 0 };
   }
 
+  async checkLiveness(): Promise<{ rttMs: number }> {
+    return this.ping();
+  }
+
   setReconnectEnabled(_enabled: boolean): void {}
 
   setConnectionState(next: ConnectionState): void {
@@ -618,6 +622,85 @@ describe("HostRuntimeController", () => {
     expect(snapshot.connectionStatus).toBe("online");
     expect(snapshot.client).not.toBe(initialClient);
     expect((initialClient as unknown as FakeDaemonClient | null)?.closeCalls).toBe(1);
+  });
+
+  it("uses liveness probes instead of session RPC timeouts for active connection health", async () => {
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({
+      connections: [relay],
+      preferredConnectionId: relay.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps({ [relay.id]: 12 }, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.ping = async () => {
+      throw new Error("Timeout waiting for message (5000ms)");
+    };
+    activeClient.checkLiveness = async () => ({ rttMs: 11 });
+    clearProbeBackoff(controller);
+
+    await controller.runProbeCycleNow();
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.probeByConnectionId.get(relay.id)).toEqual({
+      status: "available",
+      latencyMs: 11,
+    });
+    expect(snapshot.connectionStatus).toBe("online");
+  });
+
+  it("backs off inactive connection probes while a host is online", async () => {
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 10,
+      "relay:relay.paseo.sh:443": 50,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    const initialClientCount = clients.length;
+    const initialRelayProbe = controller
+      .getSnapshot()
+      .probeByConnectionId.get("relay:relay.paseo.sh:443");
+
+    latencies["direct:lan:6767"] = 12;
+    latencies["relay:relay.paseo.sh:443"] = 25;
+    const lastProbedAt = (
+      controller as unknown as {
+        connectionLastProbedAt: Map<string, number>;
+      }
+    ).connectionLastProbedAt;
+    const now = performance.now();
+    lastProbedAt.set("direct:lan:6767", now - 60_000);
+    lastProbedAt.set("relay:relay.paseo.sh:443", now - 60_000);
+
+    await controller.runProbeCycleNow();
+
+    const snapshot = controller.getSnapshot();
+    expect(clients.length).toBe(initialClientCount);
+    expect(snapshot.probeByConnectionId.get("direct:lan:6767")).toEqual({
+      status: "available",
+      latencyMs: 12,
+    });
+    expect(snapshot.probeByConnectionId.get("relay:relay.paseo.sh:443")).toEqual(initialRelayProbe);
   });
 
   it("switches only after the faster alternative wins consecutive probes", async () => {

@@ -281,6 +281,84 @@ test("does not reconnect after close when ensureConnected is called", async () =
   expect(client.getConnectionState().status).toBe("disposed");
 });
 
+test("keeps the transport connected when a session RPC ping times out", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  expect(client.getConnectionState().status).toBe("connected");
+
+  await expect(client.ping({ timeoutMs: 1 })).rejects.toThrow("Timeout waiting for message");
+
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("reconnects after repeated top-level liveness checks time out", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  expect(client.getConnectionState().status).toBe("connected");
+
+  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
+  expect(client.getConnectionState().status).toBe("connected");
+
+  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
+  expect(client.getConnectionState()).toEqual({
+    status: "disconnected",
+    reason: "Liveness check timed out (1ms)",
+  });
+});
+
+test("resets liveness failures after a top-level pong", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
+
+  const healthyProbe = client.checkLiveness({ timeoutMs: 100 });
+  mock.triggerMessage(JSON.stringify({ type: "pong" }));
+  await expect(healthyProbe).resolves.toEqual({ rttMs: expect.any(Number) });
+
+  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

@@ -142,6 +142,7 @@ export interface HostRuntimeStartOptions {
 const PROBE_TICK_MS = 2_000;
 const PROBE_STEADY_MS = 10_000;
 const PROBE_MAX_BACKOFF_MS = 30_000;
+const PROBE_INACTIVE_WHILE_ONLINE_MS = 120_000;
 const ADAPTIVE_SWITCH_THRESHOLD_MS = 40;
 const ADAPTIVE_SWITCH_CONSECUTIVE_PROBES = 3;
 const DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT = 200;
@@ -434,10 +435,14 @@ function findConnectionById(host: HostProfile, connectionId: string | null): Hos
 function probeIntervalForConnection(
   firstSeenAt: number,
   isActiveOnline: boolean,
+  hasActiveOnlineConnection: boolean,
   now: number,
 ): number {
   if (isActiveOnline) {
     return PROBE_STEADY_MS;
+  }
+  if (hasActiveOnlineConnection) {
+    return PROBE_INACTIVE_WHILE_ONLINE_MS;
   }
   const age = now - firstSeenAt;
   if (age < 10_000) return 2_000;
@@ -702,6 +707,7 @@ export class HostRuntimeController {
     const now = performance.now();
     const isOnline = this.snapshot.connectionStatus === "online";
     const activeConnectionId = this.snapshot.activeConnectionId;
+    const hasActiveOnlineConnection = isOnline && activeConnectionId !== null;
 
     const connectionsToProbe = this.host.connections.filter((connection) => {
       const lastProbed = this.connectionLastProbedAt.get(connection.id);
@@ -710,7 +716,12 @@ export class HostRuntimeController {
       }
       const firstSeen = this.connectionFirstSeenAt.get(connection.id) ?? now;
       const isActiveOnline = isOnline && connection.id === activeConnectionId;
-      const interval = probeIntervalForConnection(firstSeen, isActiveOnline, now);
+      const interval = probeIntervalForConnection(
+        firstSeen,
+        isActiveOnline,
+        hasActiveOnlineConnection,
+        now,
+      );
       return now - lastProbed >= interval;
     });
 
@@ -899,7 +910,7 @@ export class HostRuntimeController {
             const activated = await maybeActivateFirstAvailable(connection.id, connectedClient);
             shouldCloseClient = shouldCloseClient && !activated;
 
-            const { rttMs } = await connectedClient.ping({ timeoutMs: 5000 });
+            const { rttMs } = await connectedClient.checkLiveness({ timeoutMs: 5000 });
             if (!this.isCurrentProbeRequest(requestVersion)) {
               return;
             }

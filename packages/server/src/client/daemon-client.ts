@@ -719,6 +719,8 @@ class DaemonRpcError extends Error {
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15000;
+const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
+const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
@@ -825,6 +827,14 @@ interface PendingSend {
   timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
+interface LivenessProbe {
+  promise: Promise<{ rttMs: number }>;
+  resolve: (value: { rttMs: number }) => void;
+  reject: (error: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+  startedAt: number;
+}
+
 export class DaemonClient {
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
@@ -868,6 +878,8 @@ export class DaemonClient {
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
+  private livenessProbe: LivenessProbe | null = null;
+  private consecutiveLivenessFailures = 0;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
@@ -1129,6 +1141,7 @@ export class DaemonClient {
     this.disposeTransport(1000, "Client closed");
     this.clearWaiters(new Error("Daemon client closed"));
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
+    this.rejectLivenessProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
     if (this.runtimeMetricsInterval) {
@@ -1562,6 +1575,54 @@ export class DaemonClient {
       serverSentAt: payload.serverSentAt,
       rttMs: Date.now() - clientSentAt,
     };
+  }
+
+  checkLiveness(params?: { timeoutMs?: number }): Promise<{ rttMs: number }> {
+    if (this.connectionState.status !== "connected" || !this.transport) {
+      return Promise.reject(
+        new Error(`Transport not connected (status: ${this.connectionState.status})`),
+      );
+    }
+
+    if (this.livenessProbe) {
+      return this.livenessProbe.promise;
+    }
+
+    const startedAt = perfNow();
+    const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
+    let resolveProbe: ((value: { rttMs: number }) => void) | null = null;
+    let rejectProbe: ((error: Error) => void) | null = null;
+    const promise = new Promise<{ rttMs: number }>((resolve, reject) => {
+      resolveProbe = resolve;
+      rejectProbe = reject;
+    });
+    const probe: LivenessProbe = {
+      promise,
+      resolve: (value) => resolveProbe?.(value),
+      reject: (error) => rejectProbe?.(error),
+      timeoutHandle: setTimeout(() => {
+        if (this.livenessProbe !== probe) {
+          return;
+        }
+        this.livenessProbe = null;
+        const error = new Error(`Liveness check timed out (${timeoutMs}ms)`);
+        probe.reject(error);
+        this.recordLivenessFailure(error);
+      }, timeoutMs),
+      startedAt,
+    };
+    this.livenessProbe = probe;
+
+    try {
+      this.transport.send(JSON.stringify({ type: "ping" }));
+    } catch (error) {
+      this.clearLivenessProbe();
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.recordLivenessFailure(err);
+      return Promise.reject(err);
+    }
+
+    return promise;
   }
 
   // ============================================================================
@@ -4263,7 +4324,10 @@ export class DaemonClient {
       return;
     }
 
+    this.consecutiveLivenessFailures = 0;
+
     if (parsed.data.type === "pong") {
+      this.resolveLivenessProbe();
       this.runtimeMetrics?.recordMessage("pong", bytes, perfNow() - startMs);
       return;
     }
@@ -4412,6 +4476,7 @@ export class DaemonClient {
     // and responses from the previous connection will never arrive.
     this.clearWaiters(new Error(reason ?? "Connection lost"));
     this.rejectPendingSendQueue(new Error(reason ?? "Connection lost"));
+    this.rejectLivenessProbe(new Error(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
 
@@ -4458,6 +4523,50 @@ export class DaemonClient {
       }
       this.attemptConnect();
     }, delay);
+  }
+
+  private resolveLivenessProbe(): void {
+    const probe = this.livenessProbe;
+    if (!probe) {
+      return;
+    }
+    this.livenessProbe = null;
+    clearTimeout(probe.timeoutHandle);
+    probe.resolve({ rttMs: perfNow() - probe.startedAt });
+  }
+
+  private clearLivenessProbe(): void {
+    const probe = this.livenessProbe;
+    if (!probe) {
+      return;
+    }
+    this.livenessProbe = null;
+    clearTimeout(probe.timeoutHandle);
+  }
+
+  private rejectLivenessProbe(error: Error): void {
+    const probe = this.livenessProbe;
+    if (!probe) {
+      return;
+    }
+    this.livenessProbe = null;
+    clearTimeout(probe.timeoutHandle);
+    probe.reject(error);
+  }
+
+  private recordLivenessFailure(error: Error): void {
+    this.consecutiveLivenessFailures += 1;
+    if (this.consecutiveLivenessFailures < LIVENESS_FAILURE_RECONNECT_THRESHOLD) {
+      return;
+    }
+    this.consecutiveLivenessFailures = 0;
+    this.lastErrorValue = error.message;
+    this.disposeTransport(1001, "Liveness check timed out");
+    this.scheduleReconnect({
+      reason: error.message,
+      event: "LIVENESS_TIMEOUT",
+      reasonCode: "liveness_timeout",
+    });
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
