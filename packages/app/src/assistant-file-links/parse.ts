@@ -1,5 +1,13 @@
 import { isAbsolutePath } from "@/utils/path";
 
+function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 export interface InlinePathTarget {
   raw: string;
   path: string;
@@ -343,6 +351,14 @@ export function parseAssistantFileLink(
     return null;
   }
 
+  return parseAbsoluteHrefAsFileLink(value, trimmed, options.workspaceRoot);
+}
+
+function parseAbsoluteHrefAsFileLink(
+  raw: string,
+  trimmed: string,
+  workspaceRoot: string | undefined,
+): InlinePathTarget | null {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(trimmed, "http://paseo.invalid");
@@ -350,12 +366,17 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const normalizedPath = normalizePathToken(decodeURIComponent(parsedUrl.pathname));
+  const decodedPathname = safeDecodeURIComponent(parsedUrl.pathname);
+  if (decodedPathname === null) {
+    return null;
+  }
+
+  const normalizedPath = normalizePathToken(decodedPathname);
   if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
     return null;
   }
 
-  if (!isAllowedAbsolutePath(normalizedPath, options.workspaceRoot)) {
+  if (!isAllowedAbsolutePath(normalizedPath, workspaceRoot)) {
     return null;
   }
 
@@ -365,7 +386,7 @@ export function parseAssistantFileLink(
   }
 
   return {
-    raw: value,
+    raw,
     path: normalizedPath,
     ...lines,
   };
@@ -659,7 +680,7 @@ function normalizeFileUrlPath(pathname: string): string | null {
     return null;
   }
 
-  const decoded = decodeURIComponent(pathname).replace(/\\/g, "/");
+  const decoded = safeDecodeURIComponent(pathname)?.replace(/\\/g, "/");
   if (!decoded) {
     return null;
   }

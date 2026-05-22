@@ -105,6 +105,11 @@ describe("parseFileProtocolUrl", () => {
     expect(parseFileProtocolUrl("https://example.com/test.ts#L10")).toBeNull();
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L20-L12")).toBeNull();
   });
+
+  it("returns null and does not throw for malformed percent-encoding in file URLs", () => {
+    expect(() => parseFileProtocolUrl("file:///Users/test/project/bad%file.ts")).not.toThrow();
+    expect(parseFileProtocolUrl("file:///Users/test/project/bad%file.ts")).toBeNull();
+  });
 });
 
 describe("classifyAssistantFileLink", () => {
@@ -356,6 +361,19 @@ describe("parseAssistantFileLink", () => {
   it("rejects invalid line fragments", () => {
     expect(
       parseAssistantFileLink("/Users/test/project/src/app.tsx#L20-L12", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null and does not throw for malformed percent-encoding in absolute paths", () => {
+    expect(() =>
+      parseAssistantFileLink("/Users/test/project/bad%file.ts", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).not.toThrow();
+    expect(
+      parseAssistantFileLink("/Users/test/project/bad%file.ts", {
         workspaceRoot: "/Users/test/project",
       }),
     ).toBeNull();
