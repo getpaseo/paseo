@@ -123,6 +123,36 @@ describe("navigateToAgent", () => {
     );
   });
 
+  it("opens subagents in their parent workspace when the child cwd is nested", () => {
+    const parentAgent = createAgent({
+      id: "parent-agent",
+      cwd: "/repo/worktree",
+      parentAgentId: null,
+    });
+    const childAgent = createAgent({
+      id: "child-agent",
+      cwd: "/repo/worktree/packages/app",
+      parentAgentId: "parent-agent",
+    });
+    useSessionStore.getState().setAgents(
+      SERVER_ID,
+      new Map([
+        [parentAgent.id, parentAgent],
+        [childAgent.id, childAgent],
+      ]),
+    );
+
+    const route = navigateToAgent({ serverId: SERVER_ID, agentId: childAgent.id });
+
+    expect(route).toBe("/h/server-1/workspace/workspace-1");
+    expect(routerMock.navigate).not.toHaveBeenCalled();
+    expect(routerMock.dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-1");
+    const key = `${SERVER_ID}:${WORKSPACE_ID}`;
+    expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(key)).toEqual([
+      expect.objectContaining({ target: { kind: "agent", agentId: childAgent.id } }),
+    ]);
+  });
+
   it("falls back to the host agent route when the workspace is unknown", () => {
     const route = navigateToAgent({ serverId: SERVER_ID, agentId: "missing-agent" });
 
