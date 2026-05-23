@@ -301,6 +301,15 @@ describe("terminal-emulator-runtime", () => {
     expect(writeTexts[0]).toContain("hi");
   });
 
+  it("restores server-rendered ANSI snapshots through the snapshot write path", () => {
+    const { runtime, terminal, writeTexts } = createRuntimeWithTerminal();
+
+    runtime.restoreOutput({ text: "restored screen" });
+
+    expect(terminal.resetCalls).toBe(0);
+    expect(writeTexts).toEqual(["\u001bcrestored screen"]);
+  });
+
   it("forces a refit when resize is requested", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();

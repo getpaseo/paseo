@@ -9,7 +9,8 @@ import type { TerminalInput, TerminalState } from "../shared/messages.js";
 
 export type TerminalStreamEvent =
   | { terminalId: string; type: "output"; data: Uint8Array }
-  | { terminalId: string; type: "snapshot"; state: TerminalState };
+  | { terminalId: string; type: "snapshot"; state: TerminalState }
+  | { terminalId: string; type: "restore"; data: Uint8Array };
 
 export class TerminalStreamRouter {
   private readonly terminalSlots = new Map<string, number>();
@@ -92,6 +93,15 @@ export class TerminalStreamRouter {
       this.emit({
         terminalId,
         type: "output",
+        data: frame.payload,
+      });
+      return;
+    }
+
+    if (frame.opcode === TerminalStreamOpcode.Restore) {
+      this.emit({
+        terminalId,
+        type: "restore",
         data: frame.payload,
       });
       return;

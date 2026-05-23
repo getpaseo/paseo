@@ -1,7 +1,10 @@
-import type { TerminalState } from "@server/shared/messages";
+import type { SubscribeTerminalRequest, TerminalState } from "@server/shared/messages";
 
 export interface TerminalStreamControllerClient {
-  subscribeTerminal: (terminalId: string) => Promise<{
+  subscribeTerminal: (
+    terminalId: string,
+    options?: { restore?: SubscribeTerminalRequest["restore"] },
+  ) => Promise<{
     terminalId: string;
     error?: string | null;
   }>;
@@ -14,7 +17,8 @@ export interface TerminalStreamControllerClient {
     handler: (
       event:
         | { terminalId: string; type: "output"; data: Uint8Array }
-        | { terminalId: string; type: "snapshot"; state: TerminalState },
+        | { terminalId: string; type: "snapshot"; state: TerminalState }
+        | { terminalId: string; type: "restore"; data: Uint8Array },
     ) => void,
   ) => () => void;
 }
@@ -35,6 +39,8 @@ export interface TerminalStreamControllerOptions {
   getPreferredSize: () => TerminalStreamControllerSize | null;
   onOutput: (input: { terminalId: string; text: string }) => void;
   onSnapshot: (input: { terminalId: string; state: TerminalState }) => void;
+  onRestore?: (input: { terminalId: string; text: string }) => void;
+  getRestoreOptions?: () => SubscribeTerminalRequest["restore"] | undefined;
   onStatusChange?: (status: TerminalStreamControllerStatus) => void;
 }
 
@@ -54,6 +60,14 @@ export class TerminalStreamController {
       if (event.type === "snapshot") {
         this.decoder.decode();
         this.options.onSnapshot({ terminalId: event.terminalId, state: event.state });
+        return;
+      }
+      if (event.type === "restore") {
+        this.decoder.decode();
+        const text = this.decoder.decode(event.data, { stream: false });
+        if (text.length > 0) {
+          this.options.onRestore?.({ terminalId: event.terminalId, text });
+        }
         return;
       }
       const text = this.decoder.decode(event.data, { stream: true });
@@ -78,9 +92,10 @@ export class TerminalStreamController {
       this.options.onStatusChange?.({ terminalId: null, isAttaching: false, error: null });
       return;
     }
+    const restore = this.options.getRestoreOptions?.();
     this.options.onStatusChange?.({ terminalId: nextTerminalId, isAttaching: true, error: null });
     void this.options.client
-      .subscribeTerminal(nextTerminalId)
+      .subscribeTerminal(nextTerminalId, restore ? { restore } : undefined)
       .then((payload) => {
         if (this.disposed || this.terminalId !== nextTerminalId) {
           return;

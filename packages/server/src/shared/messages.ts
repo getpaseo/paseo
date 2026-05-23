@@ -1754,6 +1754,20 @@ export const SubscribeTerminalRequestSchema = z.object({
   type: z.literal("subscribe_terminal_request"),
   terminalId: z.string(),
   requestId: z.string(),
+  restore: z
+    .object({
+      mode: z.enum(["live", "visible-snapshot", "full-snapshot"]),
+      scrollbackLines: z.number().int().nonnegative().optional(),
+      size: z
+        .object({
+          rows: z.number().int().positive(),
+          cols: z.number().int().positive(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 export const UnsubscribeTerminalRequestSchema = z.object({
@@ -2079,6 +2093,8 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutGithubSetAutoMerge: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
+        // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
+        "terminal-restore-modes": z.boolean().optional(),
       })
       .optional(),
   })

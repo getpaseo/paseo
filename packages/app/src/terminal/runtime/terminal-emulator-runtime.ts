@@ -557,11 +557,25 @@ export class TerminalEmulatorRuntime {
       this.clear(input);
       return;
     }
-    this.outputOperations.push({
-      type: "snapshot",
-      text: `${RESET_TERMINAL_ANSI}${renderTerminalSnapshotToAnsi(input.state)}`,
+    this.restoreOutput({
+      text: renderTerminalSnapshotToAnsi(input.state),
       rows: input.state.rows,
       cols: input.state.cols,
+      ...(input.onCommitted ? { onCommitted: input.onCommitted } : {}),
+    });
+  }
+
+  restoreOutput(input: {
+    text: string;
+    rows?: number;
+    cols?: number;
+    onCommitted?: () => void;
+  }): void {
+    this.outputOperations.push({
+      type: "snapshot",
+      text: `${RESET_TERMINAL_ANSI}${input.text}`,
+      rows: input.rows,
+      cols: input.cols,
       suppressInput: true,
       ...(input.onCommitted ? { onCommitted: input.onCommitted } : {}),
     });
@@ -664,7 +678,7 @@ export class TerminalEmulatorRuntime {
 
     this.inFlightOutputOperation = operation;
     const previousSuppressInput = this.suppressInput;
-    if (operation.type === "write") {
+    if (operation.suppressInput) {
       this.suppressInput = Boolean(operation.suppressInput);
     }
     const finalizeOperation = (expectedOperation: TerminalOutputOperation) => {

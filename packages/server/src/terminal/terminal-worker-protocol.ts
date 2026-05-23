@@ -3,6 +3,7 @@ import type {
   ServerMessage,
   ClientMessage,
   TerminalStateSnapshot,
+  TerminalStateSnapshotOptions,
 } from "./terminal.js";
 import type { TerminalState } from "../shared/messages.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
@@ -61,6 +62,7 @@ export type TerminalWorkerRequest =
       type: "getTerminalState";
       requestId: string;
       terminalId: string;
+      options?: TerminalStateSnapshotOptions;
     }
   | {
       type: "captureTerminal";

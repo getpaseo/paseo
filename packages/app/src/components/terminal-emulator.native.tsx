@@ -20,6 +20,7 @@ import { openExternalUrl } from "../utils/open-external-url";
 
 export interface TerminalEmulatorHandle {
   writeOutput: (text: string) => void;
+  restoreOutput: (text: string) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
 }
@@ -64,6 +65,7 @@ type BridgeInboundMessage =
     }
   | { type: "unmount"; streamKey: string }
   | { type: "writeOutput"; streamKey: string; text: string }
+  | { type: "restoreOutput"; streamKey: string; text: string }
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string }
@@ -274,6 +276,9 @@ export default function TerminalEmulator({
     (): TerminalEmulatorHandle => ({
       writeOutput: (text: string) => {
         sendToWebView({ type: "writeOutput", streamKey, text });
+      },
+      restoreOutput: (text: string) => {
+        sendToWebView({ type: "restoreOutput", streamKey, text });
       },
       renderSnapshot: (state: TerminalState | null) => {
         sendToWebView({ type: "renderSnapshot", streamKey, state });

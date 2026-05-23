@@ -13,6 +13,7 @@ export const TerminalStreamOpcode = {
   Input: 0x02,
   Resize: 0x03,
   Snapshot: 0x04,
+  Restore: 0x05,
 } as const;
 
 export type TerminalStreamOpcode = (typeof TerminalStreamOpcode)[keyof typeof TerminalStreamOpcode];
@@ -57,7 +58,8 @@ function isTerminalStreamOpcode(value: number): value is TerminalStreamOpcode {
     value === TerminalStreamOpcode.Output ||
     value === TerminalStreamOpcode.Input ||
     value === TerminalStreamOpcode.Resize ||
-    value === TerminalStreamOpcode.Snapshot
+    value === TerminalStreamOpcode.Snapshot ||
+    value === TerminalStreamOpcode.Restore
   );
 }
 

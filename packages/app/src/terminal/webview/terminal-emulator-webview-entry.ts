@@ -19,6 +19,7 @@ type InboundMessage =
   | MountMessage
   | { type: "unmount"; streamKey: string }
   | { type: "writeOutput"; streamKey: string; text: string }
+  | { type: "restoreOutput"; streamKey: string; text: string }
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string }
@@ -155,6 +156,9 @@ class TerminalWebViewBridge {
     switch (message.type) {
       case "writeOutput":
         this.runtime?.write({ text: message.text });
+        break;
+      case "restoreOutput":
+        this.runtime?.restoreOutput({ text: message.text });
         break;
       case "renderSnapshot":
         this.runtime?.renderSnapshot({ state: message.state });

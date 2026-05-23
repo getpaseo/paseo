@@ -67,6 +67,7 @@ import type {
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
+  SubscribeTerminalRequest,
   CloseItemsResponse,
   KillTerminalResponse,
   CaptureTerminalResponse,
@@ -3770,13 +3771,19 @@ export class DaemonClient {
 
   async subscribeTerminal(
     terminalId: string,
-    requestId?: string,
+    optionsOrRequestId?:
+      | { restore?: SubscribeTerminalRequest["restore"]; requestId?: string }
+      | string,
   ): Promise<SubscribeTerminalPayload> {
+    const restore = typeof optionsOrRequestId === "object" ? optionsOrRequestId.restore : undefined;
+    const requestId =
+      typeof optionsOrRequestId === "object" ? optionsOrRequestId.requestId : optionsOrRequestId;
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "subscribe_terminal_request",
       terminalId,
       requestId: resolvedRequestId,
+      ...(restore ? { restore } : {}),
     });
     const payload = await this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
@@ -4363,6 +4370,8 @@ export class DaemonClient {
       frameKind = "output";
     } else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
       frameKind = "snapshot";
+    } else if (frame.opcode === TerminalStreamOpcode.Restore) {
+      frameKind = "output";
     }
     this.runtimeMetrics?.recordBinaryFrame(
       frameKind,

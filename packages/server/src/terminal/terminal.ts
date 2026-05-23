@@ -33,6 +33,14 @@ export interface TerminalStateSnapshot {
   revision: number;
 }
 
+export interface TerminalStateSnapshotOptions {
+  scrollbackLines?: number;
+}
+
+export interface TerminalSubscribeOptions {
+  initialSnapshot?: "state" | "ready";
+}
+
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -41,6 +49,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
   | { type: "snapshot"; state: TerminalState; revision?: number }
+  | { type: "snapshotReady"; revision?: number }
   | { type: "titleChange"; title?: string };
 
 export interface TerminalSession {
@@ -48,13 +57,13 @@ export interface TerminalSession {
   name: string;
   cwd: string;
   send(msg: ClientMessage): void;
-  subscribe(listener: (msg: ServerMessage) => void): () => void;
+  subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   getSize(): { rows: number; cols: number };
   getState(): TerminalState;
-  getStateSnapshot(): TerminalStateSnapshot;
+  getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   setTitle(title: string): void;
@@ -292,14 +301,21 @@ function extractGrid(terminal: TerminalType): TerminalCell[][] {
   return grid;
 }
 
-function extractScrollback(terminal: TerminalType): TerminalCell[][] {
+function extractScrollback(
+  terminal: TerminalType,
+  options?: { scrollbackLines?: number },
+): TerminalCell[][] {
   const scrollback: TerminalCell[][] = [];
   const buffer = terminal.buffer.active;
   // baseY is the first row of the visible viewport (0-indexed)
   // Lines 0 to baseY-1 are in scrollback, lines baseY onwards are visible
   const scrollbackLines = buffer.baseY;
+  const startRow =
+    typeof options?.scrollbackLines === "number"
+      ? Math.max(0, scrollbackLines - options.scrollbackLines)
+      : 0;
 
-  for (let row = 0; row < scrollbackLines; row++) {
+  for (let row = startRow; row < scrollbackLines; row++) {
     const rowCells: TerminalCell[] = [];
     const line = buffer.getLine(row);
     for (let col = 0; col < terminal.cols; col++) {
@@ -813,20 +829,22 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  function getState(): TerminalState {
+  function getState(snapshotOptions?: TerminalStateSnapshotOptions): TerminalState {
     return {
       rows: terminal.rows,
       cols: terminal.cols,
       grid: extractGrid(terminal),
-      scrollback: extractScrollback(terminal),
+      scrollback: extractScrollback(terminal, {
+        scrollbackLines: snapshotOptions?.scrollbackLines,
+      }),
       cursor: extractCursorState(terminal),
       ...(title ? { title } : {}),
     };
   }
 
-  function getStateSnapshot(): TerminalStateSnapshot {
+  function getStateSnapshot(snapshotOptions?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
     return {
-      state: getState(),
+      state: getState(snapshotOptions),
       revision: stateRevision,
     };
   }
@@ -891,10 +909,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  function subscribe(listener: (msg: ServerMessage) => void): () => void {
+  function subscribe(
+    listener: (msg: ServerMessage) => void,
+    subscribeOptions?: TerminalSubscribeOptions,
+  ): () => void {
     let active = true;
     let snapshotDelivered = false;
     const queuedMessages: ServerMessage[] = [];
+    const initialSnapshot = subscribeOptions?.initialSnapshot ?? "state";
     const subscriptionListener = (msg: ServerMessage): void => {
       if (!active) {
         return;
@@ -911,7 +933,11 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     terminal.write("", () => {
       if (!disposed && active && listeners.has(subscriptionListener)) {
         snapshotDelivered = true;
-        listener({ type: "snapshot", ...getStateSnapshot() });
+        if (initialSnapshot === "ready") {
+          listener({ type: "snapshotReady", revision: stateRevision });
+        } else {
+          listener({ type: "snapshot", ...getStateSnapshot() });
+        }
         for (const message of queuedMessages.splice(0)) {
           listener(message);
         }

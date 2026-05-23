@@ -14,19 +14,32 @@ interface TerminalSnapshot {
   cursor: { row: number; col: number };
 }
 
+function terminalCellText(cell: { char: string }): string {
+  return cell.char;
+}
+
+function terminalRowText(row: Array<{ char: string }>): string {
+  return row.map(terminalCellText).join("");
+}
+
+function terminalSnapshotText(state: TerminalSnapshot): string {
+  return state.grid.map(terminalRowText).join("\n");
+}
+
 type TerminalStreamEvent =
   | { terminalId: string; type: "output"; data: Uint8Array }
-  | { terminalId: string; type: "snapshot"; state: TerminalSnapshot };
+  | { terminalId: string; type: "snapshot"; state: TerminalSnapshot }
+  | { terminalId: string; type: "restore"; data: Uint8Array };
 
 class FakeTerminalStreamClient implements TerminalStreamControllerClient {
   private readonly listeners = new Set<(event: TerminalStreamEvent) => void>();
-  public subscribeCalls: string[] = [];
+  public subscribeCalls: Array<{ terminalId: string; options?: unknown }> = [];
   public unsubscribeCalls: string[] = [];
   public resizeCalls: Array<{ terminalId: string; rows: number; cols: number }> = [];
   public nextSubscribeResults: Array<{ terminalId: string; error?: string | null }> = [];
 
-  async subscribeTerminal(terminalId: string) {
-    this.subscribeCalls.push(terminalId);
+  async subscribeTerminal(terminalId: string, options?: unknown) {
+    this.subscribeCalls.push({ terminalId, ...(options ? { options } : {}) });
     const result = this.nextSubscribeResults.shift();
     if (!result) {
       throw new Error("Missing fake subscribe result");
@@ -62,6 +75,7 @@ class FakeTerminalStreamClient implements TerminalStreamControllerClient {
 function createHarness(input?: { client?: FakeTerminalStreamClient }) {
   const client = input?.client ?? new FakeTerminalStreamClient();
   const outputs: Array<{ terminalId: string; text: string }> = [];
+  const restores: Array<{ terminalId: string; text: string }> = [];
   const snapshots: Array<{ terminalId: string; text: string }> = [];
   const statuses: TerminalStreamControllerStatus[] = [];
   const controller = new TerminalStreamController({
@@ -70,10 +84,13 @@ function createHarness(input?: { client?: FakeTerminalStreamClient }) {
     onOutput: (output) => {
       outputs.push(output);
     },
+    onRestore: (restore) => {
+      restores.push(restore);
+    },
     onSnapshot: ({ terminalId, state }) => {
       snapshots.push({
         terminalId,
-        text: state.grid.map((row) => row.map((cell) => cell.char).join("")).join("\n"),
+        text: terminalSnapshotText(state),
       });
     },
     onStatusChange: (status) => {
@@ -81,7 +98,7 @@ function createHarness(input?: { client?: FakeTerminalStreamClient }) {
     },
   });
 
-  return { client, controller, outputs, snapshots, statuses };
+  return { client, controller, outputs, restores, snapshots, statuses };
 }
 
 async function flushAsyncWork(): Promise<void> {
@@ -114,7 +131,7 @@ describe("terminal-stream-controller", () => {
       data: new TextEncoder().encode(" world"),
     });
 
-    expect(harness.client.subscribeCalls).toEqual(["term-1"]);
+    expect(harness.client.subscribeCalls).toEqual([{ terminalId: "term-1" }]);
     expect(harness.client.resizeCalls).toEqual([{ terminalId: "term-1", rows: 24, cols: 80 }]);
     expect(harness.snapshots).toEqual([{ terminalId: "term-1", text: "hello" }]);
     expect(harness.outputs).toEqual([{ terminalId: "term-1", text: " world" }]);
@@ -135,7 +152,7 @@ describe("terminal-stream-controller", () => {
     harness.controller.setTerminal({ terminalId: "term-1" });
     await flushAsyncWork();
 
-    expect(harness.client.subscribeCalls).toEqual(["term-1"]);
+    expect(harness.client.subscribeCalls).toEqual([{ terminalId: "term-1" }]);
     expect(harness.statuses.at(-1)).toEqual({
       terminalId: "term-1",
       isAttaching: false,
@@ -152,12 +169,59 @@ describe("terminal-stream-controller", () => {
     harness.controller.handleTerminalExit({ terminalId: "term-1" });
     await flushAsyncWork();
 
-    expect(harness.client.subscribeCalls).toEqual(["term-1"]);
+    expect(harness.client.subscribeCalls).toEqual([{ terminalId: "term-1" }]);
     expect(harness.statuses.at(-1)).toEqual({
       terminalId: "term-1",
       isAttaching: false,
       error: "Terminal exited",
     });
+  });
+
+  it("requests configured restore options and forwards restore output", async () => {
+    const client = new FakeTerminalStreamClient();
+    const harness = createHarness({ client });
+    client.nextSubscribeResults.push({ terminalId: "term-1", error: null });
+    const controller = new TerminalStreamController({
+      client,
+      getPreferredSize: () => ({ rows: 24, cols: 80 }),
+      getRestoreOptions: () => ({
+        mode: "visible-snapshot",
+        scrollbackLines: 200,
+        size: { rows: 24, cols: 80 },
+      }),
+      onOutput: (output) => harness.outputs.push(output),
+      onRestore: (restore) => harness.restores.push(restore),
+      onSnapshot: ({ terminalId, state }) => {
+        harness.snapshots.push({
+          terminalId,
+          text: terminalSnapshotText(state),
+        });
+      },
+    });
+
+    controller.setTerminal({ terminalId: "term-1" });
+    await flushAsyncWork();
+    client.emit({
+      terminalId: "term-1",
+      type: "restore",
+      data: new TextEncoder().encode("restored"),
+    });
+    controller.dispose();
+
+    expect(client.subscribeCalls).toEqual([
+      {
+        terminalId: "term-1",
+        options: {
+          restore: {
+            mode: "visible-snapshot",
+            scrollbackLines: 200,
+            size: { rows: 24, cols: 80 },
+          },
+        },
+      },
+    ]);
+    expect(harness.restores).toEqual([{ terminalId: "term-1", text: "restored" }]);
+    expect(harness.outputs).toEqual([]);
   });
 
   it("unsubscribes when switching terminals and on dispose", async () => {

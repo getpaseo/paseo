@@ -200,8 +200,18 @@ export function createWorkerTerminalManager(
         }
         sendBestEffortRequest({ type: "send", terminalId: record.info.id, message });
       },
-      subscribe(listener: (msg: ServerMessage) => void): () => void {
+      subscribe(
+        listener: (msg: ServerMessage) => void,
+        options?: { initialSnapshot?: "state" | "ready" },
+      ): () => void {
         record.messageListeners.add(listener);
+        if (options?.initialSnapshot === "ready") {
+          queueMicrotask(() => {
+            if (record.messageListeners.has(listener)) {
+              listener({ type: "snapshotReady", revision: 0 });
+            }
+          });
+        }
         return () => {
           record.messageListeners.delete(listener);
         };
@@ -244,9 +254,14 @@ export function createWorkerTerminalManager(
       getState(): TerminalState {
         return record.state;
       },
-      getStateSnapshot(): TerminalStateSnapshot {
+      getStateSnapshot(options?: { scrollbackLines?: number }): TerminalStateSnapshot {
+        const scrollbackLines = options?.scrollbackLines;
+        const scrollback =
+          typeof scrollbackLines === "number"
+            ? record.state.scrollback.slice(-scrollbackLines)
+            : record.state.scrollback;
         return {
-          state: record.state,
+          state: { ...record.state, scrollback },
           revision: 0,
         };
       },
@@ -539,10 +554,14 @@ export function createWorkerTerminalManager(
       return recordsById.get(id)?.session;
     },
 
-    async getTerminalState(id: string): Promise<TerminalStateSnapshot | null> {
+    async getTerminalState(
+      id: string,
+      options?: { scrollbackLines?: number },
+    ): Promise<TerminalStateSnapshot | null> {
       return (await sendRequest({
         type: "getTerminalState",
         terminalId: id,
+        ...(options ? { options } : {}),
       })) as TerminalWorkerStateResult;
     },
 

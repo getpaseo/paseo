@@ -30,6 +30,7 @@ import {
 
 export interface TerminalEmulatorHandle {
   writeOutput: (text: string) => void;
+  restoreOutput: (text: string) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
 }
@@ -257,6 +258,10 @@ export default function TerminalEmulator({
         const text = args[0];
         if (typeof text === "string") runtimeRef.current?.write({ text });
       },
+      restoreOutput: (...args) => {
+        const text = args[0];
+        if (typeof text === "string") runtimeRef.current?.restoreOutput({ text });
+      },
       renderSnapshot: (...args) => {
         const state = args[0];
         if (state === null) {
@@ -276,6 +281,9 @@ export default function TerminalEmulator({
     (): TerminalEmulatorHandle => ({
       writeOutput: (text: string) => {
         runtimeRef.current?.write({ text });
+      },
+      restoreOutput: (text: string) => {
+        runtimeRef.current?.restoreOutput({ text });
       },
       renderSnapshot: (state: TerminalState | null) => {
         runtimeRef.current?.renderSnapshot({ state });

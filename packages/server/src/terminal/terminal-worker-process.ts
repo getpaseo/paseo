@@ -176,7 +176,7 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
         type: "response",
         requestId: message.requestId,
         ok: true,
-        result: session?.getStateSnapshot() ?? null,
+        result: session?.getStateSnapshot(message.options) ?? null,
       });
       return;
     }

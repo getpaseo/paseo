@@ -650,6 +650,7 @@ test("receives server_info on websocket connect", async () => {
   const serverInfo = client.getLastServerInfoMessage();
   expect(serverInfo).not.toBeNull();
   expect(serverInfo?.serverId.length).toBeGreaterThan(0);
+  expect(serverInfo?.features?.["terminal-restore-modes"]).toBe(true);
 
   await client.close();
 }, 15000);

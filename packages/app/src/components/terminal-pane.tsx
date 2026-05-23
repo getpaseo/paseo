@@ -25,7 +25,9 @@ import {
   TerminalStreamController,
   type TerminalStreamControllerStatus,
 } from "@/terminal/runtime/terminal-stream-controller";
+import { resolveTerminalRestoreOptions } from "@/terminal/runtime/terminal-restore-options";
 import { usePanelStore } from "@/stores/panel-store";
+import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -171,6 +173,9 @@ export function TerminalPane({
 
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsTerminalRestoreModes = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
+  );
 
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const terminalStreamKey = useMemo(() => `${scopeKey}:${terminalId}`, [scopeKey, terminalId]);
@@ -360,12 +365,25 @@ export function TerminalPane({
         }
         emulatorRef.current?.writeOutput(text);
       },
+      onRestore: ({ terminalId: restoreTerminalId, text }) => {
+        workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
+        if (!isWorkspaceFocused || terminalIdRef.current !== restoreTerminalId) {
+          return;
+        }
+        emulatorRef.current?.restoreOutput(text);
+      },
       onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
         workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
         if (!isWorkspaceFocused || terminalIdRef.current !== snapshotTerminalId) {
           return;
         }
         emulatorRef.current?.renderSnapshot(state);
+      },
+      getRestoreOptions: () => {
+        return resolveTerminalRestoreOptions({
+          supportsTerminalRestoreModes,
+          size: measuredTerminalSizeRef.current,
+        });
       },
       onStatusChange: handleStreamControllerStatus,
     });
@@ -386,6 +404,7 @@ export function TerminalPane({
     handleStreamControllerStatus,
     isConnected,
     isWorkspaceFocused,
+    supportsTerminalRestoreModes,
     workspaceTerminalSession.snapshots,
   ]);
 
