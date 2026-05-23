@@ -187,6 +187,20 @@ Point Playwright MCP at the running Expo web target. Under `npm run dev` (macOS/
 
 Do NOT use browser history (back/forward). Always navigate by clicking UI elements or using `browser_navigate` with the full URL — the app uses client-side routing and browser history breaks state.
 
+## App web deploys
+
+`packages/app` exports a single-page Expo web app and deploys the `dist/`
+directory to Cloudflare Pages with `npm run deploy:web --workspace=@getpaseo/app`.
+
+PWA install metadata lives in `packages/app/public/manifest.json` and is linked
+from `packages/app/public/index.html`. Keep the install icons in `public/` so
+Cloudflare serves them from stable root URLs after `expo export`.
+
+Do not add service-worker caching casually. Paseo is a live control surface for
+agents, and an aggressive service worker can strand installed users on stale web
+code. If offline behavior becomes a product requirement, add it deliberately
+with an update strategy and test the installed-app upgrade path.
+
 ## Expo troubleshooting
 
 ```bash
