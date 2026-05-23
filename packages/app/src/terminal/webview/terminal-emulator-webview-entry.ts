@@ -3,7 +3,10 @@ import xtermCss from "@xterm/xterm/css/xterm.css";
 import type { TerminalState } from "@server/shared/messages";
 import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
 import type { PendingTerminalModifiers } from "@/utils/terminal-keys";
-import { TerminalEmulatorRuntime } from "../runtime/terminal-emulator-runtime";
+import {
+  encodeTerminalOutput,
+  TerminalEmulatorRuntime,
+} from "../runtime/terminal-emulator-runtime";
 
 interface MountMessage {
   type: "mount";
@@ -155,10 +158,10 @@ class TerminalWebViewBridge {
   ): void {
     switch (message.type) {
       case "writeOutput":
-        this.runtime?.write({ text: message.text });
+        this.runtime?.write({ data: encodeTerminalOutput(message.text) });
         break;
       case "restoreOutput":
-        this.runtime?.restoreOutput({ text: message.text });
+        this.runtime?.restoreOutput({ data: encodeTerminalOutput(message.text) });
         break;
       case "renderSnapshot":
         this.runtime?.renderSnapshot({ state: message.state });

@@ -359,18 +359,18 @@ export function TerminalPane({
     const controller = new TerminalStreamController({
       client,
       getPreferredSize: () => measuredTerminalSizeRef.current,
-      onOutput: ({ terminalId: outputTerminalId, text }) => {
+      onOutput: ({ terminalId: outputTerminalId, data }) => {
         if (!isWorkspaceFocused || terminalIdRef.current !== outputTerminalId) {
           return;
         }
-        emulatorRef.current?.writeOutput(text);
+        emulatorRef.current?.writeOutput(data);
       },
-      onRestore: ({ terminalId: restoreTerminalId, text }) => {
+      onRestore: ({ terminalId: restoreTerminalId, data }) => {
         workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
         if (!isWorkspaceFocused || terminalIdRef.current !== restoreTerminalId) {
           return;
         }
-        emulatorRef.current?.restoreOutput(text);
+        emulatorRef.current?.restoreOutput(data);
       },
       onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
         workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });

@@ -1,7 +1,7 @@
 import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
-import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class WebglAddon {
@@ -47,6 +47,10 @@ function nextFrame(): Promise<void> {
       resolve();
     });
   });
+}
+
+function terminalOutput(text: string): Uint8Array {
+  return encodeTerminalOutput(text);
 }
 
 async function waitFor(input: { predicate: () => boolean; timeoutMs?: number }): Promise<void> {
@@ -253,7 +257,7 @@ describe("terminal emulator runtime in a real browser", () => {
 
     expect(mounted.terminalKeys).toEqual([]);
 
-    mounted.runtime.write({ text: "\x1b[>7u" });
+    mounted.runtime.write({ data: terminalOutput("\x1b[>7u") });
     await waitFor({
       predicate: () =>
         mounted.inputModeChanges.some(
@@ -279,7 +283,7 @@ describe("terminal emulator runtime in a real browser", () => {
     ]);
 
     mounted.terminalKeys.length = 0;
-    mounted.runtime.write({ text: "\x1b[=0;0u\x1b[?9001h" });
+    mounted.runtime.write({ data: terminalOutput("\x1b[=0;0u\x1b[?9001h") });
     await waitFor({
       predicate: () =>
         mounted.inputModeChanges.some(
@@ -321,7 +325,7 @@ describe("terminal emulator runtime in a real browser", () => {
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
 
-    mounted.runtime.write({ text: bytes });
+    mounted.runtime.write({ data: terminalOutput(bytes) });
     await nextFrame();
     await nextFrame();
 

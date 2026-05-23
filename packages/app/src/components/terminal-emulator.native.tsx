@@ -13,14 +13,15 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
 import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
+import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
 import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulator-webview-html";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
 import { openExternalUrl } from "../utils/open-external-url";
 
 export interface TerminalEmulatorHandle {
-  writeOutput: (text: string) => void;
-  restoreOutput: (text: string) => void;
+  writeOutput: (data: TerminalOutputData) => void;
+  restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
 }
@@ -160,6 +161,7 @@ export default function TerminalEmulator({
   const bridgeReadyVersionRef = useRef(0);
   const rendererReadyVersionRef = useRef(0);
   const pendingMessagesRef = useRef<BridgeInboundMessage[]>([]);
+  const outputDecoderRef = useRef(new TextDecoder());
   const mountedStreamKeyRef = useRef<string | null>(null);
   const bridgeReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rendererReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -274,21 +276,36 @@ export default function TerminalEmulator({
   useImperativeHandle(
     ref,
     (): TerminalEmulatorHandle => ({
-      writeOutput: (text: string) => {
-        sendToWebView({ type: "writeOutput", streamKey, text });
+      writeOutput: (data: TerminalOutputData) => {
+        const output = outputDecoderRef.current.decode(data, { stream: true });
+        if (output.length === 0) {
+          return;
+        }
+        sendToWebView({ type: "writeOutput", streamKey, text: output });
       },
-      restoreOutput: (text: string) => {
+      restoreOutput: (data: TerminalOutputData) => {
+        outputDecoderRef.current.decode();
+        const text = outputDecoderRef.current.decode(data, { stream: false });
+        if (text.length === 0) {
+          return;
+        }
         sendToWebView({ type: "restoreOutput", streamKey, text });
       },
       renderSnapshot: (state: TerminalState | null) => {
+        outputDecoderRef.current.decode();
         sendToWebView({ type: "renderSnapshot", streamKey, state });
       },
       clear: () => {
+        outputDecoderRef.current.decode();
         sendToWebView({ type: "clear", streamKey });
       },
     }),
     [sendToWebView, streamKey],
   );
+
+  useEffect(() => {
+    outputDecoderRef.current.decode();
+  }, [streamKey]);
 
   useEffect(() => {
     if (bridgeReadyVersion <= 0) return;

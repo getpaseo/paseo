@@ -19,7 +19,10 @@ import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
 import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
-import { TerminalEmulatorRuntime } from "../terminal/runtime/terminal-emulator-runtime";
+import {
+  TerminalEmulatorRuntime,
+  type TerminalOutputData,
+} from "../terminal/runtime/terminal-emulator-runtime";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
 import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
@@ -29,8 +32,8 @@ import {
 } from "./web-desktop-scrollbar.math";
 
 export interface TerminalEmulatorHandle {
-  writeOutput: (text: string) => void;
-  restoreOutput: (text: string) => void;
+  writeOutput: (data: TerminalOutputData) => void;
+  restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
 }
@@ -255,12 +258,12 @@ export default function TerminalEmulator({
     domBridgeRef,
     (): DOMImperativeFactory => ({
       writeOutput: (...args) => {
-        const text = args[0];
-        if (typeof text === "string") runtimeRef.current?.write({ text });
+        const data = args[0];
+        if (data instanceof Uint8Array) runtimeRef.current?.write({ data });
       },
       restoreOutput: (...args) => {
-        const text = args[0];
-        if (typeof text === "string") runtimeRef.current?.restoreOutput({ text });
+        const data = args[0];
+        if (data instanceof Uint8Array) runtimeRef.current?.restoreOutput({ data });
       },
       renderSnapshot: (...args) => {
         const state = args[0];
@@ -279,11 +282,11 @@ export default function TerminalEmulator({
   useImperativeHandle(
     ref,
     (): TerminalEmulatorHandle => ({
-      writeOutput: (text: string) => {
-        runtimeRef.current?.write({ text });
+      writeOutput: (data: TerminalOutputData) => {
+        runtimeRef.current?.write({ data });
       },
-      restoreOutput: (text: string) => {
-        runtimeRef.current?.restoreOutput({ text });
+      restoreOutput: (data: TerminalOutputData) => {
+        runtimeRef.current?.restoreOutput({ data });
       },
       renderSnapshot: (state: TerminalState | null) => {
         runtimeRef.current?.renderSnapshot({ state });

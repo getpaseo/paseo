@@ -26,6 +26,10 @@ function terminalSnapshotText(state: TerminalSnapshot): string {
   return state.grid.map(terminalRowText).join("\n");
 }
 
+function terminalOutput(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
 type TerminalStreamEvent =
   | { terminalId: string; type: "output"; data: Uint8Array }
   | { terminalId: string; type: "snapshot"; state: TerminalSnapshot }
@@ -74,8 +78,8 @@ class FakeTerminalStreamClient implements TerminalStreamControllerClient {
 
 function createHarness(input?: { client?: FakeTerminalStreamClient }) {
   const client = input?.client ?? new FakeTerminalStreamClient();
-  const outputs: Array<{ terminalId: string; text: string }> = [];
-  const restores: Array<{ terminalId: string; text: string }> = [];
+  const outputs: Array<{ terminalId: string; data: Uint8Array }> = [];
+  const restores: Array<{ terminalId: string; data: Uint8Array }> = [];
   const snapshots: Array<{ terminalId: string; text: string }> = [];
   const statuses: TerminalStreamControllerStatus[] = [];
   const controller = new TerminalStreamController({
@@ -125,16 +129,18 @@ describe("terminal-stream-controller", () => {
         cursor: { row: 0, col: 5 },
       },
     });
+    const outputData = terminalOutput(" world");
     harness.client.emit({
       terminalId: "term-1",
       type: "output",
-      data: new TextEncoder().encode(" world"),
+      data: outputData,
     });
 
     expect(harness.client.subscribeCalls).toEqual([{ terminalId: "term-1" }]);
     expect(harness.client.resizeCalls).toEqual([{ terminalId: "term-1", rows: 24, cols: 80 }]);
     expect(harness.snapshots).toEqual([{ terminalId: "term-1", text: "hello" }]);
-    expect(harness.outputs).toEqual([{ terminalId: "term-1", text: " world" }]);
+    expect(harness.outputs[0]?.data).toBe(outputData);
+    expect(harness.outputs).toEqual([{ terminalId: "term-1", data: terminalOutput(" world") }]);
     expect(harness.statuses.at(-1)).toEqual({
       terminalId: "term-1",
       isAttaching: false,
@@ -201,10 +207,11 @@ describe("terminal-stream-controller", () => {
 
     controller.setTerminal({ terminalId: "term-1" });
     await flushAsyncWork();
+    const restoreData = terminalOutput("restored");
     client.emit({
       terminalId: "term-1",
       type: "restore",
-      data: new TextEncoder().encode("restored"),
+      data: restoreData,
     });
     controller.dispose();
 
@@ -220,7 +227,8 @@ describe("terminal-stream-controller", () => {
         },
       },
     ]);
-    expect(harness.restores).toEqual([{ terminalId: "term-1", text: "restored" }]);
+    expect(harness.restores[0]?.data).toBe(restoreData);
+    expect(harness.restores).toEqual([{ terminalId: "term-1", data: terminalOutput("restored") }]);
     expect(harness.outputs).toEqual([]);
   });
 

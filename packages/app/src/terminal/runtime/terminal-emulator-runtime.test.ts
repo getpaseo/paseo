@@ -75,10 +75,10 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
-import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
 interface StubTerminal {
-  write: (text: string, callback?: () => void) => void;
+  write: (data: string | Uint8Array, callback?: () => void) => void;
   reset: () => void;
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
@@ -102,8 +102,8 @@ function createRuntimeWithTerminal(): {
   let resetCalls = 0;
 
   const terminal: StubTerminal & { resetCalls: number } = {
-    write: (text: string, callback?: () => void) => {
-      writeTexts.push(text);
+    write: (data: string | Uint8Array, callback?: () => void) => {
+      writeTexts.push(decodeTerminalOutput(data));
       if (callback) {
         writeCallbacks.push(callback);
       }
@@ -131,6 +131,17 @@ function createRuntimeWithTerminal(): {
   };
 }
 
+function terminalOutput(text: string): Uint8Array {
+  return encodeTerminalOutput(text);
+}
+
+function decodeTerminalOutput(data: string | Uint8Array): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  return new TextDecoder().decode(data);
+}
+
 describe("terminal-emulator-runtime", () => {
   const originalWindow = (globalThis as { window?: unknown }).window;
 
@@ -151,7 +162,7 @@ describe("terminal-emulator-runtime", () => {
     const committed: string[] = [];
 
     runtime.write({
-      text: "first",
+      data: terminalOutput("first"),
       onCommitted: () => {
         committed.push("first");
       },
@@ -162,7 +173,7 @@ describe("terminal-emulator-runtime", () => {
       },
     });
     runtime.write({
-      text: "second",
+      data: terminalOutput("second"),
       onCommitted: () => {
         committed.push("second");
       },
@@ -188,7 +199,7 @@ describe("terminal-emulator-runtime", () => {
     const onCommitted = vi.fn();
 
     runtime.write({
-      text: "stuck",
+      data: terminalOutput("stuck"),
       onCommitted,
     });
 
@@ -208,7 +219,7 @@ describe("terminal-emulator-runtime", () => {
       },
     });
 
-    runtime.write({ text: "\x1b[>7u" });
+    runtime.write({ data: terminalOutput("\x1b[>7u") });
     runtime.renderSnapshot({
       state: {
         rows: 2,
@@ -234,13 +245,13 @@ describe("terminal-emulator-runtime", () => {
     const committed: string[] = [];
 
     runtime.write({
-      text: "first",
+      data: terminalOutput("first"),
       onCommitted: () => {
         committed.push("first");
       },
     });
     runtime.write({
-      text: "second",
+      data: terminalOutput("second"),
       onCommitted: () => {
         committed.push("second");
       },
@@ -262,11 +273,11 @@ describe("terminal-emulator-runtime", () => {
     const onCommittedB = vi.fn();
 
     runtime.write({
-      text: "a",
+      data: terminalOutput("a"),
       onCommitted: onCommittedA,
     });
     runtime.write({
-      text: "b",
+      data: terminalOutput("b"),
       onCommitted: onCommittedB,
     });
 
@@ -304,7 +315,7 @@ describe("terminal-emulator-runtime", () => {
   it("restores server-rendered ANSI snapshots through the snapshot write path", () => {
     const { runtime, terminal, writeTexts } = createRuntimeWithTerminal();
 
-    runtime.restoreOutput({ text: "restored screen" });
+    runtime.restoreOutput({ data: terminalOutput("restored screen") });
 
     expect(terminal.resetCalls).toBe(0);
     expect(writeTexts).toEqual(["\u001bcrestored screen"]);

@@ -1,4 +1,5 @@
 import type { SubscribeTerminalRequest, TerminalState } from "@server/shared/messages";
+import type { TerminalOutputData } from "./terminal-emulator-runtime";
 
 export interface TerminalStreamControllerClient {
   subscribeTerminal: (
@@ -37,9 +38,9 @@ export interface TerminalStreamControllerStatus {
 export interface TerminalStreamControllerOptions {
   client: TerminalStreamControllerClient;
   getPreferredSize: () => TerminalStreamControllerSize | null;
-  onOutput: (input: { terminalId: string; text: string }) => void;
+  onOutput: (input: { terminalId: string; data: TerminalOutputData }) => void;
   onSnapshot: (input: { terminalId: string; state: TerminalState }) => void;
-  onRestore?: (input: { terminalId: string; text: string }) => void;
+  onRestore?: (input: { terminalId: string; data: TerminalOutputData }) => void;
   getRestoreOptions?: () => SubscribeTerminalRequest["restore"] | undefined;
   onStatusChange?: (status: TerminalStreamControllerStatus) => void;
 }
@@ -47,7 +48,6 @@ export interface TerminalStreamControllerOptions {
 const TERMINAL_EXITED_ERROR = "Terminal exited";
 
 export class TerminalStreamController {
-  private readonly decoder = new TextDecoder();
   private readonly unsubscribeStreamEvents: () => void;
   private terminalId: string | null = null;
   private disposed = false;
@@ -58,21 +58,17 @@ export class TerminalStreamController {
         return;
       }
       if (event.type === "snapshot") {
-        this.decoder.decode();
         this.options.onSnapshot({ terminalId: event.terminalId, state: event.state });
         return;
       }
       if (event.type === "restore") {
-        this.decoder.decode();
-        const text = this.decoder.decode(event.data, { stream: false });
-        if (text.length > 0) {
-          this.options.onRestore?.({ terminalId: event.terminalId, text });
+        if (event.data.length > 0) {
+          this.options.onRestore?.({ terminalId: event.terminalId, data: event.data });
         }
         return;
       }
-      const text = this.decoder.decode(event.data, { stream: true });
-      if (text.length > 0) {
-        this.options.onOutput({ terminalId: event.terminalId, text });
+      if (event.data.length > 0) {
+        this.options.onOutput({ terminalId: event.terminalId, data: event.data });
       }
     });
   }
@@ -84,7 +80,6 @@ export class TerminalStreamController {
     const nextTerminalId = input.terminalId;
     const previousTerminalId = this.terminalId;
     this.terminalId = nextTerminalId;
-    this.decoder.decode();
     if (previousTerminalId) {
       this.options.client.unsubscribeTerminal(previousTerminalId);
     }
@@ -141,7 +136,6 @@ export class TerminalStreamController {
     if (this.disposed || input.terminalId !== this.terminalId) {
       return;
     }
-    this.decoder.decode();
     this.terminalId = null;
     this.options.onStatusChange?.({
       terminalId: input.terminalId,
@@ -155,7 +149,6 @@ export class TerminalStreamController {
       return;
     }
     this.disposed = true;
-    this.decoder.decode();
     const terminalId = this.terminalId;
     this.terminalId = null;
     if (terminalId) {

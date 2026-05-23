@@ -24,6 +24,8 @@ import {
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 
+export type TerminalOutputData = Uint8Array;
+
 export interface TerminalEmulatorRuntimeMountInput {
   root: HTMLDivElement;
   host: HTMLDivElement;
@@ -67,7 +69,7 @@ interface TerminalEmulatorRuntimeDisposables {
 
 interface TerminalOutputOperation {
   type: "write" | "clear" | "snapshot";
-  text: string;
+  data: TerminalOutputData;
   rows?: number;
   cols?: number;
   suppressInput?: boolean;
@@ -96,7 +98,23 @@ const isAppleHandheld =
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
-const RESET_TERMINAL_ANSI = "\u001bc";
+const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
+const RESET_TERMINAL_OUTPUT = new Uint8Array([0x1b, 0x63]);
+const terminalOutputEncoder = new TextEncoder();
+
+export function encodeTerminalOutput(text: string): TerminalOutputData {
+  return terminalOutputEncoder.encode(text);
+}
+
+function prependTerminalOutput(
+  prefix: TerminalOutputData,
+  data: TerminalOutputData,
+): TerminalOutputData {
+  const output = new Uint8Array(prefix.length + data.length);
+  output.set(prefix, 0);
+  output.set(data, prefix.length);
+  return output;
+}
 
 const DEFAULT_TERMINAL_FONT_FAMILY = [
   // Prefer common developer fonts, with Nerd Font variants for prompt/TUI glyphs.
@@ -140,6 +158,7 @@ export class TerminalEmulatorRuntime {
   private outputOperations: TerminalOutputOperation[] = [];
   private inFlightOutputOperation: TerminalOutputOperation | null = null;
   private inFlightOutputOperationTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readonly inputModeDecoder = new TextDecoder();
   private suppressInput = false;
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
@@ -528,14 +547,18 @@ export class TerminalEmulatorRuntime {
     };
   }
 
-  write(input: { text: string; suppressInput?: boolean; onCommitted?: () => void }): void {
-    if (input.text.length === 0) {
+  write(input: {
+    data: TerminalOutputData;
+    suppressInput?: boolean;
+    onCommitted?: () => void;
+  }): void {
+    if (input.data.length === 0) {
       input.onCommitted?.();
       return;
     }
     this.outputOperations.push({
       type: "write",
-      text: input.text,
+      data: input.data,
       suppressInput: input.suppressInput ?? false,
       ...(input.onCommitted ? { onCommitted: input.onCommitted } : {}),
     });
@@ -545,7 +568,7 @@ export class TerminalEmulatorRuntime {
   clear(input?: { onCommitted?: () => void }): void {
     this.outputOperations.push({
       type: "clear",
-      text: "",
+      data: EMPTY_TERMINAL_OUTPUT,
       suppressInput: false,
       ...(input?.onCommitted ? { onCommitted: input.onCommitted } : {}),
     });
@@ -558,7 +581,7 @@ export class TerminalEmulatorRuntime {
       return;
     }
     this.restoreOutput({
-      text: renderTerminalSnapshotToAnsi(input.state),
+      data: encodeTerminalOutput(renderTerminalSnapshotToAnsi(input.state)),
       rows: input.state.rows,
       cols: input.state.cols,
       ...(input.onCommitted ? { onCommitted: input.onCommitted } : {}),
@@ -566,14 +589,14 @@ export class TerminalEmulatorRuntime {
   }
 
   restoreOutput(input: {
-    text: string;
+    data: TerminalOutputData;
     rows?: number;
     cols?: number;
     onCommitted?: () => void;
   }): void {
     this.outputOperations.push({
       type: "snapshot",
-      text: `${RESET_TERMINAL_ANSI}${input.text}`,
+      data: prependTerminalOutput(RESET_TERMINAL_OUTPUT, input.data),
       rows: input.rows,
       cols: input.cols,
       suppressInput: true,
@@ -657,6 +680,7 @@ export class TerminalEmulatorRuntime {
     this.fitAndEmitResize = null;
     this.lastSize = null;
     this.suppressInput = false;
+    this.inputModeDecoder.decode();
     this.inputModeTracker.reset();
     this.emitInputModeChange();
   }
@@ -693,6 +717,7 @@ export class TerminalEmulatorRuntime {
     };
 
     if (operation.type === "clear") {
+      this.inputModeDecoder.decode();
       this.inputModeTracker.reset();
       this.emitInputModeChange();
       terminal.reset();
@@ -701,6 +726,7 @@ export class TerminalEmulatorRuntime {
     }
 
     if (operation.type === "snapshot") {
+      this.inputModeDecoder.decode();
       this.inputModeTracker.reset();
       this.emitInputModeChange();
       try {
@@ -717,8 +743,9 @@ export class TerminalEmulatorRuntime {
       }
     }
 
-    const text = operation.text;
+    const data = operation.data;
     if (operation.type === "write") {
+      const text = this.inputModeDecoder.decode(data, { stream: true });
       const result = this.inputModeTracker.feed(text);
       if (result.changed) {
         this.emitInputModeChange();
@@ -729,7 +756,7 @@ export class TerminalEmulatorRuntime {
     }, OUTPUT_OPERATION_TIMEOUT_MS);
 
     try {
-      terminal.write(text, () => {
+      terminal.write(data, () => {
         finalizeOperation(operation);
       });
     } catch {
