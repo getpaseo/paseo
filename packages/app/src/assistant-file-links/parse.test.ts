@@ -360,6 +360,25 @@ describe("parseAssistantFileLink", () => {
       }),
     ).toBeNull();
   });
+
+  it("does not throw when the input contains a literal '%' that is not a valid percent-escape", () => {
+    // Regressions for tool output strings like ping's "100% packet loss",
+    // Windows "%PATH%" references, and percentages such as "0% off".
+    // decodeURIComponent throws URIError on these; the parser must swallow
+    // it and return null rather than crash the renderer.
+    const cases = [
+      "/tmp/100% packet loss",
+      "/Users/test/project/0% off",
+      "/var/log/%PATH%/x.log",
+      "file:///tmp/100% packet loss",
+    ];
+    for (const value of cases) {
+      expect(() =>
+        parseAssistantFileLink(value, { workspaceRoot: "/Users/test/project" }),
+      ).not.toThrow();
+    }
+    expect(() => parseFileProtocolUrl("file:///tmp/100% packet loss")).not.toThrow();
+  });
 });
 
 describe("normalizeInlinePathTarget", () => {

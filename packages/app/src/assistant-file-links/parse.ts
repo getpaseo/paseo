@@ -1,5 +1,13 @@
 import { isAbsolutePath } from "@/utils/path";
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export interface InlinePathTarget {
   raw: string;
   path: string;
@@ -350,7 +358,7 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const normalizedPath = normalizePathToken(decodeURIComponent(parsedUrl.pathname));
+  const normalizedPath = normalizePathToken(safeDecodeURIComponent(parsedUrl.pathname));
   if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
     return null;
   }
@@ -659,7 +667,7 @@ function normalizeFileUrlPath(pathname: string): string | null {
     return null;
   }
 
-  const decoded = decodeURIComponent(pathname).replace(/\\/g, "/");
+  const decoded = safeDecodeURIComponent(pathname).replace(/\\/g, "/");
   if (!decoded) {
     return null;
   }
