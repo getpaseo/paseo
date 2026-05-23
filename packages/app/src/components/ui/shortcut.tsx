@@ -1,4 +1,4 @@
-import { useMemo, type ReactElement } from "react";
+import React, { useMemo, type ReactElement } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";

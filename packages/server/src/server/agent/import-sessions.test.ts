@@ -128,6 +128,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
       cwd,
       title: "Already stored",
       lastActivityAt: "2026-04-30T12:04:00.000Z",
+      firstPrompt: "stored prompt",
     }),
     makeDescriptor({
       sessionId: "older-session",
@@ -167,6 +168,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
       cwd,
       title: "Already live",
       lastActivityAt: "2026-04-30T12:01:00.000Z",
+      firstPrompt: "live prompt",
     }),
   ];
   const listImportablePersistedAgents = vi.fn(async () => descriptors);

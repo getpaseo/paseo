@@ -1917,6 +1917,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       cwd: "/tmp/recent",
       title: "Already stored",
       lastActivityAt: "2026-04-30T12:04:00.000Z",
+      firstPrompt: "stored prompt",
     }),
     makePersistedProviderSession({
       provider: "claude",
@@ -1967,6 +1968,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       cwd: "/tmp/recent",
       title: "Already live",
       lastActivityAt: "2026-04-30T12:01:00.000Z",
+      firstPrompt: "live prompt",
     }),
   ];
   // The real AgentManager filters by providerFilter at the fan-out level
@@ -2096,6 +2098,7 @@ test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCoun
       cwd: "/tmp/recent",
       title: "Already live",
       lastActivityAt: "2026-04-30T12:01:00.000Z",
+      firstPrompt: "live prompt",
     }),
   ];
 
