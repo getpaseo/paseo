@@ -1184,7 +1184,16 @@ describe("OpenCodeAgentClient env", () => {
     const openCodeClient = new TestOpenCodeClient();
     runtime.enqueueClient(openCodeClient);
     const cwd = tmpCwd();
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(
+      createTestLogger(),
+      {
+        env: {
+          OPENCODE_SERVER_USERNAME: "provider-user",
+          OPENCODE_SERVER_PASSWORD: "provider-password",
+        },
+      },
+      { runtime },
+    );
 
     try {
       const session = await client.createSession(
@@ -1195,6 +1204,8 @@ describe("OpenCodeAgentClient env", () => {
         {
           env: {
             CHUNK14_PROBE: "expected",
+            OPENCODE_SERVER_USERNAME: "launch-user",
+            OPENCODE_SERVER_PASSWORD: "launch-password",
           },
         },
       );
@@ -1204,10 +1215,96 @@ describe("OpenCodeAgentClient env", () => {
         force: false,
         env: {
           CHUNK14_PROBE: "expected",
+          OPENCODE_SERVER_USERNAME: "launch-user",
+          OPENCODE_SERVER_PASSWORD: "launch-password",
         },
+      });
+      expect(runtime.clientCreations[0]?.auth).toEqual({
+        username: "launch-user",
+        password: "launch-password",
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("passes provider OpenCode server auth env to SDK clients", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(
+      createTestLogger(),
+      {
+        env: {
+          OPENCODE_SERVER_USERNAME: "provider-user",
+          OPENCODE_SERVER_PASSWORD: "provider-password",
+        },
+      },
+      { runtime },
+    );
+
+    try {
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd,
+      });
+      await session.close();
+
+      expect(runtime.clientCreations[0]?.auth).toEqual({
+        username: "provider-user",
+        password: "provider-password",
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("defaults OpenCode server auth username when password comes from process env", async () => {
+    const previousUsername = process.env.OPENCODE_SERVER_USERNAME;
+    const previousPassword = process.env.OPENCODE_SERVER_PASSWORD;
+    process.env.OPENCODE_SERVER_PASSWORD = "process-password";
+    delete process.env.OPENCODE_SERVER_USERNAME;
+
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.providerListResponse = {
+      data: {
+        connected: ["test-provider"],
+        all: [
+          {
+            id: "test-provider",
+            name: "Test Provider",
+            source: "env",
+            models: {
+              "model-a": { name: "Model A" },
+            },
+          },
+        ],
+      },
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+
+    try {
+      const models = await client.listModels({ cwd: os.homedir(), force: false });
+
+      expect(models).toHaveLength(1);
+      expect(runtime.clientCreations[0]?.auth).toEqual({
+        username: "opencode",
+        password: "process-password",
+      });
+    } finally {
+      if (previousUsername === undefined) {
+        delete process.env.OPENCODE_SERVER_USERNAME;
+      } else {
+        process.env.OPENCODE_SERVER_USERNAME = previousUsername;
+      }
+      if (previousPassword === undefined) {
+        delete process.env.OPENCODE_SERVER_PASSWORD;
+      } else {
+        process.env.OPENCODE_SERVER_PASSWORD = previousPassword;
+      }
     }
   });
 });
@@ -1341,7 +1438,9 @@ describe("OpenCode persisted sessions", () => {
       }),
       { type: "assistant_message", text: "hello back" },
     ]);
-    expect(runtime.clientCreations).toEqual([{ baseUrl: runtime.server.url, directory: cwd }]);
+    expect(runtime.clientCreations).toEqual([
+      expect.objectContaining({ baseUrl: runtime.server.url, directory: cwd }),
+    ]);
     expect(openCodeClient.calls.experimentalSessionList).toEqual([
       { archived: true, roots: true, limit: 200 },
     ]);

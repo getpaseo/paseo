@@ -22,6 +22,7 @@ Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`)
 ## Table of Contents
 
 - [Extending a built-in provider](#extending-a-built-in-provider)
+- [OpenCode server authentication](#opencode-server-authentication)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
@@ -82,6 +83,31 @@ Custom providers that extend `"codex"` can point Codex at an OpenAI-compatible A
 ```
 
 If the base URL does not end in `/v1`, Paseo appends `/v1` for Codex's OpenAI-compatible provider config. If it already ends in `/v1`, Paseo leaves it as-is.
+
+---
+
+## OpenCode server authentication
+
+OpenCode protects `opencode serve` with HTTP Basic Auth when `OPENCODE_SERVER_PASSWORD` is set. The username defaults to `opencode`; set `OPENCODE_SERVER_USERNAME` only if you changed it.
+
+Configure these values in the built-in OpenCode provider `env` so Paseo starts the OpenCode server with the same credentials and sends matching auth headers when calling the SDK:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "env": {
+          "OPENCODE_SERVER_USERNAME": "opencode",
+          "OPENCODE_SERVER_PASSWORD": "your-password"
+        }
+      }
+    }
+  }
+}
+```
+
+You can omit `OPENCODE_SERVER_USERNAME` when using OpenCode's default username.
 
 ---
 

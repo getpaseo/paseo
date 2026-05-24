@@ -63,8 +63,10 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import {
   createSdkOpenCodeClient,
+  type OpenCodeClientOptions,
   type OpenCodeRuntime,
   type OpenCodeServerAcquisition,
+  type OpenCodeServerAuth,
 } from "./opencode/runtime.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 
@@ -81,6 +83,9 @@ const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_SERVER_USERNAME_ENV = "OPENCODE_SERVER_USERNAME";
+const OPENCODE_SERVER_PASSWORD_ENV = "OPENCODE_SERVER_PASSWORD";
+const DEFAULT_OPENCODE_SERVER_USERNAME = "opencode";
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -103,10 +108,25 @@ const DEFAULT_MODES: AgentMode[] = [
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
 type OpenCodePersistedSession = OpenCodeSession | OpenCodeGlobalSession;
+type OpenCodeServerEnv = Record<string, string | undefined>;
 
 interface OpenCodeSessionMessage {
   info: OpenCodeMessage;
   parts: OpenCodePart[];
+}
+
+function resolveOpenCodeServerAuth(
+  ...overlays: Array<OpenCodeServerEnv | undefined>
+): OpenCodeServerAuth | undefined {
+  const env: OpenCodeServerEnv = Object.assign({}, process.env, ...overlays);
+  const password = env[OPENCODE_SERVER_PASSWORD_ENV];
+  if (!password) {
+    return undefined;
+  }
+  return {
+    username: env[OPENCODE_SERVER_USERNAME_ENV] || DEFAULT_OPENCODE_SERVER_USERNAME,
+    password,
+  };
 }
 
 type OpenCodeMcpConfig =
@@ -972,7 +992,7 @@ class ProductionOpenCodeRuntime implements OpenCodeRuntime {
     return this.serverManager.ensureRunning();
   }
 
-  createClient(options: { baseUrl: string; directory: string }): OpencodeClient {
+  createClient(options: OpenCodeClientOptions): OpencodeClient {
     return createSdkOpenCodeClient(options);
   }
 
@@ -1004,6 +1024,19 @@ export class OpenCodeAgentClient implements AgentClient {
       );
   }
 
+  private createRuntimeClient(options: {
+    baseUrl: string;
+    directory: string;
+    env?: Record<string, string>;
+  }): OpencodeClient {
+    const auth = resolveOpenCodeServerAuth(this.runtimeSettings?.env, options.env);
+    return this.runtime.createClient({
+      baseUrl: options.baseUrl,
+      directory: options.directory,
+      ...(auth ? { auth } : {}),
+    });
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -1015,9 +1048,10 @@ export class OpenCodeAgentClient implements AgentClient {
       env: launchContext?.env,
     });
     const { url } = acquisition.server;
-    const client = this.runtime.createClient({
+    const client = this.createRuntimeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
+      env: launchContext?.env,
     });
 
     try {
@@ -1074,7 +1108,7 @@ export class OpenCodeAgentClient implements AgentClient {
     const openCodeConfig = this.assertConfig(config);
     const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
-    const client = this.runtime.createClient({
+    const client = this.createRuntimeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
@@ -1101,7 +1135,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     const acquisition = await this.runtime.acquireServer({ force: options.force });
     const { url } = acquisition.server;
-    const client = this.runtime.createClient({
+    const client = this.createRuntimeClient({
       baseUrl: url,
       directory: options.cwd,
     });
@@ -1171,7 +1205,7 @@ export class OpenCodeAgentClient implements AgentClient {
     const acquisition = await this.runtime.acquireServer({ force: options.force });
     const { url } = acquisition.server;
     const directory = options.cwd;
-    const client = this.runtime.createClient({ baseUrl: url, directory });
+    const client = this.createRuntimeClient({ baseUrl: url, directory });
 
     try {
       const response = await withTimeout(
@@ -1203,7 +1237,7 @@ export class OpenCodeAgentClient implements AgentClient {
     const openCodeConfig = this.assertConfig(config);
     const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
-    const client = this.runtime.createClient({
+    const client = this.createRuntimeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
@@ -1224,7 +1258,7 @@ export class OpenCodeAgentClient implements AgentClient {
   ): Promise<PersistedAgentDescriptor[]> {
     const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
-    const client = this.runtime.createClient({
+    const client = this.createRuntimeClient({
       baseUrl: url,
       directory: options?.cwd ?? "",
     });
