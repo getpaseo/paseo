@@ -1,6 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
@@ -15,20 +13,23 @@ function createClient(pi = new FakePi()): PiRpcAgentClient {
   });
 }
 
-function createClientWithPiAgentDir(agentDir: string): PiRpcAgentClient {
-  return new PiRpcAgentClient({
-    logger: pino({ level: "silent" }),
-    runtime: new FakePi(),
-    runtimeSettings: { env: { PI_CODING_AGENT_DIR: agentDir } },
-  });
-}
-
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
     provider: "pi",
     cwd: "/tmp/paseo-pi-rpc-test",
     ...overrides,
   };
+}
+
+function readUtf8File(pathname: string): string {
+  const fd = openSync(pathname, "r");
+  try {
+    const buffer = Buffer.alloc(fstatSync(fd).size);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 async function createSession(pi = new FakePi()): Promise<{
@@ -113,6 +114,13 @@ class SessionEvents {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "permission_resolved" }> =>
         event.type === "permission_resolved",
+    );
+  }
+
+  nextTimelineEvent(): Promise<Extract<AgentStreamEvent, { type: "timeline" }>> {
+    return this.nextEvent(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline",
     );
   }
 
@@ -306,6 +314,24 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("emits live user messages with captured Pi tree entry ids", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.capturedUserEntries = [{ id: "entry-user-1", parentId: null, text: "hello" }];
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "user", content: "hello" },
+    });
+
+    await events.nextTimelineEvent();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "user_message", text: "hello", messageId: "entry-user-1" },
+    ]);
+  });
+
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
@@ -314,7 +340,7 @@ describe("PiRpcAgentSession", () => {
       {
         provider: "pi",
         sessionId: "pi-session-1",
-        nativeHandle: "/tmp/native-pi-session.jsonl",
+        nativeHandle: "/tmp/native-pi-session",
         metadata: {
           cwd: "/workspace/project",
           model: "openrouter/model-a",
@@ -328,7 +354,7 @@ describe("PiRpcAgentSession", () => {
     const actualLaunch = pi.recordedLaunches[0]!;
     expect(actualLaunch).toMatchObject({
       cwd: "/workspace/project",
-      session: "/tmp/native-pi-session.jsonl",
+      session: "/tmp/native-pi-session",
     });
     expect(actualLaunch.extensionPaths).toHaveLength(1);
     expect(actualLaunch.argv).toEqual([
@@ -340,7 +366,7 @@ describe("PiRpcAgentSession", () => {
       "--thinking",
       "high",
       "--session",
-      "/tmp/native-pi-session.jsonl",
+      "/tmp/native-pi-session",
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
@@ -384,7 +410,7 @@ describe("PiRpcAgentSession", () => {
       {
         provider: "pi",
         sessionId: "pi-session-1",
-        nativeHandle: "/tmp/native-pi-session.jsonl",
+        nativeHandle: "/tmp/native-pi-session",
         metadata: {
           cwd: "/workspace/project",
           model: "openrouter/model-a",
@@ -401,7 +427,7 @@ describe("PiRpcAgentSession", () => {
     const actualLaunch = pi.recordedLaunches[0]!;
     expect(actualLaunch).toMatchObject({
       cwd: "/workspace/project",
-      session: "/tmp/native-pi-session.jsonl",
+      session: "/tmp/native-pi-session",
       systemPrompt: "Agent prompt\n\nDaemon prompt",
     });
     expect(actualLaunch.extensionPaths).toHaveLength(1);
@@ -414,7 +440,7 @@ describe("PiRpcAgentSession", () => {
       "--thinking",
       "high",
       "--session",
-      "/tmp/native-pi-session.jsonl",
+      "/tmp/native-pi-session",
       "--append-system-prompt",
       "Agent prompt\n\nDaemon prompt",
       "--extension",
@@ -488,44 +514,16 @@ describe("PiRpcAgentClient", () => {
 
   test("rewinds conversation through the Pi tree navigation bridge", async () => {
     const { pi, session, events } = await createSession();
-    const sessionFile = path.join(
-      mkdtempSync(path.join(tmpdir(), "paseo-pi-rewind-agent-")),
-      "s.jsonl",
-    );
-    writeFileSync(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "message",
-          id: "entry-1",
-          parentId: null,
-          timestamp: "2026-01-01T00:00:01.000Z",
-          message: { role: "user", content: "first prompt" },
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-2",
-          parentId: "entry-1",
-          timestamp: "2026-01-01T00:00:02.000Z",
-          message: { role: "assistant", content: [{ type: "text", text: "first answer" }] },
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-3",
-          parentId: "entry-2",
-          timestamp: "2026-01-01T00:00:03.000Z",
-          message: { role: "user", content: "second prompt" },
-        }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-    pi.latestSession().state.sessionFile = sessionFile;
+    pi.latestSession().capturedUserEntries = [
+      { id: "entry-1", parentId: null, text: "first prompt" },
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
 
-    await session.startTurn("first prompt", { messageId: "client-message-1" });
+    await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
     await events.nextTurnCompletion();
 
-    await session.revertConversation?.({ messageId: "client-message-1" });
+    await session.revertConversation?.({ messageId: "entry-1" });
 
     expect(session.capabilities).toMatchObject({
       supportsRewindConversation: true,
@@ -586,7 +584,7 @@ describe("PiRpcAgentClient", () => {
 
     const configPath = actualLaunch.mcpConfigPath;
     expect(configPath).toEqual(expect.any(String));
-    const injectedConfig = JSON.parse(readFileSync(configPath!, "utf8")) as {
+    const injectedConfig = JSON.parse(readUtf8File(configPath!)) as {
       mcpServers: Record<string, unknown>;
     };
     expect(injectedConfig).toEqual({
@@ -638,51 +636,6 @@ describe("PiRpcAgentClient", () => {
     ]);
     expect(actualLaunch.mcpConfigPath).toBeUndefined();
     expect(session.capabilities.supportsMcpServers).toBe(false);
-  });
-
-  test("lists persisted Pi sessions from the configured Pi agent directory", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-client-"));
-    const cwd = path.join(root, "workspace");
-    const agentDir = path.join(root, "agent");
-    const sessionsDir = path.join(agentDir, "sessions", "--workspace--");
-    mkdirSync(sessionsDir, { recursive: true });
-    const sessionFile = path.join(sessionsDir, "20260101_session.jsonl");
-    writeFileSync(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "session",
-          version: 3,
-          id: "pi-session",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          cwd,
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-1",
-          parentId: null,
-          timestamp: "2026-01-01T00:00:01.000Z",
-          message: { role: "user", content: "remember this" },
-        }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-    const client = createClientWithPiAgentDir(agentDir);
-
-    await expect(client.listPersistedAgents({ cwd })).resolves.toMatchObject([
-      {
-        provider: "pi",
-        sessionId: "pi-session",
-        cwd,
-        persistence: {
-          provider: "pi",
-          sessionId: "pi-session",
-          nativeHandle: sessionFile,
-          metadata: { provider: "pi", cwd },
-        },
-        timeline: [{ type: "user_message", text: "remember this" }],
-      },
-    ]);
   });
 });
 

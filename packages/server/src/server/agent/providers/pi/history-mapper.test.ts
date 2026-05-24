@@ -1,18 +1,15 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PiAgentMessage } from "./rpc-types.js";
-import { streamPiHistory } from "./history-mapper.js";
+import { streamPiHistory, type PiCapturedUserMessageEntry } from "./history-mapper.js";
 
 async function collectHistory(
   messages: PiAgentMessage[],
-  options?: { sessionFile?: string },
+  userEntries: PiCapturedUserMessageEntry[] = [],
 ): Promise<AgentStreamEvent[]> {
   const events: AgentStreamEvent[] = [];
-  for await (const event of streamPiHistory("pi", messages, options)) {
+  for await (const event of streamPiHistory("pi", messages, userEntries)) {
     events.push(event);
   }
   return events;
@@ -52,7 +49,6 @@ describe("Pi history mapper", () => {
         item: {
           type: "user_message",
           text: "read this\n\nthen answer",
-          messageId: "pi-user-0",
         },
       },
       {
@@ -132,32 +128,6 @@ describe("Pi history mapper", () => {
   });
 
   test("uses Pi tree entry ids for replayed user messages", async () => {
-    const sessionFile = path.join(mkdtempSync(path.join(tmpdir(), "paseo-pi-history-")), "s.jsonl");
-    writeFileSync(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "message",
-          id: "entry-user-1",
-          parentId: null,
-          message: { role: "user", content: "first prompt" },
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-assistant-1",
-          parentId: "entry-user-1",
-          message: { role: "assistant", content: [{ type: "text", text: "first answer" }] },
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-user-2",
-          parentId: "entry-assistant-1",
-          message: { role: "user", content: "second prompt" },
-        }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-
     await expect(
       collectHistory(
         [
@@ -165,7 +135,10 @@ describe("Pi history mapper", () => {
           { role: "assistant", content: [{ type: "text", text: "first answer" }] },
           { role: "user", content: "second prompt" },
         ],
-        { sessionFile },
+        [
+          { id: "entry-user-1", text: "first prompt" },
+          { id: "entry-user-2", text: "second prompt" },
+        ],
       ),
     ).resolves.toEqual([
       {

@@ -7,10 +7,10 @@ import {
   parseToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
-import { getPiUserTreeEntries } from "./tree-navigation.js";
 
-interface PiHistoryMapperOptions {
-  sessionFile?: string;
+export interface PiCapturedUserMessageEntry {
+  id: string;
+  text: string;
 }
 
 function isTextContentBlock(block: unknown): block is PiTextContent {
@@ -40,23 +40,23 @@ export function getUserMessageText(content: string | (PiTextContent | PiImageCon
 export async function* streamPiHistory(
   provider: string,
   messages: PiAgentMessage[],
-  options: PiHistoryMapperOptions = {},
+  userEntries: readonly PiCapturedUserMessageEntry[] = [],
 ): AsyncGenerator<AgentStreamEvent> {
   const pendingToolCalls = new Map<string, PiTrackedToolCall>();
-  const userTreeEntries = getPiUserTreeEntries(options.sessionFile);
   let userIndex = 0;
 
   for (const message of messages) {
     if (message.role === "user") {
       const text = getUserMessageText(message.content);
       if (text) {
+        const userEntry = userEntries[userIndex];
         yield {
           type: "timeline",
           provider,
           item: {
             type: "user_message",
             text,
-            messageId: userTreeEntries[userIndex]?.id ?? `pi-user-${userIndex}`,
+            ...(userEntry ? { messageId: userEntry.id } : {}),
           },
         };
       }
