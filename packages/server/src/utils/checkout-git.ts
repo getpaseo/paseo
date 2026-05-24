@@ -1283,20 +1283,7 @@ async function getAheadOfOrigin(
     const count = Number.parseInt(stdout.trim(), 10);
     return Number.isNaN(count) ? null : count;
   } catch {
-    if (trackedOriginBranch) {
-      return null;
-    }
-    try {
-      const { stdout } = await runGitCommand(["rev-list", "--count", currentBranch], {
-        cwd,
-        envOverlay: READ_ONLY_GIT_ENV,
-        logger: context?.logger,
-      });
-      const count = Number.parseInt(stdout.trim(), 10);
-      return Number.isNaN(count) ? null : count;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
