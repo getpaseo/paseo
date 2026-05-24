@@ -569,11 +569,6 @@ export const UserMessage = memo(function UserMessage({
         {hasText ? (
           <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
             <Text style={userMessageStylesheet.timestampText}>{formattedTimestamp}</Text>
-            <TurnCopyButton
-              getContent={getMessageContent}
-              containerStyle={userMessageStylesheet.copyButton}
-              accessibilityLabel="Copy message"
-            />
             {capabilities ? (
               <RewindMenu
                 capabilities={capabilities}
@@ -582,6 +577,11 @@ export const UserMessage = memo(function UserMessage({
                 onRewind={handleRewind}
               />
             ) : null}
+            <TurnCopyButton
+              getContent={getMessageContent}
+              containerStyle={userMessageStylesheet.copyButton}
+              accessibilityLabel="Copy message"
+            />
           </View>
         ) : null}
       </View>
