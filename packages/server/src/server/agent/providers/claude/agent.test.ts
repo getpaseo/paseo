@@ -1519,6 +1519,12 @@ describe("ClaudeAgentSession context window usage", () => {
     const result = await session.run("turn");
     await session.close();
 
-    expect(result.timeline).toEqual([{ type: "assistant_message", text: "Here is the answer." }]);
+    expect(result.timeline).toEqual([
+      {
+        type: "assistant_message",
+        text: "Here is the answer.",
+        messageId: "assistant-third-party-1",
+      },
+    ]);
   });
 });

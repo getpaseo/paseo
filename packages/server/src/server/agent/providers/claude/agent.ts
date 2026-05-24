@@ -1170,8 +1170,15 @@ function isSyntheticUserEntry(entry: unknown): boolean {
   if (!candidate) {
     return false;
   }
-  if (candidate.isSynthetic === true || candidate.isMeta === true || candidate.toolUseResult) {
-    return true;
+  return (
+    candidate.isSynthetic === true || candidate.isMeta === true || Boolean(candidate.toolUseResult)
+  );
+}
+
+function isToolResultUserEntry(entry: unknown): boolean {
+  const candidate = toObjectRecord(entry);
+  if (!candidate) {
+    return false;
   }
   const message = toObjectRecord(candidate.message);
   const content = message?.content;
@@ -1181,14 +1188,7 @@ function isSyntheticUserEntry(entry: unknown): boolean {
 }
 
 function isSyntheticHistoryUserEntry(entry: Record<string, unknown>): boolean {
-  if (entry.isSynthetic === true || entry.isMeta === true || entry.toolUseResult) {
-    return true;
-  }
-  const message = toObjectRecord(entry.message);
-  const content = message?.content;
-  return (
-    Array.isArray(content) && content.some((block) => toObjectRecord(block)?.type === "tool_result")
-  );
+  return isSyntheticUserEntry(entry);
 }
 
 function firstTrimmedString(sources: readonly unknown[]): string | null {
@@ -2340,7 +2340,11 @@ class ClaudeAgentSession implements AgentSession {
     if (!messageId) {
       return;
     }
-    if (message.type === "user" && !isSyntheticUserEntry(message)) {
+    if (
+      message.type === "user" &&
+      !isSyntheticUserEntry(message) &&
+      !isToolResultUserEntry(message)
+    ) {
       this.rememberRewindUserAnchor(messageId);
       return;
     }
@@ -3910,7 +3914,8 @@ class ClaudeAgentSession implements AgentSession {
     const isVisibleUserEntry =
       entry.type === "user" &&
       typeof entry.uuid === "string" &&
-      !isSyntheticHistoryUserEntry(entry);
+      !isSyntheticHistoryUserEntry(entry) &&
+      !isToolResultUserEntry(entry);
     if (isVisibleUserEntry && typeof entry.uuid === "string") {
       this.rememberUserMessageId(entry.uuid);
       this.rememberRewindUserAnchor(entry.uuid);
