@@ -177,6 +177,7 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       status: agent?.status ?? null,
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
       contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
     };
   };
 }
@@ -184,10 +185,15 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
 function renderContextWindowMeterSlot(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
+  totalCostUsd: number | null,
 ): ReactElement {
   const meter =
     contextWindowMaxTokens !== null && contextWindowUsedTokens !== null ? (
-      <ContextWindowMeter maxTokens={contextWindowMaxTokens} usedTokens={contextWindowUsedTokens} />
+      <ContextWindowMeter
+        maxTokens={contextWindowMaxTokens}
+        usedTokens={contextWindowUsedTokens}
+        totalCostUsd={totalCostUsd}
+      />
     ) : null;
   return <View style={styles.contextWindowMeterSlot}>{meter}</View>;
 }
@@ -1419,8 +1425,13 @@ export function Composer({
   );
 
   const beforeVoiceContent = useMemo(
-    () => renderContextWindowMeterSlot(contextWindowMaxTokens, contextWindowUsedTokens),
-    [contextWindowMaxTokens, contextWindowUsedTokens],
+    () =>
+      renderContextWindowMeterSlot(
+        contextWindowMaxTokens,
+        contextWindowUsedTokens,
+        agentState.totalCostUsd,
+      ),
+    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd],
   );
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();

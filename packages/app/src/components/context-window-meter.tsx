@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 interface ContextWindowMeterProps {
   maxTokens: number;
   usedTokens: number;
+  totalCostUsd?: number | null;
 }
 
 const SVG_SIZE = 16;
@@ -43,6 +44,16 @@ function formatTokenCount(value: number): string {
   return Math.round(value).toString();
 }
 
+function formatSessionCost(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  if (value < 0.01) {
+    return `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
+
 function getMeterColors(
   percentage: number,
   theme: ReturnType<typeof useUnistyles>["theme"],
@@ -57,7 +68,11 @@ function getMeterColors(
   return { progress: theme.colors.foregroundMuted, track };
 }
 
-export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeterProps) {
+export function ContextWindowMeter({
+  maxTokens,
+  usedTokens,
+  totalCostUsd,
+}: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const percentage = getUsagePercentage(maxTokens, usedTokens);
 
@@ -69,6 +84,8 @@ export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeter
   const roundedPercentage = Math.round(percentage);
   const dashOffset = CIRCUMFERENCE - (clampedPercentage / 100) * CIRCUMFERENCE;
   const colors = getMeterColors(clampedPercentage, theme);
+  const formattedSessionCost =
+    typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
 
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
@@ -115,6 +132,9 @@ export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeter
           <Text
             style={styles.tooltipDetail}
           >{`${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)} tokens`}</Text>
+          {formattedSessionCost ? (
+            <Text style={styles.tooltipDetail}>{`Session cost ${formattedSessionCost}`}</Text>
+          ) : null}
         </View>
       </TooltipContent>
     </Tooltip>

@@ -424,6 +424,16 @@ function readPositiveFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+function maxFiniteNumber(left: number | undefined, right: number): number {
+  return left === undefined ? right : Math.max(left, right);
+}
+
+function assignUsageNumber(usage: AgentUsage, key: keyof AgentUsage, value: number | undefined) {
+  if (value !== undefined) {
+    usage[key] = value;
+  }
+}
+
 function buildOpenCodeModelLookupKey(providerId: string, modelId: string): string {
   return `${providerId}/${modelId}`;
 }
@@ -591,6 +601,7 @@ function mergeOpenCodeStepFinishUsage(
       };
     };
   },
+  options: { totalCostUsd?: number } = {},
 ): void {
   const inputTokens = readPositiveFiniteNumber(part.tokens?.input);
   const outputTokens = readPositiveFiniteNumber(part.tokens?.output);
@@ -605,20 +616,14 @@ function mergeOpenCodeStepFinishUsage(
     (cacheWriteTokens ?? 0);
   const cost = readPositiveFiniteNumber(part.cost);
 
-  if (inputTokens !== undefined) {
-    usage.inputTokens = inputTokens;
-  }
-  if (cacheReadTokens !== undefined) {
-    usage.cachedInputTokens = cacheReadTokens;
-  }
-  if (outputTokens !== undefined) {
-    usage.outputTokens = outputTokens;
-  }
+  assignUsageNumber(usage, "inputTokens", inputTokens);
+  assignUsageNumber(usage, "cachedInputTokens", cacheReadTokens);
+  assignUsageNumber(usage, "outputTokens", outputTokens);
   if (totalTokens > 0) {
     usage.contextWindowUsedTokens = totalTokens;
   }
   if (cost !== undefined) {
-    usage.totalCostUsd = (usage.totalCostUsd ?? 0) + cost;
+    usage.totalCostUsd = options.totalCostUsd ?? (usage.totalCostUsd ?? 0) + cost;
   }
 }
 
@@ -1348,6 +1353,7 @@ export interface OpenCodeEventTranslationState {
   cwd?: string;
   messageRoles: Map<string, OpenCodeMessageRole>;
   accumulatedUsage: AgentUsage;
+  sessionTotalCostUsd?: number;
   streamedPartKeys: Set<string>;
   emittedStructuredMessageIds: Set<string>;
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
@@ -1932,7 +1938,13 @@ function appendOpenCodeSessionCreatedOrUpdated(
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
 ): void {
+  const info = readOpenCodeRecord(event.properties.info);
   if (event.properties.info.id === state.sessionId) {
+    const sessionCost = readPositiveFiniteNumber(info?.cost);
+    if (sessionCost !== undefined) {
+      state.sessionTotalCostUsd = maxFiniteNumber(state.sessionTotalCostUsd, sessionCost);
+      state.accumulatedUsage.totalCostUsd = state.sessionTotalCostUsd;
+    }
     events.push({
       type: "thread_started",
       sessionId: state.sessionId,
@@ -1941,7 +1953,6 @@ function appendOpenCodeSessionCreatedOrUpdated(
     return;
   }
 
-  const info = readOpenCodeRecord(event.properties.info);
   const parentSessionId = readNonEmptyString(info?.parentID) ?? readNonEmptyString(info?.parentId);
   if (parentSessionId === state.sessionId) {
     appendOpenCodeSubAgentChildSessionLinked(event.properties.info.id, state, events);
@@ -2022,7 +2033,13 @@ function appendOpenCodeMessagePartUpdated(
     return;
   }
   if (part.type === "step-finish") {
-    mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
+    const stepCost = readPositiveFiniteNumber(part.cost);
+    if (stepCost !== undefined) {
+      state.sessionTotalCostUsd = (state.sessionTotalCostUsd ?? 0) + stepCost;
+    }
+    mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part, {
+      totalCostUsd: state.sessionTotalCostUsd,
+    });
     if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
       events.push({
         type: "usage_updated",
@@ -2300,6 +2317,7 @@ class OpenCodeAgentSession implements AgentSession {
   private abortController: AbortController | null = null;
   private pendingAbortPromise: Promise<void> | null = null;
   private accumulatedUsage: AgentUsage = {};
+  private sessionTotalCostUsd: number | undefined;
   private mcpConfigured = false;
   private mcpSetupPromise: Promise<void> | null = null;
   /** Tracks the role of each message by ID to distinguish user from assistant messages */
@@ -3198,6 +3216,7 @@ class OpenCodeAgentSession implements AgentSession {
       cwd: this.config.cwd,
       messageRoles: this.messageRoles,
       accumulatedUsage: this.accumulatedUsage,
+      sessionTotalCostUsd: this.sessionTotalCostUsd,
       streamedPartKeys: this.streamedPartKeys,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
       partTypes: this.partTypes,
@@ -3214,6 +3233,12 @@ class OpenCodeAgentSession implements AgentSession {
     });
 
     const events: AgentStreamEvent[] = [];
+    if (typeof this.accumulatedUsage.totalCostUsd === "number") {
+      this.sessionTotalCostUsd = maxFiniteNumber(
+        this.sessionTotalCostUsd,
+        this.accumulatedUsage.totalCostUsd,
+      );
+    }
 
     for (const translatedEvent of translated) {
       if (translatedEvent.type === "permission_requested") {

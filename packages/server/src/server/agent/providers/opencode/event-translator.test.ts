@@ -418,6 +418,72 @@ describe("translateOpenCodeEvent", () => {
     });
   });
 
+  it("reports totalCostUsd as cumulative session cost across turns", () => {
+    const state = createState();
+    state.accumulatedUsage.contextWindowMaxTokens = 400_000;
+    state.sessionTotalCostUsd = 0.5;
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "step-finish-1",
+            sessionID: "session-1",
+            messageID: "message-usage-1",
+            type: "step-finish",
+            reason: "stop",
+            cost: 0.25,
+            tokens: {
+              total: 55_000,
+              input: 30_000,
+              output: 12_000,
+              reasoning: 10_000,
+              cache: {
+                read: 2_000,
+                write: 1_000,
+              },
+            },
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "opencode",
+        usage: expect.objectContaining({
+          totalCostUsd: 0.75,
+        }),
+      },
+    ]);
+    expect(state.sessionTotalCostUsd).toBe(0.75);
+    expect(state.accumulatedUsage.totalCostUsd).toBe(0.75);
+  });
+
+  it("seeds cumulative session cost from OpenCode session updates", () => {
+    const state = createState();
+
+    translateOpenCodeEvent(
+      {
+        type: "session.updated",
+        properties: {
+          sessionID: "session-1",
+          info: {
+            id: "session-1",
+            cost: 1.25,
+          },
+        },
+      } as Parameters<typeof translateOpenCodeEvent>[0],
+      state,
+    );
+
+    expect(state.sessionTotalCostUsd).toBe(1.25);
+    expect(state.accumulatedUsage.totalCostUsd).toBe(1.25);
+  });
+
   it("emits normalized todo timeline items from todo.updated", () => {
     const state = createState();
 
