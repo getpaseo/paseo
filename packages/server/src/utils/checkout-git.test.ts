@@ -512,7 +512,31 @@ const x = 1;
       isPaseoOwnedWorktree: true,
       baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
-      aheadOfOrigin: null,
+      aheadOfOrigin: 0,
+    });
+  });
+
+  it("reports local-only worktree commits as unpushed relative to base", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(repoDir, "second.txt", "second\n", "second commit");
+    execFileSync("git", ["push"], { cwd: repoDir });
+
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "fresh-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "fresh-feature",
+      paseoHome,
+    });
+    commitFile(worktree.worktreePath, "feature.txt", "feature\n", "feature commit");
+
+    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    expect(status).toMatchObject({
+      isGit: true,
+      isPaseoOwnedWorktree: true,
+      baseRef: "main",
+      aheadBehind: { ahead: 1, behind: 0 },
+      aheadOfOrigin: 1,
     });
   });
 
