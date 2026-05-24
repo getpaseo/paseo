@@ -162,6 +162,17 @@ async function sendClaudeWriteTurn(
   await expect(fileExists(path.join(session.cwd, turn.fileName))).resolves.toBe(true);
 }
 
+async function sendClaudeReplyTurn(
+  harness: ClaudeRewindHarness,
+  session: ClaudeRewindSession,
+  prompt: string,
+): Promise<void> {
+  await harness.client.sendMessage(session.agentId, prompt);
+  const finish = await harness.client.waitForFinish(session.agentId, TURN_TIMEOUT_MS);
+  expect(finish.status).toBe("idle");
+  expect(finish.final?.lastError).toBeUndefined();
+}
+
 async function runtimeSessionId(
   harness: ClaudeRewindHarness,
   session: ClaudeRewindSession,
@@ -281,4 +292,59 @@ describe("daemon E2E (real claude) - rewind", () => {
     },
     420_000,
   );
+
+  test("emits only the deliberate fork session switch after conversation rewind and continue", async () => {
+    const session = await launchClaudeRewindSession(harness, "claude-rewind-no-session-roundtrip");
+    const sessionSwitches: string[] = [];
+    const unsubscribe = harness.client.on((event) => {
+      if (event.type !== "agent_stream" || event.agentId !== session.agentId) {
+        return;
+      }
+      if (
+        event.event.type === "timeline" &&
+        event.event.item.type === "assistant_message" &&
+        event.event.item.text.startsWith("Claude switched to a new session:")
+      ) {
+        sessionSwitches.push(event.event.item.text);
+      }
+    });
+
+    try {
+      await sendClaudeReplyTurn(
+        harness,
+        session,
+        "PASEO_RW_NO_ROUNDTRIP_T1. Reply exactly: PASEO_RW_NO_ROUNDTRIP_T1_DONE",
+      );
+      await sendClaudeReplyTurn(
+        harness,
+        session,
+        "PASEO_RW_NO_ROUNDTRIP_T2. Reply exactly: PASEO_RW_NO_ROUNDTRIP_T2_DONE",
+      );
+
+      const beforeTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      const targetMessageId = userMessageIdForToken(beforeTimeline, "PASEO_RW_NO_ROUNDTRIP_T2");
+      const sessionIdBeforeRewind = await runtimeSessionId(harness, session);
+      expect(sessionIdBeforeRewind).toEqual(expect.any(String));
+
+      await harness.client.rewindAgent(session.agentId, targetMessageId, "conversation");
+      const forkedSessionId = await runtimeSessionId(harness, session);
+      expect(forkedSessionId).toEqual(expect.any(String));
+      expect(forkedSessionId).not.toBe(sessionIdBeforeRewind);
+
+      await sendClaudeReplyTurn(
+        harness,
+        session,
+        "PASEO_RW_NO_ROUNDTRIP_T3. Reply exactly: PASEO_RW_NO_ROUNDTRIP_T3_DONE",
+      );
+
+      const finalSessionId = await runtimeSessionId(harness, session);
+      expect(finalSessionId).toBe(forkedSessionId);
+      expect(sessionSwitches).toEqual([
+        `Claude switched to a new session: ${sessionIdBeforeRewind} -> ${forkedSessionId}`,
+      ]);
+    } finally {
+      unsubscribe();
+      await closeClaudeRewindSession(session);
+    }
+  }, 420_000);
 });

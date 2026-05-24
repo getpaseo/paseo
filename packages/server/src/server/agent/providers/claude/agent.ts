@@ -2253,6 +2253,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private rebindConversationSession(sessionId: string): void {
+    const oldSessionId = this.claudeSessionId;
     this.claudeSessionId = sessionId;
     this.pendingFreshSessionId = null;
     this.persistence = null;
@@ -2265,6 +2266,20 @@ class ClaudeAgentSession implements AgentSession {
     this.timelineMessageTexts.clear();
     this.rewindTurnAnchors.length = 0;
     this.loadPersistedHistory(sessionId);
+    if (oldSessionId && oldSessionId !== sessionId) {
+      this.dispatchEvents([
+        {
+          type: "timeline",
+          provider: "claude",
+          item: this.createClaudeSessionChangedNotice(oldSessionId, sessionId),
+        },
+        {
+          type: "thread_started",
+          provider: "claude",
+          sessionId,
+        },
+      ]);
+    }
   }
 
   private startFreshConversationSession(): void {
@@ -3212,20 +3227,22 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const events: AgentStreamEvent[] = [];
-    const sessionCapture = this.captureSessionIdFromMessage(message);
-    if (sessionCapture.notice) {
-      events.push({
-        type: "timeline",
-        provider: "claude",
-        item: sessionCapture.notice,
-      });
-    }
-    if (sessionCapture.threadStartedSessionId) {
-      events.push({
-        type: "thread_started",
-        provider: "claude",
-        sessionId: sessionCapture.threadStartedSessionId,
-      });
+    if (message.type !== "system") {
+      const sessionCapture = this.captureSessionIdFromMessage(message);
+      if (sessionCapture.notice) {
+        events.push({
+          type: "timeline",
+          provider: "claude",
+          item: sessionCapture.notice,
+        });
+      }
+      if (sessionCapture.threadStartedSessionId) {
+        events.push({
+          type: "thread_started",
+          provider: "claude",
+          sessionId: sessionCapture.threadStartedSessionId,
+        });
+      }
     }
 
     switch (message.type) {
