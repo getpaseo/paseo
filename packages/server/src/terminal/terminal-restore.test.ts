@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { TerminalStreamOpcode, decodeTerminalStreamFrame } from "../shared/binary-frames/index.js";
+import {
+  TerminalStreamOpcode,
+  decodeTerminalStreamFrame,
+} from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
 import {
   encodeTerminalRestoreFrame,

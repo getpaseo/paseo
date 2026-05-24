@@ -1,6 +1,6 @@
+import { TerminalStreamOpcode } from "@getpaseo/protocol/binary-frames/index";
 import { describe, expect, test } from "vitest";
 
-import { TerminalStreamOpcode } from "../shared/binary-frames/index.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 
 describe("terminal-stream-router", () => {
