@@ -99,6 +99,16 @@ function expectSyncErrorSync(state: ReadyState): void {
   expect(state.sync.status).toBe("sync_error");
 }
 
+function stateMachineLabel(state: AgentScreenViewState): "loading" | "resolving" | Agent["status"] {
+  if (state.tag === "boot") {
+    return state.reason;
+  }
+  if (state.tag === "ready") {
+    return state.agent.status;
+  }
+  return "error";
+}
+
 describe("deriveAgentScreenViewState", () => {
   it("returns boot loading before first interactive paint", () => {
     const memory = createBaseMemory();
@@ -381,6 +391,39 @@ describe("deriveAgentScreenViewState", () => {
 
     expect(ready.source).toBe("optimistic");
     expect(ready.agent.status).toBe("running");
+  });
+
+  it("keeps send lifecycle transitions forward-only across optimistic and authoritative handoff", () => {
+    let memory = createBaseMemory();
+    const transitions: Array<"loading" | "resolving" | Agent["status"]> = [];
+
+    for (const input of [
+      createBaseInput(),
+      {
+        ...createBaseInput(),
+        agent: createAgentWithStatus({ id: "agent-1", status: "idle" }),
+        placeholderAgent: createAgent("agent-1"),
+        shouldUseOptimisticStream: true,
+      },
+      {
+        ...createBaseInput(),
+        agent: createAgentWithStatus({ id: "agent-1", status: "running" }),
+        placeholderAgent: createAgent("agent-1"),
+        shouldUseOptimisticStream: true,
+      },
+      {
+        ...createBaseInput(),
+        agent: createAgentWithStatus({ id: "agent-1", status: "idle" }),
+      },
+    ] satisfies AgentScreenMachineInput[]) {
+      const result = deriveAgentScreenViewState({ input, memory });
+      memory = result.memory;
+      transitions.push(stateMachineLabel(result.state));
+    }
+
+    expect(transitions).toEqual(["loading", "running", "running", "idle"]);
+    expect(transitions.join(" -> ")).not.toContain("running -> loading");
+    expect(transitions.join(" -> ")).not.toContain("loading -> idle");
   });
 
   it("keeps optimistic running status while authoritative agent is initializing", () => {

@@ -184,10 +184,61 @@ function markThoughtReady(item: ThoughtItem): ThoughtItem {
   };
 }
 
+const OPTIMISTIC_USER_MESSAGE_RECONCILE_WINDOW_MS = 2 * 60 * 1000;
+
+function findOptimisticUserMessageIndex(
+  state: StreamItem[],
+  text: string,
+  timestamp: Date,
+  messageId?: string,
+): number {
+  for (let index = state.length - 1; index >= 0; index -= 1) {
+    const entry = state[index];
+    if (entry?.kind !== "user_message") {
+      continue;
+    }
+    if (entry.id === messageId) {
+      return -1;
+    }
+    if (entry.text !== text) {
+      continue;
+    }
+    const deltaMs = Math.abs(timestamp.getTime() - entry.timestamp.getTime());
+    if (deltaMs <= OPTIMISTIC_USER_MESSAGE_RECONCILE_WINDOW_MS) {
+      return index;
+    }
+    return -1;
+  }
+  return -1;
+}
+
+function buildUserMessageItem(input: {
+  id: string;
+  text: string;
+  timestamp: Date;
+  existing?: UserMessageItem | null;
+  optimistic?: UserMessageItem | null;
+}): UserMessageItem {
+  const preservedImages = input.existing?.images ?? input.optimistic?.images;
+  const preservedAttachments = input.existing?.attachments ?? input.optimistic?.attachments;
+
+  return {
+    kind: "user_message",
+    id: input.id,
+    text: input.text,
+    timestamp: input.timestamp,
+    ...(preservedImages && preservedImages.length > 0 ? { images: preservedImages } : {}),
+    ...(preservedAttachments && preservedAttachments.length > 0
+      ? { attachments: preservedAttachments }
+      : {}),
+  };
+}
+
 function appendUserMessage(
   state: StreamItem[],
   text: string,
   timestamp: Date,
+  source: StreamUpdateSource,
   messageId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
@@ -204,19 +255,31 @@ function appendUserMessage(
     existingIndex >= 0 && state[existingIndex]?.kind === "user_message"
       ? state[existingIndex]
       : null;
-  const preservedImages = existing?.images;
+  const optimisticIndex =
+    source === "live" && existingIndex < 0
+      ? findOptimisticUserMessageIndex(state, chunk, timestamp, messageId)
+      : -1;
+  const optimistic =
+    optimisticIndex >= 0 && state[optimisticIndex]?.kind === "user_message"
+      ? state[optimisticIndex]
+      : null;
 
-  const nextItem: UserMessageItem = {
-    kind: "user_message",
+  const nextItem = buildUserMessageItem({
     id: entryId,
     text: chunk,
     timestamp,
-    ...(preservedImages && preservedImages.length > 0 ? { images: preservedImages } : {}),
-  };
+    existing,
+    optimistic,
+  });
 
   if (existingIndex >= 0) {
     const next = [...state];
     next[existingIndex] = nextItem;
+    return next;
+  }
+  if (optimisticIndex >= 0) {
+    const next = [...state];
+    next[optimisticIndex] = nextItem;
     return next;
   }
 
@@ -664,7 +727,9 @@ function reduceTimelineEvent(
   const item = event.item;
   switch (item.type) {
     case "user_message":
-      return finalizeActiveThoughts(appendUserMessage(state, item.text, timestamp, item.messageId));
+      return finalizeActiveThoughts(
+        appendUserMessage(state, item.text, timestamp, source, item.messageId),
+      );
     case "assistant_message":
       return finalizeActiveThoughts(
         appendAssistantMessage(state, item.text, timestamp, source, item.messageId),

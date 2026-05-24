@@ -4,8 +4,11 @@ import { useToast } from "@/contexts/toast-context";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { RewindMode } from "./use-rewind-capabilities";
 import { useRewindComposerRestore } from "./composer-restore";
+import { useSessionStore } from "@/stores/session-store";
+import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
 
 interface UseRewindAgentMutationInput {
+  serverId?: string;
   agentId?: string;
   messageId?: string;
   client?: DaemonClient | null;
@@ -28,8 +31,23 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
         throw new Error("Daemon client not available");
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
+      if (mode !== "files") {
+        const cursor = input.serverId
+          ? useSessionStore
+              .getState()
+              .sessions[input.serverId]?.agentTimelineCursor.get(input.agentId)
+          : undefined;
+        await input.client.fetchAgentTimeline(input.agentId, {
+          direction: "tail",
+          projection: "canonical",
+          ...(cursor ? { cursor: { epoch: cursor.epoch, seq: cursor.endSeq } } : {}),
+        });
+      }
     },
     onSuccess: (_data, variables) => {
+      if (!shouldRestoreComposerForRewindMode(variables.mode)) {
+        return;
+      }
       composerRestore?.restoreTextIfComposerEmpty(variables.rewoundText);
     },
     onError: (error) => {

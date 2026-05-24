@@ -110,6 +110,7 @@ export type { InlinePathTarget } from "@/assistant-file-links";
 type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
 interface UserMessageProps {
+  serverId?: string;
   agentId?: string;
   messageId?: string;
   message: string;
@@ -457,6 +458,7 @@ function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
 }
 
 export const UserMessage = memo(function UserMessage({
+  serverId,
   agentId,
   messageId,
   message,
@@ -480,7 +482,7 @@ export const UserMessage = memo(function UserMessage({
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
   );
-  const rewindMutation = useRewindAgentMutation({ agentId, client, messageId });
+  const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -528,7 +530,7 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} testID="user-message">
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}

@@ -276,8 +276,17 @@ describe("processTimelineResponse", () => {
   });
 
   it("sets cursor to null when reset=true but no cursors in payload", () => {
+    const existingTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "only-user",
+        text: "first turn",
+        timestamp: new Date(500),
+      },
+    ];
     const result = processTimelineResponse({
       ...baseTimelineInput,
+      currentTail: existingTail,
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 5 },
       payload: {
         ...baseTimelineInput.payload,
@@ -288,6 +297,8 @@ describe("processTimelineResponse", () => {
 
     expect(result.cursor).toBe(null);
     expect(result.cursorChanged).toBe(true);
+    expect(result.tail).toEqual([]);
+    expect(getUserTexts(result.tail)).toHaveLength(0);
   });
 
   it("performs bootstrap tail init with catch-up side effect", () => {

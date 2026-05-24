@@ -31,6 +31,10 @@ async function openAgent(page: Page, input: { cwd: string; agentId: string }): P
   await expectComposerVisible(page);
 }
 
+async function expectUserMessageCount(page: Page, expected: number): Promise<void> {
+  await expect(page.getByTestId("user-message")).toHaveCount(expected);
+}
+
 test.describe("Rewind sheet", () => {
   test("rewinds from a user message sheet option", async ({ page }) => {
     const repo = await createTempGitRepo("rewind-e2e-");
@@ -52,9 +56,11 @@ test.describe("Rewind sheet", () => {
       await openAgent(page, { cwd: repo.path, agentId: agent.id });
 
       await expect(page.getByText(firstPrompt, { exact: true })).toBeVisible();
+      await expectUserMessageCount(page, 1);
       await submitMessage(page, secondPrompt);
       await expect(page.getByText(secondPrompt, { exact: true })).toBeVisible();
       await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
+      await expectUserMessageCount(page, 2);
 
       await page.getByText(firstPrompt, { exact: true }).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();
@@ -69,12 +75,24 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(0);
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
+      await expectUserMessageCount(page, 1);
       await expectComposerDraft(page, firstPrompt);
 
       await submitMessage(page, replacementPrompt);
       await expect(page.getByText(replacementPrompt, { exact: true })).toBeVisible();
       await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(0);
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
+      await expectUserMessageCount(page, 2);
+
+      await fillComposerDraft(page, "");
+      await composerLocator(page).evaluate((element) => element.blur());
+      await page.getByText(replacementPrompt, { exact: true }).hover();
+      await page.getByTestId("rewind-menu-trigger").last().click();
+      await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
+      await page.getByTestId("rewind-menu-files").click();
+      await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
+      await expectComposerDraft(page, "");
+      await expectUserMessageCount(page, 2);
 
       const preservedDraft = "Keep this human draft after rewind.";
       await fillComposerDraft(page, preservedDraft);
@@ -85,6 +103,7 @@ test.describe("Rewind sheet", () => {
       await page.getByTestId("rewind-menu-files").click();
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, preservedDraft);
+      await expectUserMessageCount(page, 2);
 
       await fillComposerDraft(page, "");
       await composerLocator(page).evaluate((element) => element.blur());
@@ -94,6 +113,7 @@ test.describe("Rewind sheet", () => {
       await page.getByTestId("rewind-menu-both").click();
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, replacementPrompt);
+      await expectUserMessageCount(page, 1);
     } finally {
       await client.close();
       await repo.cleanup();

@@ -935,4 +935,90 @@ describe("turn lifecycle events", () => {
       ["user_message", "user_message"],
     );
   });
+
+  it.each(["codex", "opencode", "pi"] satisfies AgentProvider[])(
+    "replaces an optimistic user message when a live %s provider-owned id echo arrives",
+    (provider) => {
+      const optimisticTimestamp = new Date("2025-01-01T15:02:00Z");
+      const serverTimestamp = new Date("2025-01-01T15:02:01Z");
+      const optimistic: StreamItem = {
+        kind: "user_message",
+        id: "msg_optimistic",
+        text: "same user text",
+        timestamp: optimisticTimestamp,
+        images: [
+          {
+            id: "image-1",
+            mimeType: "image/png",
+            storageType: "web-indexeddb",
+            storageKey: "image-1",
+            createdAt: optimisticTimestamp.getTime(),
+          },
+        ],
+        attachments: [
+          {
+            type: "text",
+            mimeType: "text/plain",
+            text: "attached context",
+            title: "context.txt",
+          },
+        ],
+      };
+
+      const state = reduceStreamUpdate(
+        [optimistic],
+        {
+          type: "timeline",
+          provider,
+          item: {
+            type: "user_message",
+            text: "same user text",
+            messageId: "provider-owned-id",
+          },
+        },
+        serverTimestamp,
+        { source: "live" },
+      );
+
+      const userMessages = state.filter((item) => item.kind === "user_message");
+      assert.strictEqual(userMessages.length, 1);
+      const userMessage = userMessages[0];
+      invariant(userMessage?.kind === "user_message");
+      assert.strictEqual(userMessage.id, "provider-owned-id");
+      assert.strictEqual(userMessage.text, "same user text");
+      assert.deepStrictEqual(userMessage.images, optimistic.images);
+      assert.deepStrictEqual(userMessage.attachments, optimistic.attachments);
+    },
+  );
+
+  it("keeps canonical repeated user messages distinct during hydration", () => {
+    const state = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text: "repeat", messageId: "native-1" },
+          },
+          timestamp: new Date("2025-01-01T15:03:00Z"),
+        },
+        {
+          event: {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text: "repeat", messageId: "native-2" },
+          },
+          timestamp: new Date("2025-01-01T15:03:01Z"),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const userMessages = state.filter((item) => item.kind === "user_message");
+    assert.strictEqual(userMessages.length, 2);
+    assert.deepStrictEqual(
+      userMessages.map((item) => item.id),
+      ["native-1", "native-2"],
+    );
+  });
 });
