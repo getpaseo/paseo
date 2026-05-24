@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import invariant from "tiny-invariant";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   hydrateStreamState,
@@ -309,7 +309,7 @@ describe("stream reducer canonical tool calls", () => {
     const first = hydrateStreamState(updates);
     const second = hydrateStreamState(updates);
 
-    assert.strictEqual(JSON.stringify(first), JSON.stringify(second));
+    expect(first).toEqual(second);
     const assistantMessage = first.find((item) => item.kind === "assistant_message");
     assert.strictEqual(assistantMessage?.text, "Hello world");
   });

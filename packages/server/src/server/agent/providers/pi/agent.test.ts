@@ -13,6 +13,14 @@ function createClient(pi = new FakePi()): PiRpcAgentClient {
   });
 }
 
+function rewindCapabilities(capabilities: PiRpcAgentSession["capabilities"]) {
+  return {
+    supportsRewindConversation: capabilities.supportsRewindConversation,
+    supportsRewindFiles: capabilities.supportsRewindFiles,
+    supportsRewindBoth: capabilities.supportsRewindBoth,
+  };
+}
+
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
     provider: "pi",
@@ -525,7 +533,7 @@ describe("PiRpcAgentClient", () => {
 
     await session.revertConversation?.({ messageId: "entry-1" });
 
-    expect(session.capabilities).toMatchObject({
+    expect(rewindCapabilities(session.capabilities)).toEqual({
       supportsRewindConversation: true,
       supportsRewindFiles: false,
       supportsRewindBoth: false,

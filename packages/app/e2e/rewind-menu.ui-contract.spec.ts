@@ -10,6 +10,8 @@ import {
   submitMessage,
 } from "./helpers/composer";
 
+// UI plumbing contract against the dev mock provider. Real-provider behavior is tested in `daemon-e2e/*-rewind.real.e2e.test.ts`.
+
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
   if (!serverId) {

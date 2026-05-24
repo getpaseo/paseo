@@ -1,9 +1,10 @@
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
+import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { getFullAccessConfig } from "./agent-configs.js";
@@ -12,7 +13,6 @@ import {
   fetchTimelineItems,
   fileExists,
   readScratchFile,
-  textByRole,
   tmpRewindCwd,
   userMessageIdForToken,
 } from "./test-utils/rewind-helpers.js";
@@ -37,6 +37,40 @@ async function fetchThreadId(client: DaemonClient, agentId: string): Promise<str
     throw new Error(`Agent ${agentId} does not have a visible Codex thread id`);
   }
   return threadId;
+}
+
+function expectThreadId(value: string): void {
+  expect(value).toMatch(/^[a-f0-9-]{36}$/);
+}
+
+function roleItems(items: AgentTimelineItem[], role: "user_message" | "assistant_message") {
+  return items.filter((item) => item.type === role);
+}
+
+function expectTimeline(
+  items: AgentTimelineItem[],
+  input: { userTexts: string[]; assistantCount: number },
+): void {
+  const userMessages = roleItems(items, "user_message");
+  const assistantMessages = roleItems(items, "assistant_message");
+
+  expect(userMessages).toHaveLength(input.userTexts.length);
+  expect(userMessages.map((message) => message.text)).toEqual(input.userTexts);
+  expect(assistantMessages).toHaveLength(input.assistantCount);
+}
+
+async function createdFilesAtCwd(session: CodexRewindSession): Promise<string[]> {
+  const entries = await readdir(session.cwd);
+  return entries
+    .filter((name) => name === "rewind-scratch.txt" || name === "codex-dummy.txt")
+    .sort();
+}
+
+async function expectCreatedFiles(
+  session: CodexRewindSession,
+  expectedNames: string[],
+): Promise<void> {
+  await expect(createdFilesAtCwd(session)).resolves.toEqual([...expectedNames].sort());
 }
 
 async function launchCodexRewindSession(
@@ -73,6 +107,14 @@ function editPrompt(input: {
     input.content.trimEnd(),
     "```",
     `When the file is saved, reply exactly: ${input.doneToken}`,
+  ].join("\n");
+}
+
+function singleCreatePrompt(): string {
+  return [
+    "PASEO_CODEX_REWIND_PROMPT_SINGLE_CREATE.",
+    "Use apply_patch to create codex-dummy.txt with exactly CODEX_CREATED.",
+    "When the file is saved, reply exactly: CODEX_SINGLE_CREATE_DONE",
   ].join("\n");
 }
 
@@ -139,10 +181,8 @@ describe("daemon E2E (real codex) - rewind", () => {
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
       const fileText = await readScratchFile(session);
 
-      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
-        "CODEX_REWIND_PROMPT_SINGLE",
-      );
-      expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain("CODEX_SINGLE_DONE");
+      expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
+      await expectCreatedFiles(session, ["rewind-scratch.txt"]);
       expect(fileText).toBe("BASE\nCODEX_SINGLE_MARKER\n");
     } finally {
       await closeCodexRewindSession(session);
@@ -154,14 +194,7 @@ describe("daemon E2E (real codex) - rewind", () => {
     const dummyPath = path.join(session.cwd, "codex-dummy.txt");
 
     try {
-      await harness.client.sendMessage(
-        session.agentId,
-        [
-          "PASEO_CODEX_REWIND_PROMPT_SINGLE_CREATE.",
-          "Use apply_patch to create codex-dummy.txt with exactly CODEX_CREATED.",
-          "When the file is saved, reply exactly: CODEX_SINGLE_CREATE_DONE",
-        ].join("\n"),
-      );
+      await harness.client.sendMessage(session.agentId, singleCreatePrompt());
       const finish = await harness.client.waitForFinish(session.agentId, TURN_TIMEOUT_MS);
       expect(finish.status).toBe("idle");
       expect(finish.final?.lastError).toBeUndefined();
@@ -174,12 +207,8 @@ describe("daemon E2E (real codex) - rewind", () => {
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
 
       await expect(fileExists(dummyPath)).resolves.toBe(true);
-      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
-        "CODEX_REWIND_PROMPT_SINGLE_CREATE",
-      );
-      expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain(
-        "CODEX_SINGLE_CREATE_DONE",
-      );
+      await expectCreatedFiles(session, ["codex-dummy.txt", "rewind-scratch.txt"]);
+      expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
     } finally {
       await closeCodexRewindSession(session);
     }
@@ -203,6 +232,7 @@ describe("daemon E2E (real codex) - rewind", () => {
         doneToken: "CODEX_SECOND_DONE",
       });
       const oldThreadId = await fetchThreadId(harness.client, session.agentId);
+      expectThreadId(oldThreadId);
 
       await harness.client.rewindAgent(session.agentId, firstMessageId, "conversation");
       const newThreadId = await fetchThreadId(harness.client, session.agentId);
@@ -210,15 +240,10 @@ describe("daemon E2E (real codex) - rewind", () => {
       const fileText = await readScratchFile(session);
 
       expect(newThreadId).not.toBe(oldThreadId);
-      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
-        "CODEX_REWIND_PROMPT_FIRST",
-      );
-      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
-        "CODEX_REWIND_PROMPT_SECOND",
-      );
-      expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain("CODEX_FIRST_DONE");
-      expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain("CODEX_SECOND_DONE");
-      expect(fileText).toContain("CODEX_SECOND_MARKER");
+      expectThreadId(newThreadId);
+      expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
+      await expectCreatedFiles(session, ["rewind-scratch.txt"]);
+      expect(fileText).toBe("BASE\nCODEX_FIRST_MARKER\nCODEX_SECOND_MARKER\n");
     } finally {
       await closeCodexRewindSession(session);
     }

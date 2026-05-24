@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -12,7 +12,6 @@ import {
   closeRewindSession,
   fetchTimelineItems,
   fileExists,
-  textByRole,
   tmpRewindCwd,
   userMessageIdForToken,
 } from "./test-utils/rewind-helpers.js";
@@ -185,39 +184,31 @@ function roleItems(items: AgentTimelineItem[], role: "user_message" | "assistant
   return items.filter((item) => item.type === role);
 }
 
-async function assertFiles(
-  session: ClaudeRewindSession,
-  turns: ClaudeTurnSpec[],
-  expectedPresent: ClaudeTurnSpec[],
-): Promise<void> {
-  const expectedNames = new Set(expectedPresent.map((turn) => turn.fileName));
-  for (const turn of turns) {
-    await expect(fileExists(path.join(session.cwd, turn.fileName))).resolves.toBe(
-      expectedNames.has(turn.fileName),
-    );
-  }
+function expectSessionId(value: string | null): asserts value is string {
+  expect(value).toMatch(/^[a-f0-9-]{36}$/);
 }
 
-function assertTimeline(
-  items: AgentTimelineItem[],
-  turns: ClaudeTurnSpec[],
-  expectedKept: ClaudeTurnSpec[],
-): void {
+async function createdFilesAtCwd(session: ClaudeRewindSession): Promise<string[]> {
+  const entries = await readdir(session.cwd);
+  return entries.filter((name) => name === "baseline.txt" || /^turn-\d+\.txt$/u.test(name)).sort();
+}
+
+async function assertFiles(
+  session: ClaudeRewindSession,
+  expectedPresent: ClaudeTurnSpec[],
+): Promise<void> {
+  await expect(createdFilesAtCwd(session)).resolves.toEqual(
+    ["baseline.txt", ...expectedPresent.map((turn) => turn.fileName)].sort(),
+  );
+}
+
+function assertTimeline(items: AgentTimelineItem[], expectedKept: ClaudeTurnSpec[]): void {
   const userItems = roleItems(items, "user_message");
-  const userText = textByRole(items, "user_message");
-  const assistantText = textByRole(items, "assistant_message");
-  const keptPromptTokens = new Set(expectedKept.map((turn) => turn.promptToken));
+  const assistantItems = roleItems(items, "assistant_message");
 
   expect(userItems).toHaveLength(expectedKept.length);
-  for (const turn of turns) {
-    if (keptPromptTokens.has(turn.promptToken)) {
-      expect(userText).toContain(turn.promptToken);
-      expect(assistantText).toContain(turn.doneToken);
-    } else {
-      expect(userText).not.toContain(turn.promptToken);
-      expect(assistantText).not.toContain(turn.doneToken);
-    }
-  }
+  expect(userItems.map((item) => item.text)).toEqual(expectedKept.map(editPrompt));
+  expect(assistantItems).toHaveLength(expectedKept.length);
 }
 
 describe("daemon E2E (real claude) - rewind", () => {
@@ -262,7 +253,7 @@ describe("daemon E2E (real claude) - rewind", () => {
         const targetTurn = turns[scenario.rewindTurn - 1];
         const targetMessageId = userMessageIdForToken(beforeTimeline, targetTurn.promptToken);
         const sessionIdBefore = await runtimeSessionId(harness, session);
-        expect(sessionIdBefore).toEqual(expect.any(String));
+        expectSessionId(sessionIdBefore);
 
         await harness.client.rewindAgent(session.agentId, targetMessageId, scenario.mode);
 
@@ -273,13 +264,13 @@ describe("daemon E2E (real claude) - rewind", () => {
         const expectedKeptFiles =
           scenario.mode === "conversation" ? turns : turns.slice(0, scenario.rewindTurn - 1);
 
-        assertTimeline(afterTimeline, turns, expectedKeptConversation);
-        await assertFiles(session, turns, expectedKeptFiles);
+        assertTimeline(afterTimeline, expectedKeptConversation);
+        await assertFiles(session, expectedKeptFiles);
 
         if (scenario.mode === "files") {
           expect(sessionIdAfter).toBe(sessionIdBefore);
         } else {
-          expect(sessionIdAfter).toEqual(expect.any(String));
+          expectSessionId(sessionIdAfter);
           expect(sessionIdAfter).not.toBe(sessionIdBefore);
         }
 
@@ -324,11 +315,11 @@ describe("daemon E2E (real claude) - rewind", () => {
       const beforeTimeline = await fetchTimelineItems(harness.client, session.agentId);
       const targetMessageId = userMessageIdForToken(beforeTimeline, "PASEO_RW_NO_ROUNDTRIP_T2");
       const sessionIdBeforeRewind = await runtimeSessionId(harness, session);
-      expect(sessionIdBeforeRewind).toEqual(expect.any(String));
+      expectSessionId(sessionIdBeforeRewind);
 
       await harness.client.rewindAgent(session.agentId, targetMessageId, "conversation");
       const forkedSessionId = await runtimeSessionId(harness, session);
-      expect(forkedSessionId).toEqual(expect.any(String));
+      expectSessionId(forkedSessionId);
       expect(forkedSessionId).not.toBe(sessionIdBeforeRewind);
 
       await sendClaudeReplyTurn(

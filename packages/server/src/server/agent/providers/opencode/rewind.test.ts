@@ -4,6 +4,14 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import { revertOpenCodeConversationAndFiles, type OpenCodeRewindClient } from "./rewind.js";
 
+function rewindCapabilities(capabilities: OpenCodeAgentClient["capabilities"]) {
+  return {
+    supportsRewindConversation: capabilities.supportsRewindConversation,
+    supportsRewindFiles: capabilities.supportsRewindFiles,
+    supportsRewindBoth: capabilities.supportsRewindBoth,
+  };
+}
+
 class FakeOpencodeClient implements OpenCodeRewindClient {
   readonly recordedReverts: Array<{ sessionID: string; directory: string; messageID: string }> = [];
   revertResponse: Awaited<ReturnType<OpenCodeRewindClient["session"]["revert"]>> = {};
@@ -52,7 +60,7 @@ describe("OpenCode rewind", () => {
   test("declares only combined rewind capability", () => {
     const client = new OpenCodeAgentClient(createTestLogger());
 
-    expect(client.capabilities).toMatchObject({
+    expect(rewindCapabilities(client.capabilities)).toEqual({
       supportsRewindConversation: false,
       supportsRewindFiles: false,
       supportsRewindBoth: true,

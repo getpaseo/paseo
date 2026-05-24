@@ -28,6 +28,7 @@ import {
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
+  type FakeCodexAppServer,
   waitForNextPermission,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -111,6 +112,25 @@ function markdownImageSource(markdown: string): string {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
   return match[1].replace(/\\\)/g, ")");
+}
+
+function emitCodexUserMessage(
+  appServer: FakeCodexAppServer,
+  input: { id: string; text: string; threadId?: string },
+): void {
+  appServer.child.stdout.write(
+    `${JSON.stringify({
+      method: "item/started",
+      params: {
+        threadId: input.threadId ?? "thread-1",
+        item: {
+          type: "userMessage",
+          id: input.id,
+          content: [{ type: "text", text: input.text }],
+        },
+      },
+    })}\n`,
+  );
 }
 
 type CapturedFakeCodexRecord = Record<string, unknown>;
@@ -524,24 +544,10 @@ describe("Codex app-server provider", () => {
     );
 
     await session.startTurn("remember first");
-    asInternals(session).handleNotification("item/started", {
-      threadId: "thread-1",
-      item: {
-        type: "userMessage",
-        id: "codex-first",
-        content: [{ type: "text", text: "remember first" }],
-      },
-    });
+    emitCodexUserMessage(appServer, { id: "codex-first", text: "remember first" });
     appServer.completeTurn();
     await session.startTurn("remember second");
-    asInternals(session).handleNotification("item/started", {
-      threadId: "thread-1",
-      item: {
-        type: "userMessage",
-        id: "codex-second",
-        content: [{ type: "text", text: "remember second" }],
-      },
-    });
+    emitCodexUserMessage(appServer, { id: "codex-second", text: "remember second" });
     appServer.completeTurn();
 
     await session.revertConversation({ messageId: "codex-first" });
