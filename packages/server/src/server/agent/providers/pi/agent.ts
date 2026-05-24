@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
@@ -68,6 +68,7 @@ import {
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
+const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 
 const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -145,6 +146,11 @@ interface PiMcpServerConfig {
 }
 
 interface PiMcpConfigFile {
+  path: string;
+  cleanup: () => void;
+}
+
+interface PiTempFile {
   path: string;
   cleanup: () => void;
 }
@@ -359,6 +365,63 @@ function createPiMcpConfigFile(servers: Record<string, McpServerConfig>): PiMcpC
   };
 }
 
+function createPiPaseoExtensionFile(): PiTempFile {
+  const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
+  const filePath = join(dir, "paseo-integration.mjs");
+  writeFileSync(
+    filePath,
+    `
+import { writeFileSync } from "node:fs";
+
+function decodePayload(encoded) {
+  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+}
+
+export default function paseoIntegration(pi) {
+  pi.registerCommand("${PASEO_PI_TREE_EXTENSION_COMMAND}", {
+    description: "Internal Paseo tree navigation bridge",
+    handler: async (args, ctx) => {
+      const payload = decodePayload(args.trim());
+      try {
+        const result = await ctx.navigateTree(payload.targetId, { summarize: false });
+        writeFileSync(payload.resultPath, JSON.stringify({ ok: true, result }) + "\\n", "utf8");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        writeFileSync(payload.resultPath, JSON.stringify({ ok: false, error: message }) + "\\n", "utf8");
+        throw error;
+      }
+    },
+  });
+}
+`.trimStart(),
+    "utf8",
+  );
+  return {
+    path: filePath,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+function createPiCommandResultFile(): PiTempFile {
+  const dir = mkdtempSync(join(tmpdir(), "paseo-pi-command-"));
+  return {
+    path: join(dir, "result.json"),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+function combineCleanup(cleanups: Array<(() => void) | undefined>): (() => void) | undefined {
+  const activeCleanups = cleanups.filter((cleanup): cleanup is () => void => Boolean(cleanup));
+  if (activeCleanups.length === 0) {
+    return undefined;
+  }
+  return () => {
+    for (const cleanup of activeCleanups) {
+      cleanup();
+    }
+  };
+}
+
 function isPiMcpAdapterCommand(command: PiRpcSlashCommand): boolean {
   if (command.source !== "extension" || !/^mcp(?::\d+)?$/.test(command.name)) {
     return false;
@@ -533,6 +596,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeTurnId: string | null = null;
   private lastKnownThinkingOptionId: string | null;
+  private currentLeafOverrideId: string | null | undefined;
   private state: PiSessionState;
   private closed = false;
 
@@ -681,6 +745,30 @@ export class PiRpcAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     await this.runtimeSession.abort();
+  }
+
+  private async runPiTreeExtensionCommand(targetId: string): Promise<unknown> {
+    const resultFile = createPiCommandResultFile();
+    try {
+      const payload = Buffer.from(
+        JSON.stringify({ targetId, resultPath: resultFile.path }),
+      ).toString("base64url");
+      await this.runtimeSession.prompt(`/${PASEO_PI_TREE_EXTENSION_COMMAND} ${payload}`);
+      if (!existsSync(resultFile.path)) {
+        throw new Error("Pi tree navigation bridge did not return a result");
+      }
+      const parsed = JSON.parse(readFileSync(resultFile.path, "utf8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Pi tree navigation returned an invalid result");
+      }
+      if (Reflect.get(parsed, "ok") !== true) {
+        const error = Reflect.get(parsed, "error");
+        throw new Error(typeof error === "string" ? error : "Pi tree navigation failed");
+      }
+      return Reflect.get(parsed, "result");
+    } finally {
+      resultFile.cleanup();
+    }
   }
 
   async close(): Promise<void> {
@@ -981,6 +1069,7 @@ export class PiRpcAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers);
+    const paseoExtension = createPiPaseoExtensionFile();
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -994,9 +1083,11 @@ export class PiRpcAgentClient implements AgentClient {
         ),
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
+        extensionPaths: [paseoExtension.path],
       });
     } catch (error) {
       mcpConfig?.cleanup();
+      paseoExtension.cleanup();
       throw error;
     }
     try {
@@ -1005,11 +1096,12 @@ export class PiRpcAgentClient implements AgentClient {
         config,
         initialState: await runtimeSession.getState(),
         capabilities: withPiMcpCapability(mcpConfig !== null),
-        cleanup: mcpConfig?.cleanup,
+        cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
       mcpConfig?.cleanup();
+      paseoExtension.cleanup();
       throw error;
     }
   }
@@ -1028,6 +1120,7 @@ export class PiRpcAgentClient implements AgentClient {
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides);
 
     const mcpConfig = await this.prepareMcpConfig(resumeConfig.cwd, resumeConfig.config.mcpServers);
+    const paseoExtension = createPiPaseoExtensionFile();
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -1040,9 +1133,11 @@ export class PiRpcAgentClient implements AgentClient {
           resumeConfig.config.daemonAppendSystemPrompt,
         ),
         mcpConfigPath: mcpConfig?.path,
+        extensionPaths: [paseoExtension.path],
       });
     } catch (error) {
       mcpConfig?.cleanup();
+      paseoExtension.cleanup();
       throw error;
     }
     try {
@@ -1051,11 +1146,12 @@ export class PiRpcAgentClient implements AgentClient {
         config: resumeConfig.config,
         initialState: await runtimeSession.getState(),
         capabilities: withPiMcpCapability(mcpConfig !== null),
-        cleanup: mcpConfig?.cleanup,
+        cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
       mcpConfig?.cleanup();
+      paseoExtension.cleanup();
       throw error;
     }
   }
