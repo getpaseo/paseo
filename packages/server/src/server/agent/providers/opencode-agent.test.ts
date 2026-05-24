@@ -937,6 +937,10 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {
     const fakeClient = {
       session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
         messages: vi.fn().mockResolvedValue({
           data: [
             {
@@ -1029,6 +1033,10 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
     const fakeClient = {
       session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
         messages: vi.fn().mockResolvedValue({
           data: [
             {
