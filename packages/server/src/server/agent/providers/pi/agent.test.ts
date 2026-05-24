@@ -324,22 +324,25 @@ describe("PiRpcAgentSession", () => {
       {},
     );
 
-    expect(pi.recordedLaunches).toEqual([
-      expect.objectContaining({
-        cwd: "/workspace/project",
-        session: "/tmp/native-pi-session.jsonl",
-        argv: [
-          "pi",
-          "--mode",
-          "rpc",
-          "--model",
-          "openrouter/model-a",
-          "--thinking",
-          "high",
-          "--session",
-          "/tmp/native-pi-session.jsonl",
-        ],
-      }),
+    expect(pi.recordedLaunches).toHaveLength(1);
+    const actualLaunch = pi.recordedLaunches[0]!;
+    expect(actualLaunch).toMatchObject({
+      cwd: "/workspace/project",
+      session: "/tmp/native-pi-session.jsonl",
+    });
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--model",
+      "openrouter/model-a",
+      "--thinking",
+      "high",
+      "--session",
+      "/tmp/native-pi-session.jsonl",
+      "--extension",
+      actualLaunch.extensionPaths[0],
     ]);
   });
 
@@ -354,21 +357,23 @@ describe("PiRpcAgentSession", () => {
       }),
     );
 
-    expect(pi.recordedLaunches[0]).toEqual(
-      expect.objectContaining({
-        cwd: "/tmp/paseo-pi-rpc-test",
-        systemPrompt: "Agent prompt\n\nDaemon prompt",
-        argv: [
-          "pi",
-          "--mode",
-          "rpc",
-          "--thinking",
-          "medium",
-          "--append-system-prompt",
-          "Agent prompt\n\nDaemon prompt",
-        ],
-      }),
-    );
+    const actualLaunch = pi.recordedLaunches[0]!;
+    expect(actualLaunch).toMatchObject({
+      cwd: "/tmp/paseo-pi-rpc-test",
+      systemPrompt: "Agent prompt\n\nDaemon prompt",
+    });
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--thinking",
+      "medium",
+      "--append-system-prompt",
+      "Agent prompt\n\nDaemon prompt",
+      "--extension",
+      actualLaunch.extensionPaths[0],
+    ]);
   });
 
   test("resumes Pi sessions with daemon system prompts appended", async () => {
@@ -392,25 +397,28 @@ describe("PiRpcAgentSession", () => {
       },
     );
 
-    expect(pi.recordedLaunches).toEqual([
-      expect.objectContaining({
-        cwd: "/workspace/project",
-        session: "/tmp/native-pi-session.jsonl",
-        systemPrompt: "Agent prompt\n\nDaemon prompt",
-        argv: [
-          "pi",
-          "--mode",
-          "rpc",
-          "--model",
-          "openrouter/model-a",
-          "--thinking",
-          "high",
-          "--session",
-          "/tmp/native-pi-session.jsonl",
-          "--append-system-prompt",
-          "Agent prompt\n\nDaemon prompt",
-        ],
-      }),
+    expect(pi.recordedLaunches).toHaveLength(1);
+    const actualLaunch = pi.recordedLaunches[0]!;
+    expect(actualLaunch).toMatchObject({
+      cwd: "/workspace/project",
+      session: "/tmp/native-pi-session.jsonl",
+      systemPrompt: "Agent prompt\n\nDaemon prompt",
+    });
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--model",
+      "openrouter/model-a",
+      "--thinking",
+      "high",
+      "--session",
+      "/tmp/native-pi-session.jsonl",
+      "--append-system-prompt",
+      "Agent prompt\n\nDaemon prompt",
+      "--extension",
+      actualLaunch.extensionPaths[0],
     ]);
   });
 
@@ -478,6 +486,55 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test("rewinds conversation through the Pi tree navigation bridge", async () => {
+    const { pi, session, events } = await createSession();
+    const sessionFile = path.join(
+      mkdtempSync(path.join(tmpdir(), "paseo-pi-rewind-agent-")),
+      "s.jsonl",
+    );
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          parentId: null,
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: { role: "user", content: "first prompt" },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-2",
+          parentId: "entry-1",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          message: { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-3",
+          parentId: "entry-2",
+          timestamp: "2026-01-01T00:00:03.000Z",
+          message: { role: "user", content: "second prompt" },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    pi.latestSession().state.sessionFile = sessionFile;
+
+    await session.startTurn("first prompt", { messageId: "client-message-1" });
+    pi.latestSession().finishTurn({ role: "assistant", content: [] });
+    await events.nextTurnCompletion();
+
+    await session.revertConversation?.({ messageId: "client-message-1" });
+
+    expect(session.capabilities).toMatchObject({
+      supportsRewindConversation: true,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    });
+    expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-1"]);
+  });
+
   test("injects MCP servers through pi-mcp-adapter when the extension is loaded", async () => {
     const pi = new FakePi();
     pi.queueCommands([
@@ -512,7 +569,8 @@ describe("PiRpcAgentClient", () => {
       cwd: "/tmp/paseo-pi-rpc-test",
       argv: ["pi", "--mode", "rpc"],
     });
-    const actualLaunch = pi.recordedLaunches[1];
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
     expect(actualLaunch.argv).toEqual([
       "pi",
       "--mode",
@@ -521,6 +579,8 @@ describe("PiRpcAgentClient", () => {
       "medium",
       "--mcp-config",
       actualLaunch.mcpConfigPath,
+      "--extension",
+      actualLaunch.extensionPaths[0],
     ]);
     expect(session.capabilities.supportsMcpServers).toBe(true);
 
@@ -565,8 +625,18 @@ describe("PiRpcAgentClient", () => {
     );
 
     expect(pi.recordedLaunches).toHaveLength(2);
-    expect(pi.recordedLaunches[1]?.argv).toEqual(["pi", "--mode", "rpc", "--thinking", "medium"]);
-    expect(pi.recordedLaunches[1]?.mcpConfigPath).toBeUndefined();
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--thinking",
+      "medium",
+      "--extension",
+      actualLaunch.extensionPaths[0],
+    ]);
+    expect(actualLaunch.mcpConfigPath).toBeUndefined();
     expect(session.capabilities.supportsMcpServers).toBe(false);
   });
 

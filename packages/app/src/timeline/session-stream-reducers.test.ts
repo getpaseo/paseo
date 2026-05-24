@@ -933,6 +933,34 @@ describe("processAgentStreamEvent", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
+  it("resets visible timeline when a new epoch starts at seq 1", () => {
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 5,
+    };
+    const currentTail = [makeAssistantItem("old timeline")];
+
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent("rewound start", "user_message"),
+      seq: 1,
+      epoch: "epoch-2",
+      currentCursor: existingCursor,
+      currentTail,
+    });
+
+    expect(result.cursorChanged).toBe(true);
+    expect(result.cursor).toEqual({
+      epoch: "epoch-2",
+      startSeq: 1,
+      endSeq: 1,
+    });
+    expect(getAssistantTexts(result.tail)).toEqual([]);
+    expect(getUserTexts(result.tail)).toEqual(["rewound start"]);
+    expect(result.sideEffects).toEqual([]);
+  });
+
   it("initializes cursor when none exists", () => {
     const result = processAgentStreamEvent({
       ...baseStreamInput,

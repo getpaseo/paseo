@@ -69,6 +69,7 @@ interface ChatAgentStateShape {
   id: string | null;
   status: Agent["status"] | null;
   cwd: string | null;
+  capabilities?: Agent["capabilities"];
   lastError?: Agent["lastError"] | null;
 }
 
@@ -111,6 +112,7 @@ function selectChatAgentState(
     id: agent.id,
     status: agent.status,
     cwd: agent.cwd,
+    capabilities: agent.capabilities,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
@@ -130,6 +132,7 @@ function buildChatAgentFromState(
     id: state.id,
     status: state.status,
     cwd: state.cwd,
+    capabilities: state.capabilities,
     lastError: state.lastError ?? null,
     projectPlacement,
   };

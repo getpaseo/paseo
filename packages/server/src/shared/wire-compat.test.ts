@@ -1,9 +1,10 @@
 import pino from "pino";
 import { z } from "zod";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import {
+  AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
@@ -58,8 +59,20 @@ const LegacySubAgentToolCallSchema = z.object({
   }),
 });
 
+const LegacyAgentCapabilityFlagsSchema = z.object({
+  supportsStreaming: z.boolean(),
+  supportsSessionPersistence: z.boolean(),
+  supportsDynamicModes: z.boolean(),
+  supportsMcpServers: z.boolean(),
+  supportsReasoningStream: z.boolean(),
+  supportsToolInvocations: z.boolean(),
+});
+
+const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
+  capabilities: LegacyAgentCapabilityFlagsSchema,
+});
+
 interface SessionInternals {
-  buildAgentPayload: (snapshot: unknown) => Promise<null>;
   handleFetchAgentTimelineRequest: (
     message: Extract<
       z.infer<typeof SessionInboundMessageSchema>,
@@ -68,12 +81,140 @@ interface SessionInternals {
   ) => Promise<void>;
 }
 
+class InMemoryAgentManager {
+  constructor(private readonly rows: AgentTimelineRow[]) {}
+
+  getAgent() {
+    return {
+      id: "agent-1",
+      provider: "codex",
+      cwd: "/tmp/project",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: new Date("2026-05-02T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-02T00:00:00.000Z"),
+      lastUserMessageAt: null,
+      lifecycle: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+        supportsRewindConversation: false,
+        supportsRewindFiles: false,
+        supportsRewindBoth: false,
+      },
+      config: { provider: "codex", cwd: "/tmp/project" },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: new Map(),
+      bufferedPermissionResolutions: new Map(),
+      inFlightPermissionResponses: new Set(),
+      pendingReplacement: false,
+      persistence: null,
+      historyPrimed: true,
+      lastUsage: undefined,
+      lastError: undefined,
+      attention: { requiresAttention: false, attentionReason: null, attentionTimestamp: null },
+      foregroundTurnWaiters: new Set(),
+      finalizedForegroundTurnIds: new Set(),
+      unsubscribeSession: null,
+      session: null,
+      activeForegroundTurnId: null,
+      labels: {},
+    };
+  }
+
+  fetchTimeline() {
+    return {
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 3, nextSeq: 4 },
+      rows: this.rows,
+      hasOlder: false,
+      hasNewer: false,
+    };
+  }
+
+  listAgents() {
+    return [];
+  }
+
+  subscribe() {
+    return () => {};
+  }
+}
+
+class EmptyAgentStorage {
+  async list() {
+    return [];
+  }
+
+  async get() {
+    return null;
+  }
+}
+
+class EmptyProjectRegistry {
+  async list() {
+    return [];
+  }
+
+  async get() {
+    return null;
+  }
+
+  async upsert() {}
+  async archive() {}
+  async remove() {}
+  async initialize() {}
+  async existsOnDisk() {
+    return false;
+  }
+}
+
+class EmptyWorkspaceRegistry {
+  get() {
+    return null;
+  }
+
+  list() {
+    return [];
+  }
+}
+
+class EmptyDaemonConfigStore {
+  get() {
+    return {
+      mcp: { injectIntoAgents: false },
+      providers: {},
+    };
+  }
+
+  onChange() {
+    return () => {};
+  }
+}
+
+class InMemoryWorktreeWorkflow {
+  readonly capturedInputs: unknown[] = [];
+
+  async create(input: unknown) {
+    this.capturedInputs.push(input);
+    return {} as never;
+  }
+}
+
 function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
   messages?: SessionOutboundMessage[];
 }): Session {
   const messages = options?.messages ?? [];
-  const snapshot = { id: "agent-1", provider: "codex" };
   const rows: AgentTimelineRow[] = [
     {
       seq: 1,
@@ -100,74 +241,62 @@ function createSessionForWireCompatTest(options?: {
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushTokenStore: {} as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-home",
-    agentManager: {
-      getAgent: vi.fn(() => snapshot),
-      fetchTimeline: vi.fn(() => ({
-        epoch: "epoch-1",
-        reset: false,
-        staleCursor: false,
-        gap: false,
-        window: { minSeq: 1, maxSeq: 3, nextSeq: 4 },
-        rows,
-        hasOlder: false,
-        hasNewer: false,
-      })),
-      listAgents: vi.fn(() => []),
-      subscribe: vi.fn(() => () => {}),
-    } as unknown as SessionOptions["agentManager"],
-    agentStorage: {
-      list: vi.fn().mockResolvedValue([]),
-      get: vi.fn().mockResolvedValue(null),
-    } as unknown as SessionOptions["agentStorage"],
-    projectRegistry: {
-      list: vi.fn().mockResolvedValue([]),
-      get: vi.fn(),
-      upsert: vi.fn(),
-      archive: vi.fn(),
-      remove: vi.fn(),
-      initialize: vi.fn(),
-      existsOnDisk: vi.fn(),
-    } as unknown as SessionOptions["projectRegistry"],
-    workspaceRegistry: {
-      get: vi.fn(),
-      list: vi.fn().mockResolvedValue([]),
-    } as unknown as SessionOptions["workspaceRegistry"],
+    agentManager: new InMemoryAgentManager(rows) as unknown as SessionOptions["agentManager"],
+    agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
+    projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
+    workspaceRegistry:
+      new EmptyWorkspaceRegistry() as unknown as SessionOptions["workspaceRegistry"],
     chatService: {} as SessionOptions["chatService"],
     scheduleService: {} as SessionOptions["scheduleService"],
     loopService: {} as SessionOptions["loopService"],
     checkoutDiffManager: {
-      scheduleRefreshForCwd: vi.fn(),
+      scheduleRefreshForCwd() {},
     } as unknown as SessionOptions["checkoutDiffManager"],
     github: {
-      invalidate: vi.fn(),
-      searchIssuesAndPrs: vi.fn(),
-      createPullRequest: vi.fn(),
+      invalidate() {},
+      async searchIssuesAndPrs() {
+        return [];
+      },
+      async createPullRequest() {
+        return null;
+      },
     } as unknown as SessionOptions["github"],
     workspaceGitService: {
-      getCheckoutDiff: vi.fn(),
-      getSnapshot: vi.fn(),
-      suggestBranchesForCwd: vi.fn(),
-      listStashes: vi.fn(),
-      peekSnapshot: vi.fn(),
-      validateBranchRef: vi.fn(),
-      hasLocalBranch: vi.fn(),
-      resolveRepoRemoteUrl: vi.fn(),
-      getWorkspaceGitMetadata: vi.fn(),
+      async getCheckoutDiff() {
+        return null;
+      },
+      async getSnapshot() {
+        return null;
+      },
+      async suggestBranchesForCwd() {
+        return [];
+      },
+      async listStashes() {
+        return [];
+      },
+      peekSnapshot() {
+        return null;
+      },
+      async validateBranchRef() {
+        return { ok: false, error: "not found" };
+      },
+      async hasLocalBranch() {
+        return false;
+      },
+      async resolveRepoRemoteUrl() {
+        return null;
+      },
+      async getWorkspaceGitMetadata() {
+        return null;
+      },
     } as unknown as SessionOptions["workspaceGitService"],
-    daemonConfigStore: {
-      get: vi.fn(() => ({
-        mcp: { injectIntoAgents: false },
-        providers: {},
-      })),
-      onChange: vi.fn(() => () => {}),
-    } as unknown as SessionOptions["daemonConfigStore"],
+    daemonConfigStore:
+      new EmptyDaemonConfigStore() as unknown as SessionOptions["daemonConfigStore"],
     stt: null,
     tts: null,
     terminalManager: null,
   });
 
-  const internals = session as unknown as SessionInternals;
-  internals.buildAgentPayload = vi.fn(async () => null);
   return session;
 }
 
@@ -256,8 +385,82 @@ describe("wire compatibility", () => {
     expect(parsed.detail.actions).toEqual([]);
   });
 
+  test("old clients parse agent snapshots with rewind capabilities", () => {
+    const parsed = LegacyAgentSnapshotPayloadSchema.parse({
+      id: "agent-1",
+      provider: "claude",
+      cwd: "/tmp/project",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+        supportsRewindConversation: true,
+        supportsRewindFiles: true,
+        supportsRewindBoth: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    });
+
+    expect(parsed.capabilities).toEqual({
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    });
+  });
+
+  test("new clients parse agent snapshots without rewind capabilities", () => {
+    const parsed = AgentSnapshotPayloadSchema.parse({
+      id: "agent-1",
+      provider: "claude",
+      cwd: "/tmp/project",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    });
+
+    expect(parsed.capabilities.supportsRewindConversation).toBe(false);
+    expect(parsed.capabilities.supportsRewindFiles).toBe(false);
+    expect(parsed.capabilities.supportsRewindBoth).toBe(false);
+  });
+
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {
-    const captured: unknown[] = [];
+    const workflow = new InMemoryWorktreeWorkflow();
 
     const dependencies = {
       paseoHome: "/tmp/paseo-home",
@@ -275,12 +478,9 @@ describe("wire compatibility", () => {
           activityAt: null,
           scripts: [],
         }) as never,
-      emit: vi.fn(),
+      emit() {},
       sessionLogger: pino({ level: "silent" }),
-      createPaseoWorktreeWorkflow: async (input: unknown) => {
-        captured.push(input);
-        return {} as never;
-      },
+      createPaseoWorktreeWorkflow: workflow.create.bind(workflow),
     };
 
     const legacyRequest = SessionInboundMessageSchema.parse({
@@ -329,9 +529,9 @@ describe("wire compatibility", () => {
     await handleCreatePaseoWorktreeRequest(dependencies, legacyRequest);
     await handleCreatePaseoWorktreeRequest(dependencies, newRequest);
 
-    expect(captured).toHaveLength(2);
-    expect(captured[0]).toEqual(captured[1]);
-    expect(captured[0]).toEqual({
+    expect(workflow.capturedInputs).toHaveLength(2);
+    expect(workflow.capturedInputs[0]).toEqual(workflow.capturedInputs[1]);
+    expect(workflow.capturedInputs[0]).toEqual({
       cwd: "/tmp/repo",
       worktreeSlug: "legacy-worktree",
       firstAgentContext: {

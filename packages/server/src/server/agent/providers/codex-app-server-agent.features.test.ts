@@ -2,7 +2,7 @@ import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
-import { __codexAppServerInternals } from "./codex-app-server-agent.js";
+import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -74,7 +74,7 @@ function createSessionHarness(
   const appServer = createFakeCodexAppServer({
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
   });
-  const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+  const session = new CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
     null,
     options.logger ?? createTestLogger(),

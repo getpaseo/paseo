@@ -331,7 +331,7 @@ function mergeModelAdditions(
   );
 }
 
-function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
+export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
   return {
     provider,
     id: inner.id,
@@ -360,6 +360,10 @@ function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): Agen
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
     setFeature: inner.setFeature?.bind(inner),
+    revertConversation: inner.revertConversation?.bind(inner),
+    revertFiles: inner.revertFiles?.bind(inner),
+    revertBoth: inner.revertBoth?.bind(inner),
+    tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
   };
 }
 

@@ -67,6 +67,7 @@ import {
   type OpenCodeServerAcquisition,
 } from "./opencode/runtime.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
+import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -75,6 +76,9 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsRewindConversation: false,
+  supportsRewindFiles: false,
+  supportsRewindBoth: true,
 };
 
 const OPENCODE_BUILD_MODE_ID = "build";
@@ -845,7 +849,7 @@ async function readOpenCodeSessionMessagesFromSdk(
     return [];
   }
 
-  return response.data;
+  return filterOpenCodeRevertedMessages(response.data, session.revert);
 }
 
 function buildOpenCodeSessionTimeline(
@@ -854,6 +858,20 @@ function buildOpenCodeSessionTimeline(
   return messages.flatMap((message) =>
     buildOpenCodeReplayTimelineEvents(message).map((event) => event.item),
   );
+}
+
+function filterOpenCodeRevertedMessages(
+  messages: ReadonlyArray<OpenCodeSessionMessage>,
+  revert: OpenCodePersistedSession["revert"] | null | undefined,
+): OpenCodeSessionMessage[] {
+  if (!revert?.messageID || revert.partID) {
+    return [...messages];
+  }
+  const revertIndex = messages.findIndex((message) => message.info.id === revert.messageID);
+  if (revertIndex < 0) {
+    return [...messages];
+  }
+  return messages.slice(0, revertIndex);
 }
 
 function resolveOpenCodePersistedSessionModeId(
@@ -2432,6 +2450,15 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
+  async revertBoth(input: { messageId: string }): Promise<void> {
+    await revertOpenCodeConversationAndFiles({
+      client: this.client,
+      sessionId: this.sessionId,
+      cwd: this.config.cwd,
+      messageId: input.messageId,
+    });
+  }
+
   private beginSessionAbort(turnId: string | null, reason: string): Promise<void> {
     const abortPromise = this.client.session
       .abort({
@@ -2621,6 +2648,7 @@ class OpenCodeAgentSession implements AgentSession {
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
             directory: this.config.cwd,
+            ...(options?.messageId ? { messageID: options.messageId } : {}),
             parts,
             ...(options?.outputSchema
               ? {
@@ -2934,6 +2962,10 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    const sessionResponse = await this.client.session.get({
+      sessionID: this.sessionId,
+      directory: this.config.cwd,
+    });
     const response = await this.client.session.messages({
       sessionID: this.sessionId,
       directory: this.config.cwd,
@@ -2943,7 +2975,11 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
 
-    for (const message of response.data) {
+    const messages = filterOpenCodeRevertedMessages(
+      response.data,
+      sessionResponse.error ? null : sessionResponse.data?.revert,
+    );
+    for (const message of messages) {
       for (const event of buildOpenCodeReplayTimelineEvents(message)) {
         yield event;
       }

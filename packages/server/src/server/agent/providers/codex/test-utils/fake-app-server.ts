@@ -14,8 +14,11 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
+  readonly recordedRollbacks: JsonObject[];
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
+  nextResponse(): Promise<string>;
+  completeTurn(params?: { threadId?: string }): void;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -46,6 +49,7 @@ export function createFakeCodexAppServer(
   handlers: Record<string, FakeCodexAppServerHandler> = {},
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
+  const recordedRollbacks: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
     "collaborationMode/list": () => ({ data: [] }),
@@ -65,6 +69,38 @@ export function createFakeCodexAppServer(
     "thread/loaded/list": () => ({ data: [] }),
     "thread/resume": () => ({}),
     "turn/start": () => ({}),
+    "thread/fork": (params) => ({
+      thread: {
+        id: "forked-thread",
+        sessionId: "forked-session",
+        forkedFromId: toJsonObject(params).threadId,
+        turns: [],
+      },
+      model: "gpt-5.4",
+      modelProvider: "openai",
+      serviceTier: null,
+      cwd: "/workspace/project",
+      runtimeWorkspaceRoots: [],
+      instructionSources: [],
+      approvalPolicy: "on-request",
+      approvalsReviewer: null,
+      sandbox: { type: "workspaceWrite", networkAccess: false },
+      activePermissionProfile: null,
+      reasoningEffort: null,
+    }),
+    "thread/rollback": (params) => {
+      const rollback = toJsonObject(params);
+      recordedRollbacks.push(rollback);
+      return {
+        thread: {
+          id: typeof rollback.threadId === "string" ? rollback.threadId : "forked-thread",
+          sessionId: "forked-session",
+          forkedFromId: "thread-1",
+          turns: [],
+        },
+      };
+    },
+    "thread/read": () => ({ thread: { turns: [] } }),
     ...handlers,
   };
   const messages: JsonObject[] = [];
@@ -161,6 +197,7 @@ export function createFakeCodexAppServer(
 
   return {
     child,
+    recordedRollbacks,
     assertNoErrors() {
       if (errors.length > 0) {
         throw errors[0];
@@ -172,6 +209,19 @@ export function createFakeCodexAppServer(
         "turn start request",
       );
       return toJsonObject(message.params);
+    },
+    nextResponse() {
+      return new Promise<string>((resolve) => {
+        child.stdin.once("data", (chunk) => resolve(chunk.toString()));
+      });
+    },
+    completeTurn(params = {}) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/completed",
+          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+        })}\n`,
+      );
     },
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;

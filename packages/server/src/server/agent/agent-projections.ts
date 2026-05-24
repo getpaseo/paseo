@@ -196,6 +196,9 @@ export function buildStoredAgentPayload(
     supportsMcpServers: false,
     supportsReasoningStream: false,
     supportsToolInvocations: true,
+    supportsRewindConversation: false,
+    supportsRewindFiles: false,
+    supportsRewindBoth: false,
   } as const;
 
   const createdAt = new Date(record.createdAt);

@@ -43,6 +43,7 @@ import {
 } from "../diagnostic-utils.js";
 import { streamPiHistory } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
+import { revertPiConversation } from "./rewind.js";
 import { listPiPersistedAgents } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
@@ -64,6 +65,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { getPiUserTreeEntries, resolvePiNavigationLeafId } from "./tree-navigation.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -77,6 +79,9 @@ const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsRewindConversation: true,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
 };
 
 const PI_THINKING_OPTIONS: ReadonlyArray<{
@@ -596,7 +601,9 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeTurnId: string | null = null;
   private lastKnownThinkingOptionId: string | null;
-  private currentLeafOverrideId: string | null | undefined;
+  currentLeafOverrideId: string | null | undefined;
+  private readonly timelineMessageIdAliases = new Map<string, string>();
+  private readonly timelineMessageTexts = new Map<string, string>();
   private state: PiSessionState;
   private closed = false;
 
@@ -636,12 +643,13 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
-  async startTurn(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<StartTurnResult> {
+  async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
     if (this.activeTurnId) {
       throw new Error("A Pi turn is already active");
     }
 
     const payload = convertPromptInput(prompt);
+    this.rememberTimelineMessageText(options?.messageId, payload.text);
     const turnId = randomUUID();
     this.activeTurnId = turnId;
 
@@ -676,7 +684,9 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    yield* streamPiHistory(PI_PROVIDER, await this.runtimeSession.getMessages());
+    yield* streamPiHistory(PI_PROVIDER, await this.runtimeSession.getMessages(), {
+      sessionFile: this.state.sessionFile,
+    });
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -745,6 +755,23 @@ export class PiRpcAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     await this.runtimeSession.abort();
+  }
+
+  async revertConversation(input: { messageId: string }): Promise<void> {
+    if (this.activeTurnId) {
+      throw new Error("Cannot rewind the Pi conversation while a Pi turn is active");
+    }
+    await this.refreshState().catch(() => undefined);
+    const targetId = this.resolvePiRewindTargetId(input.messageId);
+    await revertPiConversation({
+      messageId: targetId,
+      navigator: {
+        navigateTree: (treeEntryId) => this.runPiTreeExtensionCommand(treeEntryId),
+      },
+    });
+    // Pi keeps all tree nodes, so selecting the previous leaf later reverses this rewind.
+    this.currentLeafOverrideId = resolvePiNavigationLeafId(this.state.sessionFile, targetId);
+    this.activeToolCalls.clear();
   }
 
   private async runPiTreeExtensionCommand(targetId: string): Promise<unknown> {
@@ -828,6 +855,38 @@ export class PiRpcAgentSession implements AgentSession {
 
   private currentTurnIdForEvent(): string | undefined {
     return this.activeTurnId ?? undefined;
+  }
+
+  private rememberTimelineMessageText(messageId: string | undefined, text: string): void {
+    const trimmedMessageId = messageId?.trim();
+    if (!trimmedMessageId) {
+      return;
+    }
+    this.timelineMessageTexts.set(trimmedMessageId, text);
+  }
+
+  private resolvePiRewindTargetId(messageId: string): string {
+    const alias = this.timelineMessageIdAliases.get(messageId);
+    if (alias) {
+      return alias;
+    }
+
+    const entries = getPiUserTreeEntries(this.state.sessionFile);
+    if (entries.some((entry) => entry.id === messageId)) {
+      return messageId;
+    }
+
+    const text = this.timelineMessageTexts.get(messageId);
+    if (!text) {
+      return messageId;
+    }
+
+    const entry = entries.findLast((candidate) => candidate.text === text);
+    if (!entry) {
+      return messageId;
+    }
+    this.timelineMessageIdAliases.set(messageId, entry.id);
+    return entry.id;
   }
 
   private handleExtensionUiRequest(

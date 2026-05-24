@@ -102,15 +102,22 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
+import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
+import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
+import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 export type { InlinePathTarget } from "@/assistant-file-links";
 
 type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
 interface UserMessageProps {
+  agentId?: string;
+  messageId?: string;
   message: string;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
   timestamp: number;
+  capabilities?: AgentCapabilityFlags;
+  client?: DaemonClient | null;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   disableOuterSpacing?: boolean;
@@ -450,10 +457,14 @@ function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
 }
 
 export const UserMessage = memo(function UserMessage({
+  agentId,
+  messageId,
   message,
   images = [],
   attachments = [],
   timestamp,
+  capabilities,
+  client,
   isFirstInGroup = true,
   isLastInGroup = true,
   disableOuterSpacing,
@@ -469,10 +480,17 @@ export const UserMessage = memo(function UserMessage({
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
   );
+  const rewindMutation = useRewindAgentMutation({ agentId, client, messageId });
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const getMessageContent = useCallback(() => message, [message]);
+  const handleRewind = useCallback(
+    (mode: RewindMode) => {
+      rewindMutation.rewindAgent(mode);
+    },
+    [rewindMutation],
+  );
 
   const containerStyle = useMemo(
     () => [
@@ -554,6 +572,9 @@ export const UserMessage = memo(function UserMessage({
               containerStyle={userMessageStylesheet.copyButton}
               accessibilityLabel="Copy message"
             />
+            {capabilities ? (
+              <RewindMenu capabilities={capabilities} onRewind={handleRewind} />
+            ) : null}
           </View>
         ) : null}
       </View>

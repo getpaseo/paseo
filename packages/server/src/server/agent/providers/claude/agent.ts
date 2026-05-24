@@ -41,6 +41,7 @@ import {
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
+import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 
 import {
@@ -198,6 +199,9 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsRewindConversation: true,
+  supportsRewindFiles: true,
+  supportsRewindBoth: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -1567,6 +1571,7 @@ class ClaudeAgentSession implements AgentSession {
   private queryRestartNeeded = false;
   private pendingInterruptAbort = false;
   private lastForegroundPromptText: string | null = null;
+  private activeForegroundTimelineMessageId: string | null = null;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private lastContextWindowUsedTokens: number | undefined;
@@ -1574,6 +1579,8 @@ class ClaudeAgentSession implements AgentSession {
   private lastStreamRequestInputTokens: number | undefined;
   private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
+  private readonly timelineMessageIdAliases = new Map<string, string>();
+  private readonly timelineMessageTexts = new Map<string, string>();
   private recentStderr = "";
   private closed = false;
 
@@ -1690,6 +1697,13 @@ class ClaudeAgentSession implements AgentSession {
 
     const sdkMessage = this.toSdkUserMessage(prompt);
     this.lastForegroundPromptText = this.extractPromptText(prompt);
+    this.activeForegroundTimelineMessageId = _options?.messageId ?? null;
+    if (this.activeForegroundTimelineMessageId && this.lastForegroundPromptText) {
+      this.timelineMessageTexts.set(
+        this.activeForegroundTimelineMessageId,
+        this.lastForegroundPromptText.trim(),
+      );
+    }
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
@@ -2004,6 +2018,49 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  async revertConversation(input: { messageId: string }): Promise<void> {
+    await revertClaudeConversation({
+      sdk: realClaudeRewindSdk,
+      sessionId: this.claudeSessionId,
+      messageId: input.messageId,
+      resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
+      setSessionId: (sessionId) => {
+        this.claudeSessionId = sessionId;
+        this.persistence = null;
+        this.queryRestartNeeded = true;
+        this.persistedHistory = [];
+        this.historyPending = false;
+        this.loadPersistedHistory(sessionId);
+      },
+    });
+  }
+
+  async revertFiles(input: { messageId: string }): Promise<void> {
+    const messageId = await this.resolveClaudeMessageId(input.messageId);
+    try {
+      await revertClaudeFiles({
+        query: await this.ensureQuery(),
+        messageId,
+      });
+    } catch (error) {
+      if (!this.shouldUseJsonlFileRewindFallback(error)) {
+        throw error;
+      }
+      this.rewindFilesFromJsonl(messageId);
+    }
+    if (this.claudeSessionId) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      this.persistedHistory = [];
+      this.historyPending = false;
+      this.loadPersistedHistory(this.claudeSessionId);
+    }
+  }
+
+  async revertBoth(input: { messageId: string }): Promise<void> {
+    await this.revertFiles(input);
+    await this.revertConversation(input);
+  }
+
   private resolveSlashCommandInvocation(prompt: AgentPromptInput): SlashCommandInvocation | null {
     if (typeof prompt !== "string") {
       return null;
@@ -2205,6 +2262,134 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.userMessageIds.push(messageId);
+  }
+
+  private rememberTimelineMessageAlias(
+    timelineMessageId: string | null | undefined,
+    claudeMessageId: string | null | undefined,
+  ): void {
+    if (
+      typeof timelineMessageId !== "string" ||
+      timelineMessageId.length === 0 ||
+      typeof claudeMessageId !== "string" ||
+      claudeMessageId.length === 0 ||
+      timelineMessageId === claudeMessageId
+    ) {
+      return;
+    }
+    this.timelineMessageIdAliases.set(timelineMessageId, claudeMessageId);
+  }
+
+  private async resolveClaudeMessageId(messageId: string): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const resolved =
+        this.timelineMessageIdAliases.get(messageId) ??
+        this.resolveClaudeMessageIdFromHistoryText(messageId);
+      if (resolved) {
+        return resolved;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return (
+      this.timelineMessageIdAliases.get(messageId) ??
+      this.resolveClaudeMessageIdFromHistoryText(messageId) ??
+      messageId
+    );
+  }
+
+  private resolveClaudeMessageIdFromHistoryText(messageId: string): string | null {
+    const expectedText = this.timelineMessageTexts.get(messageId);
+    if (!expectedText || !this.claudeSessionId) {
+      return null;
+    }
+    const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+    if (!historyPath || !fs.existsSync(historyPath)) {
+      return null;
+    }
+    try {
+      const content = fs.readFileSync(historyPath, "utf8");
+      for (const line of content.split(/\n+/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const entry = toObjectRecord(JSON.parse(trimmed));
+        if (!entry || entry.type !== "user" || typeof entry.uuid !== "string") {
+          continue;
+        }
+        const message = toObjectRecord(entry.message);
+        const text = extractUserMessageText(message?.content);
+        if (text?.trim() === expectedText) {
+          this.timelineMessageIdAliases.set(messageId, entry.uuid);
+          return entry.uuid;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private shouldUseJsonlFileRewindFallback(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      (/file rewinding is not enabled/i.test(error.message) ||
+        /No file checkpoint found for message/i.test(error.message))
+    );
+  }
+
+  private rewindFilesFromJsonl(messageId: string): void {
+    if (!this.claudeSessionId) {
+      throw new Error("Claude session is not ready for file rewind");
+    }
+    const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+    if (!historyPath || !fs.existsSync(historyPath)) {
+      throw new Error(`No file checkpoint found for message ${messageId}`);
+    }
+
+    const entries = fs
+      .readFileSync(historyPath, "utf8")
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => toObjectRecord(JSON.parse(line)))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+
+    const targetIndex = entries.findIndex(
+      (entry) => entry.type === "user" && entry.uuid === messageId,
+    );
+    if (targetIndex < 0) {
+      throw new Error(`No file checkpoint found for message ${messageId}`);
+    }
+
+    const restored = new Set<string>();
+    for (let idx = entries.length - 1; idx >= targetIndex; idx -= 1) {
+      const result = toObjectRecord(entries[idx]?.toolUseResult);
+      if (!result) {
+        continue;
+      }
+      const filePath = typeof result?.filePath === "string" ? result.filePath : null;
+      if (!filePath || restored.has(filePath) || !Object.hasOwn(result, "originalFile")) {
+        continue;
+      }
+      const originalFile = result.originalFile;
+      if (originalFile === null) {
+        fs.rmSync(filePath, { force: true });
+        restored.add(filePath);
+        continue;
+      }
+      if (typeof originalFile !== "string") {
+        continue;
+      }
+      const restoredContent =
+        originalFile.length > 0 && !originalFile.endsWith("\n")
+          ? `${originalFile}\n`
+          : originalFile;
+      fs.writeFileSync(filePath, restoredContent, "utf8");
+      restored.add(filePath);
+    }
+
+    if (restored.size === 0) {
+      return;
+    }
   }
 
   private async ensureQuery(): Promise<Query> {
@@ -2631,6 +2816,7 @@ class ClaudeAgentSession implements AgentSession {
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
     this.lastForegroundPromptText = null;
+    this.activeForegroundTimelineMessageId = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.syncTurnState("foreground turn terminal");
@@ -2647,6 +2833,7 @@ class ClaudeAgentSession implements AgentSession {
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
         this.lastForegroundPromptText = null;
+        this.activeForegroundTimelineMessageId = null;
         this.cancelCurrentTurn = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("foreground turn terminal");
@@ -2817,7 +3004,14 @@ class ClaudeAgentSession implements AgentSession {
     ) {
       return false;
     }
-    return event.item.text.trim() === this.lastForegroundPromptText.trim();
+    const isEcho = event.item.text.trim() === this.lastForegroundPromptText.trim();
+    if (isEcho) {
+      this.rememberTimelineMessageAlias(
+        this.activeForegroundTimelineMessageId,
+        event.item.messageId,
+      );
+    }
+    return isEcho;
   }
 
   private shouldSuppressStaleResult(message: SDKMessage): boolean {
@@ -2968,6 +3162,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryRestartNeeded = false;
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
+    this.activeForegroundTimelineMessageId = null;
     this.syncTurnState("missing resumed conversation");
     return true;
   }
@@ -3722,10 +3917,25 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const sanitized = sanitizeClaudeProjectPath(cwd);
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const dir = path.join(configDir, "projects", sanitized);
-    return path.join(dir, `${sessionId}.jsonl`);
+    const candidates = [cwd];
+    try {
+      const realCwd = fs.realpathSync(cwd);
+      if (realCwd !== cwd) {
+        candidates.push(realCwd);
+      }
+    } catch {
+      // Fall back to the configured cwd when the path has already disappeared.
+    }
+    for (const candidate of candidates) {
+      const sanitized = sanitizeClaudeProjectPath(candidate);
+      const historyPath = path.join(configDir, "projects", sanitized, `${sessionId}.jsonl`);
+      if (fs.existsSync(historyPath)) {
+        return historyPath;
+      }
+    }
+    const sanitized = sanitizeClaudeProjectPath(cwd);
+    return path.join(configDir, "projects", sanitized, `${sessionId}.jsonl`);
   }
 
   private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {

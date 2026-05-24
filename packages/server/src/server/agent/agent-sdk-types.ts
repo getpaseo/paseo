@@ -123,6 +123,9 @@ export interface AgentCapabilityFlags {
   supportsMcpServers: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
+  supportsRewindConversation?: boolean;
+  supportsRewindFiles?: boolean;
+  supportsRewindBoth?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -144,6 +147,7 @@ export interface AgentRunOptions {
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
+  messageId?: string;
 }
 
 export interface AgentUsage {
@@ -545,6 +549,9 @@ export interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
+  revertConversation?(input: { messageId: string }): Promise<void>;
+  revertFiles?(input: { messageId: string }): Promise<void>;
+  revertBoth?(input: { messageId: string }): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

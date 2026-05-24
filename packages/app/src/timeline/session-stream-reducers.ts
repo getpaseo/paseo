@@ -623,6 +623,14 @@ export interface AgentStreamReducerEvent {
   timestamp: Date;
 }
 
+interface TimelineSequencingGateResult {
+  shouldApplyStreamEvent: boolean;
+  nextTimelineCursor: TimelineCursor | null;
+  cursorChanged: boolean;
+  resetLiveTimeline: boolean;
+  sideEffects: AgentStreamReducerSideEffect[];
+}
+
 export interface AgentStreamReducerAgentSnapshot {
   status: AgentLifecycleStatus;
   updatedAt: Date;
@@ -672,61 +680,91 @@ function applyAgentPatch(
   };
 }
 
+function processTimelineSequencingGate(input: {
+  event: AgentStreamEventPayload;
+  seq: number | undefined;
+  epoch: string | undefined;
+  currentCursor: TimelineCursor | undefined;
+}): TimelineSequencingGateResult {
+  const { event, seq, epoch, currentCursor } = input;
+  const base: TimelineSequencingGateResult = {
+    shouldApplyStreamEvent: true,
+    nextTimelineCursor: null,
+    cursorChanged: false,
+    resetLiveTimeline: false,
+    sideEffects: [],
+  };
+  if (event.type !== "timeline" || typeof seq !== "number" || typeof epoch !== "string") {
+    return base;
+  }
+
+  const decision = classifySessionTimelineSeq({
+    cursor: currentCursor ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq } : null,
+    epoch,
+    seq,
+  });
+
+  if (decision === "init") {
+    return {
+      ...base,
+      nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
+      cursorChanged: true,
+    };
+  }
+  if (decision === "accept") {
+    return {
+      ...base,
+      nextTimelineCursor: {
+        ...(currentCursor ?? { epoch, startSeq: seq, endSeq: seq }),
+        epoch,
+        endSeq: seq,
+      },
+      cursorChanged: true,
+    };
+  }
+  if (decision === "gap") {
+    return {
+      ...base,
+      shouldApplyStreamEvent: false,
+      sideEffects: currentCursor
+        ? [
+            {
+              type: "catch_up",
+              cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
+            },
+          ]
+        : [],
+    };
+  }
+  if (decision === "drop_epoch" && seq === 1) {
+    return {
+      ...base,
+      nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
+      cursorChanged: true,
+      resetLiveTimeline: true,
+    };
+  }
+  return {
+    ...base,
+    shouldApplyStreamEvent: false,
+  };
+}
+
 export function processAgentStreamEvent(
   input: ProcessAgentStreamEventInput,
 ): ProcessAgentStreamEventOutput {
   const { event, seq, epoch, currentTail, currentHead, currentCursor, currentAgent, timestamp } =
     input;
 
-  let shouldApplyStreamEvent = true;
-  let nextTimelineCursor: TimelineCursor | null = null;
-  let cursorChanged = false;
-  const sideEffects: AgentStreamReducerSideEffect[] = [];
-
-  // ------------------------------------------------------------------
-  // Timeline sequencing gate
-  // ------------------------------------------------------------------
-  if (event.type === "timeline" && typeof seq === "number" && typeof epoch === "string") {
-    const decision = classifySessionTimelineSeq({
-      cursor: currentCursor ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq } : null,
-      epoch,
-      seq,
-    });
-
-    if (decision === "init") {
-      nextTimelineCursor = { epoch, startSeq: seq, endSeq: seq };
-      cursorChanged = true;
-    } else if (decision === "accept") {
-      nextTimelineCursor = {
-        ...(currentCursor ?? { epoch, startSeq: seq, endSeq: seq }),
-        epoch,
-        endSeq: seq,
-      };
-      cursorChanged = true;
-    } else if (decision === "gap") {
-      shouldApplyStreamEvent = false;
-      if (currentCursor) {
-        sideEffects.push({
-          type: "catch_up",
-          cursor: {
-            epoch: currentCursor.epoch,
-            endSeq: currentCursor.endSeq,
-          },
-        });
-      }
-    } else {
-      // drop_stale or drop_epoch
-      shouldApplyStreamEvent = false;
-    }
-  }
+  const sequencing = processTimelineSequencingGate({ event, seq, epoch, currentCursor });
 
   // ------------------------------------------------------------------
   // Apply stream event to tail/head
   // ------------------------------------------------------------------
-  const { tail, head, changedTail, changedHead } = shouldApplyStreamEvent
+  const { tail, head, changedTail, changedHead } = sequencing.shouldApplyStreamEvent
     ? applyStreamEvent({
-        tail: currentTail,
-        head: currentHead,
+        tail: sequencing.resetLiveTimeline ? [] : currentTail,
+        head: sequencing.resetLiveTimeline ? [] : currentHead,
         event,
         timestamp,
         source: "live",
@@ -771,11 +809,11 @@ export function processAgentStreamEvent(
     head,
     changedTail,
     changedHead,
-    cursor: nextTimelineCursor,
-    cursorChanged,
+    cursor: sequencing.nextTimelineCursor,
+    cursorChanged: sequencing.cursorChanged,
     agent: agentPatch,
     agentChanged,
-    sideEffects,
+    sideEffects: sequencing.sideEffects,
   };
 }
 

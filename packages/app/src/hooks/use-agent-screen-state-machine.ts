@@ -1,10 +1,12 @@
 import { useRef } from "react";
+import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 
 export interface AgentScreenAgent {
   serverId: string;
   id: string;
   status: "initializing" | "idle" | "running" | "error" | "closed";
   cwd: string;
+  capabilities?: AgentCapabilityFlags;
   lastError?: string | null;
   projectPlacement?: {
     checkout?: {

@@ -189,9 +189,13 @@ export async function sendPromptToAgent(
     }
   }
 
+  const runOptions = params.messageId
+    ? { ...params.runOptions, messageId: params.messageId }
+    : params.runOptions;
+
   return startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
-    runOptions: params.runOptions,
+    runOptions,
   });
 }
 

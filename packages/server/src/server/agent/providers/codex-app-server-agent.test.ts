@@ -15,10 +15,17 @@ import type {
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
 import {
-  __codexAppServerInternals,
+  buildCodexAppServerEnv,
   CodexAppServerAgentClient,
+  CodexAppServerAgentSession,
   codexAppServerTurnInputFromPrompt,
+  listCodexSkills,
+  mapCodexPatchNotificationToToolCall,
+  mapCodexPlanToToolCall,
+  normalizeCodexOutputSchema,
+  toAgentUsage,
 } from "./codex-app-server-agent.js";
+import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
   waitForNextPermission,
@@ -76,7 +83,7 @@ function createSession(
   configOverrides: Partial<AgentSessionConfig> = {},
   options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean } = {},
 ): CodexTestSession {
-  const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+  const session = new CodexAppServerAgentSession(
     createConfig(configOverrides),
     null,
     createTestLogger(),
@@ -380,7 +387,7 @@ describe("Codex app-server provider", () => {
       },
     };
 
-    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+    const session = new CodexAppServerAgentSession(
       createConfig({ thinkingOptionId: "medium" }),
       null,
       createTestLogger(),
@@ -411,7 +418,7 @@ describe("Codex app-server provider", () => {
       },
     };
 
-    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+    const session = new CodexAppServerAgentSession(
       createConfig({ thinkingOptionId: "medium" }),
       null,
       createTestLogger(),
@@ -437,7 +444,7 @@ describe("Codex app-server provider", () => {
     child.exitCode = null;
     child.signalCode = null;
     child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
-    const client = new __codexAppServerInternals.CodexAppServerClient(child, createTestLogger());
+    const client = new CodexAppServerClient(child, createTestLogger());
 
     try {
       const disposePromise = client.dispose();
@@ -459,7 +466,7 @@ describe("Codex app-server provider", () => {
       "collaborationMode/list": () => ({ data: [] }),
       "skills/list": () => ({ data: [] }),
     });
-    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+    const session = new CodexAppServerAgentSession(
       createConfig({ cwd: "/workspace/project" }),
       null,
       createTestLogger(),
@@ -502,6 +509,30 @@ describe("Codex app-server provider", () => {
 
     await expect(appServer.waitForCommandApprovalDecision("exec-approval-1")).resolves.toEqual({
       decision: "accept",
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("rewinds the conversation to a freshly sent Paseo user message id", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember first", { messageId: "paseo-first" });
+    appServer.completeTurn();
+    await session.startTurn("remember second", { messageId: "paseo-second" });
+    appServer.completeTurn();
+
+    await session.revertConversation({ messageId: "paseo-first" });
+
+    expect(appServer.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 2 }]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      sessionId: "forked-thread",
     });
     appServer.assertNoErrors();
     await session.close();
@@ -637,9 +668,7 @@ describe("Codex app-server provider", () => {
     };
 
     try {
-      await expect(
-        __codexAppServerInternals.listCodexSkills(cwd, workspaceGitService),
-      ).resolves.toContainEqual({
+      await expect(listCodexSkills(cwd, workspaceGitService)).resolves.toContainEqual({
         name: "shipper",
         description: "Ship changes carefully.",
         argumentHint: "",
@@ -654,7 +683,7 @@ describe("Codex app-server provider", () => {
 
   test("extracts context window usage from snake_case token payloads", () => {
     expect(
-      __codexAppServerInternals.toAgentUsage({
+      toAgentUsage({
         model_context_window: 200000,
         last: {
           total_tokens: 50000,
@@ -674,7 +703,7 @@ describe("Codex app-server provider", () => {
 
   test("extracts context window usage from camelCase token payloads", () => {
     expect(
-      __codexAppServerInternals.toAgentUsage({
+      toAgentUsage({
         modelContextWindow: 200000,
         last: {
           totalTokens: 50000,
@@ -694,7 +723,7 @@ describe("Codex app-server provider", () => {
 
   test("keeps existing usage behavior when context window fields are missing", () => {
     expect(
-      __codexAppServerInternals.toAgentUsage({
+      toAgentUsage({
         last: {
           inputTokens: 30000,
           cachedInputTokens: 5000,
@@ -710,7 +739,7 @@ describe("Codex app-server provider", () => {
 
   test("excludes invalid context window values", () => {
     expect(
-      __codexAppServerInternals.toAgentUsage({
+      toAgentUsage({
         model_context_window: Number.NaN,
         modelContextWindow: "200000",
         last: {
@@ -748,7 +777,7 @@ describe("Codex app-server provider", () => {
       required: ["overall"],
     };
 
-    const normalized = __codexAppServerInternals.normalizeCodexOutputSchema(input);
+    const normalized = normalizeCodexOutputSchema(input);
 
     expect(normalized).toEqual({
       type: "object",
@@ -1013,7 +1042,7 @@ describe("Codex app-server provider", () => {
   });
 
   test("maps patch notifications with array-style changes and alias diff keys", () => {
-    const item = __codexAppServerInternals.mapCodexPatchNotificationToToolCall({
+    const item = mapCodexPatchNotificationToToolCall({
       callId: "patch-array-alias",
       changes: [
         {
@@ -1036,7 +1065,7 @@ describe("Codex app-server provider", () => {
   });
 
   test("maps Codex plan markdown to a synthetic plan tool call", () => {
-    const item = __codexAppServerInternals.mapCodexPlanToToolCall({
+    const item = mapCodexPlanToToolCall({
       callId: "plan-turn-1",
       text: "### Login Screen\n- Build layout\n- Add validation",
     });
@@ -1055,7 +1084,7 @@ describe("Codex app-server provider", () => {
   });
 
   test("maps patch notifications with object-style single change payloads", () => {
-    const item = __codexAppServerInternals.mapCodexPatchNotificationToToolCall({
+    const item = mapCodexPatchNotificationToToolCall({
       callId: "patch-object-single",
       changes: {
         path: "/tmp/repo/src/object-single.ts",
@@ -1076,7 +1105,7 @@ describe("Codex app-server provider", () => {
   });
 
   test("maps patch notifications with file_path aliases in array-style changes", () => {
-    const item = __codexAppServerInternals.mapCodexPatchNotificationToToolCall({
+    const item = mapCodexPatchNotificationToToolCall({
       callId: "patch-array-file-path",
       changes: [
         {
@@ -1105,7 +1134,7 @@ describe("Codex app-server provider", () => {
         PASEO_TEST_FLAG: "codex-launch-value",
       },
     };
-    const env = __codexAppServerInternals.buildCodexAppServerEnv(
+    const env = buildCodexAppServerEnv(
       {
         env: {
           PASEO_AGENT_ID: "runtime-value",

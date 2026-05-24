@@ -9,7 +9,7 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 
 import { ClaudeAgentClient } from "./claude/agent.js";
-import { __codexAppServerInternals, CodexAppServerAgentClient } from "./codex-app-server-agent.js";
+import { CodexAppServerAgentClient, findDefaultCodexBinary } from "./codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
 const originalEnv = {
@@ -88,7 +88,7 @@ describe("default provider availability", () => {
     try {
       const client = new CodexAppServerAgentClient(createTestLogger());
 
-      await expect(__codexAppServerInternals.findDefaultCodexBinary()).resolves.toBe(codexExe);
+      await expect(findDefaultCodexBinary()).resolves.toBe(codexExe);
       await expect(client.isAvailable()).resolves.toBe(true);
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });

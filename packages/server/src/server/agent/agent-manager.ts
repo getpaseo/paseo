@@ -55,6 +55,7 @@ import {
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
 import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
+import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -65,6 +66,9 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: false,
   supportsToolInvocations: true,
+  supportsRewindConversation: false,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
 };
 
 type TimeoutResult = "completed" | "timed_out";
@@ -130,6 +134,11 @@ export type AgentSubscriber = (event: AgentManagerEvent) => void;
 export interface SubscribeOptions {
   agentId?: string;
   replayState?: boolean;
+}
+
+interface HydrateTimelineOptions {
+  force?: boolean;
+  broadcast?: boolean;
 }
 
 export type ImportablePersistedAgentQueryOptions = ListPersistedAgentsOptions & {
@@ -1984,9 +1993,45 @@ export class AgentManager {
    * timeline is empty (e.g., imported agents that have provider history
    * on disk but no persisted timeline rows). No-ops if already hydrated.
    */
-  async hydrateTimelineFromProvider(agentId: string): Promise<void> {
+  async hydrateTimelineFromProvider(
+    agentId: string,
+    options?: HydrateTimelineOptions,
+  ): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
-    await this.hydrateTimelineFromLegacyProviderHistory(agent);
+    await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+  }
+
+  async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    const agent = this.requireSessionAgent(agentId);
+    const hadActiveRun =
+      Boolean(agent.activeForegroundTurnId) || this.foregroundRuns.hasPendingRun(agentId);
+    if (hadActiveRun) {
+      await this.cancelAgentRun(agentId);
+    }
+
+    const lock = this.foregroundRuns.createPendingRun(agentId);
+    try {
+      this.logger.info(
+        { agentId, provider: agent.provider, messageId, mode },
+        "agent.rewind.start",
+      );
+      await invokeRewindCapability(agent.session, { messageId, mode });
+      await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+      await this.refreshRuntimeInfo(agent);
+      await this.persistSnapshot(agent);
+      this.logger.info(
+        { agentId, provider: agent.provider, messageId, mode },
+        "agent.rewind.complete",
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId, provider: agent.provider, messageId, mode },
+        "agent.rewind.failed",
+      );
+      throw error;
+    } finally {
+      this.foregroundRuns.settlePendingRun(agentId, lock.token);
+    }
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
@@ -2627,10 +2672,47 @@ export class AgentManager {
     }
   }
 
-  private async hydrateTimelineFromLegacyProviderHistory(agent: ActiveManagedAgent): Promise<void> {
-    if (agent.historyPrimed) {
+  private async hydrateTimelineFromLegacyProviderHistory(
+    agent: ActiveManagedAgent,
+    options?: HydrateTimelineOptions,
+  ): Promise<void> {
+    if (agent.historyPrimed && !options?.force) {
       return;
     }
+
+    if (options?.force) {
+      const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+      for await (const event of agent.session.streamHistory()) {
+        if (event.type === "timeline") {
+          historyEvents.push(event);
+        }
+      }
+
+      this.agentStreamCoalescer.flushAndDiscard(agent.id);
+      await this.deleteCommittedTimeline(agent.id);
+      this.timelineStore.delete(agent.id);
+      this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+      agent.historyPrimed = true;
+
+      for (const event of historyEvents) {
+        const row = this.recordTimeline(
+          agent.id,
+          event.item,
+          event.timestamp ? { timestamp: event.timestamp } : undefined,
+        );
+        if (options?.broadcast) {
+          this.dispatchStream(agent.id, event, {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          });
+        }
+      }
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      return;
+    }
+
     agent.historyPrimed = true;
     const canonicalUserMessagesById = this.timelineStore.getCanonicalUserMessagesById(agent.id);
     try {

@@ -42,6 +42,9 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsRewindConversation: true,
+  supportsRewindFiles: true,
+  supportsRewindBoth: true,
 };
 
 const MODELS: AgentModelDefinition[] = [
@@ -449,12 +452,17 @@ export class MockLoadTestAgentSession implements AgentSession {
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private modeId: string | null;
   private modelId: string | null;
+  private readonly rewindError: string | null;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
+    this.rewindError =
+      typeof options.config.featureValues?.mockRewindError === "string"
+        ? options.config.featureValues.mockRewindError
+        : null;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -495,6 +503,15 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnStarted: false,
     };
     this.activeTurn = turn;
+    this.remember({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "user_message",
+        text: promptToText(prompt),
+      },
+    });
 
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);
@@ -609,6 +626,21 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.listeners.clear();
   }
 
+  async revertConversation(_input: { messageId: string }): Promise<void> {
+    this.failConfiguredRewind();
+    this.keepFirstUserMessageHistory();
+  }
+
+  async revertFiles(_input: { messageId: string }): Promise<void> {
+    this.failConfiguredRewind();
+    this.keepFirstUserMessageHistory();
+  }
+
+  async revertBoth(_input: { messageId: string }): Promise<void> {
+    this.failConfiguredRewind();
+    this.keepFirstUserMessageHistory();
+  }
+
   async setModel(modelId: string | null): Promise<void> {
     this.modelId = modelId ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
   }
@@ -618,6 +650,12 @@ export class MockLoadTestAgentSession implements AgentSession {
       this.tick(turn);
     }, delayMs);
     turn.timer.unref?.();
+  }
+
+  private failConfiguredRewind(): void {
+    if (this.rewindError) {
+      throw new Error(this.rewindError);
+    }
   }
 
   private scheduleLargePayloadTurn(
@@ -941,7 +979,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   }
 
   private emit(event: AgentStreamEvent): void {
-    this.history.push(event);
+    this.remember(event);
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -949,6 +987,22 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.logger?.warn({ err: error }, "Mock load-test listener failed");
       }
     }
+  }
+
+  private remember(event: AgentStreamEvent): void {
+    this.history.push(event);
+  }
+
+  private keepFirstUserMessageHistory(): void {
+    const nextHistory: AgentStreamEvent[] = [];
+    for (const event of this.history) {
+      if (event.type === "timeline" && event.item.type === "user_message") {
+        nextHistory.push(event);
+        break;
+      }
+    }
+    this.history.length = 0;
+    this.history.push(...nextHistory);
   }
 
   private clearTurnTimer(turn: ActiveTurn): void {

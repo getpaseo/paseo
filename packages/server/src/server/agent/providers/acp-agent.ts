@@ -158,6 +158,9 @@ const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsRewindConversation: false,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
 };
 
 const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {

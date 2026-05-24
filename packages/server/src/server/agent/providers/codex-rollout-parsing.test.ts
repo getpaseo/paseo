@@ -1,10 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { rmSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseRolloutFile } from "./codex-rollout-timeline.js";
 
 let tmpDir: string;
+const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "codex", "test-fixtures");
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "rollout-test-"));
@@ -459,6 +461,21 @@ describe("real rollout file structure", () => {
       { type: "reasoning", text: "thinking" },
       { type: "assistant_message", text: "answer" },
     ]);
+  });
+
+  test("trims timeline items when a forked Codex rollout records thread rollback", async () => {
+    const rolloutPath = join(tmpDir, "rollout.jsonl");
+    copyFileSync(join(fixturesDir, "rollouts", "thread-rollback.jsonl"), rolloutPath);
+
+    const timeline = await parseRolloutFile(rolloutPath);
+
+    expect(timeline).toMatchObject([
+      { type: "user_message", text: "first prompt" },
+      { type: "tool_call", name: "apply_patch", callId: "call_first" },
+      { type: "assistant_message", text: "first done" },
+    ]);
+    expect(timeline).not.toContainEqual({ type: "user_message", text: "second prompt" });
+    expect(timeline).not.toContainEqual({ type: "assistant_message", text: "second done" });
   });
 });
 

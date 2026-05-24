@@ -7,6 +7,11 @@ interface PiTreeEntry {
   record: Record<string, unknown>;
 }
 
+export interface PiUserTreeEntry {
+  id: string;
+  text: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -114,4 +119,14 @@ export function resolvePiNavigationLeafId(
   const message = getPiMessage(entry);
   const role = getPiMessageRole(message);
   return role === "user" ? entry.parentId : targetId;
+}
+
+export function getPiUserTreeEntries(sessionFile: string | undefined): PiUserTreeEntry[] {
+  return readPiTreeEntries(sessionFile).flatMap((entry) => {
+    const message = getPiMessage(entry);
+    if (!message || getPiMessageRole(message) !== "user") {
+      return [];
+    }
+    return [{ id: entry.id, text: extractPiUserText(message.content) }];
+  });
 }

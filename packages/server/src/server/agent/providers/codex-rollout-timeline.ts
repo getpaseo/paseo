@@ -19,8 +19,15 @@ function resolveCodexSessionRoot(): string | null {
   return path.join(codexHome, "sessions");
 }
 
-async function findRolloutFile(threadId: string, root: string): Promise<string | null> {
-  let currentLevel: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+export async function findCodexRolloutFile(
+  threadId: string,
+  root?: string | null,
+): Promise<string | null> {
+  const searchRoot = root ?? resolveCodexSessionRoot();
+  if (!searchRoot) {
+    return null;
+  }
+  let currentLevel: { dir: string; depth: number }[] = [{ dir: searchRoot, depth: 0 }];
   while (currentLevel.length > 0) {
     const readings = await Promise.all(
       currentLevel.map(async ({ dir, depth }) => {
@@ -168,11 +175,17 @@ const RolloutEventUserMessagePayloadSchema = z.object({
     .optional(),
 });
 
+const RolloutEventThreadRolledBackPayloadSchema = z.object({
+  type: z.literal("thread_rolled_back"),
+  num_turns: z.number().int().nonnegative().default(0),
+});
+
 type RolloutResponseReasoningPayload = z.infer<typeof RolloutResponseReasoningPayloadSchema>;
 type ParsedRolloutRecord =
   | { kind: "timeline"; item: AgentTimelineItem }
   | { kind: "call"; name: string; callId?: string; input?: unknown }
   | { kind: "output"; callId: string; output: unknown }
+  | { kind: "rollback"; numTurns: number }
   | { kind: "ignore" };
 
 const RolloutMessageContentSchema = z.union([
@@ -413,6 +426,9 @@ const RolloutResponseRecordSchema = z.union([
 ]);
 
 const RolloutEventRecordSchema = z.union([
+  RolloutEventThreadRolledBackPayloadSchema.transform(
+    (payload): ParsedRolloutRecord => ({ kind: "rollback", numTurns: payload.num_turns }),
+  ),
   RolloutEventAgentReasoningPayloadSchema.transform(
     (payload): ParsedRolloutRecord =>
       payload.text
@@ -560,12 +576,18 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
     .reduce((map, record) => map.set(record.callId, record.output), new Map<string, unknown>());
   const terminalCommandsBySessionId = buildTerminalCommandBySessionId(parsedRecords);
 
-  const timeline = parsedRecords.flatMap((record): AgentTimelineItem[] => {
+  let timeline: AgentTimelineItem[] = [];
+  for (const record of parsedRecords) {
+    if (record.kind === "rollback") {
+      timeline = dedupeMirroredTextTimelineItems(timeline).slice(0, -record.numTurns);
+      continue;
+    }
     if (record.kind === "timeline") {
-      return [record.item];
+      timeline.push(record.item);
+      continue;
     }
     if (record.kind !== "call") {
-      return [];
+      continue;
     }
     if (record.name === "write_stdin") {
       const input =
@@ -574,13 +596,14 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
           : null;
       const sessionId =
         readTerminalSessionId(input?.session_id) ?? readTerminalSessionId(input?.sessionId);
-      return [
+      timeline.push(
         mapCodexTerminalInteractionToToolCall({
           processId: sessionId,
           fallbackCallId: record.callId,
           command: sessionId ? terminalCommandsBySessionId.get(sessionId) : undefined,
         }),
-      ];
+      );
+      continue;
     }
     const mapped = mapCodexRolloutToolCall({
       callId: record.callId ?? null,
@@ -588,8 +611,10 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
       input: record.input ?? null,
       output: record.callId ? (outputsByCallId.get(record.callId) ?? null) : null,
     });
-    return mapped ? [mapped] : [];
-  });
+    if (mapped) {
+      timeline.push(mapped);
+    }
+  }
   return dedupeMirroredTextTimelineItems(timeline);
 }
 
@@ -624,10 +649,10 @@ export async function loadCodexPersistedTimeline(
     let rolloutFile: string | null = null;
 
     if (preferredRoot) {
-      rolloutFile = await findRolloutFile(sessionId, preferredRoot);
+      rolloutFile = await findCodexRolloutFile(sessionId, preferredRoot);
     }
     if (!rolloutFile && fallbackRoot && fallbackRoot !== preferredRoot) {
-      rolloutFile = await findRolloutFile(sessionId, fallbackRoot);
+      rolloutFile = await findCodexRolloutFile(sessionId, fallbackRoot);
     }
     if (!rolloutFile) {
       return [];

@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+
 import type {
   PiRuntime,
   PiRuntimeLaunch,
@@ -53,6 +55,7 @@ export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
   readonly setThinkingLevelRequests: string[] = [];
+  readonly treeNavigationRequests: string[] = [];
   abortRequested = false;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
@@ -96,6 +99,7 @@ export class FakePiSession implements PiRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void> {
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    this.handleTreeNavigationCommand(message);
   }
 
   async abort(): Promise<void> {
@@ -157,5 +161,20 @@ export class FakePiSession implements PiRuntimeSession {
   finishTurn(message: PiAgentMessage = { role: "assistant", content: [] }): void {
     this.messages = [...this.messages, message];
     this.emit({ type: "agent_end", messages: this.messages });
+  }
+
+  private handleTreeNavigationCommand(message: string): void {
+    const prefix = "/paseo_tree ";
+    if (!message.startsWith(prefix)) {
+      return;
+    }
+    const payload = JSON.parse(
+      Buffer.from(message.slice(prefix.length), "base64url").toString("utf8"),
+    ) as { targetId?: unknown; resultPath?: unknown };
+    if (typeof payload.targetId !== "string" || typeof payload.resultPath !== "string") {
+      return;
+    }
+    this.treeNavigationRequests.push(payload.targetId);
+    writeFileSync(payload.resultPath, JSON.stringify({ ok: true, result: {} }), "utf8");
   }
 }
