@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AgentModelDefinition,
-  ProviderSnapshotEntry,
-} from "@server/server/agent/agent-sdk-types";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import {
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,

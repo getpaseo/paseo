@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import type { DaemonClient, FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
+import type {
+  DaemonClient,
+  FetchRecentProviderSessionEntry,
+} from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
 import { Inbox, RotateCw } from "lucide-react-native";

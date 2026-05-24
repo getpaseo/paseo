@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@server/utils/branch-slug";
+import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/server/utils/branch-slug";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import {

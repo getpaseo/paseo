@@ -96,7 +96,7 @@ import {
   FileTransferOpcode,
   TerminalStreamOpcode,
   type FileTransferFrame,
-} from "@getpaseo/protocol/binary-frames";
+} from "@getpaseo/protocol/binary-frames/index";
 import {
   createRelayE2eeTransportFactory,
   createWebSocketTransportFactory,

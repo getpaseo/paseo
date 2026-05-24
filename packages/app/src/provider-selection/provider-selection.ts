@@ -3,8 +3,8 @@ import type {
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
-} from "@server/server/agent/agent-sdk-types";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+} from "@getpaseo/protocol/agent-types";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { buildFavoriteModelKey, type FavoriteModelRow } from "@/hooks/use-form-preferences";
 import { compareMatchScores, scoreTextFields } from "@/utils/score-match";

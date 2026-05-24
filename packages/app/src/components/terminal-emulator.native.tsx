@@ -18,8 +18,8 @@ import {
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { ITheme } from "@xterm/xterm";
-import type { TerminalState } from "@server/shared/messages";
-import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
+import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
 import type {
   TerminalLocalFileLinkSource,
