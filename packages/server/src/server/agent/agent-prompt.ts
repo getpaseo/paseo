@@ -178,7 +178,9 @@ export async function sendPromptToAgent(
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
-  if (recordUserMessage && params.userMessageText !== undefined) {
+  const providerEmitsUserMessages = params.agentManager.sessionEmitsUserMessages(params.agentId);
+
+  if (recordUserMessage && !providerEmitsUserMessages && params.userMessageText !== undefined) {
     try {
       params.agentManager.recordUserMessage(params.agentId, params.userMessageText, {
         messageId: params.messageId,
@@ -189,9 +191,10 @@ export async function sendPromptToAgent(
     }
   }
 
-  const runOptions = params.messageId
-    ? { ...params.runOptions, messageId: params.messageId }
-    : params.runOptions;
+  const runOptions =
+    !providerEmitsUserMessages && params.messageId
+      ? { ...params.runOptions, messageId: params.messageId }
+      : params.runOptions;
 
   return startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,

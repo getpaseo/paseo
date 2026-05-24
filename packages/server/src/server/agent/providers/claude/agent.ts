@@ -192,6 +192,15 @@ interface PersistedTimelineEntry {
   timestamp?: string;
 }
 
+interface ClaudeRewindTurnAnchor {
+  userMessageId: string;
+  assistantMessageId: string | null;
+}
+
+type ClaudeConversationRewindTarget =
+  | { kind: "fresh-session" }
+  | { kind: "fork"; messageId: string };
+
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -1050,7 +1059,7 @@ class TimelineAssembler {
       !isClaudeTranscriptNoiseText(nextAssistantText)
     ) {
       state.emittedAssistantLength = state.assistantText.length;
-      items.push({ type: "assistant_message", text: nextAssistantText });
+      items.push({ type: "assistant_message", text: nextAssistantText, messageId: state.id });
     }
 
     const nextReasoningText = state.reasoningText.slice(state.emittedReasoningLength);
@@ -1161,7 +1170,25 @@ function isSyntheticUserEntry(entry: unknown): boolean {
   if (!candidate) {
     return false;
   }
-  return candidate.isSynthetic === true || candidate.isMeta === true;
+  if (candidate.isSynthetic === true || candidate.isMeta === true || candidate.toolUseResult) {
+    return true;
+  }
+  const message = toObjectRecord(candidate.message);
+  const content = message?.content;
+  return (
+    Array.isArray(content) && content.some((block) => toObjectRecord(block)?.type === "tool_result")
+  );
+}
+
+function isSyntheticHistoryUserEntry(entry: Record<string, unknown>): boolean {
+  if (entry.isSynthetic === true || entry.isMeta === true || entry.toolUseResult) {
+    return true;
+  }
+  const message = toObjectRecord(entry.message);
+  const content = message?.content;
+  return (
+    Array.isArray(content) && content.some((block) => toObjectRecord(block)?.type === "tool_result")
+  );
 }
 
 function firstTrimmedString(sources: readonly unknown[]): string | null {
@@ -1174,6 +1201,15 @@ function firstTrimmedString(sources: readonly unknown[]): string | null {
   return null;
 }
 
+function readTranscriptUuid(message: SDKMessage): string | null {
+  const root = toObjectRecord(message) ?? {};
+  const messageType = readTrimmedString(root.type);
+  if (messageType !== "user" && messageType !== "assistant") {
+    return null;
+  }
+  return firstTrimmedString([root.uuid]);
+}
+
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const root = toObjectRecord(message) ?? {};
   const messageType = readTrimmedString(root.type);
@@ -1181,7 +1217,10 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const streamEventMessage = toObjectRecord(streamEvent?.message);
   const messageContainer = toObjectRecord(root.message);
 
-  const messageIdFromUuid = messageType === "user" ? root.uuid : undefined;
+  const messageIdFromUuid =
+    messageType === "user" || messageType === "assistant" || messageType === "system"
+      ? root.uuid
+      : undefined;
 
   return {
     taskId: firstTrimmedString([
@@ -1581,6 +1620,8 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly timelineMessageIdAliases = new Map<string, string>();
   private readonly timelineMessageTexts = new Map<string, string>();
+  private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
+  private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
 
@@ -1704,6 +1745,10 @@ class ClaudeAgentSession implements AgentSession {
         this.lastForegroundPromptText.trim(),
       );
     }
+    const sdkUserMessageId =
+      typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
+    this.rememberTimelineMessageAlias(this.activeForegroundTimelineMessageId, sdkUserMessageId);
+    this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
@@ -2019,18 +2064,18 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
+    const target = this.resolveConversationRewindTarget(input.messageId);
+    if (target.kind === "fresh-session") {
+      this.startFreshConversationSession();
+      return;
+    }
     await revertClaudeConversation({
       sdk: realClaudeRewindSdk,
       sessionId: this.claudeSessionId,
-      messageId: input.messageId,
+      messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
       setSessionId: (sessionId) => {
-        this.claudeSessionId = sessionId;
-        this.persistence = null;
-        this.queryRestartNeeded = true;
-        this.persistedHistory = [];
-        this.historyPending = false;
-        this.loadPersistedHistory(sessionId);
+        this.rebindConversationSession(sessionId);
       },
     });
   }
@@ -2041,19 +2086,10 @@ class ClaudeAgentSession implements AgentSession {
       query: await this.ensureQuery(),
       messageId,
     });
-    if (this.claudeSessionId) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      this.persistedHistory = [];
-      this.historyPending = false;
-      this.loadPersistedHistory(this.claudeSessionId);
-    }
   }
 
   async revertBoth(input: { messageId: string }): Promise<void> {
-    const nextMessageId = this.resolveNextTimelineUserMessageId(input.messageId);
-    if (nextMessageId) {
-      await this.revertFiles({ messageId: nextMessageId });
-    }
+    await this.revertFiles(input);
     await this.revertConversation(input);
   }
 
@@ -2203,10 +2239,6 @@ class ClaudeAgentSession implements AgentSession {
       }
     };
 
-    const historyIds = this.readUserMessageIdsFromHistoryFile();
-    for (let idx = historyIds.length - 1; idx >= 0; idx -= 1) {
-      pushUnique(historyIds[idx]);
-    }
     for (let idx = this.persistedHistory.length - 1; idx >= 0; idx -= 1) {
       const entry = this.persistedHistory[idx];
       if (entry?.item.type === "user_message") {
@@ -2220,44 +2252,34 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
-  private resolveNextTimelineUserMessageId(messageId: string): string | null {
-    const ids = Array.from(this.timelineMessageTexts.keys());
-    const index = ids.findIndex(
-      (id) => id === messageId || this.timelineMessageIdAliases.get(id) === messageId,
-    );
-    if (index < 0) {
-      return null;
-    }
-    return ids[index + 1] ?? null;
+  private rebindConversationSession(sessionId: string): void {
+    this.claudeSessionId = sessionId;
+    this.pendingFreshSessionId = null;
+    this.persistence = null;
+    this.cachedRuntimeInfo = null;
+    this.queryRestartNeeded = true;
+    this.persistedHistory = [];
+    this.historyPending = false;
+    this.userMessageIds = [];
+    this.timelineMessageIdAliases.clear();
+    this.timelineMessageTexts.clear();
+    this.rewindTurnAnchors.length = 0;
+    this.loadPersistedHistory(sessionId);
   }
 
-  private readUserMessageIdsFromHistoryFile(): string[] {
-    if (!this.claudeSessionId) {
-      return [];
-    }
-    const historyPath = this.resolveHistoryPath(this.claudeSessionId);
-    if (!historyPath || !fs.existsSync(historyPath)) {
-      return [];
-    }
-    try {
-      const ids: string[] = [];
-      const content = fs.readFileSync(historyPath, "utf8");
-      for (const line of content.split(/\n+/)) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const entry = JSON.parse(trimmed);
-          if (entry?.type === "user" && typeof entry.uuid === "string") {
-            ids.push(entry.uuid);
-          }
-        } catch {
-          // ignore malformed lines
-        }
-      }
-      return ids;
-    } catch {
-      return [];
-    }
+  private startFreshConversationSession(): void {
+    const sessionId = randomUUID();
+    this.claudeSessionId = sessionId;
+    this.pendingFreshSessionId = sessionId;
+    this.persistence = null;
+    this.cachedRuntimeInfo = null;
+    this.queryRestartNeeded = true;
+    this.persistedHistory = [];
+    this.historyPending = false;
+    this.userMessageIds = [];
+    this.timelineMessageIdAliases.clear();
+    this.timelineMessageTexts.clear();
+    this.rewindTurnAnchors.length = 0;
   }
 
   private rememberUserMessageId(messageId: string | null | undefined): void {
@@ -2287,52 +2309,79 @@ class ClaudeAgentSession implements AgentSession {
     this.timelineMessageIdAliases.set(timelineMessageId, claudeMessageId);
   }
 
-  private async resolveClaudeMessageId(messageId: string): Promise<string> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const resolved =
-        this.timelineMessageIdAliases.get(messageId) ??
-        this.resolveClaudeMessageIdFromHistoryText(messageId);
-      if (resolved) {
-        return resolved;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+  private rememberRewindUserAnchor(userMessageId: string | null | undefined): void {
+    if (typeof userMessageId !== "string" || userMessageId.length === 0) {
+      return;
     }
-    return (
-      this.timelineMessageIdAliases.get(messageId) ??
-      this.resolveClaudeMessageIdFromHistoryText(messageId) ??
-      messageId
-    );
+    if (this.rewindTurnAnchors.some((anchor) => anchor.userMessageId === userMessageId)) {
+      return;
+    }
+    this.rewindTurnAnchors.push({
+      userMessageId,
+      assistantMessageId: null,
+    });
   }
 
-  private resolveClaudeMessageIdFromHistoryText(messageId: string): string | null {
-    const expectedText = this.timelineMessageTexts.get(messageId);
-    if (!expectedText || !this.claudeSessionId) {
-      return null;
+  private rememberRewindAssistantAnchor(assistantMessageId: string | null | undefined): void {
+    if (typeof assistantMessageId !== "string" || assistantMessageId.length === 0) {
+      return;
     }
-    const historyPath = this.resolveHistoryPath(this.claudeSessionId);
-    if (!historyPath || !fs.existsSync(historyPath)) {
-      return null;
-    }
-    try {
-      const content = fs.readFileSync(historyPath, "utf8");
-      for (const line of content.split(/\n+/)) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const entry = toObjectRecord(JSON.parse(trimmed));
-        if (!entry || entry.type !== "user" || typeof entry.uuid !== "string") {
-          continue;
-        }
-        const message = toObjectRecord(entry.message);
-        const text = extractUserMessageText(message?.content);
-        if (text?.trim() === expectedText) {
-          this.timelineMessageIdAliases.set(messageId, entry.uuid);
-          return entry.uuid;
-        }
+    for (let index = this.rewindTurnAnchors.length - 1; index >= 0; index -= 1) {
+      const anchor = this.rewindTurnAnchors[index];
+      if (!anchor) {
+        continue;
       }
-    } catch {
-      return null;
+      anchor.assistantMessageId = assistantMessageId;
+      return;
     }
-    return null;
+  }
+
+  private rememberTranscriptProgress(message: SDKMessage, messageId: string | null): void {
+    if (!messageId) {
+      return;
+    }
+    if (message.type === "user" && !isSyntheticUserEntry(message)) {
+      this.rememberRewindUserAnchor(messageId);
+      return;
+    }
+    if (message.type === "assistant") {
+      this.rememberRewindAssistantAnchor(messageId);
+      return;
+    }
+    if (message.type === "stream_event") {
+      const event = toObjectRecord(message.event) ?? {};
+      const eventType = readTrimmedString(event.type);
+      if (eventType === "message_start") {
+        this.rememberRewindAssistantAnchor(messageId);
+      }
+      return;
+    }
+  }
+
+  private resolveClaudeMessageId(messageId: string): string {
+    return this.timelineMessageIdAliases.get(messageId) ?? messageId;
+  }
+
+  private resolveConversationRewindTarget(messageId: string): ClaudeConversationRewindTarget {
+    const targetUserMessageId = this.resolveClaudeMessageId(messageId);
+    const index = this.rewindTurnAnchors.findIndex(
+      (anchor) => anchor.userMessageId === targetUserMessageId,
+    );
+    if (index < 0) {
+      throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
+    }
+
+    if (index === 0) {
+      return { kind: "fresh-session" };
+    }
+
+    const previousTurn = this.rewindTurnAnchors[index - 1];
+    if (!previousTurn?.assistantMessageId) {
+      throw new Error(
+        `Claude rewind cannot preserve turn ${index} because its assistant response id was not observed`,
+      );
+    }
+    return { kind: "fork", messageId: previousTurn.assistantMessageId };
   }
 
   private async ensureQuery(): Promise<Query> {
@@ -2481,6 +2530,13 @@ class ClaudeAgentSession implements AgentSession {
       },
       "Resolved Claude executable",
     );
+    const sessionBinding: Pick<ClaudeOptions, "resume" | "sessionId"> = {};
+    if (this.pendingFreshSessionId) {
+      sessionBinding.sessionId = this.pendingFreshSessionId;
+    } else if (this.claudeSessionId) {
+      sessionBinding.resume = this.claudeSessionId;
+    }
+
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
@@ -2508,7 +2564,7 @@ class ClaudeAgentSession implements AgentSession {
       enableFileCheckpointing: true,
       // If we have a session ID from a previous query (e.g., after interrupt),
       // resume that session to continue the conversation history.
-      ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
+      ...sessionBinding,
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
       ...extraClaudeOptions,
@@ -2524,7 +2580,7 @@ class ClaudeAgentSession implements AgentSession {
       base.model = this.config.model;
     }
     this.lastOptionsModel = base.model ?? null;
-    if (this.claudeSessionId) {
+    if (this.claudeSessionId && !this.pendingFreshSessionId) {
       base.resume = this.claudeSessionId;
     }
     if (this.runtimeSettings?.disallowedTools?.length) {
@@ -2999,6 +3055,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
     const identifiers = readEventIdentifiers(message);
+    this.rememberTranscriptProgress(message, readTranscriptUuid(message));
 
     this.logger.trace(
       {
@@ -3431,10 +3488,12 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (this.claudeSessionId === null) {
       this.claudeSessionId = sessionId;
+      this.pendingFreshSessionId = null;
       this.persistence = null;
       return { threadStartedSessionId: sessionId, notice: null };
     }
     if (this.claudeSessionId === sessionId) {
+      this.pendingFreshSessionId = null;
       return { threadStartedSessionId: null, notice: null };
     }
     const oldSessionId = this.claudeSessionId;
@@ -3446,6 +3505,7 @@ class ClaudeAgentSession implements AgentSession {
       "Claude session ID changed in message; accepting new session",
     );
     this.claudeSessionId = sessionId;
+    this.pendingFreshSessionId = null;
     this.persistence = null;
     return {
       threadStartedSessionId: sessionId,
@@ -3476,9 +3536,11 @@ class ClaudeAgentSession implements AgentSession {
 
     if (existingSessionId === null) {
       this.claudeSessionId = newSessionId;
+      this.pendingFreshSessionId = null;
       threadStartedSessionId = newSessionId;
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID set for the first time");
     } else if (existingSessionId === newSessionId) {
+      this.pendingFreshSessionId = null;
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID unchanged (same value)");
     } else {
       // Session ID changed in an init message (e.g. a hook restarted Claude
@@ -3488,6 +3550,7 @@ class ClaudeAgentSession implements AgentSession {
         "Claude session ID changed in init message; accepting new session",
       );
       this.claudeSessionId = newSessionId;
+      this.pendingFreshSessionId = null;
       threadStartedSessionId = newSessionId;
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
@@ -3841,12 +3904,29 @@ class ClaudeAgentSession implements AgentSession {
     if (entry.isSidechain) {
       return;
     }
-    if (entry.type === "user" && typeof entry.uuid === "string") {
-      this.rememberUserMessageId(entry.uuid);
-    }
 
     const historyTimestamp = normalizeProviderReplayTimestamp(entry.timestamp);
     const items = this.convertHistoryEntry(entry);
+    const isVisibleUserEntry =
+      entry.type === "user" &&
+      typeof entry.uuid === "string" &&
+      !isSyntheticHistoryUserEntry(entry);
+    if (isVisibleUserEntry && typeof entry.uuid === "string") {
+      this.rememberUserMessageId(entry.uuid);
+      this.rememberRewindUserAnchor(entry.uuid);
+      const text = items
+        .filter((item) => item.type === "user_message")
+        .map((item) => item.text)
+        .join("\n")
+        .trim();
+      if (text) {
+        this.timelineMessageTexts.set(entry.uuid, text);
+      }
+    }
+    if (entry.type === "assistant" && typeof entry.uuid === "string") {
+      this.rememberRewindAssistantAnchor(entry.uuid);
+    }
+
     if (items.length > 0) {
       timeline.push(
         ...items.map((item) => ({
@@ -4562,6 +4642,25 @@ interface ClaudeHistoryEntry {
   [key: string]: unknown;
 }
 
+function mapAssistantHistoryBlocksWithMessageId(
+  entry: ClaudeHistoryEntry,
+  content: string | ClaudeContentChunk[],
+  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
+): AgentTimelineItem[] {
+  const items = mapBlocks(content);
+  const assistantMessageId =
+    typeof entry.uuid === "string" && entry.uuid.length > 0 ? entry.uuid : null;
+  if (!assistantMessageId) {
+    return items;
+  }
+  for (const item of items) {
+    if (item.type === "assistant_message" && !item.messageId) {
+      item.messageId = assistantMessageId;
+    }
+  }
+  return items;
+}
+
 function convertClaudeHistoryEntryPreamble(
   entry: ClaudeHistoryEntry,
 ): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
@@ -4657,7 +4756,7 @@ export function convertClaudeHistoryEntry(
   }
 
   if (entry.type === "assistant" && contentValue) {
-    return mapBlocks(contentValue);
+    return mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
   }
 
   return timeline;

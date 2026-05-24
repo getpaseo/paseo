@@ -33,6 +33,7 @@ export class FakeRewindSession implements AgentSession {
   readonly capabilities = REWIND_TEST_CAPABILITIES;
   readonly recordedRewinds: RecordedRewind[] = [];
   aborted = false;
+  historyReadCount = 0;
   history: AgentTimelineItem[] = [{ type: "user_message", text: "before", messageId: "message-1" }];
 
   private subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -59,6 +60,7 @@ export class FakeRewindSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    this.historyReadCount += 1;
     await this.waitBeforeHistory?.();
     for (const item of this.history) {
       yield { type: "timeline", provider: this.provider, item };

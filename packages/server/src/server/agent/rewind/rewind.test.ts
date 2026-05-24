@@ -75,9 +75,19 @@ describe("AgentManager rewind", () => {
     await manager.rewind(agentId, "message-1", "conversation");
 
     expect(session.recordedRewinds).toEqual([{ mode: "conversation", messageId: "message-1" }]);
+    expect(session.historyReadCount).toBe(1);
     expect(manager.fetchTimeline(agentId, { limit: 0 }).rows.map((row) => row.item)).toEqual([
       { type: "user_message", text: "before", messageId: "message-1" },
     ]);
+  });
+
+  test("rewinds files without rehydrating the conversation timeline", async () => {
+    const { manager, session, agentId } = await createRewindHarness();
+
+    await manager.rewind(agentId, "message-1", "files");
+
+    expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "message-1" }]);
+    expect(session.historyReadCount).toBe(0);
   });
 
   test("aborts an in-flight turn before rewinding", async () => {

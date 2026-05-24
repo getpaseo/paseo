@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mapCodexRolloutToolCall, mapCodexToolCallFromThreadItem } from "./tool-call-mapper.js";
+import { mapCodexToolCallEnvelope, mapCodexToolCallFromThreadItem } from "./tool-call-mapper.js";
 
 function expectMapped<T>(item: T | null): T {
   expect(item).toBeTruthy();
@@ -487,7 +487,7 @@ describe("codex tool-call mapper", () => {
 
   it("maps unknown tools to unknown detail with raw payloads", () => {
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-4",
         name: "my_custom_tool",
         input: { foo: "bar" },
@@ -505,7 +505,7 @@ describe("codex tool-call mapper", () => {
     expect(item.callId).toBe("codex-call-4");
   });
 
-  it("maps apply_patch rollout calls with raw patch input into edit detail", () => {
+  it("maps apply_patch tool-call calls with raw patch input into edit detail", () => {
     const patch = [
       "*** Begin Patch",
       "*** Update File: /tmp/repo/src/index.ts",
@@ -515,7 +515,7 @@ describe("codex tool-call mapper", () => {
       "*** End Patch",
     ].join("\n");
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-apply",
         name: "apply_patch",
         input: patch,
@@ -549,7 +549,7 @@ describe("codex tool-call mapper", () => {
     ].join("\n");
 
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-apply-object",
         name: "apply_patch",
         input: {
@@ -622,20 +622,20 @@ describe("codex tool-call mapper", () => {
     }
   });
 
-  it("maps path-only apply_patch rollout payloads to unknown detail instead of empty edit detail", () => {
+  it("maps path-only apply_patch tool-call payloads to unknown detail instead of empty edit detail", () => {
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-apply-path-only",
         name: "apply_patch",
-        input: { path: "/tmp/repo/src/path-only-rollout.ts" },
-        output: { files: [{ path: "/tmp/repo/src/path-only-rollout.ts", kind: "modify" }] },
+        input: { path: "/tmp/repo/src/path-only-tool-call.ts" },
+        output: { files: [{ path: "/tmp/repo/src/path-only-tool-call.ts", kind: "modify" }] },
         cwd: "/tmp/repo",
       }),
     );
 
     expect(item.detail.type).toBe("unknown");
     if (item.detail.type === "unknown") {
-      expect(item.detail.input).toEqual({ path: "/tmp/repo/src/path-only-rollout.ts" });
+      expect(item.detail.input).toEqual({ path: "/tmp/repo/src/path-only-tool-call.ts" });
     }
   });
 
@@ -679,12 +679,12 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("normalizes codex paseo speak rollout names and extracts spoken text", () => {
+  it("normalizes codex paseo speak tool-call names and extracts spoken text", () => {
     const item = expectMapped(
-      mapCodexRolloutToolCall({
-        callId: "codex-speak-rollout-1",
+      mapCodexToolCallEnvelope({
+        callId: "codex-speak-tool-call-1",
         name: "paseo.speak",
-        input: { text: "Rollout speech text." },
+        input: { text: "Tool call speech text." },
         output: { ok: true },
       }),
     );
@@ -692,13 +692,13 @@ describe("codex tool-call mapper", () => {
     expect(item.name).toBe("speak");
     expect(item.detail).toEqual({
       type: "unknown",
-      input: "Rollout speech text.",
+      input: "Tool call speech text.",
       output: null,
     });
   });
 
-  it("drops rollout tool calls when callId is missing", () => {
-    const item = mapCodexRolloutToolCall({
+  it("drops tool-call tool calls when callId is missing", () => {
+    const item = mapCodexToolCallEnvelope({
       callId: null,
       name: "read_file",
       input: { path: "/tmp/repo/README.md" },
@@ -727,8 +727,8 @@ describe("codex tool-call mapper", () => {
       "*** End Patch",
     ].join("\n");
     const item = expectMapped(
-      mapCodexRolloutToolCall({
-        callId: "codex-delete-rollout",
+      mapCodexToolCallEnvelope({
+        callId: "codex-delete-tool-call",
         name: "apply_patch",
         input: patch,
         output:
@@ -746,7 +746,7 @@ describe("codex tool-call mapper", () => {
   });
 
   it("maps multi-file apply_patch with update + delete into edit detail referencing the deleted file", () => {
-    // Exact data shape from real Codex rollout: update one file, delete another
+    // Exact data shape from real Codex tool-call: update one file, delete another
     const patch = [
       "*** Begin Patch",
       "*** Update File: /tmp/repo/src/app/index.tsx",
@@ -760,7 +760,7 @@ describe("codex tool-call mapper", () => {
     ].join("\n");
 
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-delete-multi",
         name: "apply_patch",
         input: patch,

@@ -18,7 +18,7 @@ const CodexCommandValueSchema = z.union([z.string(), z.array(z.string())]);
 const CodexToolCallStatusSchema = z.enum(["running", "completed", "failed", "canceled"]);
 type CodexToolCallStatus = z.infer<typeof CodexToolCallStatusSchema>;
 
-const CodexRolloutToolCallParamsSchema = z
+const CodexToolCallEnvelopeParamsSchema = z
   .object({
     callId: z.string().optional().nullable(),
     name: z.string().min(1),
@@ -432,7 +432,7 @@ function asEditTextFields(text: string | undefined): { unifiedDiff?: string; new
   return { newString: text };
 }
 
-function findRolloutEditPatchText(input: Record<string, unknown>): string | undefined {
+function findToolCallEditPatchText(input: Record<string, unknown>): string | undefined {
   return (
     (typeof input.patch === "string" && input.patch) ||
     (typeof input.diff === "string" && input.diff) ||
@@ -443,7 +443,7 @@ function findRolloutEditPatchText(input: Record<string, unknown>): string | unde
   );
 }
 
-function findRolloutEditInputPath(
+function findToolCallEditInputPath(
   input: Record<string, unknown>,
   patchText: string,
 ): string | undefined {
@@ -459,14 +459,14 @@ function findRolloutEditInputPath(
   );
 }
 
-function normalizeRolloutEditRecordInput(input: Record<string, unknown>): unknown {
-  const candidatePatchText = findRolloutEditPatchText(input);
+function normalizeToolCallEditRecordInput(input: Record<string, unknown>): unknown {
+  const candidatePatchText = findToolCallEditPatchText(input);
   if (!candidatePatchText) {
     return input;
   }
 
   const textFields = asEditTextFields(candidatePatchText);
-  const rawPath = findRolloutEditInputPath(input, candidatePatchText);
+  const rawPath = findToolCallEditInputPath(input, candidatePatchText);
 
   const {
     patch: _patch,
@@ -490,7 +490,7 @@ function normalizeRolloutEditRecordInput(input: Record<string, unknown>): unknow
   return normalized;
 }
 
-function normalizeRolloutEditInput(input: unknown): unknown {
+function normalizeToolCallEditInput(input: unknown): unknown {
   if (typeof input === "string") {
     const textFields = asEditTextFields(input);
     const path = extractPatchPrimaryFilePath(input);
@@ -503,7 +503,7 @@ function normalizeRolloutEditInput(input: unknown): unknown {
   if (!isRecord(input)) {
     return input;
   }
-  return normalizeRolloutEditRecordInput(input);
+  return normalizeToolCallEditRecordInput(input);
 }
 
 function asEditFileOutputFields(text: string | undefined): { patch?: string; content?: string } {
@@ -965,7 +965,7 @@ export function mapCodexToolCallFromThreadItem(
   return toToolCallFromNormalizedEnvelope(envelope);
 }
 
-export function mapCodexRolloutToolCall(params: {
+export function mapCodexToolCallEnvelope(params: {
   callId?: string | null;
   name: string;
   input?: unknown;
@@ -973,7 +973,7 @@ export function mapCodexRolloutToolCall(params: {
   error?: unknown;
   cwd?: string | null;
 }): ToolCallTimelineItem | null {
-  const parsed = CodexRolloutToolCallParamsSchema.safeParse(params);
+  const parsed = CodexToolCallEnvelopeParamsSchema.safeParse(params);
   if (!parsed.success) {
     return null;
   }
@@ -988,7 +988,7 @@ export function mapCodexRolloutToolCall(params: {
   }
   const normalizedInput =
     normalizedName === "apply_patch" || normalizedName === "apply_diff"
-      ? normalizeRolloutEditInput(parsed.data.input ?? null)
+      ? normalizeToolCallEditInput(parsed.data.input ?? null)
       : (parsed.data.input ?? null);
 
   return toToolCallFromNormalizedEnvelope({

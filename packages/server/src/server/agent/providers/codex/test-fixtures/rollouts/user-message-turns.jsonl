@@ -1,6 +1,0 @@
-{"timestamp":"2026-05-23T01:00:00.000Z","type":"session_meta","payload":{"id":"thread-fixture","cwd":"/workspace"}}
-{"timestamp":"2026-05-23T01:00:01.000Z","type":"event_msg","payload":{"type":"user_message","id":"synthetic-agents","message":"# AGENTS.md instructions for /workspace\n\n<INSTRUCTIONS>\nUse the project instructions.\n</INSTRUCTIONS>"}}
-{"timestamp":"2026-05-23T01:00:02.000Z","type":"event_msg","payload":{"type":"user_message","id":"paseo-user-1","message":"First real prompt"}}
-{"timestamp":"2026-05-23T01:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"assistant-1","content":[{"type":"output_text","text":"First answer"}]}}
-{"timestamp":"2026-05-23T01:00:04.000Z","type":"response_item","payload":{"type":"message","role":"user","id":"paseo-user-2","content":[{"type":"input_text","text":"Second real prompt"}]}}
-{"timestamp":"2026-05-23T01:00:05.000Z","type":"event_msg","payload":{"type":"user_message","id":"paseo-user-3","message":{"text":"Third real prompt"}}}

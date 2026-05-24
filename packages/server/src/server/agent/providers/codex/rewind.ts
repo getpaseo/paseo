@@ -8,11 +8,6 @@ import {
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
 } from "./app-server-transport.js";
-import {
-  countRolloutUserMessageTurns,
-  findUserMessageTurnIndex,
-} from "../codex-user-message-turn-index.js";
-import { findCodexRolloutFile } from "../codex-rollout-timeline.js";
 
 export interface CodexRewindClient {
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
@@ -20,7 +15,7 @@ export interface CodexRewindClient {
   request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
 }
 
-export interface CodexMessageTurnIndexResolver {
+export interface CodexUserMessageTurnIndex {
   resolve(messageId: string): number | null;
   count(): number;
 }
@@ -45,32 +40,6 @@ async function rollbackCodexThread(
   return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
 }
 
-async function resolveTurnIndex(input: {
-  rolloutPath: string | null;
-  messageId: string;
-  liveAlias?: CodexMessageTurnIndexResolver;
-}): Promise<number | null> {
-  const liveAliasIndex = input.liveAlias?.resolve(input.messageId);
-  if (liveAliasIndex !== null && liveAliasIndex !== undefined) {
-    return liveAliasIndex;
-  }
-  if (!input.rolloutPath) {
-    return null;
-  }
-  return await findUserMessageTurnIndex(input.rolloutPath, input.messageId);
-}
-
-async function countCurrentUserTurns(input: {
-  rolloutPath: string | null;
-  liveAlias?: CodexMessageTurnIndexResolver;
-}): Promise<number> {
-  const aliasCount = input.liveAlias?.count() ?? 0;
-  if (!input.rolloutPath) {
-    return aliasCount;
-  }
-  return Math.max(aliasCount, await countRolloutUserMessageTurns(input.rolloutPath));
-}
-
 export async function revertCodexConversation(input: {
   client: CodexRewindClient;
   threadId: string | null;
@@ -78,28 +47,19 @@ export async function revertCodexConversation(input: {
   cwd?: string | null;
   model?: string | null;
   serviceTier?: string | null;
-  sessionRoot?: string | null;
-  liveAlias?: CodexMessageTurnIndexResolver;
+  userMessageTurns: CodexUserMessageTurnIndex;
   setThreadId: (threadId: string) => void | Promise<void>;
 }): Promise<void> {
   if (!input.threadId) {
     throw new Error("Codex thread is not ready for rewind");
   }
 
-  const rolloutPath = await findCodexRolloutFile(input.threadId, input.sessionRoot);
-  const targetTurnIndex = await resolveTurnIndex({
-    rolloutPath,
-    messageId: input.messageId,
-    liveAlias: input.liveAlias,
-  });
+  const targetTurnIndex = input.userMessageTurns.resolve(input.messageId);
   if (targetTurnIndex === null) {
     throw new Error(`Codex could not find user message ${input.messageId} in the current thread`);
   }
 
-  const currentUserTurnCount = await countCurrentUserTurns({
-    rolloutPath,
-    liveAlias: input.liveAlias,
-  });
+  const currentUserTurnCount = input.userMessageTurns.count();
   const numTurns = currentUserTurnCount - targetTurnIndex;
   if (numTurns < 0) {
     throw new Error(`Codex user message ${input.messageId} is outside the current thread`);

@@ -139,7 +139,9 @@ describe("daemon E2E (real codex) - rewind", () => {
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
       const fileText = await readScratchFile(session);
 
-      expect(textByRole(rewoundTimeline, "user_message")).toContain("CODEX_REWIND_PROMPT_SINGLE");
+      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
+        "CODEX_REWIND_PROMPT_SINGLE",
+      );
       expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain("CODEX_SINGLE_DONE");
       expect(fileText).toBe("BASE\nCODEX_SINGLE_MARKER\n");
     } finally {
@@ -172,7 +174,7 @@ describe("daemon E2E (real codex) - rewind", () => {
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
 
       await expect(fileExists(dummyPath)).resolves.toBe(true);
-      expect(textByRole(rewoundTimeline, "user_message")).toContain(
+      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
         "CODEX_REWIND_PROMPT_SINGLE_CREATE",
       );
       expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain(
@@ -208,10 +210,13 @@ describe("daemon E2E (real codex) - rewind", () => {
       const fileText = await readScratchFile(session);
 
       expect(newThreadId).not.toBe(oldThreadId);
-      expect(textByRole(rewoundTimeline, "user_message")).toContain("CODEX_REWIND_PROMPT_FIRST");
+      expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
+        "CODEX_REWIND_PROMPT_FIRST",
+      );
       expect(textByRole(rewoundTimeline, "user_message")).not.toContain(
         "CODEX_REWIND_PROMPT_SECOND",
       );
+      expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain("CODEX_FIRST_DONE");
       expect(textByRole(rewoundTimeline, "assistant_message")).not.toContain("CODEX_SECOND_DONE");
       expect(fileText).toContain("CODEX_SECOND_MARKER");
     } finally {

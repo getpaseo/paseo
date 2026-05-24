@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import type {
   CodexThreadForkParams,
@@ -10,7 +7,7 @@ import type {
   CodexThreadRollbackResponse,
 } from "./app-server-transport.js";
 import {
-  type CodexMessageTurnIndexResolver,
+  type CodexUserMessageTurnIndex,
   type CodexRewindClient,
   revertCodexConversation,
 } from "./rewind.js";
@@ -59,7 +56,7 @@ class FakeCodex implements CodexRewindClient {
   }
 }
 
-class LiveCodexMessageTurns implements CodexMessageTurnIndexResolver {
+class CodexMessageTurns implements CodexUserMessageTurnIndex {
   constructor(private readonly indexesByMessageId: Map<string, number>) {}
 
   resolve(messageId: string): number | null {
@@ -71,41 +68,13 @@ class LiveCodexMessageTurns implements CodexMessageTurnIndexResolver {
   }
 }
 
-let tmpRoots: string[] = [];
-
-afterEach(() => {
-  for (const root of tmpRoots) {
-    rmSync(root, { recursive: true, force: true });
-  }
-  tmpRoots = [];
-});
-
-function writeRollout(input: { threadId: string; ids: string[] }): string {
-  const root = mkdtempSync(path.join(tmpdir(), "codex-rewind-test-"));
-  tmpRoots.push(root);
-  const rolloutPath = path.join(root, `rollout-${input.threadId}.jsonl`);
-  const lines = input.ids.map((id, index) =>
-    JSON.stringify({
-      type: "response_item",
-      item: {
-        type: "message",
-        role: "user",
-        id,
-        content: [{ type: "input_text", text: `user prompt ${index + 1}` }],
-      },
-    }),
-  );
-  writeFileSync(rolloutPath, `${lines.join("\n")}\n`, "utf8");
-  return root;
-}
-
 describe("Codex Rewind", () => {
-  test("rewinds the conversation by forking the thread and rolling back past the live user message", async () => {
+  test("rewinds the conversation by forking the thread and rolling back past the native user message", async () => {
     const codex = new FakeCodex();
-    const liveTurns = new LiveCodexMessageTurns(
+    const userMessageTurns = new CodexMessageTurns(
       new Map([
-        ["paseo-first", 0],
-        ["paseo-second", 1],
+        ["codex-first", 0],
+        ["codex-second", 1],
       ]),
     );
     let reboundThreadId: string | null = null;
@@ -113,11 +82,11 @@ describe("Codex Rewind", () => {
     await revertCodexConversation({
       client: codex,
       threadId: "source-thread",
-      messageId: "paseo-first",
+      messageId: "codex-first",
       cwd: "/workspace/project",
       model: "gpt-5.4-mini",
       serviceTier: null,
-      liveAlias: liveTurns,
+      userMessageTurns,
       setThreadId: (threadId) => {
         reboundThreadId = threadId;
       },
@@ -137,19 +106,22 @@ describe("Codex Rewind", () => {
     expect(reboundThreadId).toBe("forked-thread");
   });
 
-  test("rewinds the conversation by resolving the persisted rollout user message id", async () => {
+  test("rewinds the conversation using native user message ids hydrated from app-server history", async () => {
     const codex = new FakeCodex();
-    const sessionRoot = writeRollout({
-      threadId: "source-thread",
-      ids: ["paseo-first", "paseo-second", "paseo-third"],
-    });
+    const userMessageTurns = new CodexMessageTurns(
+      new Map([
+        ["codex-first", 0],
+        ["codex-second", 1],
+        ["codex-third", 2],
+      ]),
+    );
     let reboundThreadId: string | null = null;
 
     await revertCodexConversation({
       client: codex,
       threadId: "source-thread",
-      messageId: "paseo-second",
-      sessionRoot,
+      messageId: "codex-second",
+      userMessageTurns,
       setThreadId: (threadId) => {
         reboundThreadId = threadId;
       },
@@ -161,17 +133,14 @@ describe("Codex Rewind", () => {
 
   test("declines to rewind when the user message is not in the Codex thread", async () => {
     const codex = new FakeCodex();
-    const sessionRoot = writeRollout({
-      threadId: "source-thread",
-      ids: ["paseo-first"],
-    });
+    const userMessageTurns = new CodexMessageTurns(new Map([["codex-first", 0]]));
 
     await expect(
       revertCodexConversation({
         client: codex,
         threadId: "source-thread",
         messageId: "missing-message",
-        sessionRoot,
+        userMessageTurns,
         setThreadId: () => undefined,
       }),
     ).rejects.toThrow("Codex could not find user message missing-message");

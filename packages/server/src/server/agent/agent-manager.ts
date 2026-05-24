@@ -1425,6 +1425,11 @@ export class AgentManager {
     };
   }
 
+  sessionEmitsUserMessages(agentId: string): boolean {
+    const agent = this.requireSessionAgent(agentId);
+    return agent.session.emitsUserMessages === true;
+  }
+
   /**
    * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
    * and without canceling any active turn. Returns true when the session
@@ -2016,7 +2021,9 @@ export class AgentManager {
         "agent.rewind.start",
       );
       await invokeRewindCapability(agent.session, { messageId, mode });
-      await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+      if (mode !== "files") {
+        await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+      }
       await this.refreshRuntimeInfo(agent);
       await this.persistSnapshot(agent);
       this.logger.info(
