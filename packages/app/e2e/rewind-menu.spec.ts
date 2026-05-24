@@ -2,7 +2,13 @@ import { expect, test, type Page } from "./fixtures";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { connectTerminalClient } from "./helpers/terminal-perf";
 import { createTempGitRepo } from "./helpers/workspace";
-import { expectComposerVisible, submitMessage } from "./helpers/composer";
+import {
+  composerLocator,
+  expectComposerDraft,
+  expectComposerVisible,
+  fillComposerDraft,
+  submitMessage,
+} from "./helpers/composer";
 
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
@@ -63,11 +69,31 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(0);
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
+      await expectComposerDraft(page, firstPrompt);
 
       await submitMessage(page, replacementPrompt);
       await expect(page.getByText(replacementPrompt, { exact: true })).toBeVisible();
       await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(0);
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
+
+      const preservedDraft = "Keep this human draft after rewind.";
+      await fillComposerDraft(page, preservedDraft);
+      await composerLocator(page).evaluate((element) => element.blur());
+      await page.getByText(replacementPrompt, { exact: true }).hover();
+      await page.getByTestId("rewind-menu-trigger").last().click();
+      await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
+      await page.getByTestId("rewind-menu-files").click();
+      await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
+      await expectComposerDraft(page, preservedDraft);
+
+      await fillComposerDraft(page, "");
+      await composerLocator(page).evaluate((element) => element.blur());
+      await page.getByText(replacementPrompt, { exact: true }).hover();
+      await page.getByTestId("rewind-menu-trigger").last().click();
+      await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
+      await page.getByTestId("rewind-menu-both").click();
+      await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
+      await expectComposerDraft(page, replacementPrompt);
     } finally {
       await client.close();
       await repo.cleanup();

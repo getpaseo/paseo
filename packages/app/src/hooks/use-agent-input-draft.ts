@@ -50,7 +50,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   commandDraftConfig: DraftCommandConfig | undefined;
 };
 
-interface AgentInputDraft {
+export interface AgentInputDraft {
   text: string;
   setText: (text: string) => void;
   attachments: UserComposerAttachment[];

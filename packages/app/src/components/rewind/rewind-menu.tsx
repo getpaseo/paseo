@@ -16,7 +16,8 @@ export type { RewindMode };
 
 interface RewindMenuProps {
   capabilities: AgentCapabilityFlags;
-  onRewind: (mode: RewindMode) => Promise<void> | void;
+  rewoundText: string;
+  onRewind: (input: { mode: RewindMode; rewoundText: string }) => Promise<void> | void;
   isPending?: boolean;
   testID?: string;
 }
@@ -37,6 +38,7 @@ function iconForItem(item: RewindMenuItem): ComponentType<{ color: string; size:
 
 export const RewindMenu = memo(function RewindMenu({
   capabilities,
+  rewoundText,
   onRewind,
   isPending = false,
   testID = "rewind-menu",
@@ -57,7 +59,7 @@ export const RewindMenu = memo(function RewindMenu({
       }
       setPendingMode(mode);
       try {
-        await onRewind(mode);
+        await onRewind({ mode, rewoundText });
       } catch {
         // useRewindAgentMutation owns the toast; the sheet only owns flow state.
       } finally {
@@ -65,7 +67,7 @@ export const RewindMenu = memo(function RewindMenu({
         setIsSheetVisible(false);
       }
     },
-    [isPending, onRewind],
+    [isPending, onRewind, rewoundText],
   );
   const triggerIcon = useCallback((color: string) => <Undo2 size={16} color={color} />, []);
   const tooltipContent = useMemo(
