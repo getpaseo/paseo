@@ -133,6 +133,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         id: machine.attempt.clientMessageId,
         text: machine.attempt.text,
         timestamp: machine.attempt.timestamp,
+        optimistic: true,
         ...(machine.attempt.images && machine.attempt.images.length > 0
           ? { images: machine.attempt.images }
           : {}),

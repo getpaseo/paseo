@@ -3,6 +3,8 @@ import invariant from "tiny-invariant";
 import { describe, expect, it } from "vitest";
 
 import {
+  applyStreamEvent,
+  clearOptimisticUserMessages,
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
@@ -937,7 +939,7 @@ describe("turn lifecycle events", () => {
   });
 
   it.each(["codex", "opencode", "pi"] satisfies AgentProvider[])(
-    "replaces an optimistic user message when a live %s provider-owned id echo arrives",
+    "replaces an optimistic user message when a live %s provider-owned id echo arrives without text matching",
     (provider) => {
       const optimisticTimestamp = new Date("2025-01-01T15:02:00Z");
       const serverTimestamp = new Date("2025-01-01T15:02:01Z");
@@ -946,6 +948,7 @@ describe("turn lifecycle events", () => {
         id: "msg_optimistic",
         text: "same user text",
         timestamp: optimisticTimestamp,
+        optimistic: true,
         images: [
           {
             id: "image-1",
@@ -972,7 +975,7 @@ describe("turn lifecycle events", () => {
           provider,
           item: {
             type: "user_message",
-            text: "same user text",
+            text: "server-owned rendered text",
             messageId: "provider-owned-id",
           },
         },
@@ -985,28 +988,21 @@ describe("turn lifecycle events", () => {
       const userMessage = userMessages[0];
       invariant(userMessage?.kind === "user_message");
       assert.strictEqual(userMessage.id, "provider-owned-id");
-      assert.strictEqual(userMessage.text, "same user text");
+      assert.strictEqual(userMessage.text, "server-owned rendered text");
       assert.deepStrictEqual(userMessage.images, optimistic.images);
       assert.deepStrictEqual(userMessage.attachments, optimistic.attachments);
     },
   );
 
-  it("replaces an optimistic OpenCode user message when the provider echo includes rendered attachments", () => {
+  it("replaces one optimistic plain-text user message with the next live server user message", () => {
     const optimisticTimestamp = new Date("2025-01-01T15:03:00Z");
     const serverTimestamp = new Date("2025-01-01T15:03:01Z");
     const optimistic: StreamItem = {
       kind: "user_message",
       id: "msg_optimistic",
-      text: "inspect this file",
+      text: "typed plain text",
       timestamp: optimisticTimestamp,
-      attachments: [
-        {
-          type: "text",
-          mimeType: "text/plain",
-          text: "ATTACHMENT_CONTEXT",
-          title: "context.txt",
-        },
-      ],
+      optimistic: true,
     };
 
     const state = reduceStreamUpdate(
@@ -1016,7 +1012,7 @@ describe("turn lifecycle events", () => {
         provider: "opencode",
         item: {
           type: "user_message",
-          text: "inspect this file\nATTACHMENT_CONTEXT",
+          text: "typed plain text",
           messageId: "msg_opencode_provider_owned",
         },
       },
@@ -1029,36 +1025,152 @@ describe("turn lifecycle events", () => {
     const userMessage = userMessages[0];
     invariant(userMessage?.kind === "user_message");
     assert.strictEqual(userMessage.id, "msg_opencode_provider_owned");
-    assert.strictEqual(userMessage.text, "inspect this file\nATTACHMENT_CONTEXT");
-    assert.deepStrictEqual(userMessage.attachments, optimistic.attachments);
+    assert.strictEqual(userMessage.text, "typed plain text");
+    assert.strictEqual(userMessage.optimistic, undefined);
   });
 
-  it("keeps repeated plain user text distinct when only the optimistic message id differs", () => {
-    const optimisticTimestamp = new Date("2025-01-01T15:04:00Z");
-    const serverTimestamp = new Date("2025-01-01T15:04:01Z");
+  it("reconciles an optimistic user message that was pending in the streaming head", () => {
     const optimistic: StreamItem = {
       kind: "user_message",
-      id: "msg_optimistic",
-      text: "repeatable",
-      timestamp: optimisticTimestamp,
+      id: "msg_head_optimistic",
+      text: "plain text in head",
+      timestamp: new Date("2025-01-01T15:03:02Z"),
+      optimistic: true,
     };
 
-    const state = reduceStreamUpdate(
-      [optimistic],
+    const result = applyStreamEvent({
+      tail: [],
+      head: [optimistic],
+      event: {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: "plain text in head",
+          messageId: "provider-owned-head",
+        },
+      },
+      timestamp: new Date("2025-01-01T15:03:03Z"),
+      source: "live",
+    });
+
+    assert.strictEqual(result.head.length, 0);
+    const userMessages = result.tail.filter((item) => item.kind === "user_message");
+    assert.strictEqual(userMessages.length, 1);
+    assert.strictEqual(userMessages[0]?.id, "provider-owned-head");
+    assert.strictEqual(userMessages[0]?.optimistic, undefined);
+  });
+
+  it("replaces multiple optimistic user messages in FIFO order", () => {
+    const optimisticTimestamp = new Date("2025-01-01T15:04:00Z");
+    const serverTimestamp = new Date("2025-01-01T15:04:01Z");
+    const firstOptimistic: StreamItem = {
+      kind: "user_message",
+      id: "msg_optimistic_1",
+      text: "first typed text",
+      timestamp: optimisticTimestamp,
+      optimistic: true,
+    };
+    const secondOptimistic: StreamItem = {
+      kind: "user_message",
+      id: "msg_optimistic_2",
+      text: "second typed text",
+      timestamp: new Date("2025-01-01T15:04:00.500Z"),
+      optimistic: true,
+    };
+
+    const afterFirstEcho = reduceStreamUpdate(
+      [firstOptimistic, secondOptimistic],
       {
         type: "timeline",
         provider: "opencode",
         item: {
           type: "user_message",
-          text: "repeatable\nprovider-added context",
-          messageId: "msg_opencode_provider_owned",
+          text: "first server text",
+          messageId: "provider-owned-first",
         },
       },
       serverTimestamp,
       { source: "live" },
     );
+    const state = reduceStreamUpdate(
+      afterFirstEcho,
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: "second server text",
+          messageId: "provider-owned-second",
+        },
+      },
+      new Date("2025-01-01T15:04:02Z"),
+      { source: "live" },
+    );
 
-    assert.strictEqual(state.filter((item) => item.kind === "user_message").length, 2);
+    const userMessages = state.filter((item) => item.kind === "user_message");
+    assert.strictEqual(userMessages.length, 2);
+    assert.deepStrictEqual(
+      userMessages.map((item) => [item.id, item.text, item.optimistic]),
+      [
+        ["provider-owned-first", "first server text", undefined],
+        ["provider-owned-second", "second server text", undefined],
+      ],
+    );
+  });
+
+  it("appends a live server user message when no optimistic user message is pending", () => {
+    const state = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: "resumed session text",
+          messageId: "provider-owned-resume",
+        },
+      },
+      new Date("2025-01-01T15:04:03Z"),
+      { source: "live" },
+    );
+
+    const userMessages = state.filter((item) => item.kind === "user_message");
+    assert.strictEqual(userMessages.length, 1);
+    assert.strictEqual(userMessages[0]?.id, "provider-owned-resume");
+    assert.strictEqual(userMessages[0]?.optimistic, undefined);
+  });
+
+  it("does not match a server user message to an optimistic from a rewound turn after pending optimistics are cleared", () => {
+    const optimistic: StreamItem = {
+      kind: "user_message",
+      id: "msg_rewound_optimistic",
+      text: "rewound text",
+      timestamp: new Date("2025-01-01T15:04:04Z"),
+      optimistic: true,
+    };
+    const cleared = clearOptimisticUserMessages([optimistic]);
+
+    const state = reduceStreamUpdate(
+      cleared,
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: "future server echo",
+          messageId: "provider-owned-after-rewind",
+        },
+      },
+      new Date("2025-01-01T15:04:05Z"),
+      { source: "live" },
+    );
+
+    const userMessages = state.filter((item) => item.kind === "user_message");
+    assert.strictEqual(userMessages.length, 1);
+    assert.strictEqual(userMessages[0]?.id, "provider-owned-after-rewind");
+    assert.strictEqual(userMessages[0]?.text, "future server echo");
+    assert.strictEqual(userMessages[0]?.optimistic, undefined);
   });
 
   it("keeps canonical repeated user messages distinct during hydration", () => {

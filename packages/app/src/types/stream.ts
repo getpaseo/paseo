@@ -59,6 +59,7 @@ export interface UserMessageItem {
   id: string;
   text: string;
   timestamp: Date;
+  optimistic?: true;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
 }
@@ -184,55 +185,12 @@ function markThoughtReady(item: ThoughtItem): ThoughtItem {
   };
 }
 
-const OPTIMISTIC_USER_MESSAGE_RECONCILE_WINDOW_MS = 2 * 60 * 1000;
-
-function hasUserMessageOnlyMetadata(entry: UserMessageItem): boolean {
-  return (
-    (entry.images !== undefined && entry.images.length > 0) ||
-    (entry.attachments !== undefined && entry.attachments.length > 0)
-  );
-}
-
-function matchesOptimisticUserMessageText(entry: UserMessageItem, incomingText: string): boolean {
-  if (entry.text === incomingText) {
-    return true;
-  }
-
-  if (!hasUserMessageOnlyMetadata(entry)) {
-    return false;
-  }
-
-  const optimisticText = entry.text.trimEnd();
-  const providerText = incomingText.trimEnd();
-  if (optimisticText.length === 0) {
-    return providerText.length > 0;
-  }
-
-  return providerText.startsWith(`${optimisticText}\n`);
-}
-
-function findOptimisticUserMessageIndex(
-  state: StreamItem[],
-  text: string,
-  timestamp: Date,
-  messageId?: string,
-): number {
-  for (let index = state.length - 1; index >= 0; index -= 1) {
+function findOptimisticUserMessageIndex(state: StreamItem[]): number {
+  for (let index = 0; index < state.length; index += 1) {
     const entry = state[index];
-    if (entry?.kind !== "user_message") {
-      continue;
-    }
-    if (entry.id === messageId) {
-      return -1;
-    }
-    if (!matchesOptimisticUserMessageText(entry, text)) {
-      continue;
-    }
-    const deltaMs = Math.abs(timestamp.getTime() - entry.timestamp.getTime());
-    if (deltaMs <= OPTIMISTIC_USER_MESSAGE_RECONCILE_WINDOW_MS) {
+    if (entry?.kind === "user_message" && entry.optimistic) {
       return index;
     }
-    return -1;
   }
   return -1;
 }
@@ -281,9 +239,7 @@ function appendUserMessage(
       ? state[existingIndex]
       : null;
   const optimisticIndex =
-    source === "live" && existingIndex < 0
-      ? findOptimisticUserMessageIndex(state, chunk, timestamp, messageId)
-      : -1;
+    source === "live" && existingIndex < 0 ? findOptimisticUserMessageIndex(state) : -1;
   const optimistic =
     optimisticIndex >= 0 && state[optimisticIndex]?.kind === "user_message"
       ? state[optimisticIndex]
@@ -309,6 +265,11 @@ function appendUserMessage(
   }
 
   return [...state, nextItem];
+}
+
+export function clearOptimisticUserMessages(state: StreamItem[]): StreamItem[] {
+  const next = state.filter((item) => item.kind !== "user_message" || !item.optimistic);
+  return next.length === state.length ? state : next;
 }
 
 function appendAssistantMessage(

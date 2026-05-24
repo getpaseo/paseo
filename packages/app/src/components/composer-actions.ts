@@ -135,6 +135,7 @@ export async function dispatchComposerAgentMessage(
     id: messageId,
     text: input.text,
     timestamp: new Date(),
+    optimistic: true,
     ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
     ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
   };

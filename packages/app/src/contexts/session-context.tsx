@@ -1664,6 +1664,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         id: messageId,
         text: message,
         timestamp: new Date(),
+        optimistic: true,
         ...(images && images.length > 0 ? { images } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };

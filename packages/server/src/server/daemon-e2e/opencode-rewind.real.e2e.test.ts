@@ -271,6 +271,28 @@ describe("daemon E2E (real opencode) - rewind", () => {
     }
   }, 420_000);
 
+  test("records exactly one plain-text user message for a real OpenCode turn", async () => {
+    const session = await launchOpenCodeRewindSession(
+      harness,
+      "opencode-plain-text-user-message-real",
+    );
+    const prompt = "PASEO_OPENCODE_PLAIN_TEXT_DUP_CHECK. Reply exactly: OPENCODE_PLAIN_TEXT_DONE";
+
+    try {
+      await harness.client.sendMessage(session.agentId, prompt);
+      const finish = await harness.client.waitForFinish(session.agentId, TURN_TIMEOUT_MS);
+      expect(finish.status).toBe("idle");
+      expect(finish.final?.lastError).toBeUndefined();
+
+      const timeline = await fetchTimelineItems(harness.client, session.agentId);
+      const userMessages = roleItems(timeline, "user_message");
+      expect(userMessages).toHaveLength(1);
+      expect(userMessages[0]?.text).toBe(prompt);
+    } finally {
+      await closeOpenCodeRewindSession(session);
+    }
+  }, 420_000);
+
   test("rewinds a real OpenCode read-only turn without changing files", async () => {
     const session = await launchOpenCodeRewindSession(harness, "opencode-rewind-read-only-real");
 

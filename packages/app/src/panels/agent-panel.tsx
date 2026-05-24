@@ -1177,6 +1177,7 @@ function AgentStreamSection({
         id: pendingCreate.clientMessageId,
         text: pendingCreate.text,
         timestamp: new Date(pendingCreate.timestamp),
+        optimistic: true,
         ...(pendingCreate.images && pendingCreate.images.length > 0
           ? { images: pendingCreate.images }
           : {}),

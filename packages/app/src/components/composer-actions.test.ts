@@ -353,6 +353,7 @@ describe("dispatchComposerAgentMessage", () => {
     expect(userMessage.images).toEqual([image]);
     expect(userMessage.attachments).toEqual(call.options.attachments);
     expect(userMessage.id).toBe(call.options.messageId);
+    expect(userMessage.optimistic).toBe(true);
   });
 
   it("appends to the existing head when one is present", async () => {
