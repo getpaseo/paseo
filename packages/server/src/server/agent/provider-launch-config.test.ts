@@ -85,7 +85,7 @@ describe("createProviderEnv", () => {
     expect(env.PATH).toBe("/custom/path");
   });
 
-  test("strips parent Claude Code session env vars", () => {
+  test("strips parent Claude Code session env vars without removing SDK child flags", () => {
     const base = {
       PATH: "/usr/bin",
       CLAUDECODE: "1",
@@ -102,7 +102,7 @@ describe("createProviderEnv", () => {
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
     expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
-    expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe("true");
   });
 });
 

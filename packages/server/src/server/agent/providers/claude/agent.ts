@@ -2037,17 +2037,10 @@ class ClaudeAgentSession implements AgentSession {
 
   async revertFiles(input: { messageId: string }): Promise<void> {
     const messageId = await this.resolveClaudeMessageId(input.messageId);
-    try {
-      await revertClaudeFiles({
-        query: await this.ensureQuery(),
-        messageId,
-      });
-    } catch (error) {
-      if (!this.shouldUseJsonlFileRewindFallback(error)) {
-        throw error;
-      }
-      this.rewindFilesFromJsonl(messageId);
-    }
+    await revertClaudeFiles({
+      query: await this.ensureQuery(),
+      messageId,
+    });
     if (this.claudeSessionId) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       this.persistedHistory = [];
@@ -2057,7 +2050,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async revertBoth(input: { messageId: string }): Promise<void> {
-    await this.revertFiles(input);
+    const nextMessageId = this.resolveNextTimelineUserMessageId(input.messageId);
+    if (nextMessageId) {
+      await this.revertFiles({ messageId: nextMessageId });
+    }
     await this.revertConversation(input);
   }
 
@@ -2224,6 +2220,17 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
+  private resolveNextTimelineUserMessageId(messageId: string): string | null {
+    const ids = Array.from(this.timelineMessageTexts.keys());
+    const index = ids.findIndex(
+      (id) => id === messageId || this.timelineMessageIdAliases.get(id) === messageId,
+    );
+    if (index < 0) {
+      return null;
+    }
+    return ids[index + 1] ?? null;
+  }
+
   private readUserMessageIdsFromHistoryFile(): string[] {
     if (!this.claudeSessionId) {
       return [];
@@ -2326,70 +2333,6 @@ class ClaudeAgentSession implements AgentSession {
       return null;
     }
     return null;
-  }
-
-  private shouldUseJsonlFileRewindFallback(error: unknown): boolean {
-    return (
-      error instanceof Error &&
-      (/file rewinding is not enabled/i.test(error.message) ||
-        /No file checkpoint found for message/i.test(error.message))
-    );
-  }
-
-  private rewindFilesFromJsonl(messageId: string): void {
-    if (!this.claudeSessionId) {
-      throw new Error("Claude session is not ready for file rewind");
-    }
-    const historyPath = this.resolveHistoryPath(this.claudeSessionId);
-    if (!historyPath || !fs.existsSync(historyPath)) {
-      throw new Error(`No file checkpoint found for message ${messageId}`);
-    }
-
-    const entries = fs
-      .readFileSync(historyPath, "utf8")
-      .split(/\n+/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => toObjectRecord(JSON.parse(line)))
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry));
-
-    const targetIndex = entries.findIndex(
-      (entry) => entry.type === "user" && entry.uuid === messageId,
-    );
-    if (targetIndex < 0) {
-      throw new Error(`No file checkpoint found for message ${messageId}`);
-    }
-
-    const restored = new Set<string>();
-    for (let idx = entries.length - 1; idx >= targetIndex; idx -= 1) {
-      const result = toObjectRecord(entries[idx]?.toolUseResult);
-      if (!result) {
-        continue;
-      }
-      const filePath = typeof result?.filePath === "string" ? result.filePath : null;
-      if (!filePath || restored.has(filePath) || !Object.hasOwn(result, "originalFile")) {
-        continue;
-      }
-      const originalFile = result.originalFile;
-      if (originalFile === null) {
-        fs.rmSync(filePath, { force: true });
-        restored.add(filePath);
-        continue;
-      }
-      if (typeof originalFile !== "string") {
-        continue;
-      }
-      const restoredContent =
-        originalFile.length > 0 && !originalFile.endsWith("\n")
-          ? `${originalFile}\n`
-          : originalFile;
-      fs.writeFileSync(filePath, restoredContent, "utf8");
-      restored.add(filePath);
-    }
-
-    if (restored.size === 0) {
-      return;
-    }
   }
 
   private async ensureQuery(): Promise<Query> {
