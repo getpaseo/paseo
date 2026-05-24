@@ -503,15 +503,22 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnStarted: false,
     };
     this.activeTurn = turn;
-    this.remember({
-      type: "timeline",
-      provider: this.provider,
-      turnId,
-      item: {
-        type: "user_message",
-        text: promptToText(prompt),
-      },
-    });
+    const userMessageId = randomUUID();
+    setTimeout(() => {
+      if (this.activeTurn?.turnId !== turnId) {
+        return;
+      }
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "user_message",
+          text: promptToText(prompt),
+          messageId: userMessageId,
+        },
+      });
+    }, 0);
 
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);

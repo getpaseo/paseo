@@ -229,7 +229,6 @@ interface StreamEventFlags {
 
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
-  canonicalUserMessagesById?: ReadonlyMap<string, string>;
 }
 
 interface ManagedAgentBase {
@@ -381,28 +380,6 @@ function validateAgentId(agentId: string, source: string): string {
     throw new Error(`${source}: agentId must be a UUID`);
   }
   return result.data;
-}
-
-function normalizeMessageId(messageId: string | undefined): string | undefined {
-  if (typeof messageId !== "string") {
-    return undefined;
-  }
-  const trimmed = messageId.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isDuplicateLegacyUserMessage(
-  item: AgentTimelineItem,
-  canonicalUserMessagesById: Map<string, string>,
-): boolean {
-  if (item.type !== "user_message") {
-    return false;
-  }
-  const eventMessageId = normalizeMessageId(item.messageId);
-  if (!eventMessageId) {
-    return false;
-  }
-  return canonicalUserMessagesById.get(eventMessageId) === item.text;
 }
 
 function buildExplicitTimelineSeedForRegister(
@@ -1425,11 +1402,6 @@ export class AgentManager {
     };
   }
 
-  sessionEmitsUserMessages(agentId: string): boolean {
-    const agent = this.requireSessionAgent(agentId);
-    return agent.session.emitsUserMessages === true;
-  }
-
   /**
    * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
    * and without canceling any active turn. Returns true when the session
@@ -1471,39 +1443,6 @@ export class AgentManager {
       }
     })();
     return true;
-  }
-
-  recordUserMessage(
-    agentId: string,
-    text: string,
-    options?: { messageId?: string; emitState?: boolean },
-  ): void {
-    const agent = this.requireAgent(agentId);
-    const normalizedMessageId = normalizeMessageId(options?.messageId);
-    const item: AgentTimelineItem = {
-      type: "user_message",
-      text,
-      messageId: normalizedMessageId,
-    };
-    const updatedAt = this.touchUpdatedAt(agent);
-    agent.lastUserMessageAt = updatedAt;
-    const row = this.recordTimeline(agentId, item);
-    this.dispatchStream(
-      agentId,
-      {
-        type: "timeline",
-        item,
-        provider: agent.provider,
-      },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agentId),
-        timestamp: row.timestamp,
-      },
-    );
-    if (options?.emitState !== false) {
-      this.emitState(agent);
-    }
   }
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
@@ -2126,19 +2065,6 @@ export class AgentManager {
     return await this.durableTimelineStore.getLastItem(agentId);
   }
 
-  private async hasCommittedUserMessageFromStores(
-    agentId: string,
-    options: { messageId: string; text: string },
-  ): Promise<boolean> {
-    if (this.timelineStore.hasCommittedUserMessage(agentId, options)) {
-      return true;
-    }
-    if (!this.durableTimelineStore) {
-      return false;
-    }
-    return await this.durableTimelineStore.hasCommittedUserMessage(agentId, options);
-  }
-
   async waitForAgentEvent(
     agentId: string,
     options?: WaitForAgentOptions,
@@ -2721,13 +2647,9 @@ export class AgentManager {
     }
 
     agent.historyPrimed = true;
-    const canonicalUserMessagesById = this.timelineStore.getCanonicalUserMessagesById(agent.id);
     try {
       for await (const event of agent.session.streamHistory()) {
         if (event.type !== "timeline") {
-          continue;
-        }
-        if (isDuplicateLegacyUserMessage(event.item, canonicalUserMessagesById)) {
           continue;
         }
         this.recordTimeline(
@@ -2971,42 +2893,11 @@ export class AgentManager {
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
-    options:
-      | {
-          fromHistory?: boolean;
-          canonicalUserMessagesById?: ReadonlyMap<string, string>;
-        }
-      | undefined;
+    options: { fromHistory?: boolean } | undefined;
     isForegroundEvent: boolean;
     flags: StreamEventFlags;
   }): Promise<void> {
-    const { agent, event, options, isForegroundEvent, flags } = params;
-    // Skip provider-replayed user_message items during history hydration.
-    if (options?.fromHistory && event.item.type === "user_message") {
-      const eventMessageId = normalizeMessageId(event.item.messageId);
-      if (eventMessageId) {
-        const canonicalText = options?.canonicalUserMessagesById?.get(eventMessageId);
-        if (canonicalText === event.item.text) {
-          flags.shouldDispatchEvent = false;
-          flags.shouldNotifyWaiters = false;
-          return;
-        }
-      }
-    }
-
-    // Suppress user_message echoes for the active foreground turn.
-    if (!options?.fromHistory && event.item.type === "user_message" && isForegroundEvent) {
-      const eventMessageId = normalizeMessageId(event.item.messageId);
-      if (
-        eventMessageId &&
-        (await this.hasCommittedUserMessageFromStores(agent.id, {
-          messageId: eventMessageId,
-          text: event.item.text,
-        }))
-      ) {
-        return;
-      }
-    }
+    const { agent, event, options, flags } = params;
 
     if (options?.fromHistory) {
       this.recordTimeline(
@@ -3060,12 +2951,7 @@ export class AgentManager {
     event: Extract<AgentStreamEvent, { type: "turn_failed" }>;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
-    options:
-      | {
-          fromHistory?: boolean;
-          canonicalUserMessagesById?: ReadonlyMap<string, string>;
-        }
-      | undefined;
+    options: { fromHistory?: boolean } | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, options } = params;
     this.logger.warn(
@@ -3228,10 +3114,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     provider: AgentProvider,
     message: string,
-    options?: {
-      fromHistory?: boolean;
-      canonicalUserMessagesById?: ReadonlyMap<string, string>;
-    },
+    options?: { fromHistory?: boolean },
   ): Promise<void> {
     if (options?.fromHistory) {
       return;

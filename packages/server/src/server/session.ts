@@ -8831,7 +8831,7 @@ export class Session {
             agentId,
             prompt: formatSystemNotificationPrompt(text),
             unarchive: false,
-            recordUserMessage: false,
+            userMessageVisible: false,
             logger: this.sessionLogger,
           });
         },

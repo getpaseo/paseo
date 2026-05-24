@@ -26,14 +26,6 @@ function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
   return { ...row };
 }
 
-function normalizeTimelineMessageId(messageId: string | undefined): string | undefined {
-  if (typeof messageId !== "string") {
-    return undefined;
-  }
-  const normalized = messageId.trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
 interface FetchContext {
   state: AgentTimelineState;
   direction: NonNullable<AgentTimelineFetchOptions["direction"]>;
@@ -280,35 +272,6 @@ export class InMemoryAgentTimelineStore {
     }
 
     return chunks.toReversed().join("");
-  }
-
-  getCanonicalUserMessagesById(agentId: string): Map<string, string> {
-    const entries = this.requireState(agentId).rows.flatMap<[string, string]>((row) => {
-      if (row.item.type !== "user_message") {
-        return [];
-      }
-      const messageId = normalizeTimelineMessageId(row.item.messageId);
-      if (!messageId) {
-        return [];
-      }
-      return [[messageId, row.item.text]];
-    });
-    return new Map(entries);
-  }
-
-  hasCommittedUserMessage(agentId: string, options: { messageId: string; text: string }): boolean {
-    const messageId = normalizeTimelineMessageId(options.messageId);
-    if (!messageId) {
-      return false;
-    }
-
-    return this.requireState(agentId).rows.some((row) => {
-      if (row.item.type !== "user_message") {
-        return false;
-      }
-      const rowMessageId = normalizeTimelineMessageId(row.item.messageId);
-      return rowMessageId === messageId && row.item.text === options.text;
-    });
   }
 
   private requireState(agentId: string): AgentTimelineState {

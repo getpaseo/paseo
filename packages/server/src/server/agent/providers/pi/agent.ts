@@ -702,7 +702,6 @@ function createRuntime(logger: Logger, runtimeSettings?: ProviderRuntimeSettings
 export class PiRpcAgentSession implements AgentSession {
   readonly provider = PI_PROVIDER;
   readonly capabilities: AgentCapabilityFlags;
-  readonly emitsUserMessages = true;
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
@@ -712,7 +711,7 @@ export class PiRpcAgentSession implements AgentSession {
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
   private readonly capturedUserEntriesById = new Map<string, PiCapturedEntry>();
-  private readonly emittedUserEntryIds = new Set<string>();
+  private readonly seenUserEntryIds = new Set<string>();
   private readonly pendingUserMessages: PendingPiUserMessage[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private state: PiSessionState;
@@ -1004,27 +1003,30 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
+    const previouslySeenEntryIds = new Set(this.seenUserEntryIds);
     this.capturedUserEntries.splice(0, this.capturedUserEntries.length, ...entries);
     this.capturedUserEntriesById.clear();
     for (const entry of entries) {
       this.capturedUserEntriesById.set(entry.id, entry);
     }
-    this.flushPendingUserMessages();
+    this.flushPendingUserMessages(previouslySeenEntryIds);
+    for (const entry of entries) {
+      this.seenUserEntryIds.add(entry.id);
+    }
   }
 
-  private flushPendingUserMessages(): void {
+  private flushPendingUserMessages(previouslySeenEntryIds: Set<string>): void {
     for (let index = 0; index < this.pendingUserMessages.length; index += 1) {
       const pending = this.pendingUserMessages[index]!;
       const entry = this.capturedUserEntries.find(
-        (candidate) =>
-          !this.emittedUserEntryIds.has(candidate.id) && candidate.text === pending.text,
+        (candidate) => !previouslySeenEntryIds.has(candidate.id),
       );
       if (!entry) {
         continue;
       }
+      previouslySeenEntryIds.add(entry.id);
       this.pendingUserMessages.splice(index, 1);
       index -= 1;
-      this.emittedUserEntryIds.add(entry.id);
       this.emit({
         type: "timeline",
         provider: PI_PROVIDER,

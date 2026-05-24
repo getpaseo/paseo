@@ -185,25 +185,14 @@ function markThoughtReady(item: ThoughtItem): ThoughtItem {
   };
 }
 
-function findOptimisticUserMessageIndex(state: StreamItem[]): number {
-  for (let index = 0; index < state.length; index += 1) {
-    const entry = state[index];
-    if (entry?.kind === "user_message" && entry.optimistic) {
-      return index;
-    }
-  }
-  return -1;
-}
-
 function buildUserMessageItem(input: {
   id: string;
   text: string;
   timestamp: Date;
-  existing?: UserMessageItem | null;
   optimistic?: UserMessageItem | null;
 }): UserMessageItem {
-  const preservedImages = input.existing?.images ?? input.optimistic?.images;
-  const preservedAttachments = input.existing?.attachments ?? input.optimistic?.attachments;
+  const preservedImages = input.optimistic?.images;
+  const preservedAttachments = input.optimistic?.attachments;
 
   return {
     kind: "user_message",
@@ -231,33 +220,19 @@ function appendUserMessage(
 
   const chunkSeed = chunk.trim() || chunk;
   const entryId = messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp);
-  const existingIndex = state.findIndex(
-    (entry) => entry.kind === "user_message" && entry.id === entryId,
-  );
-  const existing =
-    existingIndex >= 0 && state[existingIndex]?.kind === "user_message"
-      ? state[existingIndex]
-      : null;
   const optimisticIndex =
-    source === "live" && existingIndex < 0 ? findOptimisticUserMessageIndex(state) : -1;
-  const optimistic =
-    optimisticIndex >= 0 && state[optimisticIndex]?.kind === "user_message"
-      ? state[optimisticIndex]
-      : null;
+    source === "live"
+      ? state.findIndex((entry) => entry.kind === "user_message" && entry.optimistic)
+      : -1;
+  const optimistic = optimisticIndex >= 0 ? (state[optimisticIndex] as UserMessageItem) : null;
 
   const nextItem = buildUserMessageItem({
     id: entryId,
     text: chunk,
     timestamp,
-    existing,
     optimistic,
   });
 
-  if (existingIndex >= 0) {
-    const next = [...state];
-    next[existingIndex] = nextItem;
-    return next;
-  }
   if (optimisticIndex >= 0) {
     const next = [...state];
     next[optimisticIndex] = nextItem;

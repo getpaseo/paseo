@@ -1090,14 +1090,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       });
 
       try {
-        agentManager.recordUserMessage(snapshot.id, trimmedPrompt, {
-          emitState: false,
-        });
-      } catch (error) {
-        childLogger.error({ err: error, agentId: snapshot.id }, "Failed to record initial prompt");
-      }
-
-      try {
         startAgentRun(agentManager, snapshot.id, trimmedPrompt, childLogger);
         if (notifyOnFinish && callerAgentId) {
           setupFinishNotification({

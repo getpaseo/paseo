@@ -1609,8 +1609,6 @@ class ClaudeAgentSession implements AgentSession {
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
   private pendingInterruptAbort = false;
-  private lastForegroundPromptText: string | null = null;
-  private activeForegroundTimelineMessageId: string | null = null;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private lastContextWindowUsedTokens: number | undefined;
@@ -1618,8 +1616,7 @@ class ClaudeAgentSession implements AgentSession {
   private lastStreamRequestInputTokens: number | undefined;
   private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
-  private readonly timelineMessageIdAliases = new Map<string, string>();
-  private readonly timelineMessageTexts = new Map<string, string>();
+  private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
@@ -1737,17 +1734,8 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const sdkMessage = this.toSdkUserMessage(prompt);
-    this.lastForegroundPromptText = this.extractPromptText(prompt);
-    this.activeForegroundTimelineMessageId = _options?.messageId ?? null;
-    if (this.activeForegroundTimelineMessageId && this.lastForegroundPromptText) {
-      this.timelineMessageTexts.set(
-        this.activeForegroundTimelineMessageId,
-        this.lastForegroundPromptText.trim(),
-      );
-    }
     const sdkUserMessageId =
       typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
-    this.rememberTimelineMessageAlias(this.activeForegroundTimelineMessageId, sdkUserMessageId);
     this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
@@ -1786,6 +1774,11 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.startQueryPump();
       this.input.push(sdkMessage);
+      setTimeout(() => {
+        if (this.activeForegroundTurnId === turnId) {
+          this.emitSubmittedUserMessage(sdkMessage, turnId);
+        }
+      }, 0);
     } catch (error) {
       this.finishForegroundTurn(
         this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
@@ -2262,8 +2255,7 @@ class ClaudeAgentSession implements AgentSession {
     this.persistedHistory = [];
     this.historyPending = false;
     this.userMessageIds = [];
-    this.timelineMessageIdAliases.clear();
-    this.timelineMessageTexts.clear();
+    this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
     this.loadPersistedHistory(sessionId);
     if (oldSessionId && oldSessionId !== sessionId) {
@@ -2292,8 +2284,7 @@ class ClaudeAgentSession implements AgentSession {
     this.persistedHistory = [];
     this.historyPending = false;
     this.userMessageIds = [];
-    this.timelineMessageIdAliases.clear();
-    this.timelineMessageTexts.clear();
+    this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
   }
 
@@ -2308,20 +2299,11 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds.push(messageId);
   }
 
-  private rememberTimelineMessageAlias(
-    timelineMessageId: string | null | undefined,
-    claudeMessageId: string | null | undefined,
-  ): void {
-    if (
-      typeof timelineMessageId !== "string" ||
-      timelineMessageId.length === 0 ||
-      typeof claudeMessageId !== "string" ||
-      claudeMessageId.length === 0 ||
-      timelineMessageId === claudeMessageId
-    ) {
+  private rememberEmittedUserMessageId(messageId: string | null | undefined): void {
+    if (typeof messageId !== "string" || messageId.length === 0) {
       return;
     }
-    this.timelineMessageIdAliases.set(timelineMessageId, claudeMessageId);
+    this.emittedUserMessageIds.add(messageId);
   }
 
   private rememberRewindUserAnchor(userMessageId: string | null | undefined): void {
@@ -2378,7 +2360,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private resolveClaudeMessageId(messageId: string): string {
-    return this.timelineMessageIdAliases.get(messageId) ?? messageId;
+    return messageId;
   }
 
   private resolveConversationRewindTarget(messageId: string): ClaudeConversationRewindTarget {
@@ -2762,16 +2744,6 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private extractPromptText(prompt: AgentPromptInput): string | null {
-    if (typeof prompt === "string") {
-      return prompt;
-    }
-    const textParts = prompt
-      .filter((block): block is { type: "text"; text: string } => block.type === "text")
-      .map((block) => block.text);
-    return textParts.length > 0 ? textParts.join("\n") : null;
-  }
-
   private async executeRewindTurn(
     _turnId: string,
     invocation: SlashCommandInvocation,
@@ -2833,8 +2805,6 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
-    this.lastForegroundPromptText = null;
-    this.activeForegroundTimelineMessageId = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.syncTurnState("foreground turn terminal");
@@ -2850,8 +2820,6 @@ class ClaudeAgentSession implements AgentSession {
     if (terminalSeen) {
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
-        this.lastForegroundPromptText = null;
-        this.activeForegroundTimelineMessageId = null;
         this.cancelCurrentTurn = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("foreground turn terminal");
@@ -3013,25 +2981,6 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private isEchoedForegroundUserMessage(event: AgentStreamEvent): boolean {
-    if (
-      event.type !== "timeline" ||
-      event.item.type !== "user_message" ||
-      !this.activeForegroundTurnId ||
-      !this.lastForegroundPromptText
-    ) {
-      return false;
-    }
-    const isEcho = event.item.text.trim() === this.lastForegroundPromptText.trim();
-    if (isEcho) {
-      this.rememberTimelineMessageAlias(
-        this.activeForegroundTimelineMessageId,
-        event.item.messageId,
-      );
-    }
-    return isEcho;
-  }
-
   private shouldSuppressStaleResult(message: SDKMessage): boolean {
     // Suppress stale results from interrupted requests. The cancel path already
     // emitted the terminal event; this result is leftover from the killed API
@@ -3108,12 +3057,7 @@ class ClaudeAgentSession implements AgentSession {
           }) satisfies AgentStreamEvent,
       );
 
-    // User message dedup: suppress echoed user messages that match the foreground prompt
-    const filteredMessageEvents = messageEvents.filter(
-      (event) => !this.isEchoedForegroundUserMessage(event),
-    );
-
-    const events = [...filteredMessageEvents, ...assistantTimelineEvents];
+    const events = [...messageEvents, ...assistantTimelineEvents];
 
     if (events.length === 0) {
       return;
@@ -3181,7 +3125,6 @@ class ClaudeAgentSession implements AgentSession {
     this.queryRestartNeeded = false;
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
-    this.activeForegroundTimelineMessageId = null;
     this.syncTurnState("missing resumed conversation");
     return true;
   }
@@ -3273,6 +3216,25 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private emitSubmittedUserMessage(
+    message: Extract<SDKMessage, { type: "user" }>,
+    turnId: string,
+  ): void {
+    const events: AgentStreamEvent[] = [];
+    this.appendUserMessageEvents(message, events);
+    if (events.length === 0) {
+      return;
+    }
+    this.foregroundHasVisibleActivity = true;
+    for (const event of events) {
+      if (event.type === "timeline") {
+        this.notifySubscribers({ ...event, turnId });
+      } else {
+        this.notifySubscribers(event);
+      }
+    }
   }
 
   private appendSystemMessageEvents(
@@ -3378,7 +3340,11 @@ class ClaudeAgentSession implements AgentSession {
     }
     const messageId =
       typeof message.uuid === "string" && message.uuid.length > 0 ? message.uuid : undefined;
+    if (messageId && this.emittedUserMessageIds.has(messageId)) {
+      return;
+    }
     this.rememberUserMessageId(messageId);
+    this.rememberEmittedUserMessageId(messageId);
     const content = message.message?.content;
     const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
       content,
@@ -3936,14 +3902,6 @@ class ClaudeAgentSession implements AgentSession {
     if (isVisibleUserEntry && typeof entry.uuid === "string") {
       this.rememberUserMessageId(entry.uuid);
       this.rememberRewindUserAnchor(entry.uuid);
-      const text = items
-        .filter((item) => item.type === "user_message")
-        .map((item) => item.text)
-        .join("\n")
-        .trim();
-      if (text) {
-        this.timelineMessageTexts.set(entry.uuid, text);
-      }
     }
     if (entry.type === "assistant" && typeof entry.uuid === "string") {
       this.rememberRewindAssistantAnchor(entry.uuid);

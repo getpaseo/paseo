@@ -2365,7 +2365,6 @@ function unwrapOpenCodeGlobalEvent(event: unknown): OpenCodeEvent | null {
 class OpenCodeAgentSession implements AgentSession {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
-  readonly emitsUserMessages = true;
 
   private readonly config: OpenCodeAgentConfig;
   private readonly client: OpencodeClient;

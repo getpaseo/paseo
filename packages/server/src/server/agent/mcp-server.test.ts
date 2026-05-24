@@ -116,7 +116,6 @@ function buildAgentManagerSpies() {
   return {
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn(),
-    recordUserMessage: vi.fn(),
     setAgentMode: vi.fn().mockResolvedValue(undefined),
     setAgentModel: vi.fn().mockResolvedValue(undefined),
     setAgentThinkingOption: vi.fn().mockResolvedValue(undefined),

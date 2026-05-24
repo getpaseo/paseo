@@ -737,6 +737,7 @@ describe("stream reducer canonical tool calls", () => {
         id: messageId,
         text: "Analyze this image",
         timestamp: new Date("2025-01-01T11:10:00Z"),
+        optimistic: true,
         images: optimisticImages,
       },
     ];
