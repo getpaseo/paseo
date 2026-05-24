@@ -8,6 +8,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { UITextView } from "@/components/selectable-text";
 import * as Clipboard from "expo-clipboard";
 import { Check, Copy } from "lucide-react-native";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
@@ -119,7 +120,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
       onPointerLeave={handlePointerLeave}
     >
       {keyedLines ? (
-        <Text style={innerTextStyle}>
+        <UITextView uiTextView selectable style={innerTextStyle}>
           {keyedLines.map((line, lineIndex) => (
             <React.Fragment key={line.key}>
               {lineIndex > 0 ? "\n" : null}
@@ -128,9 +129,11 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
               ))}
             </React.Fragment>
           ))}
-        </Text>
+        </UITextView>
       ) : (
-        <Text style={innerTextStyle}>{code}</Text>
+        <UITextView uiTextView selectable style={innerTextStyle}>
+          {code}
+        </UITextView>
       )}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>

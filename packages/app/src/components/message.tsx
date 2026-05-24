@@ -4,12 +4,14 @@ import {
   Image,
   Pressable,
   ActivityIndicator,
+  Platform,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   StyleProp,
   ViewStyle,
   type TextStyle,
 } from "react-native";
+import { UITextView } from "@/components/selectable-text";
 import * as React from "react";
 import {
   useState,
@@ -1527,7 +1529,11 @@ function MarkdownInheritedText({
     () => [inheritedStyles, textStyle, overrideStyle],
     [inheritedStyles, textStyle, overrideStyle],
   );
-  return <Text style={style}>{children}</Text>;
+  return (
+    <UITextView uiTextView selectable style={style}>
+      {children}
+    </UITextView>
+  );
 }
 
 interface MarkdownListItemContentProps {
@@ -1551,6 +1557,16 @@ const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
 
 function MarkdownParagraphView({ paragraphStyle, children }: MarkdownParagraphViewProps) {
   const style = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
+  if (Platform.OS === "ios") {
+    // ViewStyle is structurally compatible with TextStyle for the layout
+    // properties paragraphs use (margin, padding, alignment). Cast lets
+    // the same style flow into UITextView, which expects TextStyle.
+    return (
+      <UITextView uiTextView selectable style={style as StyleProp<TextStyle>}>
+        {children}
+      </UITextView>
+    );
+  }
   return <View style={style}>{children}</View>;
 }
 
