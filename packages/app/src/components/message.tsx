@@ -62,7 +62,6 @@ import Animated, {
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Fonts } from "@/constants/theme";
-import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@server/shared/messages";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
@@ -73,6 +72,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import {
   getAssistantImageLoadStateFromMetadata,
   getAssistantImageMetadata,
@@ -1117,7 +1117,7 @@ export const TurnCopyButton = memo(function TurnCopyButton({
       return;
     }
 
-    await Clipboard.setStringAsync(content);
+    await writeMarkdownToRichClipboard(content);
     setCopied(true);
 
     if (copyTimeoutRef.current) {
