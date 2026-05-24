@@ -487,7 +487,7 @@ export const UserMessage = memo(function UserMessage({
   const getMessageContent = useCallback(() => message, [message]);
   const handleRewind = useCallback(
     (mode: RewindMode) => {
-      rewindMutation.rewindAgent(mode);
+      return rewindMutation.rewindAgent(mode);
     },
     [rewindMutation],
   );
@@ -573,7 +573,11 @@ export const UserMessage = memo(function UserMessage({
               accessibilityLabel="Copy message"
             />
             {capabilities ? (
-              <RewindMenu capabilities={capabilities} onRewind={handleRewind} />
+              <RewindMenu
+                capabilities={capabilities}
+                isPending={rewindMutation.isPending}
+                onRewind={handleRewind}
+              />
             ) : null}
           </View>
         ) : null}

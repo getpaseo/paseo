@@ -15,11 +15,11 @@ interface RewindAgentInput {
 }
 
 export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
-  rewindAgent: (mode: RewindMode) => void;
+  rewindAgent: (mode: RewindMode) => Promise<void>;
   isPending: boolean;
 } {
   const toast = useToast();
-  const { isPending, mutate } = useMutation({
+  const { isPending, mutateAsync } = useMutation({
     mutationFn: async ({ mode }: RewindAgentInput) => {
       if (!input.client || !input.agentId || !input.messageId) {
         throw new Error("Daemon client not available");
@@ -32,13 +32,13 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
   });
 
   const rewindAgent = useCallback(
-    (mode: RewindMode) => {
+    async (mode: RewindMode) => {
       if (isPending) {
         return;
       }
-      mutate({ mode });
+      await mutateAsync({ mode });
     },
-    [isPending, mutate],
+    [isPending, mutateAsync],
   );
 
   return {

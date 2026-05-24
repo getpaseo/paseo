@@ -1,13 +1,10 @@
-import { memo, useCallback, type ReactElement } from "react";
-import { View } from "react-native";
+import { memo, useCallback, useMemo, useState, type ComponentType } from "react";
+import { Text, View } from "react-native";
 import { FileText, Layers, MessageSquare, Undo2 } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   type RewindMenuItem,
   type RewindMode,
@@ -19,68 +16,147 @@ export type { RewindMode };
 
 interface RewindMenuProps {
   capabilities: AgentCapabilityFlags;
-  onRewind: (mode: RewindMode) => void;
+  onRewind: (mode: RewindMode) => Promise<void> | void;
+  isPending?: boolean;
   testID?: string;
 }
 
-function iconForItem(item: RewindMenuItem): ReactElement {
+const REWIND_HEADER: SheetHeader = { title: "Rewind to this message" };
+const SNAP_POINTS: string[] = ["42%", "72%"];
+
+function iconForItem(item: RewindMenuItem): ComponentType<{ color: string; size: number }> {
   switch (item.mode) {
     case "conversation":
-      return <MessageSquare size={14} color="#8a8f98" />;
+      return MessageSquare;
     case "files":
-      return <FileText size={14} color="#8a8f98" />;
+      return FileText;
     case "both":
-      return <Layers size={14} color="#8a8f98" />;
+      return Layers;
   }
 }
 
 export const RewindMenu = memo(function RewindMenu({
   capabilities,
   onRewind,
+  isPending = false,
   testID = "rewind-menu",
 }: RewindMenuProps) {
   const items = useRewindCapabilities(capabilities);
-  const handleSelect = useCallback((mode: RewindMode) => () => onRewind(mode), [onRewind]);
+  const [isSheetVisible, setIsSheetVisible] = useState(false);
+  const [pendingMode, setPendingMode] = useState<RewindMode | null>(null);
+  const handleOpen = useCallback(() => setIsSheetVisible(true), []);
+  const handleClose = useCallback(() => {
+    if (!isPending) {
+      setIsSheetVisible(false);
+    }
+  }, [isPending]);
+  const handleSelect = useCallback(
+    (mode: RewindMode) => async () => {
+      if (isPending) {
+        return;
+      }
+      setPendingMode(mode);
+      try {
+        await onRewind(mode);
+      } catch {
+        // useRewindAgentMutation owns the toast; the sheet only owns flow state.
+      } finally {
+        setPendingMode(null);
+        setIsSheetVisible(false);
+      }
+    },
+    [isPending, onRewind],
+  );
+  const triggerIcon = useCallback((color: string) => <Undo2 size={16} color={color} />, []);
+  const tooltipContent = useMemo(
+    () => (
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>Rewind to this message</Text>
+      </TooltipContent>
+    ),
+    [],
+  );
 
   if (items.length === 0) {
     return null;
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        accessibilityLabel="Rewind message"
-        style={styles.trigger}
-        testID={`${testID}-trigger`}
+    <>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>
+          <Button
+            accessibilityLabel="Rewind to this message"
+            disabled={isPending}
+            leftIcon={triggerIcon}
+            onPress={handleOpen}
+            size="xs"
+            style={styles.trigger}
+            testID={`${testID}-trigger`}
+            variant="ghost"
+          />
+        </TooltipTrigger>
+        {tooltipContent}
+      </Tooltip>
+      <AdaptiveModalSheet
+        desktopMaxWidth={420}
+        header={REWIND_HEADER}
+        onClose={handleClose}
+        scrollable={false}
+        snapPoints={SNAP_POINTS}
+        testID={`${testID}-content`}
+        visible={isSheetVisible}
       >
-        <View style={styles.iconFrame}>
-          <Undo2 size={16} color="#8a8f98" />
+        <View style={styles.content}>
+          <Text style={styles.warningText}>This action cannot be undone</Text>
+          <View style={styles.actions}>
+            {items.map((item) => (
+              <Button
+                key={item.mode}
+                leftIcon={iconForItem(item)}
+                loading={pendingMode === item.mode}
+                disabled={isPending}
+                onPress={handleSelect(item.mode)}
+                size="md"
+                style={styles.actionButton}
+                testID={item.testID}
+                variant="secondary"
+              >
+                {item.label}
+              </Button>
+            ))}
+          </View>
         </View>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={240} testID={`${testID}-content`}>
-        {items.map((item) => (
-          <DropdownMenuItem
-            key={item.mode}
-            leading={iconForItem(item)}
-            onSelect={handleSelect(item.mode)}
-            testID={item.testID}
-          >
-            {item.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </AdaptiveModalSheet>
+    </>
   );
 });
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    padding: theme.spacing[1],
-  },
-  iconFrame: {
     width: 24,
     height: 24,
+    minHeight: 24,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
     alignItems: "center",
     justifyContent: "center",
+  },
+  tooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+  },
+  content: {
+    gap: theme.spacing[4],
+  },
+  warningText: {
+    color: theme.colors.statusWarning,
+    fontSize: theme.fontSize.sm,
+  },
+  actions: {
+    gap: theme.spacing[2],
+  },
+  actionButton: {
+    justifyContent: "flex-start",
   },
 }));

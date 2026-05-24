@@ -25,8 +25,8 @@ async function openAgent(page: Page, input: { cwd: string; agentId: string }): P
   await expectComposerVisible(page);
 }
 
-test.describe("Rewind menu", () => {
-  test("rewinds from a user message option", async ({ page }) => {
+test.describe("Rewind sheet", () => {
+  test("rewinds from a user message sheet option", async ({ page }) => {
     const repo = await createTempGitRepo("rewind-e2e-");
     const client = await connectTerminalClient();
     const firstPrompt = "emit 1 coalesced agent stream updates for first rewind turn.";
@@ -52,7 +52,12 @@ test.describe("Rewind menu", () => {
 
       await page.getByText(firstPrompt, { exact: true }).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();
-      await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
+      const rewindSheet = page.getByTestId("rewind-menu-content");
+      await expect(rewindSheet).toBeVisible();
+      await expect(rewindSheet.getByText("Rewind to this message", { exact: true })).toBeVisible();
+      await expect(
+        rewindSheet.getByText("This action cannot be undone", { exact: true }),
+      ).toBeVisible();
       await page.getByTestId("rewind-menu-conversation").click();
 
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
@@ -94,7 +99,12 @@ test.describe("Rewind menu", () => {
 
       await page.getByText(firstPrompt, { exact: true }).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();
-      await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
+      const rewindSheet = page.getByTestId("rewind-menu-content");
+      await expect(rewindSheet).toBeVisible();
+      await expect(rewindSheet.getByText("Rewind to this message", { exact: true })).toBeVisible();
+      await expect(
+        rewindSheet.getByText("This action cannot be undone", { exact: true }),
+      ).toBeVisible();
       await page.getByTestId("rewind-menu-conversation").click();
 
       await expect(page.getByTestId("app-toast-message")).toHaveText(rewindError);
