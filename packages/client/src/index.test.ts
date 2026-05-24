@@ -671,6 +671,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       mcp: { injectIntoAgents: true },
       providers: {},
       autoArchiveAfterMerge: false,
+      appendSystemPrompt: "",
     },
   });
 
@@ -722,6 +723,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
         },
       },
       autoArchiveAfterMerge: false,
+      appendSystemPrompt: "",
     },
   });
 
