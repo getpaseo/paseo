@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
+import type { AgentLifecycleStatus } from "../../shared/agent-lifecycle.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { getFullAccessConfig } from "./agent-configs.js";
@@ -27,6 +28,11 @@ interface OpenCodeRewindSession {
   agentId: string;
   cwd: string;
   scratchPath: string;
+}
+
+interface AgentStatusRecord {
+  at: number;
+  status: AgentLifecycleStatus;
 }
 
 const TURN_TIMEOUT_MS = 180_000;
@@ -87,6 +93,55 @@ function expectTimeline(
   expect(userMessages).toHaveLength(input.userTexts.length);
   expect(userMessages.map((message) => message.text)).toEqual(input.userTexts);
   expect(assistantMessages).toHaveLength(input.assistantCount);
+}
+
+function expectUserMessageCount(items: AgentTimelineItem[], expected: number): void {
+  expect(roleItems(items, "user_message")).toHaveLength(expected);
+}
+
+async function recordAgentStatusTransitions(
+  harness: OpenCodeRewindHarness,
+  session: OpenCodeRewindSession,
+): Promise<{ records: AgentStatusRecord[]; stop: () => void }> {
+  const records: AgentStatusRecord[] = [];
+  const initial = await harness.client.fetchAgent(session.agentId);
+  if (initial?.agent.status) {
+    records.push({ at: Date.now(), status: initial.agent.status });
+  }
+  const unsubscribe = harness.client.on("agent_update", (message) => {
+    if (message.payload.kind !== "upsert" || message.payload.agent.id !== session.agentId) {
+      return;
+    }
+    records.push({ at: Date.now(), status: message.payload.agent.status });
+  });
+
+  return { records, stop: unsubscribe };
+}
+
+function screenStatusForInvariant(status: AgentLifecycleStatus): "loading" | AgentLifecycleStatus {
+  return status === "initializing" ? "loading" : status;
+}
+
+function expectNoLoadingRegression(records: AgentStatusRecord[]): void {
+  const statuses = records.map((record) => screenStatusForInvariant(record.status));
+  for (let index = 1; index < statuses.length; index += 1) {
+    expect([statuses[index - 1], statuses[index]]).not.toEqual(["running", "loading"]);
+  }
+  for (let index = 2; index < statuses.length; index += 1) {
+    expect([statuses[index - 2], statuses[index - 1], statuses[index]]).not.toEqual([
+      "idle",
+      "loading",
+      "idle",
+    ]);
+  }
+}
+
+async function expectAgentIdle(
+  harness: OpenCodeRewindHarness,
+  session: OpenCodeRewindSession,
+): Promise<void> {
+  const snapshot = await harness.client.fetchAgent(session.agentId);
+  expect(snapshot?.agent.status).toBe("idle");
 }
 
 async function createdFilesAtCwd(session: OpenCodeRewindSession): Promise<string[]> {
@@ -190,16 +245,24 @@ describe("daemon E2E (real opencode) - rewind", () => {
         doneToken: "OPENCODE_SINGLE_DONE",
       });
       const timeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectUserMessageCount(timeline, 1);
       const messageId = userMessageIdForToken(timeline, "OPENCODE_REWIND_PROMPT_SINGLE");
       const sessionIdBefore = await runtimeSessionId(harness, session);
       expectOpenCodeSessionId(sessionIdBefore);
+      const statusTransitions = await recordAgentStatusTransitions(harness, session);
 
-      await rewindOpenCode(harness, session, messageId);
+      try {
+        await rewindOpenCode(harness, session, messageId);
+      } finally {
+        statusTransitions.stop();
+      }
       const sessionIdAfter = await runtimeSessionId(harness, session);
       const fileText = await readScratchFile(session);
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
 
       expect(sessionIdAfter).toBe(sessionIdBefore);
+      await expectAgentIdle(harness, session);
+      expectNoLoadingRegression(statusTransitions.records);
       expect(fileText).toBe("BASE\n");
       await expectCreatedFiles(session, ["rewind-scratch.txt"]);
       expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
@@ -225,16 +288,24 @@ describe("daemon E2E (real opencode) - rewind", () => {
       expect(finish.final?.lastError).toBeUndefined();
 
       const timeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectUserMessageCount(timeline, 1);
       const messageId = userMessageIdForToken(timeline, "OPENCODE_REWIND_PROMPT_READ_ONLY");
       const sessionIdBefore = await runtimeSessionId(harness, session);
       expectOpenCodeSessionId(sessionIdBefore);
+      const statusTransitions = await recordAgentStatusTransitions(harness, session);
 
-      await rewindOpenCode(harness, session, messageId);
+      try {
+        await rewindOpenCode(harness, session, messageId);
+      } finally {
+        statusTransitions.stop();
+      }
       const sessionIdAfter = await runtimeSessionId(harness, session);
       const fileText = await readScratchFile(session);
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
 
       expect(sessionIdAfter).toBe(sessionIdBefore);
+      await expectAgentIdle(harness, session);
+      expectNoLoadingRegression(statusTransitions.records);
       expect(fileText).toBe("BASE\n");
       await expectCreatedFiles(session, ["rewind-scratch.txt"]);
       expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
@@ -266,15 +337,23 @@ describe("daemon E2E (real opencode) - rewind", () => {
       await expect(fileExists(secondPath)).resolves.toBe(true);
 
       const timeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectUserMessageCount(timeline, 1);
       const messageId = userMessageIdForToken(timeline, "OPENCODE_REWIND_PROMPT_MULTI_EDIT");
       const sessionIdBefore = await runtimeSessionId(harness, session);
       expectOpenCodeSessionId(sessionIdBefore);
+      const statusTransitions = await recordAgentStatusTransitions(harness, session);
 
-      await rewindOpenCode(harness, session, messageId);
+      try {
+        await rewindOpenCode(harness, session, messageId);
+      } finally {
+        statusTransitions.stop();
+      }
       const sessionIdAfter = await runtimeSessionId(harness, session);
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
 
       expect(sessionIdAfter).toBe(sessionIdBefore);
+      await expectAgentIdle(harness, session);
+      expectNoLoadingRegression(statusTransitions.records);
       await expect(fileExists(firstPath)).resolves.toBe(false);
       await expect(fileExists(secondPath)).resolves.toBe(false);
       await expectCreatedFiles(session, ["rewind-scratch.txt"]);
@@ -294,6 +373,8 @@ describe("daemon E2E (real opencode) - rewind", () => {
         doneToken: "OPENCODE_BOTH_FIRST_DONE",
       });
       const fileTextAfterFirstTurn = await readScratchFile(session);
+      const firstTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectUserMessageCount(firstTimeline, 1);
 
       await askOpenCodeToEditFile(harness, session, {
         promptToken: "BOTH_SECOND",
@@ -301,16 +382,24 @@ describe("daemon E2E (real opencode) - rewind", () => {
         doneToken: "OPENCODE_BOTH_SECOND_DONE",
       });
       const secondTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectUserMessageCount(secondTimeline, 2);
       const secondMessageId = userMessageIdForToken(secondTimeline, "BOTH_SECOND");
       const sessionIdBefore = await runtimeSessionId(harness, session);
       expectOpenCodeSessionId(sessionIdBefore);
+      const statusTransitions = await recordAgentStatusTransitions(harness, session);
 
-      await rewindOpenCode(harness, session, secondMessageId);
+      try {
+        await rewindOpenCode(harness, session, secondMessageId);
+      } finally {
+        statusTransitions.stop();
+      }
       const sessionIdAfter = await runtimeSessionId(harness, session);
       const fileText = await readScratchFile(session);
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
 
       expect(sessionIdAfter).toBe(sessionIdBefore);
+      await expectAgentIdle(harness, session);
+      expectNoLoadingRegression(statusTransitions.records);
       expect(fileText).toBe(fileTextAfterFirstTurn);
       await expectCreatedFiles(session, ["rewind-scratch.txt"]);
       expectTimeline(rewoundTimeline, {

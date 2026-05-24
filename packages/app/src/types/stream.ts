@@ -186,6 +186,31 @@ function markThoughtReady(item: ThoughtItem): ThoughtItem {
 
 const OPTIMISTIC_USER_MESSAGE_RECONCILE_WINDOW_MS = 2 * 60 * 1000;
 
+function hasUserMessageOnlyMetadata(entry: UserMessageItem): boolean {
+  return (
+    (entry.images !== undefined && entry.images.length > 0) ||
+    (entry.attachments !== undefined && entry.attachments.length > 0)
+  );
+}
+
+function matchesOptimisticUserMessageText(entry: UserMessageItem, incomingText: string): boolean {
+  if (entry.text === incomingText) {
+    return true;
+  }
+
+  if (!hasUserMessageOnlyMetadata(entry)) {
+    return false;
+  }
+
+  const optimisticText = entry.text.trimEnd();
+  const providerText = incomingText.trimEnd();
+  if (optimisticText.length === 0) {
+    return providerText.length > 0;
+  }
+
+  return providerText.startsWith(`${optimisticText}\n`);
+}
+
 function findOptimisticUserMessageIndex(
   state: StreamItem[],
   text: string,
@@ -200,7 +225,7 @@ function findOptimisticUserMessageIndex(
     if (entry.id === messageId) {
       return -1;
     }
-    if (entry.text !== text) {
+    if (!matchesOptimisticUserMessageText(entry, text)) {
       continue;
     }
     const deltaMs = Math.abs(timestamp.getTime() - entry.timestamp.getTime());

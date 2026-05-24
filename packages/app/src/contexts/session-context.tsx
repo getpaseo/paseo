@@ -1664,6 +1664,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         id: messageId,
         text: message,
         timestamp: new Date(),
+        ...(images && images.length > 0 ? { images } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
 
       // Append to head if streaming (keeps the user message with the current

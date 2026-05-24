@@ -991,6 +991,76 @@ describe("turn lifecycle events", () => {
     },
   );
 
+  it("replaces an optimistic OpenCode user message when the provider echo includes rendered attachments", () => {
+    const optimisticTimestamp = new Date("2025-01-01T15:03:00Z");
+    const serverTimestamp = new Date("2025-01-01T15:03:01Z");
+    const optimistic: StreamItem = {
+      kind: "user_message",
+      id: "msg_optimistic",
+      text: "inspect this file",
+      timestamp: optimisticTimestamp,
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          text: "ATTACHMENT_CONTEXT",
+          title: "context.txt",
+        },
+      ],
+    };
+
+    const state = reduceStreamUpdate(
+      [optimistic],
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: "inspect this file\nATTACHMENT_CONTEXT",
+          messageId: "msg_opencode_provider_owned",
+        },
+      },
+      serverTimestamp,
+      { source: "live" },
+    );
+
+    const userMessages = state.filter((item) => item.kind === "user_message");
+    assert.strictEqual(userMessages.length, 1);
+    const userMessage = userMessages[0];
+    invariant(userMessage?.kind === "user_message");
+    assert.strictEqual(userMessage.id, "msg_opencode_provider_owned");
+    assert.strictEqual(userMessage.text, "inspect this file\nATTACHMENT_CONTEXT");
+    assert.deepStrictEqual(userMessage.attachments, optimistic.attachments);
+  });
+
+  it("keeps repeated plain user text distinct when only the optimistic message id differs", () => {
+    const optimisticTimestamp = new Date("2025-01-01T15:04:00Z");
+    const serverTimestamp = new Date("2025-01-01T15:04:01Z");
+    const optimistic: StreamItem = {
+      kind: "user_message",
+      id: "msg_optimistic",
+      text: "repeatable",
+      timestamp: optimisticTimestamp,
+    };
+
+    const state = reduceStreamUpdate(
+      [optimistic],
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "user_message",
+          text: "repeatable\nprovider-added context",
+          messageId: "msg_opencode_provider_owned",
+        },
+      },
+      serverTimestamp,
+      { source: "live" },
+    );
+
+    assert.strictEqual(state.filter((item) => item.kind === "user_message").length, 2);
+  });
+
   it("keeps canonical repeated user messages distinct during hydration", () => {
     const state = hydrateStreamState(
       [
