@@ -86,14 +86,45 @@ function visibleChatMessages(page: Page) {
 async function transcript(
   page: Page,
 ): Promise<Array<{ role: "user" | "assistant"; text: string }>> {
-  return visibleChatMessages(page).evaluateAll((elements) =>
+  const rawMessages = await visibleChatMessages(page).evaluateAll((elements) =>
     elements.map((element) => ({
-      role: element.getAttribute("data-testid") === "user-message" ? "user" : "assistant",
+      role: (element.getAttribute("data-testid") === "user-message" ? "user" : "assistant") as
+        | "user"
+        | "assistant",
       text: (element.textContent ?? "")
         .replace(/\s+/g, " ")
         .replace(/\d{1,2}:\d{2}\s?(?:AM|PM)$/u, "")
         .trim(),
     })),
+  );
+
+  return coalesceAssistantTurnSegments(rawMessages);
+}
+
+function coalesceAssistantTurnSegments(
+  messages: Array<{ role: "user" | "assistant"; text: string }>,
+): Array<{ role: "user" | "assistant"; text: string }> {
+  const transcriptMessages: Array<{ role: "user" | "assistant"; text: string }> = [];
+
+  for (const message of messages) {
+    const previous = transcriptMessages.at(-1);
+    if (message.role === "assistant" && previous?.role === "assistant") {
+      const joinedText =
+        previous.text && message.text
+          ? `${previous.text}\n${message.text}`
+          : previous.text || message.text;
+      transcriptMessages[transcriptMessages.length - 1] = {
+        role: "assistant",
+        text: joinedText,
+      };
+      continue;
+    }
+
+    transcriptMessages.push(message);
+  }
+
+  return transcriptMessages.filter(
+    (message) => message.role !== "assistant" || message.text.length > 0,
   );
 }
 
