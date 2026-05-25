@@ -230,6 +230,43 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("marks optional Pi RPC input prompts as skippable", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "comment-1",
+      method: "input",
+      title: "Optional comment?",
+      placeholder: "Optional comment (press Enter to skip)...",
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request.input).toEqual({
+      questions: [
+        {
+          question: "Optional comment?",
+          header: "Response",
+          options: [],
+          multiSelect: false,
+          placeholder: "Optional comment (press Enter to skip)...",
+          allowEmpty: true,
+          dismissLabel: "Skip",
+        },
+      ],
+    });
+
+    await session.respondToPermission("comment-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "" } },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "comment-1", response: { value: "" } },
+    ]);
+  });
+
   test("cancels Pi RPC extension UI dialogs when question permission is denied", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

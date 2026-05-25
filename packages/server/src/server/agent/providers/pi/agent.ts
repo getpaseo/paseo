@@ -618,6 +618,10 @@ function parseCapturedEntries(value: unknown): PiCapturedEntry[] {
   });
 }
 
+function isOptionalInputPlaceholder(placeholder: string | undefined): boolean {
+  return /\boptional\b|\bskip\b/i.test(placeholder ?? "");
+}
+
 function mapExtensionUiRequestToPermission(
   event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
 ): AgentPermissionRequest | null {
@@ -630,12 +634,17 @@ function mapExtensionUiRequestToPermission(
           : [],
         multiSelect: false,
       });
-    case "input":
+    case "input": {
+      const placeholder = optionalString(event.placeholder);
+      const allowEmpty = isOptionalInputPlaceholder(placeholder);
       return buildExtensionUiQuestionPermission(event, {
         question: optionalString(event.title) ?? "Enter a value",
         options: [],
         multiSelect: false,
+        ...(placeholder ? { placeholder } : {}),
+        ...(allowEmpty ? { allowEmpty: true, dismissLabel: "Skip" } : {}),
       });
+    }
     case "editor":
       return buildExtensionUiQuestionPermission(event, {
         question: optionalString(event.title) ?? "Edit text",
@@ -657,7 +666,14 @@ function mapExtensionUiRequestToPermission(
 
 function buildExtensionUiQuestionPermission(
   event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
-  input: { question: string; options: string[]; multiSelect: boolean },
+  input: {
+    question: string;
+    options: string[];
+    multiSelect: boolean;
+    placeholder?: string;
+    allowEmpty?: boolean;
+    dismissLabel?: string;
+  },
 ): AgentPermissionRequest {
   const header = "Response";
   return {
@@ -673,6 +689,9 @@ function buildExtensionUiQuestionPermission(
           header,
           options: input.options.map((label) => ({ label })),
           multiSelect: input.multiSelect,
+          ...(input.placeholder ? { placeholder: input.placeholder } : {}),
+          ...(input.allowEmpty ? { allowEmpty: true } : {}),
+          ...(input.dismissLabel ? { dismissLabel: input.dismissLabel } : {}),
         },
       ],
     },
