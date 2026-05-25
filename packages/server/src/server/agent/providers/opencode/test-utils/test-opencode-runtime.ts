@@ -1,6 +1,10 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import type { OpenCodeRuntime, OpenCodeServerAcquisition } from "../runtime.js";
+import type {
+  OpenCodeClientOptions,
+  OpenCodeRuntime,
+  OpenCodeServerAcquisition,
+} from "../runtime.js";
 
 interface OpenCodeResponse {
   data?: unknown;
@@ -13,7 +17,7 @@ export class TestOpenCodeRuntime implements OpenCodeRuntime {
     env?: Record<string, string>;
     releaseCount: number;
   }> = [];
-  readonly clientCreations: Array<{ baseUrl: string; directory: string }> = [];
+  readonly clientCreations: OpenCodeClientOptions[] = [];
   private readonly clients: TestOpenCodeClient[] = [];
 
   server = { port: 1234, url: "http://127.0.0.1:1234" };
@@ -40,7 +44,7 @@ export class TestOpenCodeRuntime implements OpenCodeRuntime {
     return this.server;
   }
 
-  createClient(options: { baseUrl: string; directory: string }): OpencodeClient {
+  createClient(options: OpenCodeClientOptions): OpencodeClient {
     this.clientCreations.push(options);
     const client = this.clients.shift() ?? new TestOpenCodeClient();
     return client.asSdkClient();
