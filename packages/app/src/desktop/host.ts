@@ -51,6 +51,10 @@ export interface DesktopOpenerBridge {
   openUrl?: (url: string) => Promise<void>;
 }
 
+export interface DesktopWebUtilsBridge {
+  getPathForFile?: (file: File) => string;
+}
+
 export interface DesktopMenuBridge {
   showContextMenu?: (input?: { kind?: "terminal"; hasSelection?: boolean }) => Promise<void>;
 }
@@ -107,6 +111,7 @@ export interface DesktopHostBridge {
   dialog?: DesktopDialogBridge;
   notification?: DesktopNotificationBridge;
   opener?: DesktopOpenerBridge;
+  webUtils?: DesktopWebUtilsBridge;
   menu?: DesktopMenuBridge;
   browser?: DesktopBrowserBridge;
 }

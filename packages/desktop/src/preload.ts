@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 type EventHandler = (payload: unknown) => void;
 
@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
+  },
+  webUtils: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
   },
   menu: {
     showContextMenu: (input?: Record<string, unknown>) =>
