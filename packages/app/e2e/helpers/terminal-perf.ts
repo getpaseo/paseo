@@ -35,6 +35,10 @@ export interface TerminalPerfDaemonClient {
     timeout?: number,
   ): Promise<{ status: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
+  waitForFinish(
+    agentId: string,
+    timeout?: number,
+  ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   subscribeTerminal(
     terminalId: string,
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;

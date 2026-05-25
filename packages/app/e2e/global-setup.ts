@@ -537,13 +537,22 @@ async function awaitRelayReady(
   }
 }
 
-async function startRelay(): Promise<number> {
+async function getAvailablePortExcluding(excludedPorts: Set<number>): Promise<number> {
+  for (;;) {
+    const port = await getAvailablePort();
+    if (!excludedPorts.has(port)) {
+      return port;
+    }
+  }
+}
+
+async function startRelay(excludedPorts: Set<number>): Promise<number> {
   const relayDir = path.resolve(__dirname, "..", "..", "relay");
   const maxRelayStartupAttempts = 5;
   let lastRelayStartupError: unknown = null;
 
   for (let attempt = 1; attempt <= maxRelayStartupAttempts; attempt += 1) {
-    const relayPort = await getAvailablePort();
+    const relayPort = await getAvailablePortExcluding(excludedPorts);
     const buffer = createLineBuffer();
     const state: RelayStreamState = { failureLine: null, readyForSelectedPort: false };
 
@@ -729,7 +738,7 @@ export default async function globalSetup() {
   const dictation = await resolveDictationConfig();
 
   try {
-    const relayPort = await startRelay();
+    const relayPort = await startRelay(new Set([port, metroPort]));
     metroProcess = startMetro(metroPort, metroLineBuffer);
     daemonProcess = startDaemon({
       port,
