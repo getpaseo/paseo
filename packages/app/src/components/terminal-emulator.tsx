@@ -23,6 +23,10 @@ import {
   TerminalEmulatorRuntime,
   type TerminalOutputData,
 } from "../terminal/runtime/terminal-emulator-runtime";
+import type {
+  TerminalLocalFileLinkSource,
+  TerminalLocalFileLinkTarget,
+} from "../terminal/local-links/terminal-local-link-provider";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
 import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
@@ -136,6 +140,13 @@ interface TerminalEmulatorProps {
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+  onResolveLocalFileLink?: (
+    source: TerminalLocalFileLinkSource,
+  ) => Promise<TerminalLocalFileLinkTarget | null> | TerminalLocalFileLinkTarget | null;
+  onOpenLocalFileLink?: (
+    target: TerminalLocalFileLinkTarget,
+    disposition: "main" | "side",
+  ) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
   pendingModifiers?: PendingTerminalModifiers;
   focusRequestToken?: number;
@@ -203,6 +214,8 @@ export default function TerminalEmulator({
   onTerminalKey,
   onPendingModifiersConsumed,
   onInputModeChange,
+  onResolveLocalFileLink,
+  onOpenLocalFileLink,
   onRendererReadyChange,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
@@ -231,6 +244,8 @@ export default function TerminalEmulator({
     onTerminalKey,
     onPendingModifiersConsumed,
     onInputModeChange,
+    onResolveLocalFileLink,
+    onOpenLocalFileLink,
   });
   mountCallbacksRef.current = {
     onInput,
@@ -238,6 +253,8 @@ export default function TerminalEmulator({
     onTerminalKey,
     onPendingModifiersConsumed,
     onInputModeChange,
+    onResolveLocalFileLink,
+    onOpenLocalFileLink,
   };
   const initialSnapshotRef = useRef(initialSnapshot);
   initialSnapshotRef.current = initialSnapshot;
@@ -470,10 +487,20 @@ export default function TerminalEmulator({
         onTerminalKey,
         onPendingModifiersConsumed,
         onInputModeChange,
+        onResolveLocalFileLink,
+        onOpenLocalFileLink,
         onOpenExternalUrl: openExternalUrl,
       },
     });
-  }, [onInput, onInputModeChange, onPendingModifiersConsumed, onResize, onTerminalKey]);
+  }, [
+    onInput,
+    onInputModeChange,
+    onOpenLocalFileLink,
+    onPendingModifiersConsumed,
+    onResolveLocalFileLink,
+    onResize,
+    onTerminalKey,
+  ]);
 
   useEffect(() => {
     runtimeRef.current?.setPendingModifiers({ pendingModifiers });

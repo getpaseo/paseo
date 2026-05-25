@@ -23,6 +23,11 @@ import {
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
+import {
+  createTerminalLocalFileLinkProvider,
+  type TerminalLocalFileLinkSource,
+  type TerminalLocalFileLinkTarget,
+} from "../local-links/terminal-local-link-provider";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -46,6 +51,13 @@ export interface TerminalEmulatorRuntimeCallbacks {
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
   onOpenExternalUrl?: (url: string) => Promise<void> | void;
+  onResolveLocalFileLink?: (
+    source: TerminalLocalFileLinkSource,
+  ) => Promise<TerminalLocalFileLinkTarget | null> | TerminalLocalFileLinkTarget | null;
+  onOpenLocalFileLink?: (
+    target: TerminalLocalFileLinkTarget,
+    disposition: "main" | "side",
+  ) => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
 }
 
@@ -219,6 +231,17 @@ export class TerminalEmulatorRuntime {
       new WebLinksAddon((event, uri) => {
         event.preventDefault();
         void this.callbacks.onOpenExternalUrl?.(uri);
+      }),
+    );
+    const localFileLinkProvider = terminal.registerLinkProvider(
+      createTerminalLocalFileLinkProvider(terminal, {
+        resolveLink: async (source) => {
+          const target = await this.callbacks.onResolveLocalFileLink?.(source);
+          return target ?? null;
+        },
+        openLink: (target, disposition) => {
+          void this.callbacks.onOpenLocalFileLink?.(target, disposition);
+        },
       }),
     );
     terminal.loadAddon(new SearchAddon({ highlightLimit: 20_000 }));
@@ -524,6 +547,7 @@ export class TerminalEmulatorRuntime {
         disposeImageAddon();
       },
       disposeTerminal: () => {
+        localFileLinkProvider.dispose();
         terminal.dispose();
       },
     };

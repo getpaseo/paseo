@@ -14,6 +14,10 @@ import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
 import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
 import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
+import type {
+  TerminalLocalFileLinkSource,
+  TerminalLocalFileLinkTarget,
+} from "../terminal/local-links/terminal-local-link-provider";
 import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulator-webview-html";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
@@ -48,6 +52,13 @@ interface TerminalEmulatorProps {
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+  onResolveLocalFileLink?: (
+    source: TerminalLocalFileLinkSource,
+  ) => Promise<TerminalLocalFileLinkTarget | null> | TerminalLocalFileLinkTarget | null;
+  onOpenLocalFileLink?: (
+    target: TerminalLocalFileLinkTarget,
+    disposition: "main" | "side",
+  ) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
   pendingModifiers?: PendingTerminalModifiers;
   focusRequestToken?: number;
@@ -74,7 +85,13 @@ type BridgeInboundMessage =
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
-  | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean };
+  | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
+  | {
+      type: "resolveLocalFileLinkResponse";
+      streamKey: string;
+      requestId: number;
+      target: TerminalLocalFileLinkTarget | null;
+    };
 
 type BridgeOutboundMessage =
   | { type: "bridgeReady" }
@@ -93,6 +110,18 @@ type BridgeOutboundMessage =
   | { type: "pendingModifiersConsumed"; streamKey: string }
   | { type: "inputModeChange"; streamKey: string; state: TerminalInputModeState }
   | { type: "openExternalUrl"; streamKey: string; url: string }
+  | {
+      type: "resolveLocalFileLink";
+      streamKey: string;
+      requestId: number;
+      source: TerminalLocalFileLinkSource;
+    }
+  | {
+      type: "openLocalFileLink";
+      streamKey: string;
+      target: TerminalLocalFileLinkTarget;
+      disposition: "main" | "side";
+    }
   | { type: "swipeLeft"; streamKey: string }
   | { type: "swipeRight"; streamKey: string }
   | { type: "debug"; message: string; details?: unknown };
@@ -149,6 +178,8 @@ export default function TerminalEmulator({
   onTerminalKey,
   onPendingModifiersConsumed,
   onInputModeChange,
+  onResolveLocalFileLink,
+  onOpenLocalFileLink,
   onRendererReadyChange,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
@@ -188,6 +219,8 @@ export default function TerminalEmulator({
     onPendingModifiersConsumed,
     onInputModeChange,
     onRendererReadyChange,
+    onResolveLocalFileLink,
+    onOpenLocalFileLink,
     onSwipeLeft,
     onSwipeRight,
   });
@@ -198,6 +231,8 @@ export default function TerminalEmulator({
     onPendingModifiersConsumed,
     onInputModeChange,
     onRendererReadyChange,
+    onResolveLocalFileLink,
+    onOpenLocalFileLink,
     onSwipeLeft,
     onSwipeRight,
   };
@@ -399,10 +434,41 @@ export default function TerminalEmulator({
     [clearBridgeReadyTimeout, clearRendererReadyTimeout],
   );
 
+  const resolveLocalFileLink = useCallback(
+    async (message: Extract<BridgeOutboundMessage, { type: "resolveLocalFileLink" }>) => {
+      try {
+        const target = await (callbacksRef.current.onResolveLocalFileLink?.(message.source) ??
+          null);
+        sendToWebView({
+          type: "resolveLocalFileLinkResponse",
+          streamKey: message.streamKey,
+          requestId: message.requestId,
+          target,
+        });
+      } catch {
+        sendToWebView({
+          type: "resolveLocalFileLinkResponse",
+          streamKey: message.streamKey,
+          requestId: message.requestId,
+          target: null,
+        });
+      }
+    },
+    [sendToWebView],
+  );
+
   const handleTerminalMessage = useCallback(
     (
       message: Exclude<BridgeOutboundMessage, { type: "bridgeReady" } | { type: "rendererReady" }>,
     ) => {
+      if (message.type === "resolveLocalFileLink") {
+        void resolveLocalFileLink(message);
+        return;
+      }
+      if (message.type === "openLocalFileLink") {
+        callbacksRef.current.onOpenLocalFileLink?.(message.target, message.disposition);
+        return;
+      }
       switch (message.type) {
         case "input":
           callbacksRef.current.onInput?.(message.data);
@@ -438,7 +504,7 @@ export default function TerminalEmulator({
           break;
       }
     },
-    [],
+    [resolveLocalFileLink],
   );
 
   const handleMessage = useCallback(

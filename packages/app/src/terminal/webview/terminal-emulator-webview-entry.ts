@@ -7,6 +7,10 @@ import {
   encodeTerminalOutput,
   TerminalEmulatorRuntime,
 } from "../runtime/terminal-emulator-runtime";
+import type {
+  TerminalLocalFileLinkSource,
+  TerminalLocalFileLinkTarget,
+} from "../local-links/terminal-local-link-provider";
 
 interface MountMessage {
   type: "mount";
@@ -30,7 +34,13 @@ type InboundMessage =
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
-  | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean };
+  | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
+  | {
+      type: "resolveLocalFileLinkResponse";
+      streamKey: string;
+      requestId: number;
+      target: TerminalLocalFileLinkTarget | null;
+    };
 
 type OutboundMessage =
   | { type: "bridgeReady" }
@@ -49,6 +59,18 @@ type OutboundMessage =
   | { type: "pendingModifiersConsumed"; streamKey: string }
   | { type: "inputModeChange"; streamKey: string; state: TerminalInputModeState }
   | { type: "openExternalUrl"; streamKey: string; url: string }
+  | {
+      type: "resolveLocalFileLink";
+      streamKey: string;
+      requestId: number;
+      source: TerminalLocalFileLinkSource;
+    }
+  | {
+      type: "openLocalFileLink";
+      streamKey: string;
+      target: TerminalLocalFileLinkTarget;
+      disposition: "main" | "side";
+    }
   | { type: "swipeLeft"; streamKey: string }
   | { type: "swipeRight"; streamKey: string }
   | { type: "debug"; message: string; details?: unknown };
@@ -109,6 +131,11 @@ body,
 class TerminalWebViewBridge {
   private runtime: TerminalEmulatorRuntime | null = null;
   private streamKey: string | null = null;
+  private nextLocalFileLinkRequestId = 1;
+  private readonly pendingLocalFileLinkResolutions = new Map<
+    number,
+    (target: TerminalLocalFileLinkTarget | null) => void
+  >();
   private swipeGesturesEnabled = false;
   private trackingSwipe = false;
   private activePointerId: number | null = null;
@@ -150,11 +177,18 @@ class TerminalWebViewBridge {
     if (!this.matches(message.streamKey)) {
       return;
     }
+    if (message.type === "resolveLocalFileLinkResponse") {
+      this.resolveLocalFileLinkRequest(message.requestId, message.target);
+      return;
+    }
     this.receiveMounted(message);
   }
 
   private receiveMounted(
-    message: Exclude<InboundMessage, MountMessage | { type: "unmount" }>,
+    message: Exclude<
+      InboundMessage,
+      MountMessage | { type: "unmount" } | { type: "resolveLocalFileLinkResponse" }
+    >,
   ): void {
     switch (message.type) {
       case "writeOutput":
@@ -211,6 +245,14 @@ class TerminalWebViewBridge {
           sendToNative({ type: "inputModeChange", streamKey: message.streamKey, state }),
         onOpenExternalUrl: (url) =>
           sendToNative({ type: "openExternalUrl", streamKey: message.streamKey, url }),
+        onResolveLocalFileLink: (source) => this.requestLocalFileLinkResolution(source),
+        onOpenLocalFileLink: (target, disposition) =>
+          sendToNative({
+            type: "openLocalFileLink",
+            streamKey: message.streamKey,
+            target,
+            disposition,
+          }),
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: message.pendingModifiers });
@@ -232,6 +274,7 @@ class TerminalWebViewBridge {
     this.runtime.unmount();
     this.runtime = null;
     this.streamKey = null;
+    this.resolveAllLocalFileLinkRequests(null);
     if (previousStreamKey && (!streamKey || streamKey === previousStreamKey)) {
       sendToNative({ type: "rendererReady", streamKey: previousStreamKey, isReady: false });
     }
@@ -239,6 +282,46 @@ class TerminalWebViewBridge {
 
   private matches(streamKey: string): boolean {
     return this.streamKey === streamKey;
+  }
+
+  private requestLocalFileLinkResolution(
+    source: TerminalLocalFileLinkSource,
+  ): Promise<TerminalLocalFileLinkTarget | null> {
+    const streamKey = this.streamKey;
+    if (!streamKey) {
+      return Promise.resolve(null);
+    }
+
+    const requestId = this.nextLocalFileLinkRequestId++;
+    return new Promise((resolve) => {
+      this.pendingLocalFileLinkResolutions.set(requestId, resolve);
+      sendToNative({
+        type: "resolveLocalFileLink",
+        streamKey,
+        requestId,
+        source,
+      });
+    });
+  }
+
+  private resolveLocalFileLinkRequest(
+    requestId: number,
+    target: TerminalLocalFileLinkTarget | null,
+  ): void {
+    const resolve = this.pendingLocalFileLinkResolutions.get(requestId);
+    if (!resolve) {
+      return;
+    }
+    this.pendingLocalFileLinkResolutions.delete(requestId);
+    resolve(target);
+  }
+
+  private resolveAllLocalFileLinkRequests(target: TerminalLocalFileLinkTarget | null): void {
+    const requests = Array.from(this.pendingLocalFileLinkResolutions.values());
+    this.pendingLocalFileLinkResolutions.clear();
+    for (const resolve of requests) {
+      resolve(target);
+    }
   }
 
   private handlePointerDown = (event: PointerEvent): void => {

@@ -38,6 +38,16 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
+import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
+import type {
+  TerminalLocalFileLinkSource,
+  TerminalLocalFileLinkTarget,
+} from "@/terminal/local-links/terminal-local-link-provider";
+import {
+  normalizeWorkspaceFileLocation,
+  type OpenFileDisposition,
+  type WorkspaceFileOpenRequest,
+} from "@/workspace/file-open";
 
 interface TerminalPaneProps {
   serverId: string;
@@ -46,6 +56,7 @@ interface TerminalPaneProps {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
+  onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -157,6 +168,7 @@ export function TerminalPane({
   isWorkspaceFocused,
   isPaneFocused,
   onOpenFileExplorer,
+  onOpenWorkspaceFile,
 }: TerminalPaneProps) {
   const isAppVisible = useAppVisible();
   const { theme } = useUnistyles();
@@ -630,6 +642,42 @@ export function TerminalPane({
   const handleInputModeChange = useCallback((state: TerminalInputModeState) => {
     inputModeRef.current = state;
   }, []);
+  const handleResolveLocalFileLink = useCallback(
+    async (source: TerminalLocalFileLinkSource): Promise<TerminalLocalFileLinkTarget | null> => {
+      const resolution = classifyForResolution(
+        { href: source.text, text: source.text, sourceType: "inline-code" },
+        { workspaceRoot: cwd },
+      );
+      if (resolution.kind === "resolved") {
+        return resolution.value.kind === "file" ? resolution.value.target : null;
+      }
+      if (!client) {
+        return null;
+      }
+      try {
+        return await fetchDaemonResolution({
+          ambiguousQuery: resolution.ambiguousQuery,
+          token: resolution.token,
+          target: resolution.target,
+          workspaceRoot: cwd,
+          getDirectorySuggestions: (input) => client.getDirectorySuggestions(input),
+        });
+      } catch {
+        return null;
+      }
+    },
+    [client, cwd],
+  );
+  const handleOpenLocalFileLink = useCallback(
+    (target: TerminalLocalFileLinkTarget, disposition: OpenFileDisposition) => {
+      const location = normalizeWorkspaceFileLocation(target);
+      if (!location) {
+        return;
+      }
+      onOpenWorkspaceFile({ location, disposition });
+    },
+    [onOpenWorkspaceFile],
+  );
 
   const toggleModifier = useCallback(
     (modifier: keyof ModifierState) => {
@@ -712,6 +760,8 @@ export function TerminalPane({
               onResize={handleTerminalResize}
               onTerminalKey={handleTerminalKey}
               onInputModeChange={handleInputModeChange}
+              onResolveLocalFileLink={handleResolveLocalFileLink}
+              onOpenLocalFileLink={handleOpenLocalFileLink}
               onPendingModifiersConsumed={handlePendingModifiersConsumed}
               pendingModifiers={modifiers}
               focusRequestToken={focusRequestToken}

@@ -65,6 +65,9 @@ vi.mock("@xterm/xterm", () => ({
       terminalConstructorOptions.values.push(options);
     }
     loadAddon(): void {}
+    registerLinkProvider(): { dispose: () => void } {
+      return { dispose: () => undefined };
+    }
     open(): void {}
     onData(): { dispose: () => void } {
       return { dispose: () => undefined };
