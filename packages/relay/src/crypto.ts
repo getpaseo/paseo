@@ -22,7 +22,7 @@ export interface KeyPair {
 
 export type SharedKey = Uint8Array; // 32 bytes (box.before)
 
-const NONCE_LENGTH = nacl.box.nonceLength; // 24
+export const NONCE_LENGTH = nacl.box.nonceLength; // 24
 
 let prngReady = false;
 

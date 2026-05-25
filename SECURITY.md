@@ -34,7 +34,7 @@ The daemon requires a valid cryptographic handshake before processing any comman
 - **Send commands as you** — The daemon only accepts traffic that decrypts and authenticates under a shared key derived with its own secret key. The phone's keypair is ephemeral per connection, so there is no persistent phone-side secret to steal; protection comes from the daemon's secret key never leaving the daemon.
 - **Read your traffic** — All messages are encrypted with XSalsa20-Poly1305 (NaCl box) after the handshake
 - **Forge messages** — NaCl box provides authenticated encryption; tampered messages are rejected
-- **Replay old messages across sessions** — Each session derives fresh encryption keys, so ciphertext from one session cannot be replayed into another session. Within a live session, replay protection is not yet implemented; the protocol uses random nonces and does not track nonce reuse or message counters.
+- **Replay old messages across sessions** — Each session derives fresh encryption keys, so ciphertext from one session cannot be replayed into another session. Within a live session, each receiver tracks accepted frame nonces and closes the channel before delivering a repeated nonce.
 
 ### Trust model
 

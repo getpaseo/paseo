@@ -238,6 +238,46 @@ describe("EncryptedChannel", () => {
     expect(daemonMessages).toEqual(["still encrypted with original key"]);
   });
 
+  it("closes the receiver when an encrypted frame is replayed", async () => {
+    const [daemonTransport, clientTransport] = createMockTransportPair();
+
+    const daemonKeyPair = generateKeyPair();
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
+    const daemonMessages: (string | ArrayBuffer)[] = [];
+
+    let clientOpenedResolve: (() => void) | null = null;
+    const clientOpened = new Promise<void>((resolve) => {
+      clientOpenedResolve = resolve;
+    });
+
+    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
+      onmessage: (data) => daemonMessages.push(data),
+    });
+
+    const clientChannel = await createClientChannel(clientTransport, daemonPubKeyB64, {
+      onopen: () => clientOpenedResolve?.(),
+    });
+
+    await daemonChannelPromise;
+    await clientOpened;
+
+    (clientTransport.send as ReturnType<typeof vi.fn>).mockClear();
+
+    await clientChannel.send("execute once");
+    await waitForAsyncDelivery();
+
+    expect(daemonMessages).toEqual(["execute once"]);
+
+    const replayedFrame = (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(typeof replayedFrame).toBe("string");
+
+    daemonTransport.onmessage?.(replayedFrame as string);
+    await waitForAsyncDelivery();
+
+    expect(daemonMessages).toEqual(["execute once"]);
+    expect(daemonTransport.close).toHaveBeenCalledWith(1008, "E2EE replayed frame");
+  });
+
   it("closes an open daemon channel when a different client key sends hello", async () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
 

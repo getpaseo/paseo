@@ -13,6 +13,7 @@ import {
   deriveSharedKey,
   encrypt,
   decrypt,
+  NONCE_LENGTH,
   type KeyPair,
   type SharedKey,
 } from "./crypto.js";
@@ -92,6 +93,8 @@ function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
 
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
+const REPLAYED_FRAME_CLOSE_CODE = 1008;
+const REPLAYED_FRAME_CLOSE_REASON = "E2EE replayed frame";
 const REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE = 1008;
 const REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON = "E2EE re-handshake key mismatch";
 
@@ -270,6 +273,7 @@ export class EncryptedChannel {
   private pendingSends: Array<string | ArrayBuffer> = [];
   private onOpenCallbacks: Array<() => void> = [];
   private onCloseCallbacks: Array<() => void> = [];
+  private seenInboundNonces = new Set<string>();
 
   constructor(
     transport: Transport,
@@ -365,7 +369,17 @@ export class EncryptedChannel {
       })();
 
       if (ciphertext) {
+        const inboundNonceKey = extractNonceKey(ciphertext);
+        if (inboundNonceKey && this.seenInboundNonces.has(inboundNonceKey)) {
+          this.state = "closed";
+          this.transport.close(REPLAYED_FRAME_CLOSE_CODE, REPLAYED_FRAME_CLOSE_REASON);
+          return;
+        }
+
         const plaintext = decrypt(this.sharedKey, ciphertext);
+        if (inboundNonceKey) {
+          this.seenInboundNonces.add(inboundNonceKey);
+        }
         this.events.onmessage?.(plaintext);
       }
     } catch (error) {
@@ -457,4 +471,10 @@ function keysEqual(a: Uint8Array, b: Uint8Array): boolean {
     difference |= a[i] ^ b[i];
   }
   return difference === 0;
+}
+
+function extractNonceKey(ciphertext: ArrayBuffer): string | null {
+  const bytes = new Uint8Array(ciphertext);
+  if (bytes.byteLength < NONCE_LENGTH) return null;
+  return arrayBufferToBase64(bytes.slice(0, NONCE_LENGTH).buffer);
 }
