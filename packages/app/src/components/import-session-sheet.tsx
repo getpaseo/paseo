@@ -393,6 +393,7 @@ export function ImportSessionSheet({
   const queryClient = useQueryClient();
 
   const { entries: snapshotEntries, supportsSnapshot } = useProvidersSnapshot(serverId, {
+    cwd,
     enabled: visible,
   });
 

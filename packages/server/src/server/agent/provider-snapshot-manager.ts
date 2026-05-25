@@ -44,8 +44,8 @@ export class ProviderSnapshotManager {
     this.refreshTimeoutMs = options.refreshTimeoutMs ?? DEFAULT_REFRESH_TIMEOUT_MS;
   }
 
-  getSnapshot(_cwd?: string): ProviderSnapshotEntry[] {
-    const resolvedCwd = resolveGlobalSnapshotCwd();
+  getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
+    const resolvedCwd = resolveSnapshotCwd(cwd);
     const entries = this.snapshots.get(resolvedCwd);
     if (!entries) {
       const loadingEntries = this.resetSnapshotToLoading(resolvedCwd);
@@ -54,9 +54,14 @@ export class ProviderSnapshotManager {
     }
     const missingProviders = this.getProviderIds().filter((provider) => !entries.has(provider));
     if (missingProviders.length > 0) {
+      const loadingEntries = this.createLoadingEntries();
       for (const provider of missingProviders) {
-        entries.set(provider, this.createUnprobedEntry(provider));
+        const loadingEntry = loadingEntries.get(provider);
+        if (loadingEntry) {
+          entries.set(provider, loadingEntry);
+        }
       }
+      void this.warmUp(resolvedCwd, missingProviders);
     }
     const providerLoads = this.providerLoads.get(resolvedCwd);
     const loadingProviders = Array.from(entries.values())
@@ -69,9 +74,9 @@ export class ProviderSnapshotManager {
   }
 
   async refreshSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {
-    const snapshotCwd = resolveGlobalSnapshotCwd();
+    const snapshotCwd = resolveSnapshotCwd(options.cwd);
     const providers = this.resolveRefreshProviders(options.providers);
-    this.resetSnapshotToLoading(snapshotCwd, providers);
+    this.resetSnapshotToLoading(snapshotCwd, providers, { preserveExisting: false });
     this.emitChange(snapshotCwd);
     await this.refreshProviders(snapshotCwd, providers ?? this.getProviderIds());
   }
@@ -79,17 +84,18 @@ export class ProviderSnapshotManager {
   async refreshSettingsSnapshot(
     options: Omit<ProviderSnapshotRefreshOptions, "cwd"> = {},
   ): Promise<void> {
-    const homeCwd = resolveGlobalSnapshotCwd();
+    const homeCwd = resolveSnapshotCwd();
     const providers = this.resolveRefreshProviders(options.providers);
     const providersToRefresh = providers ?? this.getProviderIds();
 
-    this.resetSnapshotToLoading(homeCwd, providers);
+    this.clearCachedProviders(providers);
+    this.resetSnapshotToLoading(homeCwd, providers, { preserveExisting: false });
     this.emitChange(homeCwd);
     await this.refreshProviders(homeCwd, providersToRefresh);
   }
 
   async warmUpSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {
-    const snapshotCwd = resolveGlobalSnapshotCwd();
+    const snapshotCwd = resolveSnapshotCwd(options.cwd);
     const providers = this.resolveRefreshProviders(options.providers);
     if (options.providers && providers?.length === 0) {
       return;
@@ -155,18 +161,6 @@ export class ProviderSnapshotManager {
     return entries;
   }
 
-  private createUnprobedEntry(provider: AgentProvider): ProviderSnapshotEntry {
-    const definition = this.providerRegistry[provider];
-    return {
-      provider,
-      status: "unavailable",
-      enabled: definition?.enabled ?? true,
-      label: definition?.label,
-      description: definition?.description,
-      defaultModeId: definition?.defaultModeId ?? null,
-    };
-  }
-
   private reconcileSnapshotForRegistry(cwd: string): Map<AgentProvider, ProviderSnapshotEntry> {
     const existing = this.snapshots.get(cwd);
     const entries = new Map<AgentProvider, ProviderSnapshotEntry>();
@@ -212,6 +206,47 @@ export class ProviderSnapshotManager {
 
   private async refreshProviders(cwd: string, providers: AgentProvider[]): Promise<void> {
     await this.loadProviders({ cwd, providers, force: true });
+  }
+
+  private clearCachedProviders(providers?: AgentProvider[]): void {
+    const providerSet = providers ? new Set(providers) : null;
+    const loadingEntries = this.createLoadingEntries();
+
+    for (const [cwd, providerLoads] of Array.from(this.providerLoads.entries())) {
+      if (!providerSet) {
+        this.providerLoads.delete(cwd);
+        continue;
+      }
+
+      for (const provider of providerSet) {
+        providerLoads.delete(provider);
+      }
+      if (providerLoads.size === 0) {
+        this.providerLoads.delete(cwd);
+      }
+    }
+
+    for (const [cwd, snapshot] of this.snapshots.entries()) {
+      if (!providerSet) {
+        snapshot.clear();
+        for (const [provider, entry] of loadingEntries) {
+          snapshot.set(provider, entry);
+        }
+        this.emitChange(cwd);
+        continue;
+      }
+
+      let changed = false;
+      for (const provider of providerSet) {
+        const loadingEntry = loadingEntries.get(provider);
+        if (!loadingEntry) continue;
+        snapshot.set(provider, loadingEntry);
+        changed = true;
+      }
+      if (changed) {
+        this.emitChange(cwd);
+      }
+    }
   }
 
   private async loadProviders(options: ProviderLoadOptions): Promise<void> {
@@ -374,9 +409,11 @@ export class ProviderSnapshotManager {
   private resetSnapshotToLoading(
     cwdKey: string,
     providers?: AgentProvider[],
+    options: { preserveExisting?: boolean } = {},
   ): Map<AgentProvider, ProviderSnapshotEntry> {
     const snapshot = this.getOrCreateSnapshot(cwdKey);
     const loadingEntries = this.createLoadingEntries();
+    const preserveExisting = options.preserveExisting ?? true;
 
     if (!providers) {
       snapshot.clear();
@@ -392,9 +429,13 @@ export class ProviderSnapshotManager {
       const existing = snapshot.get(provider);
       snapshot.set(provider, {
         ...loadingEntry,
-        models: existing?.models,
-        modes: existing?.modes,
-        fetchedAt: existing?.fetchedAt,
+        ...(preserveExisting
+          ? {
+              models: existing?.models,
+              modes: existing?.modes,
+              fetchedAt: existing?.fetchedAt,
+            }
+          : {}),
       });
     }
     return snapshot;
@@ -422,10 +463,6 @@ export function resolveSnapshotCwd(cwd?: string | null): string {
   const expanded =
     trimmed === "~" || trimmed.startsWith("~/") ? `${homedir()}${trimmed.slice(1)}` : trimmed;
   return resolve(expanded);
-}
-
-function resolveGlobalSnapshotCwd(): string {
-  return resolveSnapshotCwd();
 }
 
 function entriesToArray(

@@ -1502,8 +1502,9 @@ function WorkspaceScreenContent({
     setIsImportSheetVisible(false);
   }, []);
 
-  // Warm the global provider snapshot so the model picker is ready when opened.
+  // Warm the workspace-scoped provider snapshot so the model picker is ready when opened.
   useProvidersSnapshot(normalizedServerId, {
+    cwd: workspaceDirectory,
     enabled: isRouteFocused,
   });
 

@@ -14,7 +14,7 @@ import { providersSnapshotQueryKey, useProvidersSnapshot } from "./use-providers
 interface ProviderSnapshotUpdateMessage {
   type: "providers_snapshot_update";
   payload: {
-    cwd: string;
+    cwd?: string;
     entries: ProviderSnapshotEntry[];
     generatedAt: string;
   };
@@ -76,12 +76,12 @@ function enableProvidersSnapshot(): void {
   });
 }
 
-function renderProvidersSnapshotHook() {
+function renderProvidersSnapshotHook(options: { cwd?: string | null } = {}) {
   const queryClient = createQueryClient();
   const wrapper = ({ children }: { children: React.ReactNode }) =>
     React.createElement(QueryClientProvider, { client: queryClient }, children);
 
-  return renderHook(() => useProvidersSnapshot(serverId), { wrapper });
+  return renderHook(() => useProvidersSnapshot(serverId, options), { wrapper });
 }
 
 const readyCodexModel = { provider: "codex", id: "gpt-5.4", label: "GPT-5.4" } as const;
@@ -123,7 +123,7 @@ async function waitForSnapshotEntries(
 
 async function emitProvidersSnapshotUpdate(
   entries: ProviderSnapshotEntry[],
-  cwd = "/repo",
+  cwd?: string,
 ): Promise<void> {
   const listener = snapshotUpdateListeners.at(-1);
   expect(listener).toBeDefined();
@@ -132,7 +132,7 @@ async function emitProvidersSnapshotUpdate(
     listener?.({
       type: "providers_snapshot_update",
       payload: {
-        cwd,
+        ...(cwd ? { cwd } : {}),
         entries,
         generatedAt: "2026-01-01T00:00:01.000Z",
       },
@@ -155,8 +155,14 @@ afterEach(() => {
 });
 
 describe("providers snapshot hook cache scope", () => {
-  it("uses a global query key without cwd", () => {
-    expect(providersSnapshotQueryKey(serverId)).toEqual(["providersSnapshot", serverId]);
+  it("uses separate query keys for home and workspace scopes", () => {
+    expect(providersSnapshotQueryKey(serverId)).toEqual(["providersSnapshot", serverId, "home"]);
+    expect(providersSnapshotQueryKey(serverId, "/repo-a")).toEqual([
+      "providersSnapshot",
+      serverId,
+      "cwd",
+      "/repo-a",
+    ]);
   });
 
   it("sends no cwd for settings snapshot loads and refreshes", async () => {
@@ -181,7 +187,7 @@ describe("providers snapshot hook cache scope", () => {
     expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
   });
 
-  it("does not send cwd for repeated snapshot loads and refreshes", async () => {
+  it("sends cwd for workspace snapshot loads and refreshes", async () => {
     enableProvidersSnapshot();
     mockClient.getProvidersSnapshot.mockResolvedValue(providersSnapshot([]));
     mockClient.refreshProvidersSnapshot.mockResolvedValue({
@@ -189,29 +195,34 @@ describe("providers snapshot hook cache scope", () => {
       requestId: "workspace-refresh",
     });
 
-    const { result } = renderProvidersSnapshotHook();
+    const { result } = renderProvidersSnapshotHook({ cwd: "/repo-a" });
 
     await waitFor(() => {
-      expect(mockClient.getProvidersSnapshot).toHaveBeenCalledWith({});
+      expect(mockClient.getProvidersSnapshot).toHaveBeenCalledWith({ cwd: "/repo-a" });
     });
 
     await act(async () => {
       await result.current.refresh(["codex"]);
     });
 
-    expect(mockClient.refreshProvidersSnapshot).toHaveBeenCalledWith({ providers: ["codex"] });
-    expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
+    expect(mockClient.refreshProvidersSnapshot).toHaveBeenCalledWith({
+      cwd: "/repo-a",
+      providers: ["codex"],
+    });
+    expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({ cwd: "/repo-a" });
   });
 
-  it("applies provider snapshot updates from other cwd values to the global cache", async () => {
+  it("routes provider snapshot updates by cwd scope", async () => {
     enableProvidersSnapshot();
     mockClient.getProvidersSnapshot.mockResolvedValue(providersSnapshot([]));
 
-    const { result } = renderProvidersSnapshotHook();
+    const { result } = renderProvidersSnapshotHook({ cwd: "/repo-a" });
 
     await waitForSnapshotEntries(result, []);
     await emitProvidersSnapshotUpdate([codexEntry("ready", [readyCodexModel])], "/repo-b");
+    expect(result.current.entries).toEqual([]);
 
+    await emitProvidersSnapshotUpdate([codexEntry("ready", [readyCodexModel])], "/repo-a");
     await waitForSnapshotEntries(result, [codexEntry("ready", [readyCodexModel])]);
   });
 

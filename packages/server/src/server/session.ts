@@ -1237,10 +1237,11 @@ export class Session {
         const visibleEntries = entries.filter((entry) =>
           this.isProviderVisibleToClient(entry.provider),
         );
+        const snapshotCwd = cwd === resolveSnapshotCwd() ? undefined : cwd;
         this.emit({
           type: "providers_snapshot_update",
           payload: {
-            cwd,
+            ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
             entries: visibleEntries,
             generatedAt: new Date().toISOString(),
           },

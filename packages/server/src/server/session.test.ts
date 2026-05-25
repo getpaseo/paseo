@@ -986,6 +986,41 @@ describe("session provider refresh cwd routing", () => {
     expect(refreshSettingsSnapshot).not.toHaveBeenCalled();
   });
 
+  test("provider snapshot requests pass cwd through to provider discovery", async () => {
+    const messages: unknown[] = [];
+    const fetchModels = vi.fn(async (options: ListModelsOptions) => [
+      {
+        provider: "codex" as const,
+        id: `model:${options.cwd}`,
+        label: `model:${options.cwd}`,
+      },
+    ]);
+    const providerDefinition = createTestProviderDefinition({
+      fetchModels,
+      fetchModes: vi.fn(async () => []),
+    });
+    const providerSnapshotManager = new ProviderSnapshotManager(
+      { codex: providerDefinition },
+      pino({ level: "silent" }),
+    );
+    const session = createSessionForTest({ messages, providerSnapshotManager });
+
+    await session.handleMessage({
+      type: "get_providers_snapshot_request",
+      cwd: "/tmp/session-provider-snapshot",
+      requestId: "snapshot-workspace",
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchModels).toHaveBeenCalledWith({
+        cwd: "/tmp/session-provider-snapshot",
+        force: false,
+      });
+    });
+
+    providerSnapshotManager.destroy();
+  });
+
   test("normalizes legacy model and mode list requests without cwd to home", async () => {
     const messages: unknown[] = [];
     const session = createSessionForTest({ messages });

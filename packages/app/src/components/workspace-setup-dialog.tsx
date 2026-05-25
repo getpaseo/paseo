@@ -63,7 +63,10 @@ function buildChatDraftComposerArgs({
 }) {
   return {
     initialServerId: serverId || null,
-    initialValues: workspaceDirectory ? { workingDir: workspaceDirectory } : undefined,
+    initialValues:
+      workspaceDirectory || sourceDirectory
+        ? { workingDir: workspaceDirectory || sourceDirectory }
+        : undefined,
     isVisible: pendingWorkspaceSetup !== null,
     onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workspaceDirectory || sourceDirectory || undefined,
