@@ -622,6 +622,16 @@ function isOptionalInputPlaceholder(placeholder: string | undefined): boolean {
   return /\boptional\b|\bskip\b/i.test(placeholder ?? "");
 }
 
+function getInputQuestionTitle(title: string | undefined, placeholder: string | undefined): string {
+  if (!isOptionalInputPlaceholder(placeholder)) {
+    return title ?? "Enter a value";
+  }
+  if (/\bcomment\b/i.test(`${title ?? ""}\n${placeholder ?? ""}`)) {
+    return "Optional comment";
+  }
+  return "Optional response";
+}
+
 function mapExtensionUiRequestToPermission(
   event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
 ): AgentPermissionRequest | null {
@@ -636,9 +646,10 @@ function mapExtensionUiRequestToPermission(
       });
     case "input": {
       const placeholder = optionalString(event.placeholder);
+      const title = optionalString(event.title);
       const allowEmpty = isOptionalInputPlaceholder(placeholder);
       return buildExtensionUiQuestionPermission(event, {
-        question: optionalString(event.title) ?? "Enter a value",
+        question: getInputQuestionTitle(title, placeholder),
         options: [],
         multiSelect: false,
         ...(placeholder ? { placeholder } : {}),

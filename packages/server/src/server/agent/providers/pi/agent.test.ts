@@ -238,23 +238,26 @@ describe("PiRpcAgentSession", () => {
       type: "extension_ui_request",
       id: "comment-1",
       method: "input",
-      title: "Optional comment?",
+      title: "Pick one\n\nSelected option:\n- A",
       placeholder: "Optional comment (press Enter to skip)...",
     });
 
     const permission = await events.nextPermissionRequest();
-    expect(permission.request.input).toEqual({
-      questions: [
-        {
-          question: "Optional comment?",
-          header: "Response",
-          options: [],
-          multiSelect: false,
-          placeholder: "Optional comment (press Enter to skip)...",
-          allowEmpty: true,
-          dismissLabel: "Skip",
-        },
-      ],
+    expect(permission.request).toMatchObject({
+      title: "Optional comment",
+      input: {
+        questions: [
+          {
+            question: "Optional comment",
+            header: "Response",
+            options: [],
+            multiSelect: false,
+            placeholder: "Optional comment (press Enter to skip)...",
+            allowEmpty: true,
+            dismissLabel: "Skip",
+          },
+        ],
+      },
     });
 
     await session.respondToPermission("comment-1", {
