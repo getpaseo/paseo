@@ -924,4 +924,52 @@ describe("translateOpenCodeEvent", () => {
     ]);
     expect(second).toEqual([]);
   });
+
+  it("translates session.error with MessageAbortedError as turn_canceled, not turn_failed", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.error",
+        properties: {
+          sessionID: "session-1",
+          error: {
+            name: "MessageAbortedError",
+            data: { message: "aborted" },
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      { type: "turn_canceled", provider: "opencode", reason: "interrupted" },
+    ]);
+  });
+
+  it("translates session.error with a real error as turn_failed", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.error",
+        properties: {
+          sessionID: "session-1",
+          error: {
+            name: "UnknownError",
+            data: { message: "something broke" },
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode",
+        error: '{"name":"UnknownError","data":{"message":"something broke"}}',
+      },
+    ]);
+  });
 });

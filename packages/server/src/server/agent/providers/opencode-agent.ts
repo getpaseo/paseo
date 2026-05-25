@@ -1653,14 +1653,7 @@ export function translateOpenCodeEvent(
       }
       break;
     case "session.error":
-      if (event.properties.sessionID === state.sessionId) {
-        resetOpenCodeTurnTrackingState(state);
-        events.push({
-          type: "turn_failed",
-          provider: "opencode",
-          error: toDiagnosticErrorMessage(event.properties.error),
-        });
-      }
+      appendOpenCodeSessionError(event, state, events);
       break;
     case "session.status":
       appendOpenCodeSessionStatus(event, state, events);
@@ -2233,6 +2226,36 @@ function appendOpenCodeQuestionAsked(
       },
     },
   });
+}
+
+function appendOpenCodeSessionError(
+  event: Extract<OpenCodeEvent, { type: "session.error" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (event.properties.sessionID !== state.sessionId) {
+    return;
+  }
+  resetOpenCodeTurnTrackingState(state);
+  const error = event.properties.error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "MessageAbortedError"
+  ) {
+    events.push({
+      type: "turn_canceled",
+      provider: "opencode",
+      reason: "interrupted",
+    });
+  } else {
+    events.push({
+      type: "turn_failed",
+      provider: "opencode",
+      error: toDiagnosticErrorMessage(error),
+    });
+  }
 }
 
 function appendOpenCodeSessionStatus(
