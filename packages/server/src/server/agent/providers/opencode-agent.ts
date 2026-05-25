@@ -884,6 +884,17 @@ function buildOpenCodeReplayPartTimelineEvent(params: {
   if (part.type !== "tool") {
     return null;
   }
+  if (isOpenCodeTodoWriteToolPart(part)) {
+    const todos = readOpenCodeTodoItemsFromToolPart(part);
+    if (!todos) {
+      return null;
+    }
+    return buildOpenCodeReplayTimelineEvent({
+      item: mapOpenCodeTodosToTimelineItems(todos),
+      message,
+      part,
+    });
+  }
   const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
   if (!parsedToolPart.success || !parsedToolPart.data) {
     return null;
@@ -1537,6 +1548,56 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function isOpenCodeTodoWriteToolPart(part: OpenCodeToolPartEventPart | OpenCodePart): boolean {
+  return part.type === "tool" && part.tool.trim().toLowerCase() === "todowrite";
+}
+
+function readOpenCodeTodoItems(
+  value: unknown,
+): Array<{ content?: string | null; status?: string | null }> | null {
+  if (typeof value === "string") {
+    try {
+      return readOpenCodeTodoItems(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      const record = readOpenCodeRecord(entry);
+      if (!record) {
+        return [];
+      }
+      const content = readNonEmptyString(record.content);
+      if (!content) {
+        return [];
+      }
+      return [
+        {
+          content,
+          status: readNonEmptyString(record.status),
+        },
+      ];
+    });
+  }
+  const record = readOpenCodeRecord(value);
+  if (!record) {
+    return null;
+  }
+  return readOpenCodeTodoItems(record.todos);
+}
+
+function readOpenCodeTodoItemsFromToolPart(
+  part: Extract<OpenCodePart, { type: "tool" }>,
+): Array<{ content?: string | null; status?: string | null }> | null {
+  const state = readOpenCodeRecord(part.state);
+  return (
+    readOpenCodeTodoItems(state?.input) ??
+    readOpenCodeTodoItems(state?.output) ??
+    readOpenCodeTodoItems(state?.metadata)
+  );
+}
+
 function mapOpenCodeTodosToTimelineItems(
   todos: Array<{ content?: string | null; status?: string | null }>,
 ): Extract<AgentTimelineItem, { type: "todo" }> {
@@ -2093,6 +2154,9 @@ function appendOpenCodeMessagePartUpdated(
   events: AgentStreamEvent[],
 ): void {
   const part = event.properties.part;
+  if (part.type === "tool" && isOpenCodeTodoWriteToolPart(part)) {
+    return;
+  }
   if (part.sessionID !== state.sessionId) {
     if (part.type === "tool") {
       appendOpenCodeSubAgentChildToolPart(part, state, events);

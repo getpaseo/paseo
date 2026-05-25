@@ -1082,6 +1082,167 @@ describe("OpenCode adapter startTurn error handling", () => {
     ]);
   });
 
+  test("streamHistory maps persisted OpenCode tool parts through canonical detail branches", async () => {
+    const patchText = [
+      "*** Begin Patch",
+      "*** Delete File: /tmp/repo/src/App.tsx",
+      "*** End Patch",
+    ].join("\n");
+
+    const fakeClient = {
+      session: {
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+              },
+              parts: [
+                {
+                  id: "part-grep",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "grep",
+                  callID: "call-grep",
+                  state: {
+                    status: "completed",
+                    input: { pattern: "sendCorrelatedSessionRequest" },
+                  },
+                },
+                {
+                  id: "part-skill",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "skill",
+                  callID: "call-skill",
+                  state: {
+                    status: "completed",
+                    input: { name: "diagnose" },
+                    output: '<skill_content name="diagnose"># Skill: diagnose</skill_content>',
+                  },
+                },
+                {
+                  id: "part-apply-patch",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "apply_patch",
+                  callID: "call-apply-patch",
+                  state: {
+                    status: "completed",
+                    input: { patchText },
+                    output: "Success. Updated the following files:\nD /tmp/repo/src/App.tsx",
+                  },
+                },
+                {
+                  id: "part-todowrite",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "todowrite",
+                  callID: "call-todowrite",
+                  state: {
+                    status: "completed",
+                    input: {
+                      todos: [
+                        {
+                          content: "Inspect current directory and existing files",
+                          status: "completed",
+                          priority: "high",
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/repo" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "tool_call",
+          callId: "call-grep",
+          name: "grep",
+          status: "completed",
+          detail: {
+            type: "search",
+            query: "sendCorrelatedSessionRequest",
+            toolName: "grep",
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "tool_call",
+          callId: "call-skill",
+          name: "skill",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            label: "diagnose",
+            icon: "sparkles",
+            text: '<skill_content name="diagnose"># Skill: diagnose</skill_content>',
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "tool_call",
+          callId: "call-apply-patch",
+          name: "apply_patch",
+          status: "completed",
+          detail: {
+            type: "edit",
+            filePath: "/tmp/repo/src/App.tsx",
+            unifiedDiff: [
+              "diff --git a//tmp/repo/src/App.tsx b//tmp/repo/src/App.tsx",
+              "--- a//tmp/repo/src/App.tsx",
+              "+++ /dev/null",
+            ].join("\n"),
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "todo",
+          items: [{ text: "Inspect current directory and existing files", completed: true }],
+        },
+      },
+    ]);
+  });
+
   test("emits turn_failed when client.session.promptAsync throws synchronously", async () => {
     // Yield the server-connected event, then park forever. The adapter waits
     // for that first event before sending the prompt.
