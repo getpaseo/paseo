@@ -1091,6 +1091,10 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     const fakeClient = {
       session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
         messages: vi.fn().mockResolvedValue({
           data: [
             {
