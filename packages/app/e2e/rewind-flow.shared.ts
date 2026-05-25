@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "./fixtures";
@@ -21,6 +21,7 @@ const FILE_PROMPT = "Use the Write tool to create ./qa.txt with the exact conten
 
 interface RewindFlowCase {
   provider: RewindFlowProvider;
+  initialRewindMode?: RewindFlowMode;
   rewindMode: RewindFlowMode;
   fileReverted: boolean;
 }
@@ -30,7 +31,9 @@ export function defineRewindFlowSpec(input: RewindFlowCase): void {
     test.setTimeout(600_000);
 
     test("rewinds conversation and file-write turns without transcript drift", async ({ page }) => {
-      const cwd = mkdtempSync(path.join(tmpdir(), `paseo-rewind-flow-${input.provider}-`));
+      const cwd = realpathSync(
+        mkdtempSync(path.join(tmpdir(), `paseo-rewind-flow-${input.provider}-`)),
+      );
       let handle: AgentHandle | undefined;
 
       try {
@@ -47,7 +50,7 @@ export function defineRewindFlowSpec(input: RewindFlowCase): void {
           { role: "assistant", text: /.+/ },
         ]);
 
-        await rewindMessage(handle, 0, "conversation");
+        await rewindMessage(handle, 0, input.initialRewindMode ?? "conversation");
         await assertChatTranscript(handle, []);
         await assertComposerIdle(handle);
 

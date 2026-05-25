@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expectComposerEditable, submitMessage } from "./composer";
@@ -150,8 +151,27 @@ export async function launchAgent(input: {
   cwd: string;
   mode: "full-access";
 }): Promise<AgentHandle> {
+  execFileSync("git", ["init", "-b", "main"], { cwd: input.cwd, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "paseo-test@example.com"], {
+    cwd: input.cwd,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], {
+    cwd: input.cwd,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], {
+    cwd: input.cwd,
+    stdio: "ignore",
+  });
+  writeFileSync(`${input.cwd}/README.md`, "# Paseo rewind flow\n", "utf8");
+  execFileSync("git", ["add", "README.md"], { cwd: input.cwd, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: input.cwd, stdio: "ignore" });
   const client = await connectTerminalClient();
-  await client.openProject(input.cwd);
+  const opened = await client.openProject(input.cwd);
+  if (!opened.workspace) {
+    throw new Error(opened.error ?? `Failed to open project ${input.cwd}`);
+  }
   const agent = await client.createAgent({
     ...fullAccessConfig(input.provider),
     cwd: input.cwd,
@@ -164,7 +184,7 @@ export async function launchAgent(input: {
     cwd: input.cwd,
     provider: input.provider,
   };
-  await openAgent(input.page, handle);
+  await openAgent(input.page, { cwd: input.cwd, agentId: agent.id });
   return handle;
 }
 
@@ -251,7 +271,9 @@ export async function rewindMessage(
   await expect(trigger).toBeVisible({ timeout: 10_000 });
   await trigger.click();
   await expect(handle.page.getByTestId("rewind-menu-content")).toBeVisible({ timeout: 10_000 });
-  await handle.page.getByTestId(`rewind-menu-${mode}`).click();
+  const modeItem = handle.page.getByTestId(`rewind-menu-${mode}`);
+  await expect(modeItem).toBeVisible({ timeout: 10_000 });
+  await modeItem.click();
   await expect(handle.page.getByTestId("rewind-menu-content")).toHaveCount(0, { timeout: 10_000 });
   if (mode !== "files") {
     await waitForNextTimelineEpoch(handle, beforeEpoch);
