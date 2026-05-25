@@ -504,7 +504,7 @@ function canMergeFromBase(input: BuildGitActionsInput): boolean {
 
 function canMergePr(input: BuildGitActionsInput): boolean {
   const github = input.pullRequestGithub;
-  const canMergeFromTopLevelStatus =
+  const canMergeFromPullRequestStatus =
     input.githubFeaturesEnabled &&
     input.hasPullRequest &&
     input.pullRequestState === "open" &&
@@ -512,17 +512,19 @@ function canMergePr(input: BuildGitActionsInput): boolean {
     !input.pullRequestIsMerged &&
     input.pullRequestMergeable !== "CONFLICTING" &&
     input.aheadCount > 0 &&
-    !input.hasUncommittedChanges &&
-    input.behindOfOrigin === 0 &&
-    input.aheadOfOrigin === 0 &&
-    !canMergeFromBase(input);
+    !input.hasUncommittedChanges;
 
-  if (!canMergeFromTopLevelStatus) {
+  if (!canMergeFromPullRequestStatus) {
     return false;
   }
 
   if (!hasPullRequestGithubFacts(github)) {
-    return input.pullRequestMergeable === "MERGEABLE";
+    return (
+      input.pullRequestMergeable === "MERGEABLE" &&
+      input.behindOfOrigin === 0 &&
+      input.aheadOfOrigin === 0 &&
+      !canMergeFromBase(input)
+    );
   }
 
   return (

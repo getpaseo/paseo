@@ -226,6 +226,9 @@ describe("git-actions-policy", () => {
       "merge-from-base",
       "merge-branch",
       "pr",
+      "merge-pr-squash",
+      "merge-pr-merge",
+      "merge-pr-rebase",
     ]);
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
@@ -322,6 +325,45 @@ describe("git-actions-policy", () => {
       id: "merge-pr-squash",
       label: "Squash and merge",
     });
+  });
+
+  it("offers direct PR merge when GitHub says the PR is mergeable even if the local branch is behind", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        behindBaseCount: 3,
+        aheadOfOrigin: 0,
+        behindOfOrigin: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        pullRequestGithub: githubStatus({ mergeStateStatus: "CLEAN" }),
+        shipDefault: "pr",
+      }),
+    );
+
+    expect(actions.secondary).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "merge-pr-squash",
+          disabled: false,
+          unavailableMessage: undefined,
+        }),
+        expect.objectContaining({
+          id: "merge-pr-merge",
+          disabled: false,
+          unavailableMessage: undefined,
+        }),
+        expect.objectContaining({
+          id: "merge-pr-rebase",
+          disabled: false,
+          unavailableMessage: undefined,
+        }),
+      ]),
+    );
   });
 
   it("respects the ship preference when choosing between PR merge and local merge", () => {
