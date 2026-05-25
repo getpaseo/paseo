@@ -5,7 +5,7 @@ import type { CommandError, CommandOptions, SingleResult } from "../../output/in
 import { agentRunSchema, type AgentRunResult } from "./run.js";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 
-const IMPORT_PROVIDER_LIST = ["claude", "codex", "opencode", "pi", "acp"] as const;
+const IMPORT_PROVIDER_LIST = ["claude", "codex", "opencode", "pi", "omp", "acp"] as const;
 const IMPORT_PROVIDERS = new Set<string>(IMPORT_PROVIDER_LIST);
 const IMPORT_PROVIDER_HELP = IMPORT_PROVIDER_LIST.join(", ");
 

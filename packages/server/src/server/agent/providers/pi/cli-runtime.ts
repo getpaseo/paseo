@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { PI_FAMILY, type PiFamilyConfig, resolveFamilyBinaryName } from "./family-config.js";
 import {
   buildPiLaunch,
   type PiRuntime,
@@ -22,9 +23,9 @@ import type {
   PiSessionStats,
 } from "./rpc-types.js";
 
-const DEFAULT_PI_COMMAND: [string, ...string[]] = [
-  process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
-];
+function defaultCommandForFamily(family: PiFamilyConfig): [string, ...string[]] {
+  return [resolveFamilyBinaryName(family)];
+}
 const DEFAULT_TIMEOUT_MS = 30_000;
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -32,9 +33,10 @@ const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
 function assertChildWithPipes(
   child: ChildProcess,
+  label: string,
 ): asserts child is ChildProcessWithoutNullStreams {
   if (!child.stdin || !child.stdout || !child.stderr) {
-    throw new Error("Pi process was spawned without stdio streams");
+    throw new Error(`${label} process was spawned without stdio streams`);
   }
 }
 
@@ -49,24 +51,28 @@ export interface PiCliRuntimeOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
   spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  family?: PiFamilyConfig;
 }
 
 export class PiCliRuntime implements PiRuntime {
   private readonly command: [string, ...string[]];
   private readonly spawnProcess: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  private readonly family: PiFamilyConfig;
 
   constructor(private readonly options: PiCliRuntimeOptions) {
-    this.command = options.command ?? DEFAULT_PI_COMMAND;
+    this.family = options.family ?? PI_FAMILY;
+    this.command = options.command ?? defaultCommandForFamily(this.family);
+    const label = this.family.displayLabel;
     this.spawnProcess =
       options.spawnProcess ??
-      ((launch) => {
+      ((launch): ChildProcessWithoutNullStreams => {
         const [command, ...args] = launch.argv;
         const child = spawnProcess(command, args, {
           cwd: launch.cwd,
           envOverlay: launch.env,
           stdio: ["pipe", "pipe", "pipe"],
         });
-        assertChildWithPipes(child);
+        assertChildWithPipes(child, label);
         return child;
       });
   }

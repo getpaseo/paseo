@@ -17,6 +17,7 @@ Work out of the box once the underlying CLI is installed and authenticated.
 - [Codex CLI](https://github.com/openai/codex). OpenAI's workspace agent with sandbox controls and optional network access.
 - [OpenCode](https://opencode.ai/). Open-source coding assistant with multi-provider model support.
 - [pi](https://github.com/svkozak/pi-acp). Minimal terminal-based coding agent with multi-provider LLM support.
+- [OMP (Oh-My-Pi)](https://github.com/oh-my-pi/pi-coding-agent). Pi fork with an extended plugin ecosystem (`~/.omp`). Reuses Pi's RPC protocol and session schema, but ships its own `omp` binary and home directory.
 
 ## ACP catalog
 

@@ -845,4 +845,26 @@ describe("transformPiModels", () => {
       },
     ]);
   });
+
+  test("keeps the provider prefix when keepProviderInLabel is set (OMP)", () => {
+    expect(
+      transformPiModels(
+        [
+          {
+            provider: "omp",
+            id: "openrouter/google/gemini-2.5-flash-lite",
+            label: "openrouter/google/gemini_2.5 flash lite",
+          },
+        ],
+        { keepProviderInLabel: true },
+      ),
+    ).toEqual([
+      {
+        provider: "omp",
+        id: "openrouter/google/gemini-2.5-flash-lite",
+        label: "openrouter/google/gemini 2.5 flash lite",
+        description: "openrouter/google/gemini_2.5 flash lite",
+      },
+    ]);
+  });
 });

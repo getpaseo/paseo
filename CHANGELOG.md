@@ -1,3 +1,12 @@
+## Unreleased
+
+### Added
+
+- **OMP (Oh-My-Pi) as a first-class importable provider** alongside Pi. OMP is a downstream fork of Pi (`@oh-my-pi/pi-coding-agent`) that ships its own binary (`omp`) and home directory (`~/.omp`) but preserves Pi's `--mode rpc` wire protocol and JSONL session schema. The Pi adapter is now parameterized over a `PiFamilyConfig` so both providers share session lifecycle, history mapping, tool-call translation, permission dialogs, and the RPC client.
+  - Surfaces as **OMP** in `paseo provider ls`, the in-app provider picker, and `paseo import --provider omp`
+  - OMP sessions started outside Paseo (in the terminal) are discovered by reading `~/.omp/agent/sessions/**/*.jsonl` (overridable via `$OMP_CODING_AGENT_DIR`, `$OMP_CODING_AGENT_SESSION_DIR`, or `settings.json:sessionDir`)
+  - Custom providers can `extends: "omp"` in `~/.paseo/config.json` for alternative OMP binaries or wrappers
+
 # Changelog
 
 ## 0.1.89 - 2026-06-02

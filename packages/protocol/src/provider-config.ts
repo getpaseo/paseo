@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AgentProvider } from "./agent-types.js";
-import { AgentProviderSchema } from "./provider-manifest.js";
+import { AgentProviderSchema, BUILTIN_PROVIDER_IDS } from "./provider-manifest.js";
 
 const ProviderCommandDefaultSchema = z.object({
   mode: z.literal("default"),
@@ -56,7 +56,8 @@ export const ProviderOverrideSchema = z.object({
   order: z.number().optional(),
 });
 
-const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi"] as const;
+// BUILTIN_PROVIDER_IDS is imported from provider-manifest (single source of truth,
+// derived from AGENT_PROVIDER_DEFINITIONS) so new builtin providers stay in sync.
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 export const ProviderOverridesSchema = z

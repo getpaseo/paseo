@@ -92,4 +92,4 @@ export function getAskModeConfig(provider: AgentProvider) {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi"];
+export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi", "omp"];
