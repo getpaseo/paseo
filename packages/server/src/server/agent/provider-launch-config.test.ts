@@ -113,14 +113,24 @@ describe("ProviderOverrideSchema", () => {
       env: {
         FOO: "bar",
       },
+      serverUrl: "http://127.0.0.1:4096",
       enabled: false,
       order: 2,
     });
 
     expect(parsed.command).toEqual(["custom-claude", "--json"]);
     expect(parsed.env?.FOO).toBe("bar");
+    expect(parsed.serverUrl).toBe("http://127.0.0.1:4096");
     expect(parsed.enabled).toBe(false);
     expect(parsed.order).toBe(2);
+  });
+
+  test("rejects non-HTTP server URLs", () => {
+    const parsed = ProviderOverrideSchema.safeParse({
+      serverUrl: "ws://127.0.0.1:4096",
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   test("accepts models with thinking options", () => {
@@ -273,6 +283,23 @@ describe("migrateProviderSettings", () => {
         env: {
           PATH: "/custom/bin",
         },
+      },
+    });
+  });
+
+  test("preserves external server URLs while migrating old entries", () => {
+    const migrated = migrateProviderSettings(
+      {
+        opencode: {
+          serverUrl: "http://127.0.0.1:4096",
+        },
+      },
+      builtinProviderIds,
+    );
+
+    expect(migrated).toEqual({
+      opencode: {
+        serverUrl: "http://127.0.0.1:4096",
       },
     });
   });

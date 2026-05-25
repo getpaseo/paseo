@@ -33,10 +33,22 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
   ProviderCommandReplaceSchema,
 ]);
 
+const ProviderServerUrlSchema = z
+  .string()
+  .url()
+  .refine(
+    (value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === "http:" || protocol === "https:";
+    },
+    { message: "Server URL must use http or https" },
+  );
+
 export const ProviderRuntimeSettingsSchema = z
   .object({
     command: ProviderCommandSchema.optional(),
     env: z.record(z.string()).optional(),
+    serverUrl: ProviderServerUrlSchema.optional(),
     disallowedTools: z.array(z.string()).optional(),
   })
   .strict();
@@ -67,6 +79,7 @@ export const ProviderOverrideSchema = z
     description: z.string().optional(),
     command: z.array(z.string().min(1)).min(1).optional(),
     env: z.record(z.string()).optional(),
+    serverUrl: ProviderServerUrlSchema.optional(),
     models: z.array(ProviderProfileModelSchema).optional(),
     additionalModels: z.array(ProviderProfileModelSchema).optional(),
     disallowedTools: z.array(z.string()).optional(),
@@ -156,6 +169,9 @@ export function migrateProviderSettings(
     }
     if (parsedOld.data.env) {
       nextEntry.env = parsedOld.data.env;
+    }
+    if (parsedOld.data.serverUrl) {
+      nextEntry.serverUrl = parsedOld.data.serverUrl;
     }
     if (!builtinProviderIdSet.has(providerId) && nextEntry.extends === undefined) {
       delete nextEntry.extends;

@@ -1,4 +1,5 @@
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -37,6 +38,32 @@ function isolateCodexDefaultDiscoveryTo(dir: string): void {
   if (process.platform === "win32") {
     process.env.LOCALAPPDATA = dir;
   }
+}
+
+function listen(server: http.Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (typeof address === "object" && address) {
+        resolve(address.port);
+      } else {
+        reject(new Error("server did not bind to a TCP port"));
+      }
+    });
+  });
+}
+
+function closeServer(server: http.Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
 afterEach(() => {
@@ -112,6 +139,40 @@ describe("default provider availability", () => {
     const binDir = makeTempDir("provider-availability-opencode-");
     isolatePathTo(binDir);
     const client = new OpenCodeAgentClient(createTestLogger());
+
+    await expect(client.isAvailable()).resolves.toBe(false);
+  });
+
+  test("OpenCode reports available with an external server URL", async () => {
+    const binDir = makeTempDir("provider-availability-opencode-external-");
+    isolatePathTo(binDir);
+    const server = http.createServer((request, response) => {
+      if (request.url === "/global/health") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ healthy: true, version: "test" }));
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    const port = await listen(server);
+    const client = new OpenCodeAgentClient(createTestLogger(), {
+      serverUrl: `http://127.0.0.1:${port}`,
+    });
+
+    try {
+      await expect(client.isAvailable()).resolves.toBe(true);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("OpenCode reports unavailable when the external server health check fails", async () => {
+    const binDir = makeTempDir("provider-availability-opencode-external-down-");
+    isolatePathTo(binDir);
+    const client = new OpenCodeAgentClient(createTestLogger(), {
+      serverUrl: "http://127.0.0.1:1",
+    });
 
     await expect(client.isAvailable()).resolves.toBe(false);
   });

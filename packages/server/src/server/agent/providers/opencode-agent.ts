@@ -170,6 +170,7 @@ type OpenCodeMcpConfig =
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
 const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
+const OPENCODE_EXTERNAL_HEALTH_TIMEOUT_MS = 2_000;
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
   { name: "compact", description: "Compact the current session", argumentHint: "" },
   { name: "summarize", description: "Compact the current session", argumentHint: "" },
@@ -1051,17 +1052,71 @@ interface OpenCodeAgentClientDeps {
   runtime?: OpenCodeRuntime;
 }
 
+function acquireExternalOpenCodeServer(serverUrl: string): OpenCodeServerAcquisition {
+  const url = normalizeOpenCodeServerUrl(serverUrl);
+  return {
+    server: { port: resolveOpenCodeServerPort(url), url },
+    release: () => {},
+  };
+}
+
+function normalizeOpenCodeServerUrl(serverUrl: string): string {
+  const parsed = new URL(serverUrl);
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function resolveOpenCodeServerPort(serverUrl: string): number {
+  const parsed = new URL(serverUrl);
+  if (parsed.port) {
+    return Number(parsed.port);
+  }
+  return parsed.protocol === "https:" ? 443 : 80;
+}
+
+async function isExternalOpenCodeServerAvailable(serverUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OPENCODE_EXTERNAL_HEALTH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${normalizeOpenCodeServerUrl(serverUrl)}/global/health`, {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 class ProductionOpenCodeRuntime implements OpenCodeRuntime {
-  constructor(private readonly serverManager: OpenCodeServerManager) {}
+  constructor(
+    private readonly serverManager: OpenCodeServerManager | null,
+    private readonly externalServerUrl?: string,
+  ) {}
 
   async acquireServer(options: {
     force: boolean;
     env?: Record<string, string>;
   }): Promise<OpenCodeServerAcquisition> {
+    if (this.externalServerUrl) {
+      return acquireExternalOpenCodeServer(this.externalServerUrl);
+    }
+    if (!this.serverManager) {
+      throw new Error("OpenCode server manager is not configured");
+    }
     return this.serverManager.acquire(options);
   }
 
   async ensureServerRunning(): Promise<{ port: number; url: string }> {
+    if (this.externalServerUrl) {
+      return acquireExternalOpenCodeServer(this.externalServerUrl).server;
+    }
+    if (!this.serverManager) {
+      throw new Error("OpenCode server manager is not configured");
+    }
     return this.serverManager.ensureRunning();
   }
 
@@ -1070,7 +1125,7 @@ class ProductionOpenCodeRuntime implements OpenCodeRuntime {
   }
 
   async shutdown(): Promise<void> {
-    await this.serverManager.shutdown();
+    await this.serverManager?.shutdown();
   }
 }
 
@@ -1093,7 +1148,10 @@ export class OpenCodeAgentClient implements AgentClient {
     this.runtime =
       deps.runtime ??
       new ProductionOpenCodeRuntime(
-        OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+        runtimeSettings?.serverUrl
+          ? null
+          : OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+        runtimeSettings?.serverUrl,
       );
   }
 
@@ -1330,6 +1388,11 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    const serverUrl = this.runtimeSettings?.serverUrl;
+    if (serverUrl) {
+      return await isExternalOpenCodeServerAvailable(serverUrl);
+    }
+
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
@@ -1347,7 +1410,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
       try {
         const { url } = await this.runtime.ensureServerRunning();
-        serverStatus = `Running (${url})`;
+        serverStatus = this.runtimeSettings?.serverUrl ? `External (${url})` : `Running (${url})`;
       } catch (error) {
         serverStatus = `Unavailable (${toDiagnosticErrorMessage(error)})`;
       }

@@ -312,6 +312,24 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+### Attach to an existing OpenCode server
+
+By default, Paseo starts and manages its own `opencode serve` process. To use an already-running unauthenticated OpenCode server instead, configure `serverUrl` on the built-in `opencode` provider:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "serverUrl": "http://127.0.0.1:4096"
+      }
+    }
+  }
+}
+```
+
+When `serverUrl` is set, Paseo attaches to that server and does not spawn, rotate, or shut down `opencode serve`. The configured server must be able to access the same workspace paths that Paseo sends in OpenCode requests. Authenticated OpenCode servers require OpenCode SDK authentication support; unauthenticated servers work with only `serverUrl`.
+
 ---
 
 ## Disabling a provider
@@ -511,6 +529,7 @@ Every entry under `agents.providers` accepts these fields:
 | `description`      | `string`                 | No                | Short description shown in the UI                                  |
 | `command`          | `string[]`               | Yes (ACP only)    | Command to spawn the agent process                                 |
 | `env`              | `Record<string, string>` | No                | Environment variables to set for the agent process                 |
+| `serverUrl`        | `string`                 | No                | Existing OpenCode server URL to attach to instead of spawning one  |
 | `models`           | `ProviderProfileModel[]` | No                | Static model list (overrides runtime discovery)                    |
 | `additionalModels` | `ProviderProfileModel[]` | No                | Static model additions (merged with runtime discovery or `models`) |
 | `disallowedTools`  | `string[]`               | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |

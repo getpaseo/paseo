@@ -95,6 +95,24 @@ const hasOpenCode = isBinaryInstalled("opencode");
 const hasOpenRouterKey = Boolean(process.env.OPENROUTER_API_KEY);
 const canRunLiveOpenCodeTurns = hasOpenCode && hasOpenRouterKey;
 
+describe("OpenCodeAgentClient external server configuration", () => {
+  test("does not initialize the managed server singleton when serverUrl is configured", async () => {
+    const getInstance = vi.spyOn(OpenCodeServerManager, "getInstance").mockImplementation(() => {
+      throw new Error("managed OpenCode server should not initialize");
+    });
+
+    try {
+      const client = new OpenCodeAgentClient(createTestLogger(), {
+        serverUrl: "http://127.0.0.1:4096",
+      });
+
+      expect(client.provider).toBe("opencode");
+    } finally {
+      getInstance.mockRestore();
+    }
+  });
+});
+
 (canRunLiveOpenCodeTurns ? describe : describe.skip)("OpenCodeAgentClient smoke tests", () => {
   const logger = createTestLogger();
   const buildConfig = (cwd: string): AgentSessionConfig => ({
