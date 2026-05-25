@@ -27,6 +27,7 @@ import { settingsStyles } from "@/styles/settings";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
+import { formatLatency } from "@/utils/latency";
 
 const RESTART_CONFIRMATION_MESSAGE =
   "This will restart the daemon. Agents running on it will keep going; the app will reconnect automatically.";
@@ -335,7 +336,7 @@ function ConnectionRow({
   const latencyText = (() => {
     if (latencyLoading) return "...";
     if (latencyError) return "Timeout";
-    if (latencyMs != null) return `${latencyMs}ms`;
+    if (latencyMs != null) return formatLatency(latencyMs);
     return "\u2014";
   })();
   const latencyColor = latencyError ? theme.colors.palette.red[300] : theme.colors.foregroundMuted;
