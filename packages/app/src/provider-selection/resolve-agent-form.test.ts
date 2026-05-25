@@ -768,6 +768,21 @@ describe("resolveAgentForm", () => {
       expect(next.userModified.model).toBe(true);
     });
 
+    it("preserves the current preferred mode when selecting a provider and model", () => {
+      const state = makeState({ provider: "codex", modeId: "full-access" });
+      const next = resolveAgentForm(state, {
+        type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+        provider: "codex",
+        modelId: "gpt-5.3-codex",
+        providerDef: TEST_CODEX_DEFINITION,
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(next.form.provider).toBe("codex");
+      expect(next.form.model).toBe("gpt-5.3-codex");
+      expect(next.form.modeId).toBe("full-access");
+    });
+
     it("falls back to provider default model when modelId is empty", () => {
       const state = makeState();
       const next = resolveAgentForm(state, {

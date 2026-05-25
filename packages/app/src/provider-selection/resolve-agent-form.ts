@@ -82,6 +82,7 @@ export type AgentFormAction =
       modelId: string;
       providerDef: AgentProviderDefinition | undefined;
       providerModels: AgentModelDefinition[] | null;
+      providerPrefs?: ProviderPrefs | undefined;
     }
   | { type: "SET_MODE_FROM_USER"; modeId: string }
   | {
@@ -417,6 +418,27 @@ function pickNextModeForProvider(input: {
   return providerDef?.defaultModeId ?? "";
 }
 
+function pickNextModeForProviderAndModel(input: {
+  currentProvider: AgentProvider | null;
+  currentModeId: string;
+  provider: AgentProvider;
+  providerDef: AgentProviderDefinition | undefined;
+  providerPrefs: ProviderPrefs | undefined;
+}): string {
+  const validModeIds = input.providerDef?.modes.map((m) => m.id) ?? [];
+  if (
+    input.currentProvider === input.provider &&
+    input.currentModeId &&
+    validModeIds.includes(input.currentModeId)
+  ) {
+    return input.currentModeId;
+  }
+  return pickNextModeForProvider({
+    providerDef: input.providerDef,
+    providerPrefs: input.providerPrefs,
+  });
+}
+
 function pickNextThinkingOptionForProvider(input: {
   providerModels: AgentModelDefinition[] | null;
   providerPrefs: ProviderPrefs | undefined;
@@ -494,12 +516,19 @@ export function resolveAgentForm(
         modelId: nextModelId,
         requestedThinkingOptionId: "",
       });
+      const nextModeId = pickNextModeForProviderAndModel({
+        currentProvider: state.form.provider,
+        currentModeId: state.form.modeId,
+        provider: action.provider,
+        providerDef: action.providerDef,
+        providerPrefs: action.providerPrefs,
+      });
       return {
         form: {
           ...state.form,
           provider: action.provider,
           model: nextModelId,
-          modeId: action.providerDef?.defaultModeId ?? "",
+          modeId: nextModeId,
           thinkingOptionId: nextThinkingOptionId,
         },
         userModified: { ...state.userModified, provider: true, model: true },

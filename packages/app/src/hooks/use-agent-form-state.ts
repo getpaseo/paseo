@@ -372,6 +372,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       }
       const providerDef = selectableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
+      const providerPrefs = preferences?.providerPreferences?.[provider];
       const normalizedModelId = normalizeSelectedModelId(modelId);
       const nextModelId = normalizedModelId || resolveDefaultModelId(providerModels);
 
@@ -381,6 +382,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         modelId,
         providerDef,
         providerModels,
+        providerPrefs,
       });
       void updatePreferences((current) =>
         mergeSelectedComposerPreferences({
@@ -392,7 +394,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updatePreferences],
+    [
+      allProviderModels,
+      preferences?.providerPreferences,
+      selectableProviderDefinitionMap,
+      updatePreferences,
+    ],
   );
 
   const setModeFromUser = useCallback(
