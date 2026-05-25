@@ -24,6 +24,7 @@ import {
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
+  type AgentPermissionAction,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPersistenceHandle,
@@ -81,6 +82,8 @@ const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
+const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -99,6 +102,44 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Automatically approves all tool permission prompts for the session",
   },
 ];
+
+function buildOpenCodePermissionActions(): AgentPermissionAction[] {
+  return [
+    {
+      id: "deny",
+      label: "Deny",
+      behavior: "deny",
+      variant: "danger",
+      intent: "dismiss",
+    },
+    {
+      id: OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS,
+      label: "Allow always",
+      behavior: "allow",
+      variant: "secondary",
+    },
+    {
+      id: OPENCODE_PERMISSION_ACTION_ALLOW_ONCE,
+      label: "Allow once",
+      behavior: "allow",
+      variant: "primary",
+    },
+  ];
+}
+
+function resolveOpenCodePermissionReply(
+  response: AgentPermissionResponse,
+): "once" | "always" | "reject" {
+  if (response.behavior === "deny") {
+    return "reject";
+  }
+
+  if (response.selectedActionId === OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS) {
+    return "always";
+  }
+
+  return "once";
+}
 
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
@@ -2182,6 +2223,7 @@ function appendOpenCodePermissionAsked(
       ...(description ? { description } : {}),
       input,
       detail,
+      actions: buildOpenCodePermissionActions(),
     },
   });
 }
@@ -3027,7 +3069,7 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
 
-    const reply = response.behavior === "allow" ? "once" : "reject";
+    const reply = resolveOpenCodePermissionReply(response);
     await this.client.permission.reply({
       requestID: requestId,
       directory: this.config.cwd,

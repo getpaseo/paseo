@@ -2,6 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import { translateOpenCodeEvent, type OpenCodeEventTranslationState } from "../opencode-agent.js";
 
+const openCodePermissionActions = [
+  {
+    id: "deny",
+    label: "Deny",
+    behavior: "deny",
+    variant: "danger",
+    intent: "dismiss",
+  },
+  {
+    id: "allow_always",
+    label: "Allow always",
+    behavior: "allow",
+    variant: "secondary",
+  },
+  {
+    id: "allow_once",
+    label: "Allow once",
+    behavior: "allow",
+    variant: "primary",
+  },
+];
+
 function createState(sessionId = "session-1"): OpenCodeEventTranslationState {
   return {
     sessionId,
@@ -306,6 +328,7 @@ describe("translateOpenCodeEvent", () => {
             type: "shell",
             command: "ls /home/user/secrets",
           },
+          actions: openCodePermissionActions,
         },
       },
     ]);
@@ -358,6 +381,7 @@ describe("translateOpenCodeEvent", () => {
             },
             output: null,
           },
+          actions: openCodePermissionActions,
         },
       },
     ]);
