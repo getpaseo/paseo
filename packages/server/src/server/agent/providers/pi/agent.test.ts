@@ -340,6 +340,32 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("adds Pi assistant context to generic provider finish errors", async () => {
+    const { pi, session, events } = await createSession();
+
+    await session.startTurn("write qa");
+    pi.latestSession().finishTurn({
+      role: "assistant",
+      provider: "openrouter",
+      model: "google/gemini-2.5-flash-lite",
+      responseId: "gen-test",
+      stopReason: "error",
+      errorMessage: "Provider finish_reason: error",
+      content: [
+        {
+          type: "thinking",
+          thinking: "I will use the write tool for qa.txt.",
+        },
+      ],
+    });
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      error: expect.stringContaining(
+        'Provider finish_reason: error (stopReason=error, model=openrouter/google/gemini-2.5-flash-lite, responseId=gen-test, partial="I will use the write tool for qa.txt.")',
+      ),
+    });
+  });
+
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

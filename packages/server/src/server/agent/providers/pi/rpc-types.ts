@@ -33,6 +33,10 @@ export type PiAgentMessage =
   | {
       role: "assistant";
       content: PiAssistantContent[];
+      provider?: string;
+      model?: string;
+      responseId?: string;
+      responseModel?: string;
       errorMessage?: string | null;
       stopReason?: string;
     }

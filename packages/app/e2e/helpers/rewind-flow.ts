@@ -197,7 +197,10 @@ export async function sendMessage(handle: AgentHandle, text: string): Promise<vo
   await submitMessage(handle.page, text);
   const finish = await handle.client.waitForFinish(handle.agentId, SEND_TIMEOUT_MS);
   if (finish.status !== "idle") {
-    throw new Error(`Expected agent ${handle.agentId} to become idle, got ${finish.status}`);
+    const suffix = finish.final?.lastError ? `: ${finish.final.lastError}` : "";
+    throw new Error(
+      `Expected agent ${handle.agentId} to become idle, got ${finish.status}${suffix}`,
+    );
   }
   if (finish.final?.lastError) {
     throw new Error(finish.final.lastError);

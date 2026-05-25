@@ -531,11 +531,43 @@ function modelToId(model: PiModel | null | undefined): string | null {
   return model?.provider && model.id ? `${model.provider}/${model.id}` : null;
 }
 
+function piAssistantText(message: Extract<PiAgentMessage, { role: "assistant" }>): string | null {
+  const text = message.content
+    .flatMap((part) => {
+      if (part.type === "text") {
+        return [part.text];
+      }
+      if (part.type === "thinking") {
+        return [part.thinking];
+      }
+      return [];
+    })
+    .join("\n\n")
+    .trim();
+  return text.length > 0 ? text : null;
+}
+
+function formatPiErrorMessage(message: Extract<PiAgentMessage, { role: "assistant" }>): string {
+  const headline = message.errorMessage?.trim() || "Pi turn failed";
+  const details = [
+    message.stopReason ? `stopReason=${message.stopReason}` : null,
+    message.provider && message.model ? `model=${message.provider}/${message.model}` : null,
+    message.responseModel ? `responseModel=${message.responseModel}` : null,
+    message.responseId ? `responseId=${message.responseId}` : null,
+  ].filter((detail): detail is string => detail !== null);
+  const partialText = piAssistantText(message);
+  if (partialText) {
+    details.push(`partial=${JSON.stringify(partialText.slice(0, 500))}`);
+  }
+  return details.length > 0 ? `${headline} (${details.join(", ")})` : headline;
+}
+
 function latestPiErrorMessage(messages: PiAgentMessage[]): string | null {
   const latestAssistant = messages.findLast((message) => message.role === "assistant");
-  return latestAssistant && "errorMessage" in latestAssistant
-    ? (latestAssistant.errorMessage ?? null)
-    : null;
+  if (!latestAssistant || !latestAssistant.errorMessage?.trim()) {
+    return null;
+  }
+  return formatPiErrorMessage(latestAssistant);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
