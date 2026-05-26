@@ -2351,19 +2351,22 @@ function WorkspaceScreenContent({
 
         setHoveredTabKey((current) => (current === tabId ? null : current));
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
+
+        if (closePolicy.kind === "archive-on-close") {
+          try {
+            await archiveAgent({ serverId: normalizedServerId, agentId });
+          } catch {
+            // If archive fails, don't close the tab.
+            return;
+          }
+        }
+
         if (persistenceKey) {
           closeWorkspaceTabWithCleanup({
             tabId,
             target: { kind: "agent", agentId },
           });
         }
-
-        if (closePolicy.kind === "layout-only") {
-          return;
-        }
-
-        // Errors (e.g. timeout) are handled by the mutation's onSettled callback
-        void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
       });
     },
     [archiveAgent, closeTab, closeWorkspaceTabWithCleanup, normalizedServerId, persistenceKey],
