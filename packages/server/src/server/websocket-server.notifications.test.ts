@@ -142,6 +142,7 @@ function createServer(
     undefined,
     undefined,
     pushNotifications,
+    undefined,
     hookRunner,
   );
 
