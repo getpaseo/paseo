@@ -1124,6 +1124,7 @@ export async function createPaseoDaemon(
               {
                 listen: formatListenTarget(boundListenTarget ?? listenTarget),
                 worktreesRoot: config.worktreesRoot,
+                appBaseUrl: config.appBaseUrl,
                 relay: {
                   enabled: relayEnabled,
                   endpoint: relayEndpoint,
