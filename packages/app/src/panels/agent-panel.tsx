@@ -66,6 +66,12 @@ import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
+
+import {
+  findPendingCreateUserMessageIndex,
+  mergePendingCreateImages,
+} from "@/utils/pending-create-images";
+
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
@@ -396,9 +402,29 @@ const EMPTY_PENDING_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_PENDING_PERMISSION_LIST: PendingPermission[] = [];
 
 type RouteBottomAnchorRequest = ReturnType<typeof deriveRouteBottomAnchorRequest>;
+type PendingCreateByDraftId = ReturnType<typeof useCreateFlowStore.getState>["pendingByDraftId"];
+type PendingCreateAttempt = PendingCreateByDraftId[string];
+
+function findPendingCreateForPanel(input: {
+  pendingByDraftId: PendingCreateByDraftId;
+  serverId: string;
+  agentId?: string;
+}): PendingCreateAttempt | null {
+  if (!input.agentId) {
+    return null;
+  }
+  return (
+    Object.values(input.pendingByDraftId).find(
+      (entry) =>
+        entry.lifecycle === "active" &&
+        entry.serverId === input.serverId &&
+        entry.agentId === input.agentId,
+    ) ?? null
+  );
+}
 
 function findActiveCreateHandoff(input: {
-  pendingByDraftId: ReturnType<typeof useCreateFlowStore.getState>["pendingByDraftId"];
+  pendingByDraftId: PendingCreateByDraftId;
   serverId: string;
   agentId?: string;
 }): boolean {
@@ -712,6 +738,12 @@ function ChatAgentContent({
   const historySyncGeneration = useSessionStore(
     (state) => state.sessions[serverId]?.historySyncGeneration ?? 0,
   );
+  const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
+  const pendingCreate = useMemo(
+    () => findPendingCreateForPanel({ pendingByDraftId, serverId, agentId }),
+    [agentId, pendingByDraftId, serverId],
+  );
+  const isPendingCreateForPanel = Boolean(pendingCreate);
   const hasAppliedAuthoritativeHistory = useSessionStore((state) =>
     agentId
       ? state.sessions[serverId]?.agentAuthoritativeHistoryApplied?.get(agentId) === true
@@ -732,6 +764,11 @@ function ChatAgentContent({
     kind: "idle",
   });
 
+  const shouldUseOptimisticStream = isPendingCreateForPanel;
+  const authoritativeStatus = agentState.status;
+  const isAuthoritativeBootstrapping =
+    authoritativeStatus === "initializing" || authoritativeStatus === "idle";
+  const canFinalizePendingCreate = Boolean(authoritativeStatus) && !isAuthoritativeBootstrapping;
   const hasHydratedHistoryBefore = hasAppliedAuthoritativeHistory;
 
   const attentionController = useAgentAttentionClear({
@@ -1031,6 +1068,9 @@ function ChatAgentContent({
       isArchivingCurrentAgent={isArchivingCurrentAgent}
       agentState={agentState}
       effectiveAgent={effectiveAgent}
+      pendingCreate={pendingCreate}
+      shouldUseOptimisticStream={shouldUseOptimisticStream}
+      canFinalizePendingCreate={canFinalizePendingCreate}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
       panelToast={panelToast}
@@ -1055,6 +1095,9 @@ function ChatAgentReadyContent({
   isArchivingCurrentAgent,
   agentState,
   effectiveAgent,
+  pendingCreate,
+  shouldUseOptimisticStream,
+  canFinalizePendingCreate,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
   panelToast,
@@ -1075,6 +1118,9 @@ function ChatAgentReadyContent({
   isArchivingCurrentAgent: boolean;
   agentState: ChatAgentSelectedState;
   effectiveAgent: AgentScreenAgent;
+  pendingCreate: PendingCreateAttempt | null;
+  shouldUseOptimisticStream: boolean;
+  canFinalizePendingCreate: boolean;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
   panelToast: ReturnType<typeof useToastHost>;
@@ -1108,6 +1154,9 @@ function ChatAgentReadyContent({
                   serverId={serverId}
                   agentId={agentId}
                   agent={effectiveAgent}
+                  pendingCreate={pendingCreate}
+                  shouldUseOptimisticStream={shouldUseOptimisticStream}
+                  canFinalizePendingCreate={canFinalizePendingCreate}
                   routeBottomAnchorRequest={routeBottomAnchorRequest}
                   hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
                   toast={panelToast.api}
@@ -1163,6 +1212,9 @@ function AgentStreamSection({
   serverId,
   agentId,
   agent,
+  pendingCreate,
+  shouldUseOptimisticStream,
+  canFinalizePendingCreate,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
   toast,
@@ -1172,6 +1224,9 @@ function AgentStreamSection({
   serverId: string;
   agentId?: string;
   agent: AgentScreenAgent;
+  pendingCreate: PendingCreateAttempt | null;
+  shouldUseOptimisticStream: boolean;
+  canFinalizePendingCreate: boolean;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
@@ -1208,13 +1263,115 @@ function AgentStreamSection({
     return new Map(pendingPermissionList.map((permission) => [permission.key, permission]));
   }, [pendingPermissionList]);
 
+  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
+  const markPendingCreateLifecycle = useCreateFlowStore((state) => state.markLifecycle);
+  const clearPendingCreate = useCreateFlowStore((state) => state.clear);
+
+  const optimisticStreamItems = useMemo<StreamItem[]>(() => {
+    if (!shouldUseOptimisticStream || !pendingCreate) {
+      return EMPTY_STREAM_ITEMS;
+    }
+    return [
+      {
+        kind: "user_message",
+        id: pendingCreate.clientMessageId,
+        text: pendingCreate.text,
+        timestamp: new Date(pendingCreate.timestamp),
+        optimistic: true,
+        ...(pendingCreate.images && pendingCreate.images.length > 0
+          ? { images: pendingCreate.images }
+          : {}),
+        ...(pendingCreate.attachments && pendingCreate.attachments.length > 0
+          ? { attachments: pendingCreate.attachments }
+          : {}),
+      },
+    ];
+  }, [pendingCreate, shouldUseOptimisticStream]);
+
+  const pendingCreateUserMessageIndex = useMemo(() => {
+    if (!pendingCreate) {
+      return -1;
+    }
+    return findPendingCreateUserMessageIndex({
+      streamItems,
+      clientMessageId: pendingCreate.clientMessageId,
+      text: pendingCreate.text,
+    });
+  }, [pendingCreate, streamItems]);
+
+  const mergedStreamItems = useMemo<StreamItem[]>(() => {
+    if (optimisticStreamItems.length === 0) {
+      return streamItems;
+    }
+    const optimistic = optimisticStreamItems[0];
+    if (!optimistic) {
+      return streamItems;
+    }
+    return pendingCreateUserMessageIndex >= 0
+      ? streamItems
+      : [...optimisticStreamItems, ...streamItems];
+  }, [optimisticStreamItems, pendingCreateUserMessageIndex, streamItems]);
+
+  useEffect(() => {
+    if (!shouldUseOptimisticStream || !pendingCreate) {
+      return;
+    }
+    if (pendingCreateUserMessageIndex < 0 || !canFinalizePendingCreate) {
+      return;
+    }
+
+    const pendingImages = pendingCreate.images;
+    const pendingAttachments = pendingCreate.attachments;
+    const hasPendingImages = Boolean(pendingImages && pendingImages.length > 0);
+    const hasPendingAttachments = Boolean(pendingAttachments && pendingAttachments.length > 0);
+    if (agentId && (hasPendingImages || hasPendingAttachments)) {
+      setAgentStreamTail(serverId, (previous) => {
+        const current = previous.get(agentId);
+        if (!current) {
+          return previous;
+        }
+
+        const merged = mergePendingCreateImages({
+          streamItems: current,
+          clientMessageId: pendingCreate.clientMessageId,
+          text: pendingCreate.text,
+          images: pendingImages,
+          attachments: pendingAttachments,
+        });
+        if (merged === current) {
+          return previous;
+        }
+
+        const next = new Map(previous);
+        next.set(agentId, merged);
+        return next;
+      });
+    }
+    markPendingCreateLifecycle({
+      draftId: pendingCreate.draftId,
+      lifecycle: "sent",
+    });
+    clearPendingCreate({ draftId: pendingCreate.draftId });
+  }, [
+    agentId,
+    canFinalizePendingCreate,
+    clearPendingCreate,
+    markPendingCreateLifecycle,
+    pendingCreate,
+    pendingCreateUserMessageIndex,
+    serverId,
+    setAgentStreamTail,
+    shouldUseOptimisticStream,
+    streamItems,
+  ]);
+
   return (
     <AgentStreamView
       ref={streamViewRef}
       agentId={agent.id}
       serverId={serverId}
       agent={agent}
-      streamItems={streamItems}
+      streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
       pendingPermissions={pendingPermissions}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
