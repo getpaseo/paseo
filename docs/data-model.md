@@ -151,6 +151,11 @@ Single file, validated with `PersistedConfigSchema`.
     openai: { apiKey: string },
     local: { modelsDir: string }
   },
+  notifications: {
+    hooks: {
+      agentAttention: { enabled: boolean, command: string[], timeoutMs: number }
+    }
+  },
   agents: {
     // ProviderOverrideSchema; legacy entries with `command: { mode, ... }` are migrated to the
     // current shape on load via `migrateProviderSettings`. Custom provider IDs must declare

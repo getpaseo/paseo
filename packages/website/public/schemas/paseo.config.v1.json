@@ -141,6 +141,39 @@
           },
           "additionalProperties": false
         },
+        "notifications": {
+          "type": "object",
+          "properties": {
+            "hooks": {
+              "type": "object",
+              "properties": {
+                "agentAttention": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "command": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    },
+                    "timeoutMs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "agents": {
           "type": "object",
           "properties": {

@@ -121,6 +121,10 @@ import { createConfiguredTerminalManager } from "../terminal/terminal-manager-fa
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import {
+  createAgentAttentionHookRunner,
+  type AgentAttentionHookConfig,
+} from "./agent-attention-hooks.js";
 import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
@@ -255,6 +259,7 @@ export interface PaseoDaemonConfig {
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
   pushNotificationSender?: PushNotificationSender;
+  agentAttentionHook?: AgentAttentionHookConfig;
 }
 
 export interface PaseoDaemon {
@@ -952,6 +957,12 @@ export async function createPaseoDaemon(
                 publicUseTls: relayPublicUseTls,
               },
             },
+            config.agentAttentionHook
+              ? createAgentAttentionHookRunner(
+                  logger.child({ module: "agent-attention-hook" }),
+                  config.agentAttentionHook,
+                )
+              : undefined,
           );
 
           if (relayEnabled) {

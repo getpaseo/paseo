@@ -63,6 +63,56 @@ describe("PersistedConfigSchema daemon relay config", () => {
   });
 });
 
+describe("PersistedConfigSchema notifications config", () => {
+  test("accepts optional agent attention post-hook config", () => {
+    const parsed = PersistedConfigSchema.parse({
+      notifications: {
+        hooks: {
+          agentAttention: {
+            enabled: true,
+            command: ["node", "/opt/paseo/serverchan-hook.mjs"],
+            timeoutMs: 2500,
+          },
+        },
+      },
+    });
+
+    expect(parsed.notifications?.hooks?.agentAttention?.command).toEqual([
+      "node",
+      "/opt/paseo/serverchan-hook.mjs",
+    ]);
+    expect(parsed.notifications?.hooks?.agentAttention?.timeoutMs).toBe(2500);
+  });
+
+  test("rejects enabled agent attention hook config without a command", () => {
+    const result = PersistedConfigSchema.safeParse({
+      notifications: {
+        hooks: {
+          agentAttention: {
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts disabled agent attention hook config without a command", () => {
+    const parsed = PersistedConfigSchema.parse({
+      notifications: {
+        hooks: {
+          agentAttention: {
+            enabled: false,
+          },
+        },
+      },
+    });
+
+    expect(parsed.notifications?.hooks?.agentAttention?.enabled).toBe(false);
+  });
+});
+
 describe("PersistedConfigSchema daemon append system prompt", () => {
   test("accepts optional append system prompt", () => {
     const parsed = PersistedConfigSchema.parse({
