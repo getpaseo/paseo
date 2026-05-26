@@ -122,6 +122,9 @@ export interface AgentCapabilityFlags {
   supportsMcpServers: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
+  supportsRewindConversation?: boolean;
+  supportsRewindFiles?: boolean;
+  supportsRewindBoth?: boolean;
 }
 
 export interface AgentPersistenceHandle {

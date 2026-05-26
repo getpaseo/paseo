@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type RewindMode, useRewindCapabilities } from "./use-rewind-capabilities";
-import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
+import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 
 export type { RewindMode };
 
