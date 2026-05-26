@@ -75,6 +75,12 @@ jobs:
       - name: Typecheck all packages
         run: npm run typecheck
 
+      - name: Verify public package contents
+        run: |
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
+
   server-tests:
     strategy:
       fail-fast: false

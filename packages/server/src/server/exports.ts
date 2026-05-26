@@ -25,6 +25,14 @@ export {
   parseConnectionUri,
   shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
+export {
+  DaemonClient,
+  type ConnectionState,
+  type DaemonClientConfig,
+  type DaemonEvent,
+  type WebSocketFactory,
+  type WebSocketLike,
+} from "@getpaseo/client";
 export { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 export {
   DirectTcpHostConnectionSchema,

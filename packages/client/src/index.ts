@@ -26,6 +26,14 @@ import type {
   FetchAgentTimelineProjection,
 } from "./daemon-client.js";
 
+export { DaemonClient };
+export type {
+  DaemonClientConfig,
+  DaemonEvent,
+  WebSocketFactory,
+  WebSocketLike,
+} from "./daemon-client.js";
+
 export type ConnectionState =
   | { status: "idle" }
   | { status: "connecting"; attempt: number }
