@@ -1638,6 +1638,40 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
   expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
 });
 
+test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-metadata-updated-at-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000128",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+  await manager.closeAgent(snapshot.id);
+
+  const before = await storage.get(snapshot.id);
+  expect(before).not.toBeNull();
+  expect(manager.getAgent(snapshot.id)).toBeNull();
+
+  await manager.updateAgentMetadata(snapshot.id, {
+    title: "Stored title",
+    labels: { role: "worker" },
+  });
+
+  const after = await storage.get(snapshot.id);
+  expect(after?.title).toBe("Stored title");
+  expect(after?.labels).toEqual({ role: "worker" });
+  expect(Date.parse(after!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
+});
+
 test("setGeneratedTitle persists generated title when no title exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-empty-"));
   const storagePath = join(workdir, "agents");

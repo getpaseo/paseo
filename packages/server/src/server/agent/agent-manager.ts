@@ -539,6 +539,13 @@ export class AgentManager {
     return next;
   }
 
+  private nextStoredUpdatedAt(record: StoredAgentRecord): string {
+    const previousMs = Date.parse(record.updatedAt);
+    const nowMs = Date.now();
+    const nextMs = nowMs > previousMs ? nowMs : previousMs + 1;
+    return new Date(nextMs).toISOString();
+  }
+
   hasInFlightRun(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -1360,6 +1367,7 @@ export class AgentManager {
       ...existing,
       ...(updates.title ? { title: updates.title } : {}),
       ...(updates.labels ? { labels: { ...existing.labels, ...updates.labels } } : {}),
+      updatedAt: this.nextStoredUpdatedAt(existing),
     });
   }
 
