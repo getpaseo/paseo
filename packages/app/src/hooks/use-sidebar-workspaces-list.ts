@@ -5,6 +5,7 @@ import {
   useSessionStore,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
+import { extractWorktreeSlug } from "@/utils/worktree-slug";
 import {
   useWorkspaceStructure,
   type WorkspaceStructureProject,
@@ -28,6 +29,8 @@ export interface SidebarWorkspaceEntry {
   projectKind: WorkspaceDescriptor["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
+  /** The worktree directory slug (last path component of workspaceDirectory). Null for non-worktrees. */
+  worktreeSlug: string | null;
   statusBucket: SidebarStateBucket;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
@@ -68,6 +71,7 @@ function createStructuralWorkspaceEntry(input: {
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
     name: input.workspaceId,
+    worktreeSlug: null,
     statusBucket: "done",
     archivingAt: null,
     diffStat: null,
@@ -92,6 +96,10 @@ export function createSidebarWorkspaceEntry(input: {
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
+    worktreeSlug:
+      input.workspace.workspaceKind === "worktree"
+        ? extractWorktreeSlug(input.workspace.workspaceDirectory)
+        : null,
     statusBucket: input.workspace.status,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,

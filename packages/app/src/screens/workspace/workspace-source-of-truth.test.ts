@@ -159,4 +159,92 @@ describe("workspace source of truth consumption", () => {
       }),
     ).toBe(false);
   });
+
+  describe("worktree slug in sidebar entry", () => {
+    it("sets worktreeSlug for worktree workspace with worktree path", () => {
+      const sidebar = createSidebarWorkspaceEntry({
+        serverId: "srv",
+        workspace: createWorkspaceDescriptor({
+          workspaceKind: "worktree",
+          workspaceDirectory: "/Users/dev/.paseo/worktrees/a1b2c3d4/puny-impala",
+          name: "feat/login",
+        }),
+      });
+      expect(sidebar.worktreeSlug).toBe("puny-impala");
+    });
+
+    it("sets worktreeSlug to null for non-worktree workspace even with worktree-like path", () => {
+      const sidebar = createSidebarWorkspaceEntry({
+        serverId: "srv",
+        workspace: createWorkspaceDescriptor({
+          workspaceKind: "local_checkout",
+          workspaceDirectory: "/Users/dev/.paseo/worktrees/a1b2c3d4/puny-impala",
+          name: "feat/login",
+        }),
+      });
+      expect(sidebar.worktreeSlug).toBeNull();
+    });
+
+    it("sets worktreeSlug to null for worktree workspace with non-worktree path", () => {
+      const sidebar = createSidebarWorkspaceEntry({
+        serverId: "srv",
+        workspace: createWorkspaceDescriptor({
+          workspaceKind: "worktree",
+          workspaceDirectory: "/Users/dev/projects/my-app",
+          name: "feat/login",
+        }),
+      });
+      expect(sidebar.worktreeSlug).toBeNull();
+    });
+
+    it("sets worktreeSlug to null when workspaceDirectory is undefined", () => {
+      const sidebar = createSidebarWorkspaceEntry({
+        serverId: "srv",
+        workspace: createWorkspaceDescriptor({
+          workspaceKind: "worktree",
+          workspaceDirectory: undefined,
+          name: "feat/login",
+        }),
+      });
+      expect(sidebar.worktreeSlug).toBeNull();
+    });
+  });
+
+  describe("worktree slug in workspace header", () => {
+    it("resolveWorkspaceHeaderRenderState still returns correct branch for worktree workspace", () => {
+      const state = resolveWorkspaceHeaderRenderState({
+        workspace: createWorkspaceDescriptor({
+          workspaceKind: "worktree",
+          workspaceDirectory: "/Users/dev/.paseo/worktrees/a1b2c3d4/puny-impala",
+          name: "feat/login",
+        }),
+        checkoutState: {
+          kind: "ready",
+          checkout: { isGit: true, currentBranch: "feat/login" },
+        },
+      });
+      expect(state.kind).toBe("ready");
+      if (state.kind === "ready") {
+        expect(state.currentBranchName).toBe("feat/login");
+      }
+    });
+
+    it("resolveWorkspaceHeaderRenderState handles non-worktree workspace with worktree-like path", () => {
+      const state = resolveWorkspaceHeaderRenderState({
+        workspace: createWorkspaceDescriptor({
+          workspaceKind: "local_checkout",
+          workspaceDirectory: "/Users/dev/.paseo/worktrees/a1b2c3d4/puny-impala",
+          name: "feat/login",
+        }),
+        checkoutState: {
+          kind: "ready",
+          checkout: { isGit: true, currentBranch: "feat/login" },
+        },
+      });
+      expect(state.kind).toBe("ready");
+      if (state.kind === "ready") {
+        expect(state.currentBranchName).toBe("feat/login");
+      }
+    });
+  });
 });

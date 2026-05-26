@@ -18,6 +18,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     projectKind: "git",
     workspaceKind: "checkout",
     name: "paseo",
+    worktreeSlug: null,
     statusBucket: "done",
     diffStat: null,
     archiveHasUncommittedChanges: null,

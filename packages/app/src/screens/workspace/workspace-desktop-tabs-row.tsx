@@ -224,6 +224,8 @@ function TabHandleContent({
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
 }) {
+  const hasSlug = Boolean(presentation.worktreeSlug);
+  const slugStyle = useMemo(() => [tabLabelStyle, styles.tabWorktreeSlug], [tabLabelStyle]);
   return (
     <View style={styles.tabHandle}>
       <View style={styles.tabIcon}>
@@ -233,9 +235,16 @@ function TabHandleContent({
         <View style={tabLabelSkeletonStyle} />
       ) : null}
       {showLabel && presentation.titleState !== "loading" ? (
-        <Text style={tabLabelStyle} selectable={false} numberOfLines={1} ellipsizeMode="tail">
-          {presentation.label}
-        </Text>
+        <View style={styles.tabLabelRow}>
+          <Text style={tabLabelStyle} selectable={false} numberOfLines={1} ellipsizeMode="tail">
+            {presentation.label}
+          </Text>
+          {hasSlug ? (
+            <Text style={slugStyle} selectable={false} numberOfLines={1}>
+              {presentation.worktreeSlug}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -1016,6 +1025,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabLabelActive: {
     color: theme.colors.foreground,
+  },
+  tabLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flex: 1,
+    minWidth: 0,
+  },
+  tabWorktreeSlug: {
+    color: theme.colors.foregroundMuted,
+    opacity: 0.7,
+    flexShrink: 0,
   },
   tabCloseButton: {
     width: 18,

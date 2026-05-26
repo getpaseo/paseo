@@ -22,6 +22,7 @@ function workspace(input: {
     projectKind: "git",
     workspaceKind: "checkout",
     name: input.name,
+    worktreeSlug: null,
     statusBucket: "done",
     archivingAt: null,
     diffStat: null,

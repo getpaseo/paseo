@@ -69,6 +69,7 @@ function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
     subtitle: "",
     titleState: label ? "ready" : "loading",
     icon: getProviderIcon(row.provider),
+    worktreeSlug: null,
     statusBucket: deriveSidebarStateBucket({
       status: row.status,
       requiresAttention: false,

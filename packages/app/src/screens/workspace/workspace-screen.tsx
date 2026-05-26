@@ -44,6 +44,7 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
+import { extractWorktreeSlug, shouldShowWorktreeSlug } from "@/utils/worktree-slug";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
   DropdownMenu,
@@ -947,6 +948,7 @@ interface WorkspaceHeaderTitleBarProps {
   showSubtitle: boolean;
   currentBranchName: string | null;
   isGitCheckout: boolean;
+  worktreeSlug: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   showWorkspaceSetup: boolean;
@@ -976,6 +978,7 @@ function WorkspaceHeaderTitleBar({
   showSubtitle,
   currentBranchName,
   isGitCheckout,
+  worktreeSlug,
   normalizedServerId,
   normalizedWorkspaceId,
   showWorkspaceSetup,
@@ -1019,6 +1022,17 @@ function WorkspaceHeaderTitleBar({
               numberOfLines={1}
             >
               {subtitle}
+            </Text>
+          ) : null}
+          {/* Shown independently of showSubtitle — the slug is a directory
+              identifier, not a subtitle duplicate, so it has its own gate. */}
+          {worktreeSlug ? (
+            <Text
+              testID="workspace-header-worktree-slug"
+              style={styles.headerWorktreeSlug}
+              numberOfLines={1}
+            >
+              {worktreeSlug}
             </Text>
           ) : null}
         </View>
@@ -1136,6 +1150,7 @@ interface WorkspaceHeaderFields {
   shouldShowWorkspaceHeaderSubtitle: boolean;
   isGitCheckout: boolean;
   currentBranchName: string | null;
+  worktreeSlug: string | null;
 }
 
 function buildWorkspaceHeaderCheckoutState(input: {
@@ -1171,8 +1186,18 @@ function deriveWorkspaceHeaderFields(input: {
       shouldShowWorkspaceHeaderSubtitle: false,
       isGitCheckout: false,
       currentBranchName: null,
+      worktreeSlug: null,
     };
   }
+
+  // Only extract and show the worktree slug for actual worktree workspaces
+  // where the slug differs from the branch name.
+  const isWorktree = input.workspace?.workspaceKind === "worktree";
+  const rawSlug = isWorktree ? extractWorktreeSlug(input.workspace?.workspaceDirectory) : null;
+  const worktreeSlug = shouldShowWorktreeSlug(rawSlug, renderState.currentBranchName)
+    ? rawSlug
+    : null;
+
   return {
     isWorkspaceHeaderLoading: false,
     workspaceHeaderTitle: renderState.title,
@@ -1180,6 +1205,7 @@ function deriveWorkspaceHeaderFields(input: {
     shouldShowWorkspaceHeaderSubtitle: renderState.shouldShowSubtitle,
     isGitCheckout: renderState.isGitCheckout,
     currentBranchName: renderState.currentBranchName,
+    worktreeSlug,
   };
 }
 
@@ -1607,6 +1633,7 @@ function WorkspaceScreenContent({
     shouldShowWorkspaceHeaderSubtitle,
     isGitCheckout,
     currentBranchName,
+    worktreeSlug,
   } = deriveWorkspaceHeaderFields({
     workspace: workspaceDescriptor,
     checkoutState: workspaceHeaderCheckoutState,
@@ -3254,6 +3281,7 @@ function WorkspaceScreenContent({
                         showSubtitle={shouldShowWorkspaceHeaderSubtitle}
                         currentBranchName={currentBranchName}
                         isGitCheckout={isGitCheckout}
+                        worktreeSlug={worktreeSlug}
                         normalizedServerId={normalizedServerId}
                         normalizedWorkspaceId={normalizedWorkspaceId}
                         showWorkspaceSetup={showWorkspaceSetup}
@@ -3443,6 +3471,14 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
     maxWidth: "60%",
+  },
+  headerWorktreeSlug: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "400",
+    opacity: 0.7,
+    flexShrink: 1,
+    minWidth: 0,
   },
   headerTitleSkeleton: {
     width: 220,

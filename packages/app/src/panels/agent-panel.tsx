@@ -13,6 +13,7 @@ import { Composer } from "@/components/composer";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
 import { getProviderIcon } from "@/components/provider-icons";
+import { extractWorktreeSlug } from "@/utils/worktree-slug";
 import { ToastViewport, useToastHost } from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
@@ -253,25 +254,39 @@ function useAgentPanelDescriptor(
       const session = state.sessions[context.serverId];
       const agent =
         session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
+      if (!agent) {
+        return {
+          provider: "codex" as const,
+          title: null,
+          status: null,
+          cwd: null,
+          pendingPermissionCount: 0,
+          requiresAttention: false,
+          attentionReason: null,
+        };
+      }
       return {
-        provider: agent?.provider ?? "codex",
-        title: agent?.title ?? null,
-        status: agent?.status ?? null,
-        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
-        requiresAttention: agent?.requiresAttention ?? false,
-        attentionReason: agent?.attentionReason ?? null,
+        provider: agent.provider,
+        title: agent.title ?? null,
+        status: agent.status ?? null,
+        cwd: agent.cwd ?? null,
+        pendingPermissionCount: agent.pendingPermissions.length,
+        requiresAttention: agent.requiresAttention ?? false,
+        attentionReason: agent.attentionReason ?? null,
       };
     }),
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
   const icon = getProviderIcon(provider);
+  const worktreeSlug = extractWorktreeSlug(descriptorState.cwd);
 
   return {
     label: label ?? "",
     subtitle: `${formatProviderLabel(provider)} agent`,
     titleState: label ? "ready" : "loading",
     icon,
+    worktreeSlug,
     statusBucket: descriptorState.status
       ? deriveSidebarStateBucket({
           status: descriptorState.status,

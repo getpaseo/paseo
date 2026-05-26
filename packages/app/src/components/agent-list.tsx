@@ -14,6 +14,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
+import { extractWorktreeSlug } from "@/utils/worktree-slug";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive } from "lucide-react-native";
@@ -193,6 +194,7 @@ function SessionRow({
   const isSelected = selectedAgentId === agentKey;
   const statusLabel = formatStatusLabel(agent.status);
   const projectPath = shortenPath(agent.cwd);
+  const worktreeSlug = extractWorktreeSlug(agent.cwd);
   const ProviderIcon = getProviderIcon(agent.provider);
 
   const pressableStyle = useCallback(
@@ -246,6 +248,14 @@ function SessionRow({
             <Text style={styles.sessionMetaText} numberOfLines={1}>
               {projectPath}
             </Text>
+            {worktreeSlug ? (
+              <>
+                <Text style={styles.sessionMetaSeparator}>·</Text>
+                <Text style={styles.sessionMetaText} numberOfLines={1}>
+                  {worktreeSlug}
+                </Text>
+              </>
+            ) : null}
             <Text style={styles.sessionMetaSeparator}>·</Text>
             <Text style={styles.sessionMetaText}>{statusLabel}</Text>
             <Text style={styles.sessionMetaSeparator}>·</Text>
@@ -264,7 +274,7 @@ function SessionRow({
       {!isMobile && (
         <>
           <Text style={styles.columnMeta} numberOfLines={1}>
-            {projectPath}
+            {worktreeSlug ? `${projectPath} · ${worktreeSlug}` : projectPath}
           </Text>
           <Text style={styles.columnMetaFixed}>{statusLabel}</Text>
           <Text style={styles.columnMetaFixed}>{timeAgo}</Text>

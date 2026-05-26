@@ -20,6 +20,7 @@ export interface WorkspaceTabPresentation {
   titleState: "ready" | "loading";
   icon: React.ComponentType<{ size: number; color: string }>;
   statusBucket: SidebarStateBucket | null;
+  worktreeSlug: string | null;
 }
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
@@ -82,6 +83,7 @@ function WorkspaceTabPresentationResolverInner({
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
+      worktreeSlug: descriptor.worktreeSlug ?? null,
     }),
     [
       descriptor.icon,
@@ -89,6 +91,7 @@ function WorkspaceTabPresentationResolverInner({
       descriptor.statusBucket,
       descriptor.subtitle,
       descriptor.titleState,
+      descriptor.worktreeSlug,
       tab.key,
       tab.kind,
     ],
@@ -202,6 +205,11 @@ export function WorkspaceTabOptionRow({
           <Text numberOfLines={1} style={styles.optionLabel}>
             {presentation.titleState === "loading" ? "Loading..." : presentation.label}
           </Text>
+          {presentation.worktreeSlug ? (
+            <Text numberOfLines={1} style={styles.optionWorktreeSlug}>
+              {presentation.worktreeSlug}
+            </Text>
+          ) : null}
         </View>
       </Pressable>
       {selected ? (
@@ -293,6 +301,11 @@ const styles = StyleSheet.create((theme) => ({
   optionLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  optionWorktreeSlug: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    opacity: 0.7,
   },
   optionTrailingSlot: {
     width: 16,

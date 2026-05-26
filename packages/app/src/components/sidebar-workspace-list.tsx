@@ -68,6 +68,7 @@ import {
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { shouldShowWorktreeSlug } from "@/utils/worktree-slug";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import {
@@ -1402,6 +1403,9 @@ function WorkspaceRowInner({
     ],
     [isHovered, isCreating],
   );
+
+  const shouldShowSlug = shouldShowWorktreeSlug(workspace.worktreeSlug, workspace.name);
+
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
@@ -1431,9 +1435,16 @@ function WorkspaceRowInner({
                 workspaceKind={workspace.workspaceKind}
                 loading={isArchiving || isCreating}
               />
-              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-                {workspace.name}
-              </Text>
+              <View style={styles.workspaceNameGroup}>
+                <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+                  {workspace.name}
+                </Text>
+                {shouldShowSlug ? (
+                  <Text style={styles.workspaceSlugText} numberOfLines={1}>
+                    {workspace.worktreeSlug}
+                  </Text>
+                ) : null}
+              </View>
             </View>
             <WorkspaceRowRightGroup
               workspace={workspace}
@@ -2895,14 +2906,24 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     lineHeight: 20,
     opacity: 0.76,
-    flex: 1,
-    minWidth: 0,
   },
   workspaceBranchTextCreating: {
     opacity: 0.92,
   },
   workspaceBranchTextHovered: {
     opacity: 1,
+  },
+  workspaceNameGroup: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  workspaceSlugText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "400",
+    lineHeight: 16,
+    opacity: 0.7,
   },
   workspacePrBadgeRow: {
     flexDirection: "row",
