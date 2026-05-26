@@ -6,10 +6,10 @@ import {
   type DaemonEvent,
   type WebSocketFactory,
   type WebSocketLike,
-} from "@getpaseo/server";
+} from "./exports.js";
 import { expect, test } from "vitest";
 
-test("keeps legacy daemon client exports on the server package", () => {
+test("keeps legacy daemon client exports on the server public entry", () => {
   const config: DaemonClientConfig = {
     url: "ws://127.0.0.1:6767/ws",
     clientId: "legacy-export-test",
