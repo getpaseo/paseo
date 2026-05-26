@@ -146,6 +146,7 @@ function buildAgentManagerSpies() {
     setAgentFeature: vi.fn().mockResolvedValue(undefined),
     setLabels: vi.fn().mockResolvedValue(undefined),
     setTitle: vi.fn().mockResolvedValue(undefined),
+    updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
@@ -1754,7 +1755,6 @@ describe("update_agent MCP tool", () => {
 
   it("updates runtime settings before metadata", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentStorage.get.mockResolvedValue(createStoredRecord({ id: "agent-1" }));
     const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
     const tool = registeredTool(server, "update_agent");
     const input = {
@@ -1778,13 +1778,10 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
     expect(spies.agentManager.setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
     expect(spies.agentManager.setAgentFeature).toHaveBeenCalledWith("agent-1", "fast_mode", true);
-    expect(spies.agentStorage.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "agent-1",
-        title: "Updated agent",
-      }),
-    );
-    expect(spies.agentManager.setLabels).toHaveBeenCalledWith("agent-1", { role: "worker" });
+    expect(spies.agentManager.updateAgentMetadata).toHaveBeenCalledWith("agent-1", {
+      title: "Updated agent",
+      labels: { role: "worker" },
+    });
     expect(response.structuredContent).toEqual({ success: true });
   });
 
@@ -1796,8 +1793,7 @@ describe("update_agent MCP tool", () => {
     const response = await tool.handler({ agentId: "agent-1" });
 
     expect(response.structuredContent).toEqual({ success: true });
-    expect(spies.agentStorage.upsert).not.toHaveBeenCalled();
-    expect(spies.agentManager.setLabels).not.toHaveBeenCalled();
+    expect(spies.agentManager.updateAgentMetadata).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentMode).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentModel).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentThinkingOption).not.toHaveBeenCalled();
@@ -1820,8 +1816,7 @@ describe("update_agent MCP tool", () => {
     ).rejects.toThrow("unsupported feature");
 
     expect(spies.agentStorage.get).not.toHaveBeenCalled();
-    expect(spies.agentStorage.upsert).not.toHaveBeenCalled();
-    expect(spies.agentManager.setLabels).not.toHaveBeenCalled();
+    expect(spies.agentManager.updateAgentMetadata).not.toHaveBeenCalled();
   });
 });
 
