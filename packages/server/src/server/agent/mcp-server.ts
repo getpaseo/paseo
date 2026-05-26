@@ -1431,7 +1431,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         }
       }
 
-      await updateAgentCommand({ agentManager, agentStorage }, { agentId, name, labels });
+      await updateAgentCommand({ agentManager }, { agentId, name, labels });
 
       return {
         content: [],

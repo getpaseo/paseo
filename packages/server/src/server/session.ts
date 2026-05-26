@@ -2490,7 +2490,7 @@ export class Session {
 
     try {
       const result = await updateAgentCommand(
-        { agentManager: this.agentManager, agentStorage: this.agentStorage },
+        { agentManager: this.agentManager },
         { agentId, name, labels },
       );
 

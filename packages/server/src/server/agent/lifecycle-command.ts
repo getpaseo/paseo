@@ -16,6 +16,13 @@ export interface LifecycleAgentManager {
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
   notifyAgentState(agentId: string): void;
   setAgentMode(agentId: string, modeId: string): Promise<void>;
+  updateAgentMetadata(
+    agentId: string,
+    updates: {
+      title?: string;
+      labels?: Record<string, string>;
+    },
+  ): Promise<void>;
 }
 
 export interface LifecycleAgentStorage {
@@ -125,7 +132,7 @@ export interface UpdateAgentResult {
 }
 
 export async function updateAgentCommand(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
   input: {
     agentId: string;
     name?: string;
@@ -142,22 +149,10 @@ export async function updateAgentCommand(
     };
   }
 
-  if (title) {
-    const record = await dependencies.agentStorage.get(input.agentId);
-    if (!record) {
-      throw new Error(`Agent ${input.agentId} not found`);
-    }
-    await dependencies.agentStorage.upsert({
-      ...record,
-      title,
-      updatedAt: new Date().toISOString(),
-    });
-    dependencies.agentManager.notifyAgentState(input.agentId);
-  }
-
-  if (labels) {
-    await dependencies.agentManager.setLabels(input.agentId, labels);
-  }
+  await dependencies.agentManager.updateAgentMetadata(input.agentId, {
+    ...(title ? { title } : {}),
+    ...(labels ? { labels } : {}),
+  });
 
   return {
     accepted: true,
