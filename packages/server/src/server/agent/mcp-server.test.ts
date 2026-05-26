@@ -1788,6 +1788,22 @@ describe("update_agent MCP tool", () => {
     expect(response.structuredContent).toEqual({ success: true });
   });
 
+  it("reports success for a no-op update with neither metadata nor settings", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const tool = registeredTool(server, "update_agent");
+
+    const response = await tool.handler({ agentId: "agent-1" });
+
+    expect(response.structuredContent).toEqual({ success: true });
+    expect(spies.agentStorage.upsert).not.toHaveBeenCalled();
+    expect(spies.agentManager.setLabels).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentMode).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentModel).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentThinkingOption).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentFeature).not.toHaveBeenCalled();
+  });
+
   it("does not update metadata when runtime settings fail", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.setAgentFeature.mockRejectedValue(new Error("unsupported feature"));

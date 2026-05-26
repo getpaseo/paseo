@@ -1416,36 +1416,26 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, name, labels, settings }) => {
-      let appliedSettings = false;
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
-        appliedSettings = true;
       }
       if (settings?.model !== undefined) {
         await agentManager.setAgentModel(agentId, settings.model);
-        appliedSettings = true;
       }
       if (settings?.thinkingOptionId !== undefined) {
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
-        appliedSettings = true;
       }
       if (settings?.features) {
         for (const [featureId, value] of Object.entries(settings.features)) {
           await agentManager.setAgentFeature(agentId, featureId, value);
         }
-        appliedSettings = true;
       }
 
-      const metadataResult = await updateAgentCommand(
-        { agentManager, agentStorage },
-        { agentId, name, labels },
-      );
+      await updateAgentCommand({ agentManager, agentStorage }, { agentId, name, labels });
 
       return {
         content: [],
-        structuredContent: ensureValidJson({
-          success: metadataResult.accepted || appliedSettings,
-        }),
+        structuredContent: ensureValidJson({ success: true }),
       };
     },
   );
