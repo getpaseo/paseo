@@ -1,8 +1,15 @@
-import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { CheckoutStatusResponse } from "@getpaseo/protocol/messages";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
+import {
+  applyCheckoutStatusUpdate,
+  type CheckoutStatusClient,
+  type CheckoutStatusPayload,
+  peekOrFetchCheckoutStatus,
+} from "./checkout-status-cache";
+
+export type { CheckoutStatusPayload } from "./checkout-status-cache";
 
 export const CHECKOUT_STATUS_STALE_TIME = 15_000;
 
@@ -11,39 +18,11 @@ interface UseCheckoutStatusQueryOptions {
   cwd: string;
 }
 
-export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
-
-interface CheckoutStatusClient {
-  getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
-}
-
 function fetchCheckoutStatus(
   client: CheckoutStatusClient,
   cwd: string,
 ): Promise<CheckoutStatusPayload> {
   return client.getCheckoutStatus(cwd);
-}
-
-async function peekOrFetchSnapshot({
-  queryClient,
-  client,
-  serverId,
-  cwd,
-}: {
-  queryClient: QueryClient;
-  client: CheckoutStatusClient;
-  serverId: string;
-  cwd: string;
-}): Promise<CheckoutStatusPayload> {
-  const queryKey = checkoutStatusQueryKey(serverId, cwd);
-  const cached = queryClient.getQueryData<CheckoutStatusPayload>(queryKey);
-  if (cached) {
-    return cached;
-  }
-
-  const snapshot = await fetchCheckoutStatus(client, cwd);
-  queryClient.setQueryData(queryKey, snapshot);
-  return snapshot;
 }
 
 export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
@@ -57,10 +36,7 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
     }
 
     return client.on("checkout_status_update", (message) => {
-      if (message.payload.cwd !== cwd) {
-        return;
-      }
-      queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), message.payload);
+      applyCheckoutStatusUpdate({ queryClient, serverId, cwd, message });
     });
   }, [client, isConnected, cwd, queryClient, serverId]);
 
@@ -70,7 +46,7 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await peekOrFetchSnapshot({ queryClient, client, serverId, cwd });
+      return await peekOrFetchCheckoutStatus({ queryClient, client, serverId, cwd });
     },
     enabled: !!client && isConnected && !!cwd,
     staleTime: Infinity,
