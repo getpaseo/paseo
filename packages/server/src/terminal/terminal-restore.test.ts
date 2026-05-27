@@ -4,7 +4,7 @@ import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { TerminalCell, TerminalState } from "../shared/messages.js";
+import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import {
   encodeTerminalRestoreFrame,
   resolveRestoreAfterOutputOverflow,

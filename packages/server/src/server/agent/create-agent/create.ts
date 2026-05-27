@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import { PARENT_AGENT_ID_LABEL } from "../../../shared/agent-labels.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeInput } from "../../paseo-worktree-service.js";
 import { expandUserPath, resolvePathFromBase } from "../../path-utils.js";
@@ -23,7 +23,7 @@ import type {
   AgentSessionConfig,
 } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
-import { getAgentProviderDefinition } from "../provider-manifest.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type { ProviderDefinition } from "../provider-registry.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveAndValidateCreateAgentMode } from "../create-agent-mode.js";
