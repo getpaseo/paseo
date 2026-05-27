@@ -1,35 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("@react-native-async-storage/async-storage", () => {
-  const storage = new Map<string, string>();
-  return {
-    default: {
-      getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-      setItem: vi.fn(async (key: string, value: string) => {
-        storage.set(key, value);
-      }),
-      removeItem: vi.fn(async (key: string) => {
-        storage.delete(key);
-      }),
-    },
-  };
-});
-
+import { describe, expect, it } from "vitest";
 import {
   buildExplorerCheckoutKey,
   resolveExplorerTabForCheckout,
   type ExplorerTab,
 } from "@/stores/explorer-tab-memory";
 import {
+  buildOpenFileExplorerPatch,
+  buildToggleFileExplorerPatch,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
   selectPanelVisibility,
-  usePanelStore,
-  type PanelState,
-} from "@/stores/panel-store";
+  type PanelCoreState,
+} from "@/stores/panel-store.pure";
 
-function resetPanelStore() {
-  usePanelStore.setState({
+function makePanelState(overrides: Partial<PanelCoreState> = {}): PanelCoreState {
+  return {
     mobileView: "agent",
     desktop: {
       agentListOpen: false,
@@ -38,28 +23,9 @@ function resetPanelStore() {
     },
     explorerTab: "changes",
     explorerTabByCheckout: {},
-  });
-}
-
-function createPanelState(input: {
-  mobileView: PanelState["mobileView"];
-  agentListOpen: boolean;
-  fileExplorerOpen: boolean;
-}): PanelState {
-  return {
-    ...usePanelStore.getState(),
-    mobileView: input.mobileView,
-    desktop: {
-      ...usePanelStore.getState().desktop,
-      agentListOpen: input.agentListOpen,
-      fileExplorerOpen: input.fileExplorerOpen,
-    },
+    ...overrides,
   };
 }
-
-beforeEach(() => {
-  resetPanelStore();
-});
 
 describe("panel-store explorer tab resolution", () => {
   const serverId = "server-1";
@@ -132,10 +98,9 @@ describe("panel-store explorer tab resolution", () => {
 
 describe("panel-store visibility selectors", () => {
   it("uses mobileView for compact layout visibility", () => {
-    const state = createPanelState({
+    const state = makePanelState({
       mobileView: "file-explorer",
-      agentListOpen: true,
-      fileExplorerOpen: false,
+      desktop: { agentListOpen: true, fileExplorerOpen: false, focusModeEnabled: false },
     });
 
     expect(selectPanelVisibility(state, { isCompact: true })).toEqual({
@@ -147,10 +112,9 @@ describe("panel-store visibility selectors", () => {
   });
 
   it("uses desktop flags for expanded layout visibility", () => {
-    const state = createPanelState({
+    const state = makePanelState({
       mobileView: "file-explorer",
-      agentListOpen: true,
-      fileExplorerOpen: false,
+      desktop: { agentListOpen: true, fileExplorerOpen: false, focusModeEnabled: false },
     });
 
     expect(selectPanelVisibility(state, { isCompact: false })).toEqual({
@@ -166,83 +130,71 @@ describe("panel-store checkout-intent file explorer actions", () => {
   it("opens the compact explorer and resolves the tab from the explicit checkout", () => {
     const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: true };
     const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    usePanelStore.setState({
+    const state = makePanelState({
       explorerTab: "changes",
       explorerTabByCheckout: { [key]: "files" },
     });
 
-    usePanelStore.getState().openFileExplorerForCheckout({
-      isCompact: true,
-      checkout,
-    });
+    const patch = buildOpenFileExplorerPatch(state, { isCompact: true, checkout });
 
-    expect(usePanelStore.getState().mobileView).toBe("file-explorer");
-    expect(usePanelStore.getState().desktop.fileExplorerOpen).toBe(false);
-    expect(usePanelStore.getState().explorerTab).toBe("files");
+    expect(patch.mobileView).toBe("file-explorer");
+    expect(patch.desktop).toBeUndefined();
+    expect(patch.explorerTab).toBe("files");
   });
 
   it("opens the expanded explorer and resolves the tab from the explicit checkout", () => {
     const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: true };
     const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    usePanelStore.setState({
+    const state = makePanelState({
       explorerTab: "changes",
       explorerTabByCheckout: { [key]: "files" },
     });
 
-    usePanelStore.getState().openFileExplorerForCheckout({
-      isCompact: false,
-      checkout,
-    });
+    const patch = buildOpenFileExplorerPatch(state, { isCompact: false, checkout });
 
-    expect(usePanelStore.getState().mobileView).toBe("agent");
-    expect(usePanelStore.getState().desktop.fileExplorerOpen).toBe(true);
-    expect(usePanelStore.getState().explorerTab).toBe("files");
+    expect(patch.mobileView).toBeUndefined();
+    expect(patch.desktop?.fileExplorerOpen).toBe(true);
+    expect(patch.explorerTab).toBe("files");
   });
 
   it("toggles the explorer closed without changing the active tab", () => {
-    usePanelStore.setState({
-      desktop: {
-        agentListOpen: false,
-        fileExplorerOpen: true,
-        focusModeEnabled: false,
-      },
+    const state = makePanelState({
+      desktop: { agentListOpen: false, fileExplorerOpen: true, focusModeEnabled: false },
       explorerTab: "files",
     });
 
-    usePanelStore.getState().toggleFileExplorerForCheckout({
+    const patch = buildToggleFileExplorerPatch(state, {
       isCompact: false,
       checkout: { serverId: "server-1", cwd: "/tmp/repo", isGit: true },
     });
 
-    expect(usePanelStore.getState().desktop.fileExplorerOpen).toBe(false);
-    expect(usePanelStore.getState().explorerTab).toBe("files");
+    expect(patch).toEqual({
+      desktop: { agentListOpen: false, fileExplorerOpen: false, focusModeEnabled: false },
+    });
   });
 
   it("coerces changes to files for a non-git checkout", () => {
     const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: false };
     const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    usePanelStore.setState({
+    const state = makePanelState({
       explorerTab: "changes",
       explorerTabByCheckout: { [key]: "changes" },
     });
 
-    usePanelStore.getState().openFileExplorerForCheckout({
-      isCompact: false,
-      checkout,
-    });
+    const patch = buildOpenFileExplorerPatch(state, { isCompact: false, checkout });
 
-    expect(usePanelStore.getState().explorerTab).toBe("files");
+    expect(patch.explorerTab).toBe("files");
   });
 
   it("opens with the default files tab for an explicit non-git checkout with no stored tab", () => {
-    usePanelStore.setState({ explorerTab: "changes", explorerTabByCheckout: {} });
+    const state = makePanelState({ explorerTab: "changes", explorerTabByCheckout: {} });
 
-    usePanelStore.getState().openFileExplorerForCheckout({
+    const patch = buildOpenFileExplorerPatch(state, {
       isCompact: false,
       checkout: { serverId: "server-1", cwd: "/tmp/non-git", isGit: false },
     });
 
-    expect(usePanelStore.getState().desktop.fileExplorerOpen).toBe(true);
-    expect(usePanelStore.getState().explorerTab).toBe("files");
+    expect(patch.desktop?.fileExplorerOpen).toBe(true);
+    expect(patch.explorerTab).toBe("files");
   });
 });
