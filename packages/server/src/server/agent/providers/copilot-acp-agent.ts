@@ -3,8 +3,7 @@ import { homedir } from "node:os";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
 import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
-import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
+import { resolveProviderLaunch, type ProviderRuntimeSettings } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPBeforeModeWriteResult,
@@ -16,7 +15,7 @@ import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
-  resolveBinaryVersion,
+  buildBinaryDiagnosticRows,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
@@ -88,8 +87,8 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
+      const launch = await resolveProviderLaunch(this.runtimeSettings?.command, "copilot");
       const available = await this.isAvailable();
-      const resolvedBinary = await findExecutable("copilot");
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -119,14 +118,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Copilot", [
-          {
-            label: "Binary",
-            value: resolvedBinary ?? "not found",
-          },
-          {
-            label: "Version",
-            value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
-          },
+          ...(await buildBinaryDiagnosticRows(launch)),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
         ]),

@@ -1,25 +1,60 @@
-import { describe, expect, test, vi } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
 
 import {
   createProviderEnv,
   migrateProviderSettings,
   ProviderOverrideSchema,
+  resolveProviderLaunch,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 
+const originalPath = process.env.PATH;
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  process.env.PATH = originalPath;
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function makeTempDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "paseo-provider-launch-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function createExecutable(dir: string, name: string, body = "echo test-version\n"): string {
+  const file = path.join(dir, name);
+  writeFileSync(file, `#!/bin/sh\n${body}`, "utf8");
+  chmodSync(file, 0o755);
+  return file;
+}
+
 describe("resolveProviderCommandPrefix", () => {
   test("uses resolved default command in default mode", async () => {
-    const resolveDefault = vi.fn(() => "/usr/local/bin/claude");
+    let calls = 0;
+    const resolveDefault = () => {
+      calls += 1;
+      return "/usr/local/bin/claude";
+    };
 
     const resolved = await resolveProviderCommandPrefix(undefined, resolveDefault);
 
-    expect(resolveDefault).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(1);
     expect(resolved).toEqual({ command: "/usr/local/bin/claude", args: [] });
   });
 
   test("appends args in append mode", async () => {
-    const resolveDefault = vi.fn(() => "/usr/local/bin/claude");
+    let calls = 0;
+    const resolveDefault = () => {
+      calls += 1;
+      return "/usr/local/bin/claude";
+    };
 
     const resolved = await resolveProviderCommandPrefix(
       {
@@ -29,7 +64,7 @@ describe("resolveProviderCommandPrefix", () => {
       resolveDefault,
     );
 
-    expect(resolveDefault).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(1);
     expect(resolved).toEqual({
       command: "/usr/local/bin/claude",
       args: ["--chrome"],
@@ -37,7 +72,11 @@ describe("resolveProviderCommandPrefix", () => {
   });
 
   test("replaces command in replace mode without resolving default", async () => {
-    const resolveDefault = vi.fn(() => "/usr/local/bin/claude");
+    let calls = 0;
+    const resolveDefault = () => {
+      calls += 1;
+      return "/usr/local/bin/claude";
+    };
 
     const resolved = await resolveProviderCommandPrefix(
       {
@@ -47,10 +86,93 @@ describe("resolveProviderCommandPrefix", () => {
       resolveDefault,
     );
 
-    expect(resolveDefault).not.toHaveBeenCalled();
+    expect(calls).toBe(0);
     expect(resolved).toEqual({
       command: "docker",
       args: ["run", "--rm", "my-wrapper"],
+    });
+  });
+});
+
+describe("resolveProviderLaunch", () => {
+  test("uses replace override as the spawned command", async () => {
+    const binDir = makeTempDir();
+    const shim = createExecutable(binDir, "custom-provider");
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    const launch = await resolveProviderLaunch(
+      { mode: "replace", argv: ["custom-provider", "--wrapped"] },
+      "provider",
+    );
+
+    expect(launch).toEqual({
+      command: "custom-provider",
+      args: ["--wrapped"],
+      source: "override",
+      resolvedPath: shim,
+    });
+  });
+
+  test("keeps an absolute replace override when the path exists", async () => {
+    const binDir = makeTempDir();
+    const shim = createExecutable(binDir, "custom-provider", "exit 42\n");
+
+    const launch = await resolveProviderLaunch(
+      { mode: "replace", argv: [shim, "--wrapped"] },
+      "provider",
+    );
+
+    expect(launch).toEqual({
+      command: shim,
+      args: ["--wrapped"],
+      source: "override",
+      resolvedPath: shim,
+    });
+  });
+
+  test("resolves append mode through the default binary", async () => {
+    const binDir = makeTempDir();
+    const binary = createExecutable(binDir, "default-provider");
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    const launch = await resolveProviderLaunch(
+      { mode: "append", args: ["--profile", "work"] },
+      "default-provider",
+    );
+
+    expect(launch).toEqual({
+      command: binary,
+      args: ["--profile", "work"],
+      source: "path",
+      resolvedPath: binary,
+    });
+  });
+
+  test("resolves the default binary when no override is configured", async () => {
+    const binDir = makeTempDir();
+    const binary = createExecutable(binDir, "default-provider");
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    const launch = await resolveProviderLaunch(undefined, "default-provider");
+
+    expect(launch).toEqual({
+      command: binary,
+      args: [],
+      source: "path",
+      resolvedPath: binary,
+    });
+  });
+
+  test("reports not_found when the default binary is missing", async () => {
+    process.env.PATH = makeTempDir();
+
+    const launch = await resolveProviderLaunch(undefined, "paseo-provider-missing");
+
+    expect(launch).toEqual({
+      command: "paseo-provider-missing",
+      args: [],
+      source: "not_found",
+      resolvedPath: null,
     });
   });
 });

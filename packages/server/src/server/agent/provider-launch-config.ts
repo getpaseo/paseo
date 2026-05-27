@@ -1,8 +1,7 @@
 import { z } from "zod";
 
-import { execFileSync } from "node:child_process";
-import path from "node:path";
-import { isCommandAvailable } from "../../utils/executable.js";
+import { isAbsolute } from "node:path";
+import { executableExists, findExecutable } from "../../utils/executable.js";
 import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
@@ -93,27 +92,94 @@ export interface ProviderCommandPrefix {
   args: string[];
 }
 
+export type ProviderLaunchSource = "override" | "path" | "not_found";
+
+export interface ResolvedProviderLaunch {
+  command: string;
+  args: string[];
+  source: ProviderLaunchSource;
+  resolvedPath: string | null;
+}
+
+export interface ProviderLaunchDefault {
+  command: string;
+  resolvePath?: () => Promise<string | null>;
+}
+
+function normalizeLaunchDefault(
+  defaultBinary: string | ProviderLaunchDefault,
+): ProviderLaunchDefault {
+  if (typeof defaultBinary === "string") {
+    return { command: defaultBinary };
+  }
+  return defaultBinary;
+}
+
+async function resolveLaunchPath(command: string): Promise<string | null> {
+  const found = await findExecutable(command);
+  if (found) {
+    return found;
+  }
+  if (isAbsolute(command)) {
+    return executableExists(command);
+  }
+  return null;
+}
+
+async function resolveDefaultLaunchPath(
+  defaultBinary: ProviderLaunchDefault,
+): Promise<string | null> {
+  return defaultBinary.resolvePath
+    ? await defaultBinary.resolvePath()
+    : await resolveLaunchPath(defaultBinary.command);
+}
+
+export async function resolveProviderLaunch(
+  commandConfig: ProviderCommand | undefined,
+  defaultBinary: string | ProviderLaunchDefault,
+): Promise<ResolvedProviderLaunch> {
+  const normalizedDefault = normalizeLaunchDefault(defaultBinary);
+
+  if (commandConfig?.mode === "replace") {
+    const command = commandConfig.argv[0];
+    return {
+      command,
+      args: commandConfig.argv.slice(1),
+      source: "override",
+      resolvedPath: await resolveLaunchPath(command),
+    };
+  }
+
+  const resolvedPath = await resolveDefaultLaunchPath(normalizedDefault);
+  const args = commandConfig?.mode === "append" ? [...(commandConfig.args ?? [])] : [];
+  return {
+    command: resolvedPath ?? normalizedDefault.command,
+    args,
+    source: resolvedPath ? "path" : "not_found",
+    resolvedPath,
+  };
+}
+
 export async function resolveProviderCommandPrefix(
   commandConfig: ProviderCommand | undefined,
   resolveDefaultCommand: () => string | Promise<string>,
 ): Promise<ProviderCommandPrefix> {
-  if (!commandConfig || commandConfig.mode === "default") {
+  if (commandConfig?.mode === "replace") {
+    const launch = await resolveProviderLaunch(commandConfig, "");
     return {
-      command: await resolveDefaultCommand(),
-      args: [],
+      command: launch.command,
+      args: launch.args,
     };
   }
 
-  if (commandConfig.mode === "append") {
-    return {
-      command: await resolveDefaultCommand(),
-      args: [...(commandConfig.args ?? [])],
-    };
-  }
-
+  const defaultCommand = await resolveDefaultCommand();
+  const launch = await resolveProviderLaunch(commandConfig, {
+    command: defaultCommand,
+    resolvePath: async () => defaultCommand,
+  });
   return {
-    command: commandConfig.argv[0],
-    args: commandConfig.argv.slice(1),
+    command: launch.command,
+    args: launch.args,
   };
 }
 
@@ -213,39 +279,22 @@ export function createProviderEnv(options: ProviderEnvOptions = {}): NodeJS.Proc
   return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
 }
 
-export function findExecutable(name: string): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
-    try {
-      const { existsSync } = require("node:fs");
-      return existsSync(trimmed) ? trimmed : null;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const cmd = process.platform === "win32" ? "where.exe" : "which";
-    const result = execFileSync(cmd, [trimmed], {
-      encoding: "utf8",
-      env: createProviderEnv({ baseEnv: process.env }),
-      windowsHide: true,
-    }).trim();
-    const lines = result.split(/\r?\n/).filter((l: string) => l.trim());
-    const candidate = lines.at(-1)?.trim() ?? null;
-    return candidate && path.isAbsolute(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function isProviderCommandAvailable(
   commandConfig: ProviderCommand | undefined,
   resolveDefaultCommand: () => string | Promise<string>,
 ): Promise<boolean> {
   try {
-    const prefix = await resolveProviderCommandPrefix(commandConfig, resolveDefaultCommand);
-    return isCommandAvailable(prefix.command);
+    if (commandConfig?.mode === "replace") {
+      const launch = await resolveProviderLaunch(commandConfig, "");
+      return launch.source !== "not_found";
+    }
+
+    const defaultCommand = await resolveDefaultCommand();
+    const launch = await resolveProviderLaunch(commandConfig, {
+      command: defaultCommand,
+      resolvePath: async () => defaultCommand,
+    });
+    return launch.source !== "not_found";
   } catch {
     return false;
   }

@@ -30,15 +30,18 @@ import {
   type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
 import { runProviderTurn } from "../provider-runner.js";
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import {
+  resolveProviderLaunch,
+  type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
+} from "../../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
-import { findExecutable } from "../../../../utils/executable.js";
 import {
+  buildBinaryDiagnosticRows,
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
-  resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "../diagnostic-utils.js";
 import {
@@ -1484,8 +1487,8 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    const binary = await this.resolvePiBinary();
-    if (!binary) {
+    const launch = await this.resolvePiLaunch();
+    if (launch.source === "not_found") {
       return false;
     }
     const runtimeSession = await this.runtime.startSession({ cwd: homedir() }).catch(() => null);
@@ -1503,16 +1506,15 @@ export class PiRpcAgentClient implements AgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
+      const launch = await this.resolvePiLaunch();
       const available = await this.isAvailable();
-      const binary = await this.resolvePiBinary();
-      const version = binary ? await resolveBinaryVersion(binary) : "unknown";
       const authConfigPath = join(homedir(), ".pi", "agent", "auth.json");
       let modelsValue = "Not checked";
       let configuredProvidersValue = "none";
       let mcpToolsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
-      if (binary) {
+      if (launch.source !== "not_found") {
         const runtimeSession = await this.runtime
           .startSession({ cwd: homedir() })
           .catch((error) => {
@@ -1550,8 +1552,7 @@ export class PiRpcAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Pi", [
-          { label: "Binary", value: binary ?? "not found" },
-          { label: "Version", value: version },
+          ...(await buildBinaryDiagnosticRows(launch)),
           { label: "Configured providers", value: configuredProvidersValue },
           {
             label: "Auth config (~/.pi/agent/auth.json)",
@@ -1601,11 +1602,7 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  private async resolvePiBinary(): Promise<string | null> {
-    const command = this.runtimeSettings?.command;
-    if (command?.mode === "replace" && command.argv[0]) {
-      return await findExecutable(command.argv[0]);
-    }
-    return await findExecutable(PI_BINARY_COMMAND);
+  private async resolvePiLaunch(): Promise<ResolvedProviderLaunch> {
+    return resolveProviderLaunch(this.runtimeSettings?.command, PI_BINARY_COMMAND);
   }
 }

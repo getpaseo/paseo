@@ -1,7 +1,11 @@
-import { createProviderEnvSpec, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  createProviderEnvSpec,
+  type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
+} from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
 
-interface DiagnosticEntry {
+export interface DiagnosticEntry {
   label: string;
   value: string;
 }
@@ -136,6 +140,55 @@ export async function resolveBinaryVersion(binaryPath: string): Promise<string> 
   } catch (error) {
     return `error: ${toDiagnosticErrorMessage(error)}`;
   }
+}
+
+export interface BinaryDiagnosticVersionCommand {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+export interface BinaryDiagnosticRowsOptions {
+  binaryLabel?: string;
+  versionCommand?: BinaryDiagnosticVersionCommand;
+}
+
+async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand): Promise<string> {
+  try {
+    const { stdout, stderr } = await execCommand(invocation.command, invocation.args, {
+      ...createProviderEnvSpec({ runtimeSettings: { env: invocation.env } }),
+      timeout: 5_000,
+    });
+    return stdout.trim() || stderr.trim() || "unknown";
+  } catch (error) {
+    return `error: ${toDiagnosticErrorMessage(error)}`;
+  }
+}
+
+export async function buildBinaryDiagnosticRows(
+  launch: ResolvedProviderLaunch,
+  options: BinaryDiagnosticRowsOptions = {},
+): Promise<DiagnosticEntry[]> {
+  const defaultBinaryLabel = launch.source === "override" ? "Binary (override)" : "Binary";
+  const binaryLabel = options.binaryLabel ?? defaultBinaryLabel;
+  const versionCommand =
+    launch.source === "not_found" ? null : (launch.resolvedPath ?? launch.command);
+  let version = "unknown";
+  if (options.versionCommand) {
+    version = await resolveCommandVersion(options.versionCommand);
+  } else if (versionCommand) {
+    version = await resolveBinaryVersion(versionCommand);
+  }
+  return [
+    {
+      label: binaryLabel,
+      value: launch.source === "not_found" ? "not found" : launch.command,
+    },
+    {
+      label: "Version",
+      value: version,
+    },
+  ];
 }
 
 export function formatConfiguredCommand(

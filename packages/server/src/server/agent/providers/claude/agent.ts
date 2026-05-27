@@ -33,6 +33,7 @@ import { getClaudeModelsWithSettings, normalizeClaudeRuntimeModelId } from "./mo
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import {
+  buildBinaryDiagnosticRows,
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
@@ -77,9 +78,10 @@ import {
 import {
   createProviderEnv,
   createProviderEnvSpec,
+  resolveProviderLaunch,
   type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
-import { findExecutable, isCommandAvailable } from "../../../../utils/executable.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
@@ -1335,19 +1337,16 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    const command = this.runtimeSettings?.command;
-    if (command?.mode === "replace") {
-      return await isCommandAvailable(command.argv[0]);
-    }
-    return await isCommandAvailable("claude");
+    return (
+      (await resolveProviderLaunch(this.runtimeSettings?.command, "claude")).source !== "not_found"
+    );
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const resolvedBinary = (await findExecutable("claude")) ?? "not found";
+      const launch = await resolveProviderLaunch(this.runtimeSettings?.command, "claude");
       const available = await this.isAvailable();
-      const version = await resolveClaudeVersion(this.runtimeSettings);
-      const auth = available ? await resolveClaudeAuth(this.runtimeSettings) : null;
+      const auth = available ? await resolveClaudeAuth(launch, this.runtimeSettings) : null;
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -1369,8 +1368,7 @@ export class ClaudeAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Claude Code", [
-          { label: "Binary", value: resolvedBinary },
-          ...(version ? [{ label: "Version", value: version }] : []),
+          ...(await buildBinaryDiagnosticRows(launch)),
           ...(auth ? [{ label: "Auth", value: auth }] : []),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
@@ -1392,59 +1390,19 @@ export class ClaudeAgentClient implements AgentClient {
 }
 
 async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
-  const command = runtimeSettings?.command;
-  if (command?.mode === "replace") {
-    const foundOverride = await findExecutable(command.argv[0]);
-    if (foundOverride) {
-      return foundOverride;
-    }
-  }
-
-  const found = await findExecutable("claude");
-  if (found) {
-    return found;
+  const launch = await resolveProviderLaunch(runtimeSettings?.command, "claude");
+  if (launch.source !== "not_found") {
+    return launch.command;
   }
   throw new Error(
     "Claude binary not found. Install Claude Code (https://github.com/anthropics/claude-code) and ensure it is available in your shell PATH.",
   );
 }
 
-async function resolveClaudeVersion(
-  runtimeSettings?: ProviderRuntimeSettings,
-): Promise<string | null> {
-  const command = runtimeSettings?.command;
-  const envSpec = createProviderEnvSpec({ runtimeSettings });
-
-  try {
-    if (command?.mode === "replace") {
-      const { stdout } = await execCommand(
-        command.argv[0],
-        [...command.argv.slice(1), "--version"],
-        { ...envSpec, timeout: 5_000 },
-      );
-      return stdout.trim() || null;
-    }
-
-    const executable = await findExecutable("claude");
-    if (!executable) {
-      return null;
-    }
-
-    const { stdout } = await execCommand(executable, ["--version"], {
-      ...envSpec,
-      timeout: 5_000,
-    });
-    return stdout.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 async function resolveClaudeAuth(
+  launch: ResolvedProviderLaunch,
   runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<string | null> {
-  const command = runtimeSettings?.command;
-
   const run = async (
     executable: string,
     args: string[],
@@ -1464,16 +1422,11 @@ async function resolveClaudeAuth(
   };
 
   try {
-    let result: { stdout: string; stderr: string };
-    if (command?.mode === "replace") {
-      result = await run(command.argv[0], [...command.argv.slice(1), "auth", "status"]);
-    } else {
-      const executable = await findExecutable("claude");
-      if (!executable) {
-        return null;
-      }
-      result = await run(executable, ["auth", "status"]);
+    if (launch.source === "not_found") {
+      return null;
     }
+    const executable = launch.resolvedPath ?? launch.command;
+    const result = await run(executable, [...launch.args, "auth", "status"]);
 
     const combined = [result.stdout, result.stderr]
       .map((s) => s.trim())

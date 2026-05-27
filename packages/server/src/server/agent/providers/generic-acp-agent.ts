@@ -1,10 +1,8 @@
 import { homedir } from "node:os";
 import type { Logger } from "pino";
 
-import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { execCommand } from "../../../utils/spawn.js";
 import type { AgentProvider } from "../agent-sdk-types.js";
-import { createProviderEnvSpec } from "../provider-launch-config.js";
+import { resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   deriveModelDefinitionsFromACP,
@@ -15,6 +13,7 @@ import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
+  buildBinaryDiagnosticRows,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
@@ -61,15 +60,15 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 
   override async isAvailable(): Promise<boolean> {
-    return isCommandAvailable(this.command[0]);
+    return (await this.resolveConfiguredLaunch()).source !== "not_found";
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     const providerName = formatProviderName(this.label, this.providerId);
 
     try {
-      const resolvedBinary = await findExecutable(this.command[0]);
-      const available = resolvedBinary !== null;
+      const launch = await this.resolveConfiguredLaunch();
+      const available = launch.source !== "not_found";
       const versionProbe = buildVersionProbeCommand(this.command);
       const probeResult = available
         ? await this.runDiagnosticACPProbe()
@@ -85,16 +84,17 @@ export class GenericACPAgentClient extends ACPAgentClient {
         diagnostic: formatProviderDiagnostic(providerName, [
           { label: "Provider ID", value: this.providerId ?? "unknown" },
           { label: "Configured command", value: this.command.join(" ") },
-          { label: "Launcher binary", value: resolvedBinary ?? "not found" },
+          ...(await buildBinaryDiagnosticRows(launch, {
+            binaryLabel: "Launcher binary",
+            versionCommand: {
+              command: versionProbe.command,
+              args: versionProbe.args,
+              env: this.runtimeSettings?.env,
+            },
+          })),
           {
             label: "Version command",
             value: formatCommand(versionProbe.command, versionProbe.args),
-          },
-          {
-            label: "Version",
-            value: resolvedBinary
-              ? await resolveCommandVersion(versionProbe, this.runtimeSettings?.env)
-              : "unknown",
           },
           { label: "ACP initialize", value: probeResult.initialize },
           { label: "ACP session/new", value: probeResult.session },
@@ -108,6 +108,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
         diagnostic: formatProviderDiagnosticError(providerName, error),
       };
     }
+  }
+
+  private async resolveConfiguredLaunch() {
+    return resolveProviderLaunch({ mode: "replace", argv: this.command }, this.command[0]);
   }
 
   private async runDiagnosticACPProbe(): Promise<ACPDiagnosticProbeResult> {
@@ -275,21 +279,6 @@ function formatProbeError(currentValue: string, error: unknown): string {
     return currentValue;
   }
   return `Error - ${toDiagnosticErrorMessage(error)}`;
-}
-
-async function resolveCommandVersion(
-  invocation: CommandInvocation,
-  env: Record<string, string> | undefined,
-): Promise<string> {
-  try {
-    const { stdout, stderr } = await execCommand(invocation.command, invocation.args, {
-      ...createProviderEnvSpec({ runtimeSettings: { env } }),
-      timeout: 5_000,
-    });
-    return stdout.trim() || stderr.trim() || "unknown";
-  } catch (error) {
-    return `error: ${toDiagnosticErrorMessage(error)}`;
-  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
