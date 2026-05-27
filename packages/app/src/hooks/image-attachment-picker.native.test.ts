@@ -1,45 +1,42 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import {
+  normalizePickedImageAssetsWith,
+  type ExportPickedImageAsPng,
+} from "./image-attachment-picker.native.pure";
 
-vi.mock("expo-image-manipulator", () => ({
-  SaveFormat: { PNG: "png" },
-  ImageManipulator: {
-    manipulate: (_source: string) => ({
-      async renderAsync() {
-        return {
-          release() {},
-          async saveAsync(options: { format?: string }) {
-            return {
-              uri:
-                options.format === "png"
-                  ? "file:///cache/ImageManipulator/safe-picked.png"
-                  : "file:///cache/ImageManipulator/unsafe-picked.jpg",
-              width: 100,
-              height: 100,
-            };
-          },
-        };
-      },
-      release() {},
-    }),
-  },
-}));
-
-import { normalizePickedImageAssets } from "./image-attachment-picker.native";
+function fakeExportAsPng(): {
+  exportAsPng: ExportPickedImageAsPng;
+  recordedUris: string[];
+} {
+  const recordedUris: string[] = [];
+  return {
+    exportAsPng: async (uri: string) => {
+      recordedUris.push(uri);
+      return "file:///cache/ImageManipulator/safe-picked.png";
+    },
+    recordedUris,
+  };
+}
 
 describe("native image attachment picker", () => {
   it("preserves native picked JPEG and PNG attachment inputs", async () => {
-    const result = await normalizePickedImageAssets([
-      {
-        uri: "file:///photos/IMG_0001.JPG",
-        mimeType: "image/jpeg",
-        fileName: "picked.jpeg",
-      },
-      {
-        uri: "file:///photos/screenshot.png",
-        mimeType: "image/png",
-        fileName: "screenshot.png",
-      },
-    ]);
+    const { exportAsPng, recordedUris } = fakeExportAsPng();
+
+    const result = await normalizePickedImageAssetsWith(
+      [
+        {
+          uri: "file:///photos/IMG_0001.JPG",
+          mimeType: "image/jpeg",
+          fileName: "picked.jpeg",
+        },
+        {
+          uri: "file:///photos/screenshot.png",
+          mimeType: "image/png",
+          fileName: "screenshot.png",
+        },
+      ],
+      exportAsPng,
+    );
 
     expect(result).toEqual([
       {
@@ -53,16 +50,22 @@ describe("native image attachment picker", () => {
         fileName: "screenshot.png",
       },
     ]);
+    expect(recordedUris).toEqual([]);
   });
 
   it("turns a native picked HEIC-like asset into a PNG attachment input", async () => {
-    const result = await normalizePickedImageAssets([
-      {
-        uri: "file:///photos/IMG_0001.HEIC",
-        mimeType: "image/png",
-        fileName: "picked.png",
-      },
-    ]);
+    const { exportAsPng, recordedUris } = fakeExportAsPng();
+
+    const result = await normalizePickedImageAssetsWith(
+      [
+        {
+          uri: "file:///photos/IMG_0001.HEIC",
+          mimeType: "image/png",
+          fileName: "picked.png",
+        },
+      ],
+      exportAsPng,
+    );
 
     expect(result).toEqual([
       {
@@ -71,5 +74,6 @@ describe("native image attachment picker", () => {
         fileName: "picked.png",
       },
     ]);
+    expect(recordedUris).toEqual(["file:///photos/IMG_0001.HEIC"]);
   });
 });
