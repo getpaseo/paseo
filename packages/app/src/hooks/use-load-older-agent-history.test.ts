@@ -1,156 +1,188 @@
-// @vitest-environment jsdom
-
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ToastApi } from "@/components/toast-host";
-import { useSessionStore } from "@/stores/session-store";
+import { describe, expect, it } from "vitest";
+import type { ToastApi, ToastShowOptions } from "@/components/toast-host";
+import type { AgentTimelineCursorState } from "@/stores/session-store";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
-import { useLoadOlderAgentHistory } from "./use-load-older-agent-history";
+import {
+  loadOlderAgentHistory,
+  type LoadOlderAgentHistoryClient,
+} from "./use-load-older-agent-history";
 
-const serverId = "server-1";
 const agentId = "agent-1";
 
-type FetchAgentTimeline = (agentId: string, request: unknown) => Promise<void>;
+interface FakeClient extends LoadOlderAgentHistoryClient {
+  calls: Array<{
+    agentId: string;
+    request: Parameters<LoadOlderAgentHistoryClient["fetchAgentTimeline"]>[1];
+  }>;
+}
 
-function createToast(): ToastApi {
+function createClient(behavior: () => Promise<void> = async () => undefined): FakeClient {
+  const calls: FakeClient["calls"] = [];
   return {
-    show: vi.fn<ToastApi["show"]>(),
-    copied: vi.fn<ToastApi["copied"]>(),
-    error: vi.fn<ToastApi["error"]>(),
+    calls,
+    fetchAgentTimeline: async (id, request) => {
+      calls.push({ agentId: id, request });
+      await behavior();
+    },
   };
 }
 
-function makeClient(
-  fetchAgentTimeline: FetchAgentTimeline = vi.fn<FetchAgentTimeline>().mockResolvedValue(undefined),
-) {
-  return { fetchAgentTimeline };
+interface FakeInFlight {
+  values: boolean[];
+  setInFlight(value: boolean): void;
+  get current(): boolean;
 }
 
-function initialize(input?: {
-  cursor?: { epoch: string; startSeq: number; endSeq: number };
-  hasOlder?: boolean;
-  inFlight?: boolean;
-  fetchAgentTimeline?: FetchAgentTimeline;
-}) {
-  const client = makeClient(input?.fetchAgentTimeline);
-  useSessionStore.getState().initializeSession(serverId, client as never);
-  if (input?.cursor) {
-    useSessionStore.getState().setAgentTimelineCursor(serverId, new Map([[agentId, input.cursor]]));
-  }
-  if (input?.hasOlder !== undefined) {
-    useSessionStore
-      .getState()
-      .setAgentTimelineHasOlder(serverId, new Map([[agentId, input.hasOlder]]));
-  }
-  if (input?.inFlight !== undefined) {
-    useSessionStore
-      .getState()
-      .setAgentTimelineOlderFetchInFlight(serverId, new Map([[agentId, input.inFlight]]));
-  }
-  return client;
+function createInFlight(initial = false): FakeInFlight {
+  const values: boolean[] = [initial];
+  return {
+    values,
+    setInFlight(value) {
+      values.push(value);
+    },
+    get current() {
+      return values[values.length - 1] ?? initial;
+    },
+  };
 }
 
-afterEach(() => {
-  useSessionStore.setState({ sessions: {}, agentLastActivity: new Map() });
-  vi.restoreAllMocks();
-});
+interface FakeToast extends ToastApi {
+  shown: Array<{ message: unknown; options: ToastShowOptions | undefined }>;
+}
 
-describe("useLoadOlderAgentHistory", () => {
-  it("no-ops without a cursor", () => {
-    const client = initialize({ hasOlder: true });
-    const { result } = renderHook(() => useLoadOlderAgentHistory({ serverId, agentId }));
+function createToast(): FakeToast {
+  const shown: FakeToast["shown"] = [];
+  return {
+    shown,
+    show: (message, options) => {
+      shown.push({ message, options });
+    },
+    copied: () => {},
+    error: () => {},
+  };
+}
 
-    act(() => {
-      result.current.loadOlder();
-    });
+interface FakeLogger {
+  warnings: unknown[][];
+  warn: (...args: unknown[]) => void;
+}
 
-    expect(client.fetchAgentTimeline).not.toHaveBeenCalled();
-  });
+function createLogger(): FakeLogger {
+  const warnings: unknown[][] = [];
+  return {
+    warnings,
+    warn: (...args) => {
+      warnings.push(args);
+    },
+  };
+}
 
-  it("no-ops when the daemon says no older history exists", () => {
-    const client = initialize({
-      cursor: { epoch: "epoch-1", startSeq: 10, endSeq: 20 },
-      hasOlder: false,
-    });
-    const { result } = renderHook(() => useLoadOlderAgentHistory({ serverId, agentId }));
+const someCursor: AgentTimelineCursorState = { epoch: "epoch-1", startSeq: 10, endSeq: 20 };
 
-    act(() => {
-      result.current.loadOlder();
-    });
+describe("loadOlderAgentHistory", () => {
+  it("no-ops without a cursor", async () => {
+    const client = createClient();
+    const inFlight = createInFlight();
 
-    expect(client.fetchAgentTimeline).not.toHaveBeenCalled();
-  });
-
-  it("dedupes concurrent older-page requests", () => {
-    const fetchAgentTimeline = vi.fn<FetchAgentTimeline>(
-      () =>
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, 20);
-        }),
-    );
-    const client = initialize({
-      cursor: { epoch: "epoch-1", startSeq: 10, endSeq: 20 },
+    await loadOlderAgentHistory(agentId, {
+      client,
+      cursor: undefined,
       hasOlder: true,
-      fetchAgentTimeline,
-    });
-    const { result } = renderHook(() => useLoadOlderAgentHistory({ serverId, agentId }));
-
-    act(() => {
-      result.current.loadOlder();
-      result.current.loadOlder();
+      isLoadingOlder: false,
+      setInFlight: inFlight.setInFlight,
     });
 
-    expect(client.fetchAgentTimeline).toHaveBeenCalledTimes(1);
+    expect(client.calls).toEqual([]);
+    expect(inFlight.values).toEqual([false]);
+  });
+
+  it("no-ops when the daemon says no older history exists", async () => {
+    const client = createClient();
+    const inFlight = createInFlight();
+
+    await loadOlderAgentHistory(agentId, {
+      client,
+      cursor: someCursor,
+      hasOlder: false,
+      isLoadingOlder: false,
+      setInFlight: inFlight.setInFlight,
+    });
+
+    expect(client.calls).toEqual([]);
+    expect(inFlight.values).toEqual([false]);
+  });
+
+  it("no-ops when a request is already in flight", async () => {
+    const client = createClient();
+    const inFlight = createInFlight(true);
+
+    await loadOlderAgentHistory(agentId, {
+      client,
+      cursor: someCursor,
+      hasOlder: true,
+      isLoadingOlder: true,
+      setInFlight: inFlight.setInFlight,
+    });
+
+    expect(client.calls).toEqual([]);
+    expect(inFlight.values).toEqual([true]);
   });
 
   it("requests the page before the current start cursor and clears in-flight on success", async () => {
-    const client = initialize({
-      cursor: { epoch: "epoch-1", startSeq: 10, endSeq: 20 },
+    const client = createClient();
+    const inFlight = createInFlight();
+
+    await loadOlderAgentHistory(agentId, {
+      client,
+      cursor: someCursor,
       hasOlder: true,
-    });
-    const { result } = renderHook(() => useLoadOlderAgentHistory({ serverId, agentId }));
-
-    act(() => {
-      result.current.loadOlder();
+      isLoadingOlder: false,
+      setInFlight: inFlight.setInFlight,
     });
 
-    expect(client.fetchAgentTimeline).toHaveBeenCalledWith(agentId, {
-      direction: "before",
-      cursor: { epoch: "epoch-1", seq: 10 },
-      limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
-    });
-    await waitFor(() => {
-      expect(
-        useSessionStore.getState().sessions[serverId]?.agentTimelineOlderFetchInFlight.get(agentId),
-      ).toBe(false);
-    });
+    expect(client.calls).toEqual([
+      {
+        agentId,
+        request: {
+          direction: "before",
+          cursor: { epoch: "epoch-1", seq: 10 },
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          projection: "canonical",
+        },
+      },
+    ]);
+    expect(inFlight.values).toEqual([false, true, false]);
   });
 
-  it("shows a panel toast and clears in-flight on failure", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("shows a panel toast, warns, and clears in-flight on failure", async () => {
     const error = new Error("network");
-    const client = initialize({
-      cursor: { epoch: "epoch-1", startSeq: 10, endSeq: 20 },
-      hasOlder: true,
-      fetchAgentTimeline: vi.fn<FetchAgentTimeline>().mockRejectedValue(error),
+    const client = createClient(async () => {
+      throw error;
     });
+    const inFlight = createInFlight();
     const toast = createToast();
-    const { result } = renderHook(() => useLoadOlderAgentHistory({ serverId, agentId, toast }));
+    const logger = createLogger();
 
-    act(() => {
-      result.current.loadOlder();
+    await loadOlderAgentHistory(agentId, {
+      client,
+      cursor: someCursor,
+      hasOlder: true,
+      isLoadingOlder: false,
+      setInFlight: inFlight.setInFlight,
+      toast,
+      logger,
     });
 
-    expect(client.fetchAgentTimeline).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(toast.show).toHaveBeenCalledWith("Couldn't load older history", {
-        durationMs: 2200,
-        testID: "agent-load-older-history-toast",
-      });
-    });
-    expect(
-      useSessionStore.getState().sessions[serverId]?.agentTimelineOlderFetchInFlight.get(agentId),
-    ).toBe(false);
+    expect(client.calls).toHaveLength(1);
+    expect(toast.shown).toEqual([
+      {
+        message: "Couldn't load older history",
+        options: { durationMs: 2200, testID: "agent-load-older-history-toast" },
+      },
+    ]);
+    expect(logger.warnings).toEqual([
+      ["[Timeline] failed to load older agent history", agentId, error],
+    ]);
+    expect(inFlight.values).toEqual([false, true, false]);
   });
 });
