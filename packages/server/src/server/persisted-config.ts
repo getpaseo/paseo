@@ -131,6 +131,37 @@ const FeatureVoiceModeSchema = z
   })
   .strict();
 
+const AgentAttentionHookSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    command: z.array(z.string().trim().min(1)).min(1).optional(),
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  .strict()
+  .superRefine((config, ctx) => {
+    if (config.enabled === false) {
+      return;
+    }
+
+    if (!config.command) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Agent attention hook requires a command.",
+      });
+    }
+  });
+
+const NotificationsSchema = z
+  .object({
+    hooks: z
+      .object({
+        agentAttention: AgentAttentionHookSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi"] as const;
 
 function isLegacyProviderEntry(value: unknown): boolean {
@@ -234,6 +265,7 @@ export const PersistedConfigSchema = z
       .optional(),
 
     providers: ProvidersSchema.optional(),
+    notifications: NotificationsSchema.optional(),
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),

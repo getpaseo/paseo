@@ -9,6 +9,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { AgentAttentionHookRunner } from "./agent-attention-hooks.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
 
@@ -72,7 +73,10 @@ class RecordingPushNotificationSender implements PushNotificationSender {
   }
 }
 
-function createServer(agentManagerOverrides?: Record<string, unknown>) {
+function createServer(
+  agentManagerOverrides?: Record<string, unknown>,
+  hookRunner?: AgentAttentionHookRunner,
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
@@ -138,6 +142,8 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     undefined,
     pushNotifications,
+    undefined,
+    hookRunner,
   );
 
   return { server, agentManager, pushNotifications };
@@ -299,6 +305,68 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toHaveLength(1);
+  });
+
+  it("runs the agent attention hook with the same payload as external push", async () => {
+    const runHook = vi.fn(async () => undefined);
+    const { server, pushNotifications } = createServer(
+      {
+        getAgent: vi.fn(() => ({
+          pendingPermissions: new Map([
+            [
+              "permission-1",
+              {
+                id: "permission-1",
+                provider: "codex",
+                name: "question",
+                kind: "question",
+                title: "Need input",
+                description: "Choose an option",
+              },
+            ],
+          ]),
+        })),
+      },
+      createStub<AgentAttentionHookRunner>({
+        run: runHook,
+      }),
+    );
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "agent-question",
+      provider: "codex",
+      reason: "permission",
+    });
+
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(runHook).toHaveBeenCalledWith({
+      agentId: "agent-question",
+      provider: "codex",
+      reason: "permission",
+      notification: pushNotifications.sent[0],
+    });
+  });
+
+  it("does not block in-app attention delivery when the agent attention hook rejects", async () => {
+    const runHook = vi.fn(async () => {
+      throw new Error("hook failed");
+    });
+    const { server } = createServer(
+      undefined,
+      createStub<AgentAttentionHookRunner>({
+        run: runHook,
+      }),
+    );
+    const ws = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "agent-hook-failure",
+      provider: "codex",
+      reason: "finished",
+    });
+
+    expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
+    expect(runHook).toHaveBeenCalledOnce();
   });
 
   it("does not push error attention when the only connected client has never sent a heartbeat", async () => {
