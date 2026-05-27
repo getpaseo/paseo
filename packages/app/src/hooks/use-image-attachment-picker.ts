@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { isElectronRuntime } from "@/desktop/host";
+import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import {
   normalizePickedImageAssets,
   openImagePathsWithDesktopDialog,
@@ -49,7 +49,7 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
 
     try {
       if (isWeb && isElectronRuntime()) {
-        const selectedPaths = await openImagePathsWithDesktopDialog();
+        const selectedPaths = await openImagePathsWithDesktopDialog(getDesktopHost()?.dialog);
         if (selectedPaths.length === 0) {
           return null;
         }

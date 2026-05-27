@@ -124,6 +124,6 @@ export async function normalizePickedImageAssets(
   );
 }
 
-export async function openImagePathsWithDesktopDialog(): Promise<string[]> {
+export async function openImagePathsWithDesktopDialog(_dialog?: unknown): Promise<string[]> {
   throw new Error("Desktop dialog API is not available on native.");
 }
