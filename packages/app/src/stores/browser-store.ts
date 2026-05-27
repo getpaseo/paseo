@@ -1,51 +1,24 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import {
+  applyBrowserPatch,
+  type BrowserIndexState,
+  type BrowserRecord,
+  type BrowserRecordPatch,
+  createBrowserRecord,
+  normalizeBrowserUrl,
+  removeBrowserFromIndex,
+  sanitizeBrowsersForPersist,
+  trimNonEmpty,
+} from "./browser-store.pure";
 
-export interface BrowserRecord {
-  browserId: string;
-  url: string;
-  title: string;
-  isLoading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  faviconUrl: string | null;
-  lastError: string | null;
-  createdAt: number;
-}
+export type { BrowserRecord } from "./browser-store.pure";
 
-type BrowserRecordPatch = Partial<Omit<BrowserRecord, "browserId" | "createdAt">>;
-
-interface BrowserStoreState {
-  browsersById: Record<string, BrowserRecord>;
+interface BrowserStoreState extends BrowserIndexState {
   createBrowser: (input?: { initialUrl?: string }) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;
   removeBrowser: (browserId: string) => void;
-}
-
-function trimNonEmpty(value: string | null | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizeBrowserUrl(value: string | null | undefined): string {
-  const trimmed = trimNonEmpty(value);
-  if (!trimmed) {
-    return "https://example.com";
-  }
-  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-fA-F:.]+])(?::\d+)?(?:[/?#]|$)/.test(trimmed)) {
-    return `http://${trimmed}`;
-  }
-  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) {
-    return trimmed;
-  }
-  if (trimmed.startsWith("//")) {
-    return `https:${trimmed}`;
-  }
-  return `https://${trimmed}`;
 }
 
 function createBrowserId(): string {
@@ -61,93 +34,32 @@ export const useBrowserStore = create<BrowserStoreState>()(
       browsersById: {},
       createBrowser: (input) => {
         const browserId = createBrowserId();
-        const now = Date.now();
-        const initialUrl = normalizeBrowserUrl(input?.initialUrl);
+        const record = createBrowserRecord({
+          browserId,
+          initialUrl: input?.initialUrl,
+          now: Date.now(),
+        });
 
         set((state) => ({
           browsersById: {
             ...state.browsersById,
-            [browserId]: {
-              browserId,
-              url: initialUrl,
-              title: "",
-              isLoading: false,
-              canGoBack: false,
-              canGoForward: false,
-              faviconUrl: null,
-              lastError: null,
-              createdAt: now,
-            },
+            [browserId]: record,
           },
         }));
 
         return browserId;
       },
       updateBrowser: (browserId, patch) => {
-        const normalizedBrowserId = trimNonEmpty(browserId);
-        if (!normalizedBrowserId) {
-          return;
-        }
-
-        set((state) => {
-          const existing = state.browsersById[normalizedBrowserId];
-          if (!existing) {
-            return state;
-          }
-
-          const nextRecord: BrowserRecord = {
-            ...existing,
-            ...patch,
-            url: normalizeBrowserUrl(patch.url ?? existing.url),
-          };
-
-          if (
-            nextRecord.url === existing.url &&
-            nextRecord.title === existing.title &&
-            nextRecord.isLoading === existing.isLoading &&
-            nextRecord.canGoBack === existing.canGoBack &&
-            nextRecord.canGoForward === existing.canGoForward &&
-            nextRecord.faviconUrl === existing.faviconUrl &&
-            nextRecord.lastError === existing.lastError
-          ) {
-            return state;
-          }
-
-          return {
-            browsersById: {
-              ...state.browsersById,
-              [normalizedBrowserId]: nextRecord,
-            },
-          };
-        });
+        set((state) => applyBrowserPatch(state, browserId, patch));
       },
       removeBrowser: (browserId) => {
-        const normalizedBrowserId = trimNonEmpty(browserId);
-        if (!normalizedBrowserId) {
-          return;
-        }
-
-        set((state) => {
-          if (!state.browsersById[normalizedBrowserId]) {
-            return state;
-          }
-          const next = { ...state.browsersById };
-          delete next[normalizedBrowserId];
-          return { browsersById: next };
-        });
+        set((state) => removeBrowserFromIndex(state, browserId));
       },
     }),
     {
       name: "workspace-browser-store",
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        browsersById: Object.fromEntries(
-          Object.entries(state.browsersById).map(([browserId, browser]) => [
-            browserId,
-            { ...browser, isLoading: false, lastError: null },
-          ]),
-        ),
-      }),
+      partialize: (state) => sanitizeBrowsersForPersist(state),
     },
   ),
 );

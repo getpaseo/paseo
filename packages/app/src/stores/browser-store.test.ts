@@ -1,45 +1,148 @@
-import { describe, expect, it, vi } from "vitest";
-import { normalizeWorkspaceBrowserUrl, useBrowserStore } from "./browser-store";
+import { describe, expect, it } from "vitest";
+import {
+  applyBrowserPatch,
+  type BrowserIndexState,
+  createBrowserRecord,
+  normalizeBrowserUrl,
+  removeBrowserFromIndex,
+  sanitizeBrowsersForPersist,
+} from "./browser-store.pure";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn(),
-    setItem: vi.fn(),
-    removeItem: vi.fn(),
-  },
-}));
+function withRecords(records: ReturnType<typeof createBrowserRecord>[]): BrowserIndexState {
+  return {
+    browsersById: Object.fromEntries(records.map((record) => [record.browserId, record])),
+  };
+}
 
-describe("browser store", () => {
+describe("normalizeBrowserUrl", () => {
   it("normalizes local development hosts to http by default", () => {
-    expect(normalizeWorkspaceBrowserUrl("localhost:8081")).toBe("http://localhost:8081");
-    expect(normalizeWorkspaceBrowserUrl("localhost/path")).toBe("http://localhost/path");
-    expect(normalizeWorkspaceBrowserUrl("127.0.0.1:3000/path")).toBe("http://127.0.0.1:3000/path");
-    expect(normalizeWorkspaceBrowserUrl("192.168.0.8")).toBe("http://192.168.0.8");
-    expect(normalizeWorkspaceBrowserUrl("[::1]:5173")).toBe("http://[::1]:5173");
+    expect(normalizeBrowserUrl("localhost:8081")).toBe("http://localhost:8081");
+    expect(normalizeBrowserUrl("localhost/path")).toBe("http://localhost/path");
+    expect(normalizeBrowserUrl("127.0.0.1:3000/path")).toBe("http://127.0.0.1:3000/path");
+    expect(normalizeBrowserUrl("192.168.0.8")).toBe("http://192.168.0.8");
+    expect(normalizeBrowserUrl("[::1]:5173")).toBe("http://[::1]:5173");
   });
 
   it("normalizes public hosts to https by default", () => {
-    expect(normalizeWorkspaceBrowserUrl("example.com")).toBe("https://example.com");
-    expect(normalizeWorkspaceBrowserUrl("//example.com/path")).toBe("https://example.com/path");
+    expect(normalizeBrowserUrl("example.com")).toBe("https://example.com");
+    expect(normalizeBrowserUrl("//example.com/path")).toBe("https://example.com/path");
   });
 
   it("keeps explicit protocols unchanged", () => {
-    expect(normalizeWorkspaceBrowserUrl("http://localhost:8081")).toBe("http://localhost:8081");
-    expect(normalizeWorkspaceBrowserUrl("https://localhost:8081")).toBe("https://localhost:8081");
-    expect(normalizeWorkspaceBrowserUrl("file:///tmp/example.html")).toBe(
-      "file:///tmp/example.html",
-    );
+    expect(normalizeBrowserUrl("http://localhost:8081")).toBe("http://localhost:8081");
+    expect(normalizeBrowserUrl("https://localhost:8081")).toBe("https://localhost:8081");
+    expect(normalizeBrowserUrl("file:///tmp/example.html")).toBe("file:///tmp/example.html");
   });
 
-  it("normalizes browser URLs when creating and updating records", () => {
-    useBrowserStore.setState({ browsersById: {} });
+  it("falls back to a default URL when input is blank", () => {
+    expect(normalizeBrowserUrl(null)).toBe("https://example.com");
+    expect(normalizeBrowserUrl("   ")).toBe("https://example.com");
+  });
+});
 
-    const browserId = useBrowserStore.getState().createBrowser({ initialUrl: "localhost:8081" });
-    expect(useBrowserStore.getState().browsersById[browserId]?.url).toBe("http://localhost:8081");
+describe("createBrowserRecord", () => {
+  it("normalizes the initial URL and starts with idle state", () => {
+    const record = createBrowserRecord({
+      browserId: "b1",
+      initialUrl: "localhost:8081",
+      now: 1000,
+    });
 
-    useBrowserStore.getState().updateBrowser(browserId, { url: "example.com/path" });
-    expect(useBrowserStore.getState().browsersById[browserId]?.url).toBe(
-      "https://example.com/path",
-    );
+    expect(record).toEqual({
+      browserId: "b1",
+      url: "http://localhost:8081",
+      title: "",
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false,
+      faviconUrl: null,
+      lastError: null,
+      createdAt: 1000,
+    });
+  });
+});
+
+describe("applyBrowserPatch", () => {
+  it("normalizes URL updates", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    const next = applyBrowserPatch(initial, "b1", { url: "example.com/path" });
+
+    expect(next.browsersById.b1?.url).toBe("https://example.com/path");
+  });
+
+  it("returns the same state reference when nothing changes", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    const next = applyBrowserPatch(initial, "b1", { url: "https://a.test", title: "" });
+
+    expect(next).toBe(initial);
+  });
+
+  it("returns the same state when the browser id is unknown", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    const next = applyBrowserPatch(initial, "missing", { title: "x" });
+
+    expect(next).toBe(initial);
+  });
+
+  it("returns the same state when the browser id is blank", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    expect(applyBrowserPatch(initial, "   ", { title: "x" })).toBe(initial);
+  });
+});
+
+describe("removeBrowserFromIndex", () => {
+  it("removes the named browser", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+      createBrowserRecord({ browserId: "b2", initialUrl: "https://b.test", now: 0 }),
+    ]);
+
+    const next = removeBrowserFromIndex(initial, "b1");
+
+    expect(Object.keys(next.browsersById)).toEqual(["b2"]);
+  });
+
+  it("returns the same state when the browser id is unknown", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    expect(removeBrowserFromIndex(initial, "missing")).toBe(initial);
+  });
+
+  it("returns the same state when the browser id is blank", () => {
+    const initial = withRecords([
+      createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),
+    ]);
+
+    expect(removeBrowserFromIndex(initial, "   ")).toBe(initial);
+  });
+});
+
+describe("sanitizeBrowsersForPersist", () => {
+  it("clears transient fields on every record", () => {
+    const base = createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 });
+    const state: BrowserIndexState = {
+      browsersById: {
+        b1: { ...base, isLoading: true, lastError: "network down" },
+      },
+    };
+
+    const persisted = sanitizeBrowsersForPersist(state);
+
+    expect(persisted.browsersById.b1?.isLoading).toBe(false);
+    expect(persisted.browsersById.b1?.lastError).toBe(null);
   });
 });
