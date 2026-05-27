@@ -7,9 +7,10 @@ import {
   writeDesktopAttachmentBytes,
 } from "@/desktop/attachments/desktop-file-commands";
 import {
+  createBrowserObjectUrlMinter,
+  createDesktopFileReader,
+  createDesktopPreviewUrlResolver,
   readDesktopFileBase64,
-  releaseDesktopPreviewUrl,
-  resolveDesktopPreviewUrl,
 } from "@/desktop/attachments/desktop-preview-url";
 
 export interface DesktopAttachmentFileResult {
@@ -41,6 +42,10 @@ export interface DesktopAttachmentBridge {
 }
 
 export function createDesktopAttachmentBridge(): DesktopAttachmentBridge {
+  const previewUrls = createDesktopPreviewUrlResolver({
+    reader: createDesktopFileReader(),
+    objectUrls: createBrowserObjectUrlMinter(),
+  });
   return {
     copyFile: copyDesktopAttachmentFile,
     writeBase64: writeDesktopAttachmentBase64,
@@ -48,7 +53,7 @@ export function createDesktopAttachmentBridge(): DesktopAttachmentBridge {
     deleteFile: deleteDesktopAttachmentFile,
     garbageCollect: garbageCollectDesktopAttachmentFiles,
     readFileBase64: readDesktopFileBase64,
-    resolvePreviewUrl: resolveDesktopPreviewUrl,
-    releasePreviewUrl: releaseDesktopPreviewUrl,
+    resolvePreviewUrl: (attachment) => previewUrls.resolve(attachment),
+    releasePreviewUrl: (input) => previewUrls.release(input),
   };
 }

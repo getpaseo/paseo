@@ -1,66 +1,119 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const { invokeDesktopCommandMock } = vi.hoisted(() => ({
-  invokeDesktopCommandMock: vi.fn(async () => "AAECAw=="),
-}));
-
-vi.mock("@/desktop/electron/invoke", () => ({
-  invokeDesktopCommand: invokeDesktopCommandMock,
-}));
-
+import { describe, expect, it } from "vitest";
+import type { AttachmentMetadata } from "@/attachments/types";
 import {
-  __desktopPreviewUrlTestUtils,
-  releaseDesktopPreviewUrl,
-  resolveDesktopPreviewUrl,
+  createDesktopPreviewUrlResolver,
+  type DesktopFileReader,
+  type ObjectUrlMinter,
 } from "./desktop-preview-url";
 
+class FakeDesktopReader implements DesktopFileReader {
+  readonly reads: string[] = [];
+  constructor(private readonly files: Record<string, string>) {}
+
+  async readFileBase64(storageKey: string): Promise<string> {
+    this.reads.push(storageKey);
+    const base64 = this.files[storageKey];
+    if (base64 === undefined) {
+      throw new Error(`FakeDesktopReader: no file registered for ${storageKey}`);
+    }
+    return base64;
+  }
+}
+
+interface FakeMintedUrl {
+  url: string;
+  mimeType: string;
+  base64: string;
+}
+
+class FakeObjectUrls implements ObjectUrlMinter {
+  readonly minted: FakeMintedUrl[] = [];
+  readonly revoked: string[] = [];
+  private nextId = 1;
+  private readonly supportsCreate: boolean;
+
+  constructor(options: { supportsCreate?: boolean } = {}) {
+    this.supportsCreate = options.supportsCreate ?? true;
+  }
+
+  tryCreate(input: { mimeType: string; base64: string }): string | null {
+    if (!this.supportsCreate) {
+      return null;
+    }
+    const url = `blob:fake-${this.nextId++}`;
+    this.minted.push({ url, ...input });
+    return url;
+  }
+
+  revoke(url: string): void {
+    this.revoked.push(url);
+  }
+}
+
+function attachment(overrides: Partial<AttachmentMetadata> = {}): AttachmentMetadata {
+  return {
+    id: "att-1",
+    mimeType: "image/png",
+    storageType: "desktop-file",
+    storageKey: "/tmp/att-1.png",
+    fileName: null,
+    byteSize: null,
+    createdAt: 0,
+    ...overrides,
+  };
+}
+
 describe("desktop preview URLs", () => {
-  const createObjectURL = vi.fn(() => "blob:desktop-preview-1");
-  const revokeObjectURL = vi.fn();
+  it("mints an object URL from the desktop file's base64 bytes", async () => {
+    const reader = new FakeDesktopReader({ "/tmp/att-1.png": "AAECAw==" });
+    const objectUrls = new FakeObjectUrls();
+    const resolver = createDesktopPreviewUrlResolver({ reader, objectUrls });
 
-  beforeEach(() => {
-    vi.stubGlobal("URL", {
-      createObjectURL,
-      revokeObjectURL,
-    });
+    const url = await resolver.resolve(attachment());
+
+    expect(url).toBe("blob:fake-1");
+    expect(reader.reads).toEqual(["/tmp/att-1.png"]);
+    expect(objectUrls.minted).toEqual([
+      { url: "blob:fake-1", mimeType: "image/png", base64: "AAECAw==" },
+    ]);
   });
 
-  afterEach(() => {
-    createObjectURL.mockClear();
-    revokeObjectURL.mockClear();
-    invokeDesktopCommandMock.mockClear();
-    __desktopPreviewUrlTestUtils.clearActiveObjectUrls();
-    vi.unstubAllGlobals();
+  it("falls back to a data URL when the host cannot mint object URLs", async () => {
+    const reader = new FakeDesktopReader({ "/tmp/att-2.jpg": "AAECAw==" });
+    const objectUrls = new FakeObjectUrls({ supportsCreate: false });
+    const resolver = createDesktopPreviewUrlResolver({ reader, objectUrls });
+
+    const url = await resolver.resolve(
+      attachment({ id: "att-2", mimeType: "image/jpeg", storageKey: "/tmp/att-2.jpg" }),
+    );
+
+    expect(url).toBe("data:image/jpeg;base64,AAECAw==");
+    expect(objectUrls.revoked).toEqual([]);
   });
 
-  it("resolves renderer-safe blob URLs for desktop attachments", async () => {
-    const url = await resolveDesktopPreviewUrl({
-      id: "att-1",
-      mimeType: "image/png",
-      storageType: "desktop-file",
-      storageKey: "/tmp/att-1.png",
-      createdAt: Date.now(),
-    });
+  it("revokes only object URLs it minted", async () => {
+    const reader = new FakeDesktopReader({ "/tmp/att-3.jpg": "AAECAw==" });
+    const objectUrls = new FakeObjectUrls();
+    const resolver = createDesktopPreviewUrlResolver({ reader, objectUrls });
 
-    expect(invokeDesktopCommandMock).toHaveBeenCalledWith("read_file_base64", {
-      path: "/tmp/att-1.png",
-    });
-    expect(url).toBe("blob:desktop-preview-1");
-    expect(url.startsWith("asset://")).toBe(false);
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const url = await resolver.resolve(
+      attachment({ id: "att-3", mimeType: "image/jpeg", storageKey: "/tmp/att-3.jpg" }),
+    );
+    await resolver.release({ url });
+    await resolver.release({ url: "blob:never-minted" });
+
+    expect(objectUrls.revoked).toEqual([url]);
   });
 
-  it("releases blob URLs via URL.revokeObjectURL", async () => {
-    const url = await resolveDesktopPreviewUrl({
-      id: "att-2",
-      mimeType: "image/jpeg",
-      storageType: "desktop-file",
-      storageKey: "/tmp/att-2.jpg",
-      createdAt: Date.now(),
-    });
+  it("only revokes a minted URL once across repeated release calls", async () => {
+    const reader = new FakeDesktopReader({ "/tmp/att-4.png": "AAECAw==" });
+    const objectUrls = new FakeObjectUrls();
+    const resolver = createDesktopPreviewUrlResolver({ reader, objectUrls });
 
-    await releaseDesktopPreviewUrl({ url });
+    const url = await resolver.resolve(attachment({ id: "att-4", storageKey: "/tmp/att-4.png" }));
+    await resolver.release({ url });
+    await resolver.release({ url });
 
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:desktop-preview-1");
+    expect(objectUrls.revoked).toEqual([url]);
   });
 });
