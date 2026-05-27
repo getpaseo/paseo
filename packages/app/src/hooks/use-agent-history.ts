@@ -26,13 +26,15 @@ export interface AgentHistoryResult {
   loadMore: () => void;
 }
 
-interface AgentHistoryPage {
+export interface AgentHistoryPage {
   agents: AggregatedAgent[];
   pageInfo: FetchAgentHistoryPageInfo;
 }
 
-async function fetchAgentHistoryPage(input: {
-  client: DaemonClient;
+export type AgentHistoryClient = Pick<DaemonClient, "fetchAgentHistory">;
+
+export async function fetchAgentHistoryPage(input: {
+  client: AgentHistoryClient;
   serverId: string;
   cursor: string | null;
 }): Promise<AgentHistoryPage> {
@@ -147,7 +149,3 @@ export function useAgentHistory(options: {
     loadMore,
   };
 }
-
-export const __private__ = {
-  fetchAgentHistoryPage,
-};
