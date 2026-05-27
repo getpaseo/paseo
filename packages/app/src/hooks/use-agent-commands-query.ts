@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
@@ -19,7 +20,24 @@ export interface DraftCommandConfig {
   featureValues?: Record<string, unknown>;
 }
 
-function commandsQueryKey(serverId: string, agentId: string, draftConfig?: DraftCommandConfig) {
+export type AgentCommandsClient = Pick<DaemonClient, "listCommands">;
+
+export async function fetchAgentCommands(input: {
+  client: AgentCommandsClient;
+  agentId: string;
+  draftConfig?: DraftCommandConfig;
+}): Promise<AgentSlashCommand[]> {
+  const response = await input.client.listCommands(input.agentId, {
+    draftConfig: input.draftConfig,
+  });
+  return response.commands as AgentSlashCommand[];
+}
+
+function agentCommandsQueryKey(
+  serverId: string,
+  agentId: string,
+  draftConfig?: DraftCommandConfig,
+) {
   return [
     "agentCommands",
     serverId,
@@ -50,13 +68,12 @@ export function useAgentCommandsQuery({
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   const query = useQuery({
-    queryKey: commandsQueryKey(serverId, agentId, draftConfig),
+    queryKey: agentCommandsQueryKey(serverId, agentId, draftConfig),
     queryFn: async () => {
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      const response = await client.listCommands(agentId, { draftConfig });
-      return response.commands as AgentSlashCommand[];
+      return fetchAgentCommands({ client, agentId, draftConfig });
     },
     enabled: enabled && !!client && isConnected && (!!agentId || !!draftConfig),
     staleTime: COMMANDS_STALE_TIME,

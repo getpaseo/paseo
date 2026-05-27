@@ -1,79 +1,75 @@
-/**
- * @vitest-environment jsdom
- */
-import React from "react";
-import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import {
+  type AgentCommandsClient,
+  type DraftCommandConfig,
+  fetchAgentCommands,
+} from "./use-agent-commands-query";
 
-import { useAgentCommandsQuery } from "./use-agent-commands-query";
+type ListCommands = DaemonClient["listCommands"];
+type ListCommandsResult = Awaited<ReturnType<ListCommands>>;
 
-const { mockClient, mockRuntime } = vi.hoisted(() => {
-  const hoistedClient = {
-    listCommands: vi.fn(),
-  };
+interface ListCommandsCall {
+  agentId: string;
+  draftConfig: DraftCommandConfig | undefined;
+}
+
+interface FakeAgentCommandsClient extends AgentCommandsClient {
+  calls: ListCommandsCall[];
+}
+
+function createClient(response: ListCommandsResult): FakeAgentCommandsClient {
+  const calls: ListCommandsCall[] = [];
   return {
-    mockClient: hoistedClient,
-    mockRuntime: {
-      client: hoistedClient,
-      isConnected: true,
-    },
+    calls,
+    listCommands: (async (
+      agentId: string,
+      requestIdOrOptions?: string | { draftConfig?: DraftCommandConfig },
+    ) => {
+      const options =
+        typeof requestIdOrOptions === "object" && requestIdOrOptions !== null
+          ? requestIdOrOptions
+          : undefined;
+      calls.push({ agentId, draftConfig: options?.draftConfig });
+      return response;
+    }) as ListCommands,
   };
-});
-
-vi.mock("@/runtime/host-runtime", () => ({
-  useHostRuntimeClient: () => mockRuntime.client,
-  useHostRuntimeIsConnected: () => mockRuntime.isConnected,
-}));
-
-function createQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
 }
 
-function renderCommandsHook(input: Parameters<typeof useAgentCommandsQuery>[0]) {
-  const queryClient = createQueryClient();
-  const wrapper = ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
-
-  return renderHook(() => useAgentCommandsQuery(input), { wrapper });
+function commandsPayload(commands: ListCommandsResult["commands"]): ListCommandsResult {
+  return {
+    requestId: "req_commands",
+    agentId: "",
+    error: null,
+    commands,
+  };
 }
 
-describe("useAgentCommandsQuery", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-    mockRuntime.client = mockClient;
-    mockRuntime.isConnected = true;
-  });
-
+describe("fetchAgentCommands", () => {
   it("loads commands for a draft composer without an agent id", async () => {
-    mockClient.listCommands.mockResolvedValue({
-      commands: [{ name: "compact", description: "Compact context", argumentHint: "" }],
-    });
+    const client = createClient(
+      commandsPayload([{ name: "compact", description: "Compact context", argumentHint: "" }]),
+    );
 
-    const draftConfig = {
-      provider: "opencode" as const,
+    const draftConfig: DraftCommandConfig = {
+      provider: "opencode",
       cwd: "/repo",
       modeId: "build",
     };
 
-    const { result } = renderCommandsHook({
-      serverId: "server-1",
-      agentId: "",
-      draftConfig,
-    });
+    const commands = await fetchAgentCommands({ client, agentId: "", draftConfig });
 
-    await waitFor(() => {
-      expect(result.current.commands).toEqual([
-        { name: "compact", description: "Compact context", argumentHint: "" },
-      ]);
-    });
+    expect(commands).toEqual([
+      { name: "compact", description: "Compact context", argumentHint: "" },
+    ]);
+    expect(client.calls).toEqual([{ agentId: "", draftConfig }]);
+  });
 
-    expect(mockClient.listCommands).toHaveBeenCalledWith("", { draftConfig });
+  it("passes the agent id when fetching commands for a running agent", async () => {
+    const client = createClient(commandsPayload([]));
+
+    await fetchAgentCommands({ client, agentId: "agent-1" });
+
+    expect(client.calls).toEqual([{ agentId: "agent-1", draftConfig: undefined }]);
   });
 });
