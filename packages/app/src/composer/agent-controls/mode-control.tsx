@@ -29,10 +29,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { formatAgentModeLabel } from "@/composer/agent-controls/utils";
 import type { AgentMode, AgentProvider } from "@getpaseo/protocol/agent-types";
-import {
-  getModeVisuals,
-  type AgentProviderDefinition,
-} from "@getpaseo/protocol/provider-manifest";
+import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export type AgentModeControlPlacement = "toolbar" | "footer";
 
