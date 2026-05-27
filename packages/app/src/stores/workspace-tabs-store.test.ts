@@ -1,27 +1,29 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("@react-native-async-storage/async-storage", () => {
-  const storage = new Map<string, string>();
-  return {
-    default: {
-      getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-      setItem: vi.fn(async (key: string, value: string) => {
-        storage.set(key, value);
-      }),
-      removeItem: vi.fn(async (key: string) => {
-        storage.delete(key);
-      }),
-    },
-  };
-});
-
+import { describe, expect, it } from "vitest";
 import {
+  applyCloseTab,
+  applyEnsureTab,
+  applyFocusTab,
+  applyOpenDraftTab,
+  applyOpenOrFocusTab,
+  applyRetargetTab,
   buildWorkspaceTabPersistenceKey,
-  useWorkspaceTabsStore,
-} from "@/stores/workspace-tabs-store";
+  initialWorkspaceTabsCoreState,
+  type WorkspaceTabsCoreState,
+} from "@/stores/workspace-tabs-store.pure";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "/repo/worktree";
+const WORKSPACE_KEY = `${SERVER_ID}:${WORKSPACE_ID}`;
+
+const NOW = 1_700_000_000_000;
+
+function emptyState(): WorkspaceTabsCoreState {
+  return {
+    uiTabsByWorkspace: {},
+    tabOrderByWorkspace: {},
+    focusedTabIdByWorkspace: {},
+  };
+}
 
 describe("buildWorkspaceTabPersistenceKey", () => {
   it("preserves opaque workspace ids instead of normalizing them like paths", () => {
@@ -34,176 +36,160 @@ describe("buildWorkspaceTabPersistenceKey", () => {
   });
 });
 
-describe("workspace-tabs-store retargetTab", () => {
-  beforeEach(() => {
-    useWorkspaceTabsStore.setState({
-      uiTabsByWorkspace: {},
-      tabOrderByWorkspace: {},
-      focusedTabIdByWorkspace: {},
-    });
-  });
-
+describe("workspace-tabs-store reducers", () => {
   it("keeps a promoted draft tab in-place by mutating target without changing tab id", () => {
     const draftTabId = "draft_123";
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
 
-    useWorkspaceTabsStore.getState().ensureTab({
+    let state = emptyState();
+    state = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "agent", agentId: "left" },
-    });
-    useWorkspaceTabsStore.getState().openDraftTab({
+      now: NOW,
+    }).state;
+    state = applyOpenDraftTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       draftId: draftTabId,
-    });
-    useWorkspaceTabsStore.getState().ensureTab({
+      now: NOW,
+    }).state;
+    state = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "agent", agentId: "right" },
-    });
-    useWorkspaceTabsStore.getState().focusTab({
+      now: NOW,
+    }).state;
+    state = applyFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       tabId: draftTabId,
     });
 
-    const before = useWorkspaceTabsStore.getState();
-    const beforeOrder = before.tabOrderByWorkspace[workspaceKey] ?? [];
+    const beforeOrder = state.tabOrderByWorkspace[WORKSPACE_KEY] ?? [];
 
-    const retargeted = useWorkspaceTabsStore.getState().retargetTab({
+    const retargeted = applyRetargetTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       tabId: draftTabId,
       target: { kind: "agent", agentId: "created" },
     });
 
-    const after = useWorkspaceTabsStore.getState();
-    const afterOrder = after.tabOrderByWorkspace[workspaceKey] ?? [];
-    const tabs = after.uiTabsByWorkspace[workspaceKey] ?? [];
+    const afterOrder = retargeted.state.tabOrderByWorkspace[WORKSPACE_KEY] ?? [];
+    const tabs = retargeted.state.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
     const retargetedTab = tabs.find((tab) => tab.tabId === draftTabId) ?? null;
 
-    expect(retargeted).toBe(draftTabId);
+    expect(retargeted.tabId).toBe(draftTabId);
     expect(afterOrder).toEqual(beforeOrder);
-    expect(after.focusedTabIdByWorkspace[workspaceKey]).toBe(draftTabId);
+    expect(retargeted.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(draftTabId);
     expect(retargetedTab?.target).toEqual({ kind: "agent", agentId: "created" });
   });
 
   it("ensureTab adds non-focused membership while openOrFocusTab focuses", () => {
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
-
-    const terminalTabId = useWorkspaceTabsStore.getState().ensureTab({
+    let state = emptyState();
+    const ensured = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "terminal", terminalId: "term-1" },
+      now: NOW,
     });
-    expect(terminalTabId).toBe("terminal_term-1");
-    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBeUndefined();
+    state = ensured.state;
+    expect(ensured.tabId).toBe("terminal_term-1");
+    expect(state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBeUndefined();
 
-    const focusedTabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+    const focused = applyOpenOrFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "terminal", terminalId: "term-1" },
+      now: NOW,
     });
-    expect(focusedTabId).toBe("terminal_term-1");
-    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(
-      "terminal_term-1",
-    );
+    expect(focused.tabId).toBe("terminal_term-1");
+    expect(focused.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe("terminal_term-1");
   });
 
   it("ensureTab deduplicates by target when a retargeted tab already exists", () => {
     const draftTabId = "draft_x";
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
 
-    useWorkspaceTabsStore.getState().openDraftTab({
+    let state = emptyState();
+    state = applyOpenDraftTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       draftId: draftTabId,
-    });
-    useWorkspaceTabsStore.getState().retargetTab({
+      now: NOW,
+    }).state;
+    state = applyRetargetTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       tabId: draftTabId,
       target: { kind: "agent", agentId: "created-agent" },
-    });
+    }).state;
 
-    const ensured = useWorkspaceTabsStore.getState().ensureTab({
+    const ensured = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "agent", agentId: "created-agent" },
+      now: NOW,
     });
 
-    const state = useWorkspaceTabsStore.getState();
-    const tabs = state.uiTabsByWorkspace[workspaceKey] ?? [];
-    const order = state.tabOrderByWorkspace[workspaceKey] ?? [];
+    const tabs = ensured.state.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
+    const order = ensured.state.tabOrderByWorkspace[WORKSPACE_KEY] ?? [];
     const matchingTabs = tabs.filter(
       (tab) => tab.target.kind === "agent" && tab.target.agentId === "created-agent",
     );
 
-    expect(ensured).toBe(draftTabId);
+    expect(ensured.tabId).toBe(draftTabId);
     expect(matchingTabs).toHaveLength(1);
     expect(order).toEqual([draftTabId]);
   });
 
   it("openDraftTab creates a draft tab and deduplicates by draftId", () => {
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
-
-    const firstTabId = useWorkspaceTabsStore.getState().openDraftTab({
+    let state = emptyState();
+    const first = applyOpenDraftTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       draftId: "draft-1",
+      now: NOW,
     });
-    const secondTabId = useWorkspaceTabsStore.getState().openDraftTab({
+    state = first.state;
+    const second = applyOpenDraftTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       draftId: "draft-2",
+      now: NOW,
     });
+    state = second.state;
 
-    const state = useWorkspaceTabsStore.getState();
-    expect(firstTabId).toBe("draft-1");
-    expect(secondTabId).toBe("draft-2");
-    expect(state.tabOrderByWorkspace[workspaceKey]).toEqual([firstTabId, secondTabId]);
-    expect(state.uiTabsByWorkspace[workspaceKey]).toEqual([
+    expect(first.tabId).toBe("draft-1");
+    expect(second.tabId).toBe("draft-2");
+    expect(state.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual([first.tabId, second.tabId]);
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toEqual([
       {
         tabId: "draft-1",
         target: { kind: "draft", draftId: "draft-1" },
-        createdAt: expect.any(Number),
+        createdAt: NOW,
       },
       {
         tabId: "draft-2",
         target: { kind: "draft", draftId: "draft-2" },
-        createdAt: expect.any(Number),
+        createdAt: NOW,
       },
     ]);
   });
 
   it("keeps draft setup on a retargeted tab", () => {
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
-
-    const tabId = useWorkspaceTabsStore.getState().ensureTab({
+    let state = emptyState();
+    const ensured = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "agent", agentId: "agent-1" },
+      now: NOW,
     });
-    if (!tabId) {
-      throw new Error("Expected tab id");
-    }
-    expect(tabId).toBe("agent_agent-1");
+    expect(ensured.tabId).toBe("agent_agent-1");
+    state = ensured.state;
 
-    useWorkspaceTabsStore.getState().retargetTab({
+    const retargeted = applyRetargetTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
-      tabId,
+      tabId: ensured.tabId!,
       target: {
         kind: "draft",
         draftId: "draft-replacement",
@@ -218,7 +204,7 @@ describe("workspace-tabs-store retargetTab", () => {
       },
     });
 
-    expect(useWorkspaceTabsStore.getState().uiTabsByWorkspace[workspaceKey]?.[0]?.target).toEqual({
+    expect(retargeted.state.uiTabsByWorkspace[WORKSPACE_KEY]?.[0]?.target).toEqual({
       kind: "draft",
       draftId: "draft-replacement",
       setup: {
@@ -233,16 +219,15 @@ describe("workspace-tabs-store retargetTab", () => {
   });
 
   it("updates an existing draft tab when the setup changes", () => {
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
-
-    const first = useWorkspaceTabsStore.getState().ensureTab({
+    let state = emptyState();
+    const first = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "draft", draftId: "draft-1" },
+      now: NOW,
     });
-    const second = useWorkspaceTabsStore.getState().ensureTab({
+    state = first.state;
+    const second = applyEnsureTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: {
@@ -257,11 +242,13 @@ describe("workspace-tabs-store retargetTab", () => {
           featureValues: {},
         },
       },
+      now: NOW,
     });
+    state = second.state;
 
-    expect(second).toBe(first);
-    expect(useWorkspaceTabsStore.getState().uiTabsByWorkspace[workspaceKey]).toHaveLength(1);
-    expect(useWorkspaceTabsStore.getState().uiTabsByWorkspace[workspaceKey]?.[0]?.target).toEqual({
+    expect(second.tabId).toBe(first.tabId);
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(1);
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]?.[0]?.target).toEqual({
       kind: "draft",
       draftId: "draft-1",
       setup: {
@@ -277,77 +264,101 @@ describe("workspace-tabs-store retargetTab", () => {
 
   it("retargeting a background draft keeps the currently focused tab focused", () => {
     const draftTabId = "draft_background";
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
 
-    useWorkspaceTabsStore.getState().openDraftTab({
+    let state = emptyState();
+    state = applyOpenDraftTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       draftId: draftTabId,
-    });
-    const focusedFileTabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+      now: NOW,
+    }).state;
+    const file = applyOpenOrFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "file", path: "/repo/worktree/src/index.ts" },
+      now: NOW,
     });
+    state = file.state;
 
-    useWorkspaceTabsStore.getState().retargetTab({
+    state = applyRetargetTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       tabId: draftTabId,
       target: { kind: "agent", agentId: "created-agent" },
-    });
+    }).state;
 
-    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(
-      focusedFileTabId,
-    );
+    expect(state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(file.tabId);
   });
 
   it("openOrFocusTab re-focuses an existing file tab after the workspace focus changed", () => {
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
-
-    const fileTabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+    let state = emptyState();
+    const fileResult = applyOpenOrFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "file", path: "/repo/worktree/src/index.ts" },
+      now: NOW,
     });
-    const terminalTabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+    state = fileResult.state;
+    const terminalResult = applyOpenOrFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "terminal", terminalId: "term-1" },
+      now: NOW,
     });
+    state = terminalResult.state;
 
-    expect(fileTabId).toBe("file_/repo/worktree/src/index.ts");
-    expect(terminalTabId).toBe("terminal_term-1");
-    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(
-      terminalTabId,
-    );
+    expect(fileResult.tabId).toBe("file_/repo/worktree/src/index.ts");
+    expect(terminalResult.tabId).toBe("terminal_term-1");
+    expect(state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(terminalResult.tabId);
 
-    const reopenedFileTabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+    const reopened = applyOpenOrFocusTab(state, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "file", path: "/repo/worktree/src/index.ts" },
+      now: NOW,
     });
 
-    expect(reopenedFileTabId).toBe(fileTabId);
-    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(fileTabId);
+    expect(reopened.tabId).toBe(fileResult.tabId);
+    expect(reopened.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(fileResult.tabId);
   });
 
   it("builds a deterministic setup tab keyed by workspace id", () => {
-    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
-    expect(key).toBeTruthy();
-    const workspaceKey = key as string;
-
-    const tabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+    const result = applyOpenOrFocusTab(initialWorkspaceTabsCoreState, {
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
       target: { kind: "setup", workspaceId: WORKSPACE_ID },
+      now: NOW,
     });
 
-    expect(tabId).toBe(`setup_${WORKSPACE_ID}`);
-    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(tabId);
+    expect(result.tabId).toBe(`setup_${WORKSPACE_ID}`);
+    expect(result.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(result.tabId);
+  });
+
+  it("closeTab focuses the most-recent remaining tab when the focused tab is removed", () => {
+    let state = emptyState();
+    const first = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "agent", agentId: "left" },
+      now: NOW,
+    });
+    state = first.state;
+    const second = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "agent", agentId: "right" },
+      now: NOW,
+    });
+    state = second.state;
+    expect(state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(second.tabId);
+
+    state = applyCloseTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      tabId: second.tabId!,
+    });
+
+    expect(state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(first.tabId);
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(1);
   });
 });
