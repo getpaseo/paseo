@@ -11,7 +11,7 @@ import {
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 
 interface OpenProjectDirectlyInput {
   serverId: string;

@@ -27,7 +27,7 @@ import {
   type Ref,
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { type GestureType } from "react-native-gesture-handler";

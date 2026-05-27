@@ -23,7 +23,7 @@ const { replaceRoute } = vi.hoisted(() => ({
   replaceRoute: vi.fn(),
 }));
 
-vi.mock("@/hooks/use-workspace-navigation", () => ({
+vi.mock("@/stores/navigation-active-workspace-store", () => ({
   navigateToWorkspace: replaceRoute,
 }));
 

@@ -3,7 +3,7 @@ import type { ComposerAttachment } from "@/attachments/types";
 import type { MessagePayload } from "@/composer/types";
 
 const navigateToWorkspace = vi.hoisted(() => vi.fn());
-vi.mock("@/hooks/use-workspace-navigation", () => ({ navigateToWorkspace }));
+vi.mock("@/stores/navigation-active-workspace-store", () => ({ navigateToWorkspace }));
 
 let isEmptyWorkspaceSubmission: typeof import("./new-workspace-empty").isEmptyWorkspaceSubmission;
 let runCreateEmptyWorkspace: typeof import("./new-workspace-empty").runCreateEmptyWorkspace;

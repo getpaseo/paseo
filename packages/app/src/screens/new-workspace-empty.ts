@@ -1,4 +1,4 @@
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
