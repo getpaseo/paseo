@@ -1,5 +1,6 @@
 import {
   createProviderEnvSpec,
+  type ProviderLaunchAvailability,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
 } from "../provider-launch-config.js";
@@ -167,22 +168,28 @@ async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand)
 
 export async function buildBinaryDiagnosticRows(
   launch: ResolvedProviderLaunch,
+  availability: ProviderLaunchAvailability,
   options: BinaryDiagnosticRowsOptions = {},
 ): Promise<DiagnosticEntry[]> {
   const defaultBinaryLabel = launch.source === "override" ? "Binary (override)" : "Binary";
   const binaryLabel = options.binaryLabel ?? defaultBinaryLabel;
-  const versionCommand =
-    launch.source === "not_found" ? null : (launch.resolvedPath ?? launch.command);
   let version = "unknown";
-  if (options.versionCommand) {
+  if (options.versionCommand && availability.available) {
     version = await resolveCommandVersion(options.versionCommand);
-  } else if (versionCommand) {
-    version = await resolveBinaryVersion(versionCommand);
+  } else if (availability.available) {
+    version = await resolveCommandVersion({
+      command: availability.resolvedPath ?? launch.command,
+      args: [...launch.args, "--version"],
+    });
   }
   return [
     {
       label: binaryLabel,
-      value: launch.source === "not_found" ? "not found" : launch.command,
+      value: launch.command,
+    },
+    {
+      label: "Resolved path",
+      value: availability.resolvedPath ?? "not found",
     },
     {
       label: "Version",

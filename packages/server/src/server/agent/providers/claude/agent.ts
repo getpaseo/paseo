@@ -76,6 +76,7 @@ import {
   type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
@@ -1337,16 +1338,25 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    return (
-      (await resolveProviderLaunch(this.runtimeSettings?.command, "claude")).source !== "not_found"
-    );
+    const launch = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: "claude",
+    });
+    const availability = await checkProviderLaunchAvailable(launch);
+    return availability.available;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const launch = await resolveProviderLaunch(this.runtimeSettings?.command, "claude");
-      const available = await this.isAvailable();
-      const auth = available ? await resolveClaudeAuth(launch, this.runtimeSettings) : null;
+      const launch = await resolveProviderLaunch({
+        commandConfig: this.runtimeSettings?.command,
+        defaultBinary: "claude",
+      });
+      const availability = await checkProviderLaunchAvailable(launch);
+      const available = availability.available;
+      const auth = available
+        ? await resolveClaudeAuth(launch, availability, this.runtimeSettings)
+        : null;
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -1368,7 +1378,7 @@ export class ClaudeAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Claude Code", [
-          ...(await buildBinaryDiagnosticRows(launch)),
+          ...(await buildBinaryDiagnosticRows(launch, availability)),
           ...(auth ? [{ label: "Auth", value: auth }] : []),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
@@ -1390,9 +1400,13 @@ export class ClaudeAgentClient implements AgentClient {
 }
 
 async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
-  const launch = await resolveProviderLaunch(runtimeSettings?.command, "claude");
-  if (launch.source !== "not_found") {
-    return launch.command;
+  const launch = await resolveProviderLaunch({
+    commandConfig: runtimeSettings?.command,
+    defaultBinary: "claude",
+  });
+  const availability = await checkProviderLaunchAvailable(launch);
+  if (availability.available) {
+    return availability.resolvedPath ?? launch.command;
   }
   throw new Error(
     "Claude binary not found. Install Claude Code (https://github.com/anthropics/claude-code) and ensure it is available in your shell PATH.",
@@ -1401,6 +1415,7 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
 
 async function resolveClaudeAuth(
   launch: ResolvedProviderLaunch,
+  availability: { resolvedPath: string | null },
   runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<string | null> {
   const run = async (
@@ -1422,10 +1437,7 @@ async function resolveClaudeAuth(
   };
 
   try {
-    if (launch.source === "not_found") {
-      return null;
-    }
-    const executable = launch.resolvedPath ?? launch.command;
+    const executable = availability.resolvedPath ?? launch.command;
     const result = await run(executable, [...launch.args, "auth", "status"]);
 
     const combined = [result.stdout, result.stderr]

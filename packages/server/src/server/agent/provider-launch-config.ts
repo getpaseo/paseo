@@ -92,12 +92,16 @@ export interface ProviderCommandPrefix {
   args: string[];
 }
 
-export type ProviderLaunchSource = "override" | "path" | "not_found";
+export type ProviderLaunchSource = "default" | "append" | "override";
 
 export interface ResolvedProviderLaunch {
   command: string;
   args: string[];
   source: ProviderLaunchSource;
+}
+
+export interface ProviderLaunchAvailability {
+  available: boolean;
   resolvedPath: string | null;
 }
 
@@ -134,28 +138,46 @@ async function resolveDefaultLaunchPath(
     : await resolveLaunchPath(defaultBinary.command);
 }
 
-export async function resolveProviderLaunch(
-  commandConfig: ProviderCommand | undefined,
-  defaultBinary: string | ProviderLaunchDefault,
-): Promise<ResolvedProviderLaunch> {
-  const normalizedDefault = normalizeLaunchDefault(defaultBinary);
+export interface ResolveProviderLaunchOptions {
+  commandConfig?: ProviderCommand;
+  defaultBinary?: string | ProviderLaunchDefault;
+}
 
+export async function resolveProviderLaunch({
+  commandConfig,
+  defaultBinary,
+}: ResolveProviderLaunchOptions): Promise<ResolvedProviderLaunch> {
   if (commandConfig?.mode === "replace") {
     const command = commandConfig.argv[0];
     return {
       command,
       args: commandConfig.argv.slice(1),
       source: "override",
-      resolvedPath: await resolveLaunchPath(command),
     };
   }
 
-  const resolvedPath = await resolveDefaultLaunchPath(normalizedDefault);
+  if (defaultBinary === undefined) {
+    throw new Error("defaultBinary is required when provider command is not replaced");
+  }
+  const normalizedDefault = normalizeLaunchDefault(defaultBinary);
   const args = commandConfig?.mode === "append" ? [...(commandConfig.args ?? [])] : [];
   return {
-    command: resolvedPath ?? normalizedDefault.command,
+    command: normalizedDefault.command,
     args,
-    source: resolvedPath ? "path" : "not_found",
+    source: commandConfig?.mode === "append" ? "append" : "default",
+  };
+}
+
+export async function checkProviderLaunchAvailable(
+  launch: ResolvedProviderLaunch,
+  defaultBinary?: ProviderLaunchDefault,
+): Promise<ProviderLaunchAvailability> {
+  const resolvedPath =
+    defaultBinary && launch.source !== "override"
+      ? await resolveDefaultLaunchPath(defaultBinary)
+      : await resolveLaunchPath(launch.command);
+  return {
+    available: resolvedPath !== null,
     resolvedPath,
   };
 }
@@ -165,7 +187,9 @@ export async function resolveProviderCommandPrefix(
   resolveDefaultCommand: () => string | Promise<string>,
 ): Promise<ProviderCommandPrefix> {
   if (commandConfig?.mode === "replace") {
-    const launch = await resolveProviderLaunch(commandConfig, "");
+    const launch = await resolveProviderLaunch({
+      commandConfig,
+    });
     return {
       command: launch.command,
       args: launch.args,
@@ -173,9 +197,12 @@ export async function resolveProviderCommandPrefix(
   }
 
   const defaultCommand = await resolveDefaultCommand();
-  const launch = await resolveProviderLaunch(commandConfig, {
-    command: defaultCommand,
-    resolvePath: async () => defaultCommand,
+  const launch = await resolveProviderLaunch({
+    commandConfig,
+    defaultBinary: {
+      command: defaultCommand,
+      resolvePath: async () => defaultCommand,
+    },
   });
   return {
     command: launch.command,
@@ -285,16 +312,21 @@ export async function isProviderCommandAvailable(
 ): Promise<boolean> {
   try {
     if (commandConfig?.mode === "replace") {
-      const launch = await resolveProviderLaunch(commandConfig, "");
-      return launch.source !== "not_found";
+      const launch = await resolveProviderLaunch({
+        commandConfig,
+      });
+      const availability = await checkProviderLaunchAvailable(launch);
+      return availability.available;
     }
 
     const defaultCommand = await resolveDefaultCommand();
-    const launch = await resolveProviderLaunch(commandConfig, {
+    const defaultBinary = {
       command: defaultCommand,
       resolvePath: async () => defaultCommand,
-    });
-    return launch.source !== "not_found";
+    };
+    const launch = await resolveProviderLaunch({ commandConfig, defaultBinary });
+    const availability = await checkProviderLaunchAvailable(launch, defaultBinary);
+    return availability.available;
   } catch {
     return false;
   }

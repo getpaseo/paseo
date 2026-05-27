@@ -31,6 +31,7 @@ import {
 } from "../../agent-sdk-types.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
+  checkProviderLaunchAvailable,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
@@ -1488,7 +1489,8 @@ export class PiRpcAgentClient implements AgentClient {
 
   async isAvailable(): Promise<boolean> {
     const launch = await this.resolvePiLaunch();
-    if (launch.source === "not_found") {
+    const availability = await checkProviderLaunchAvailable(launch);
+    if (!availability.available) {
       return false;
     }
     const runtimeSession = await this.runtime.startSession({ cwd: homedir() }).catch(() => null);
@@ -1507,14 +1509,15 @@ export class PiRpcAgentClient implements AgentClient {
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const launch = await this.resolvePiLaunch();
-      const available = await this.isAvailable();
+      const availability = await checkProviderLaunchAvailable(launch);
+      const available = availability.available;
       const authConfigPath = join(homedir(), ".pi", "agent", "auth.json");
       let modelsValue = "Not checked";
       let configuredProvidersValue = "none";
       let mcpToolsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
-      if (launch.source !== "not_found") {
+      if (availability.available) {
         const runtimeSession = await this.runtime
           .startSession({ cwd: homedir() })
           .catch((error) => {
@@ -1552,7 +1555,7 @@ export class PiRpcAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Pi", [
-          ...(await buildBinaryDiagnosticRows(launch)),
+          ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Configured providers", value: configuredProvidersValue },
           {
             label: "Auth config (~/.pi/agent/auth.json)",
@@ -1603,6 +1606,9 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   private async resolvePiLaunch(): Promise<ResolvedProviderLaunch> {
-    return resolveProviderLaunch(this.runtimeSettings?.command, PI_BINARY_COMMAND);
+    return resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: PI_BINARY_COMMAND,
+    });
   }
 }

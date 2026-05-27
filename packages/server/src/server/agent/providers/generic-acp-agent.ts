@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import type { Logger } from "pino";
 
 import type { AgentProvider } from "../agent-sdk-types.js";
-import { resolveProviderLaunch } from "../provider-launch-config.js";
+import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   deriveModelDefinitionsFromACP,
@@ -60,7 +60,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 
   override async isAvailable(): Promise<boolean> {
-    return (await this.resolveConfiguredLaunch()).source !== "not_found";
+    const launch = await this.resolveConfiguredLaunch();
+    const availability = await checkProviderLaunchAvailable(launch);
+    return availability.available;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
@@ -68,7 +70,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
 
     try {
       const launch = await this.resolveConfiguredLaunch();
-      const available = launch.source !== "not_found";
+      const availability = await checkProviderLaunchAvailable(launch);
+      const available = availability.available;
       const versionProbe = buildVersionProbeCommand(this.command);
       const probeResult = available
         ? await this.runDiagnosticACPProbe()
@@ -84,7 +87,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
         diagnostic: formatProviderDiagnostic(providerName, [
           { label: "Provider ID", value: this.providerId ?? "unknown" },
           { label: "Configured command", value: this.command.join(" ") },
-          ...(await buildBinaryDiagnosticRows(launch, {
+          ...(await buildBinaryDiagnosticRows(launch, availability, {
             binaryLabel: "Launcher binary",
             versionCommand: {
               command: versionProbe.command,
@@ -111,7 +114,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 
   private async resolveConfiguredLaunch() {
-    return resolveProviderLaunch({ mode: "replace", argv: this.command }, this.command[0]);
+    return resolveProviderLaunch({
+      commandConfig: { mode: "replace", argv: this.command },
+      defaultBinary: this.command[0],
+    });
   }
 
   private async runDiagnosticACPProbe(): Promise<ACPDiagnosticProbeResult> {

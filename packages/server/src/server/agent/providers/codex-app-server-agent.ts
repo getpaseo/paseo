@@ -48,6 +48,7 @@ import {
   mapCodexToolCallFromThreadItem,
 } from "./codex/tool-call-mapper.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
@@ -448,13 +449,15 @@ async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSetting
   args: string[];
 }> {
   const launch = await resolveCodexLaunch(runtimeSettings);
-  if (launch.source === "not_found") {
+  const availability = await checkCodexLaunchAvailable(launch);
+  if (!availability.available) {
     throw new Error(
       "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
     );
   }
   return {
-    command: launch.command,
+    command:
+      launch.source === "override" ? launch.command : (availability.resolvedPath ?? launch.command),
     args: launch.args,
   };
 }
@@ -462,7 +465,17 @@ async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSetting
 async function resolveCodexLaunch(
   runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<ResolvedProviderLaunch> {
-  return resolveProviderLaunch(runtimeSettings?.command, {
+  return resolveProviderLaunch({
+    commandConfig: runtimeSettings?.command,
+    defaultBinary: {
+      command: "codex",
+      resolvePath: findDefaultCodexBinary,
+    },
+  });
+}
+
+async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
+  return checkProviderLaunchAvailable(launch, {
     command: "codex",
     resolvePath: findDefaultCodexBinary,
   });
@@ -5580,15 +5593,18 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    return (await resolveCodexLaunch(this.runtimeSettings)).source !== "not_found";
+    const launch = await resolveCodexLaunch(this.runtimeSettings);
+    const availability = await checkCodexLaunchAvailable(launch);
+    return availability.available;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const launch = await resolveCodexLaunch(this.runtimeSettings);
-      const available = await this.isAvailable();
+      const availability = await checkCodexLaunchAvailable(launch);
+      const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
-        ...(await buildBinaryDiagnosticRows(launch)),
+        ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
       let status = formatDiagnosticStatus(available);
 

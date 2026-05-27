@@ -87,6 +87,7 @@ import {
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -861,11 +862,12 @@ export class ACPAgentClient implements AgentClient {
   }
 
   protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
-    const prefix = await resolveProviderLaunch(
-      this.runtimeSettings?.command,
-      this.defaultCommand[0],
-    );
-    if (prefix.source === "not_found") {
+    const prefix = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: this.defaultCommand[0],
+    });
+    const availability = await checkProviderLaunchAvailable(prefix);
+    if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
     return {
@@ -1806,11 +1808,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async spawnProcess(): Promise<SpawnedACPProcess> {
-    const prefix = await resolveProviderLaunch(
-      this.runtimeSettings?.command,
-      this.defaultCommand[0],
-    );
-    if (prefix.source === "not_found") {
+    const prefix = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: this.defaultCommand[0],
+    });
+    const availability = await checkProviderLaunchAvailable(prefix);
+    if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
 

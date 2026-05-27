@@ -3,7 +3,11 @@ import { homedir } from "node:os";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
 import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
-import { resolveProviderLaunch, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  checkProviderLaunchAvailable,
+  resolveProviderLaunch,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPBeforeModeWriteResult,
@@ -87,8 +91,12 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const launch = await resolveProviderLaunch(this.runtimeSettings?.command, "copilot");
-      const available = await this.isAvailable();
+      const launch = await resolveProviderLaunch({
+        commandConfig: this.runtimeSettings?.command,
+        defaultBinary: "copilot",
+      });
+      const availability = await checkProviderLaunchAvailable(launch);
+      const available = availability.available;
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -118,7 +126,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Copilot", [
-          ...(await buildBinaryDiagnosticRows(launch)),
+          ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
         ]),

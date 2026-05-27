@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
+  checkProviderLaunchAvailable,
   createProviderEnv,
   migrateProviderSettings,
   ProviderOverrideSchema,
@@ -108,18 +109,16 @@ describe("resolveProviderLaunch", () => {
   test("uses replace override as the spawned command", async () => {
     const binDir = makeTempDir();
     const shim = createExecutable(binDir, "custom-provider");
-    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
 
-    const launch = await resolveProviderLaunch(
-      { mode: "replace", argv: [shim.command, "--wrapped"] },
-      "provider",
-    );
+    const launch = await resolveProviderLaunch({
+      commandConfig: { mode: "replace", argv: [shim.command, "--wrapped"] },
+      defaultBinary: "provider",
+    });
 
     expect(launch).toEqual({
       command: shim.command,
       args: ["--wrapped"],
       source: "override",
-      resolvedPath: shim.path,
     });
   });
 
@@ -127,16 +126,15 @@ describe("resolveProviderLaunch", () => {
     const binDir = makeTempDir();
     const shim = createExecutable(binDir, "custom-provider", "exit 42\n");
 
-    const launch = await resolveProviderLaunch(
-      { mode: "replace", argv: [shim.path, "--wrapped"] },
-      "provider",
-    );
+    const launch = await resolveProviderLaunch({
+      commandConfig: { mode: "replace", argv: [shim.path, "--wrapped"] },
+      defaultBinary: "provider",
+    });
 
     expect(launch).toEqual({
       command: shim.path,
       args: ["--wrapped"],
       source: "override",
-      resolvedPath: shim.path,
     });
   });
 
@@ -145,16 +143,15 @@ describe("resolveProviderLaunch", () => {
     const binary = createExecutable(binDir, "default-provider");
     process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
 
-    const launch = await resolveProviderLaunch(
-      { mode: "append", args: ["--profile", "work"] },
-      binary.command,
-    );
+    const launch = await resolveProviderLaunch({
+      commandConfig: { mode: "append", args: ["--profile", "work"] },
+      defaultBinary: binary.command,
+    });
 
     expect(launch).toEqual({
-      command: binary.path,
+      command: binary.command,
       args: ["--profile", "work"],
-      source: "path",
-      resolvedPath: binary.path,
+      source: "append",
     });
   });
 
@@ -163,25 +160,57 @@ describe("resolveProviderLaunch", () => {
     const binary = createExecutable(binDir, "default-provider");
     process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
 
-    const launch = await resolveProviderLaunch(undefined, binary.command);
+    const launch = await resolveProviderLaunch({
+      defaultBinary: binary.command,
+    });
 
     expect(launch).toEqual({
-      command: binary.path,
+      command: binary.command,
       args: [],
-      source: "path",
-      resolvedPath: binary.path,
+      source: "default",
     });
   });
 
-  test("reports not_found when the default binary is missing", async () => {
+  test("keeps the default command when the default binary is missing", async () => {
     process.env.PATH = makeTempDir();
 
-    const launch = await resolveProviderLaunch(undefined, "paseo-provider-missing");
+    const launch = await resolveProviderLaunch({
+      defaultBinary: "paseo-provider-missing",
+    });
 
     expect(launch).toEqual({
       command: "paseo-provider-missing",
       args: [],
-      source: "not_found",
+      source: "default",
+    });
+  });
+});
+
+describe("checkProviderLaunchAvailable", () => {
+  test("reports available with a resolved path", async () => {
+    const binDir = makeTempDir();
+    const binary = createExecutable(binDir, "default-provider");
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    const launch = await resolveProviderLaunch({
+      defaultBinary: binary.command,
+    });
+
+    await expect(checkProviderLaunchAvailable(launch)).resolves.toEqual({
+      available: true,
+      resolvedPath: binary.path,
+    });
+  });
+
+  test("reports missing override commands as unavailable", async () => {
+    process.env.PATH = makeTempDir();
+    const launch = await resolveProviderLaunch({
+      commandConfig: { mode: "replace", argv: ["paseo-provider-missing"] },
+      defaultBinary: "provider",
+    });
+
+    await expect(checkProviderLaunchAvailable(launch)).resolves.toEqual({
+      available: false,
       resolvedPath: null,
     });
   });

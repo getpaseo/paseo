@@ -46,6 +46,7 @@ import {
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -1394,16 +1395,22 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    return (
-      (await resolveProviderLaunch(this.runtimeSettings?.command, "opencode")).source !==
-      "not_found"
-    );
+    const launch = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: "opencode",
+    });
+    const availability = await checkProviderLaunchAvailable(launch);
+    return availability.available;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const launch = await resolveProviderLaunch(this.runtimeSettings?.command, "opencode");
-      const available = await this.isAvailable();
+      const launch = await resolveProviderLaunch({
+        commandConfig: this.runtimeSettings?.command,
+        defaultBinary: "opencode",
+      });
+      const availability = await checkProviderLaunchAvailable(launch);
+      const available = availability.available;
       let serverStatus = "Not running";
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
@@ -1416,14 +1423,19 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       let authValue = "Not checked";
-      const authCommand =
-        launch.source === "not_found" ? null : (launch.resolvedPath ?? launch.command);
+      const authCommand = availability.available
+        ? (availability.resolvedPath ?? launch.command)
+        : null;
       if (authCommand) {
         try {
-          const { stdout, stderr } = await execCommand(authCommand, ["auth", "list"], {
-            ...createProviderEnvSpec(),
-            timeout: 5_000,
-          });
+          const { stdout, stderr } = await execCommand(
+            authCommand,
+            [...launch.args, "auth", "list"],
+            {
+              ...createProviderEnvSpec(),
+              timeout: 5_000,
+            },
+          );
           const text = (stdout.trim() || stderr.trim()).trim();
           authValue = text ? `\n    ${text.replace(/\n/g, "\n    ")}` : "(empty)";
         } catch (error) {
@@ -1457,7 +1469,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("OpenCode", [
-          ...(await buildBinaryDiagnosticRows(launch)),
+          ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Server", value: serverStatus },
           { label: "Auth", value: authValue },
           { label: "Models", value: modelsValue },
