@@ -1,8 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
-import { GitHubSearchItemSchema } from "@getpaseo/protocol/messages";
+import type { AttachmentMetadata } from "@/attachments/types";
 import {
   garbageCollectAttachments,
   persistAttachmentFromDataUrl,
@@ -10,37 +9,26 @@ import {
 } from "@/attachments/service";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
+import {
+  applyClearDraftRecord,
+  collectReferencedAttachmentIdsFromState,
+  DRAFT_STORE_VERSION,
+  isAttachmentMetadata,
+  isCanonicalDraftInput,
+  isLegacyDraftImage,
+  migrateDraftInput,
+  migratePersistedState,
+  normalizeComposerAttachment,
+  pruneFinalizedDraftRecords,
+  toDraftInputIfReady,
+  type DraftInput,
+  type DraftLifecycleState,
+  type DraftRecord,
+  type DraftStoreState,
+  type MigrateLegacyImages,
+} from "@/stores/draft-store.pure";
 
-const DRAFT_STORE_VERSION = 4;
-const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
-
-interface LegacyDraftImage {
-  uri: string;
-  mimeType?: string;
-}
-
-type PersistedDraftImage = AttachmentMetadata | LegacyDraftImage;
-
-export interface DraftInput {
-  text: string;
-  attachments: UserComposerAttachment[];
-}
-
-export type DraftLifecycleState = "active" | "abandoned" | "sent";
-
-type CanonicalDraftInput = DraftInput;
-
-interface DraftRecord {
-  input: CanonicalDraftInput;
-  lifecycle: DraftLifecycleState;
-  updatedAt: number;
-  version: number;
-}
-
-interface DraftStoreState {
-  drafts: Record<string, DraftRecord>;
-  createModalDraft: DraftRecord | null;
-}
+export type { DraftInput, DraftLifecycleState } from "@/stores/draft-store.pure";
 
 interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;
@@ -79,189 +67,44 @@ function createDraftRecord(input: {
   };
 }
 
-function isAttachmentMetadata(value: unknown): value is AttachmentMetadata {
-  if (!value || typeof value !== "object") {
-    return false;
+const migrateLegacyImages: MigrateLegacyImages = async (images) => {
+  if (images.length === 0) {
+    return [];
   }
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.mimeType === "string" &&
-    typeof record.storageType === "string" &&
-    typeof record.storageKey === "string" &&
-    typeof record.createdAt === "number"
-  );
-}
 
-function isLegacyDraftImage(value: unknown): value is LegacyDraftImage {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return typeof record.uri === "string";
-}
-
-function normalizeAttachmentMetadata(image: AttachmentMetadata): AttachmentMetadata {
-  return {
-    id: image.id,
-    mimeType: image.mimeType,
-    storageType: image.storageType,
-    storageKey: image.storageKey,
-    createdAt: image.createdAt,
-    ...(typeof image.fileName === "string" || image.fileName === null
-      ? { fileName: image.fileName }
-      : {}),
-    ...(typeof image.byteSize === "number" || image.byteSize === null
-      ? { byteSize: image.byteSize }
-      : {}),
-  };
-}
-
-function normalizePersistedImage(value: unknown): PersistedDraftImage | null {
-  if (isAttachmentMetadata(value)) {
-    return normalizeAttachmentMetadata(value);
-  }
-  if (isLegacyDraftImage(value)) {
-    return {
-      uri: value.uri,
-      ...(value.mimeType ? { mimeType: value.mimeType } : {}),
-    };
-  }
-  return null;
-}
-
-function isUserComposerAttachment(value: unknown): value is UserComposerAttachment {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  if (record.kind === "image") {
-    const metadata = record.metadata;
-    return isAttachmentMetadata(metadata);
-  }
-  if (record.kind !== "github_issue" && record.kind !== "github_pr") {
-    return false;
-  }
-  return GitHubSearchItemSchema.safeParse(record.item).success;
-}
-
-function normalizeComposerAttachment(attachment: UserComposerAttachment): UserComposerAttachment {
-  if (attachment.kind === "image") {
-    return {
-      kind: "image",
-      metadata: normalizeAttachmentMetadata(attachment.metadata),
-    };
-  }
-  return attachment;
-}
-
-function normalizePersistedComposerAttachment(value: unknown): UserComposerAttachment | null {
-  if (!isUserComposerAttachment(value)) {
-    return null;
-  }
-  return normalizeComposerAttachment(value);
-}
-
-function legacyImagesToAttachments(
-  images: readonly AttachmentMetadata[],
-): UserComposerAttachment[] {
-  return images.map((metadata) => ({
-    kind: "image",
-    metadata,
-  }));
-}
-
-function isCanonicalDraftInput(value: unknown): value is CanonicalDraftInput {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const input = value as Record<string, unknown>;
-  // COMPAT(draft-cwd): accept legacy persisted drafts that include cwd. Stop accepting after 2026-11-09.
-  return (
-    typeof input.text === "string" &&
-    Array.isArray(input.attachments) &&
-    input.attachments.every(isUserComposerAttachment)
-  );
-}
-
-function toDraftInputIfReady(record: DraftRecord | null | undefined): DraftInput | undefined {
-  if (!record) {
-    return undefined;
-  }
-  if (record.lifecycle !== "active") {
-    return undefined;
-  }
-  if (!isCanonicalDraftInput(record.input)) {
-    return undefined;
-  }
-  return {
-    text: record.input.text,
-    attachments: record.input.attachments.map(normalizeComposerAttachment),
-  };
-}
-
-function collectReferencedAttachmentIdsFromState(state: DraftStoreState): Set<string> {
-  const referencedIds = new Set<string>();
-
-  for (const draftRecord of Object.values(state.drafts)) {
-    if (draftRecord.lifecycle !== "active") {
-      continue;
-    }
-    if (!isCanonicalDraftInput(draftRecord.input)) {
-      continue;
-    }
-    for (const attachment of draftRecord.input.attachments) {
-      if (attachment.kind === "image") {
-        referencedIds.add(attachment.metadata.id);
+  const migrated = await Promise.all(
+    images.map(async (entry) => {
+      if (isAttachmentMetadata(entry)) {
+        return entry;
       }
-    }
-  }
-
-  const modalRecord = state.createModalDraft;
-  if (modalRecord?.lifecycle === "active" && isCanonicalDraftInput(modalRecord.input)) {
-    for (const attachment of modalRecord.input.attachments) {
-      if (attachment.kind === "image") {
-        referencedIds.add(attachment.metadata.id);
+      if (!isLegacyDraftImage(entry)) {
+        return null;
       }
-    }
-  }
 
-  return referencedIds;
-}
+      try {
+        if (entry.uri.startsWith("data:")) {
+          return await persistAttachmentFromDataUrl({
+            dataUrl: entry.uri,
+            mimeType: entry.mimeType,
+          });
+        }
 
-function pruneFinalizedDraftRecords(input: {
-  drafts: Record<string, DraftRecord>;
-  nowMs: number;
-}): Record<string, DraftRecord> {
-  let changed = false;
-  const next: Record<string, DraftRecord> = {};
-  for (const [draftKey, record] of Object.entries(input.drafts)) {
-    if (record.lifecycle !== "active" && input.nowMs - record.updatedAt >= FINALIZED_DRAFT_TTL_MS) {
-      changed = true;
-      continue;
-    }
-    next[draftKey] = record;
-  }
-  return changed ? next : input.drafts;
-}
+        return await persistAttachmentFromFileUri({
+          uri: entry.uri,
+          mimeType: entry.mimeType,
+        });
+      } catch (error) {
+        console.warn("[DraftStore] Failed to migrate legacy draft attachment", {
+          uri: entry.uri,
+          error,
+        });
+        return null;
+      }
+    }),
+  );
 
-function applyClearDraftRecord(input: {
-  record: DraftRecord;
-  lifecycle?: Exclude<DraftLifecycleState, "active">;
-  nowMs: number;
-}): DraftRecord | null {
-  if (!input.lifecycle) {
-    return null;
-  }
-
-  return {
-    ...input.record,
-    input: { text: "", attachments: [] },
-    lifecycle: input.lifecycle,
-    updatedAt: input.nowMs,
-    version: input.record.version + 1,
-  };
-}
+  return migrated.filter((entry): entry is AttachmentMetadata => entry !== null);
+};
 
 async function runAttachmentGc(): Promise<void> {
   gcScheduled = false;
@@ -370,120 +213,6 @@ async function migrateAllLegacyDrafts(): Promise<void> {
   }
 }
 
-async function migrateLegacyImages(
-  images: readonly PersistedDraftImage[],
-): Promise<AttachmentMetadata[]> {
-  if (images.length === 0) {
-    return [];
-  }
-
-  const migrated = await Promise.all(
-    images.map(async (entry) => {
-      if (isAttachmentMetadata(entry)) {
-        return entry;
-      }
-      if (!isLegacyDraftImage(entry)) {
-        return null;
-      }
-
-      try {
-        if (entry.uri.startsWith("data:")) {
-          return await persistAttachmentFromDataUrl({
-            dataUrl: entry.uri,
-            mimeType: entry.mimeType,
-          });
-        }
-
-        return await persistAttachmentFromFileUri({
-          uri: entry.uri,
-          mimeType: entry.mimeType,
-        });
-      } catch (error) {
-        console.warn("[DraftStore] Failed to migrate legacy draft attachment", {
-          uri: entry.uri,
-          error,
-        });
-        return null;
-      }
-    }),
-  );
-
-  return migrated.filter((entry): entry is AttachmentMetadata => entry !== null);
-}
-
-async function migrateDraftInput(input: { rawInput: unknown }): Promise<CanonicalDraftInput> {
-  const rawInput =
-    input.rawInput && typeof input.rawInput === "object"
-      ? (input.rawInput as Record<string, unknown>)
-      : {};
-  const attachments = Array.isArray(rawInput.attachments)
-    ? rawInput.attachments
-        .map((entry) => normalizePersistedComposerAttachment(entry))
-        .filter((entry): entry is UserComposerAttachment => entry !== null)
-    : [];
-  const legacyImages = Array.isArray(rawInput.images)
-    ? rawInput.images
-        .map((entry) => normalizePersistedImage(entry))
-        .filter((entry): entry is PersistedDraftImage => entry !== null)
-    : [];
-  const migratedImages = await migrateLegacyImages(legacyImages);
-
-  return {
-    text: typeof rawInput.text === "string" ? rawInput.text : "",
-    attachments: [...attachments, ...legacyImagesToAttachments(migratedImages)],
-  };
-}
-
-function resolvePersistedLifecycle(lifecycle: unknown): DraftLifecycleState {
-  if (lifecycle === "sent" || lifecycle === "abandoned") {
-    return lifecycle as DraftLifecycleState;
-  }
-  return "active";
-}
-
-function extractRawInput(record: Record<string, unknown>): unknown {
-  if ("input" in record && record.input && typeof record.input === "object") {
-    return record.input;
-  }
-  return record;
-}
-
-async function buildMigratedDraftRecord(parsed: Record<string, unknown>): Promise<DraftRecord> {
-  return {
-    input: await migrateDraftInput({ rawInput: extractRawInput(parsed) }),
-    lifecycle: resolvePersistedLifecycle(parsed.lifecycle),
-    updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-    version: typeof parsed.version === "number" ? parsed.version : 1,
-  };
-}
-
-async function migratePersistedState(state: unknown): Promise<DraftStoreState> {
-  const input = (state ?? {}) as {
-    drafts?: Record<string, unknown>;
-    createModalDraft?: unknown;
-  };
-
-  const nextDrafts: Record<string, DraftRecord> = {};
-  for (const [draftKey, rawRecord] of Object.entries(input.drafts ?? {})) {
-    if (!rawRecord || typeof rawRecord !== "object") {
-      continue;
-    }
-    nextDrafts[draftKey] = await buildMigratedDraftRecord(rawRecord as Record<string, unknown>);
-  }
-
-  let createModalDraft: DraftRecord | null = null;
-  if (input.createModalDraft && typeof input.createModalDraft === "object") {
-    createModalDraft = await buildMigratedDraftRecord(
-      input.createModalDraft as Record<string, unknown>,
-    );
-  }
-
-  return {
-    drafts: nextDrafts,
-    createModalDraft,
-  };
-}
-
 export const useDraftStore = create<DraftStore>()(
   persist(
     (set, get) => ({
@@ -508,9 +237,10 @@ export const useDraftStore = create<DraftStore>()(
           return ready;
         }
 
-        const migratedDraft = await migrateDraftInput({
-          rawInput: current.input,
-        });
+        const migratedDraft = await migrateDraftInput(
+          { rawInput: current.input },
+          { migrateLegacyImages },
+        );
 
         set((state) => {
           const existing = state.drafts[draftKey];
@@ -639,7 +369,10 @@ export const useDraftStore = create<DraftStore>()(
       version: DRAFT_STORE_VERSION,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState) => {
-        return migratePersistedState(persistedState);
+        return migratePersistedState(persistedState, {
+          migrateLegacyImages,
+          nowMs: Date.now(),
+        });
       },
       onRehydrateStorage: () => {
         return () => {
@@ -650,11 +383,3 @@ export const useDraftStore = create<DraftStore>()(
     },
   ),
 );
-
-export const __draftStoreTestUtils = {
-  migrateDraftInput,
-  migratePersistedState,
-  normalizeAttachmentMetadata,
-  pruneFinalizedDraftRecords,
-  applyClearDraftRecord,
-};

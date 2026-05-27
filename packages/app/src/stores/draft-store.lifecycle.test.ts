@@ -1,6 +1,5 @@
-import "@/test/window-local-storage";
 import { describe, expect, it } from "vitest";
-import { __draftStoreTestUtils } from "./draft-store";
+import { applyClearDraftRecord, pruneFinalizedDraftRecords } from "./draft-store.pure";
 
 describe("draft-store lifecycle", () => {
   it("prunes finalized tombstones after TTL", () => {
@@ -26,7 +25,7 @@ describe("draft-store lifecycle", () => {
       },
     };
 
-    const pruned = __draftStoreTestUtils.pruneFinalizedDraftRecords({
+    const pruned = pruneFinalizedDraftRecords({
       drafts,
       nowMs: nowMs + 6 * 60 * 1000,
     });
@@ -37,7 +36,7 @@ describe("draft-store lifecycle", () => {
   });
 
   it("normalizes clear-with-lifecycle into a tombstone without attachments", () => {
-    const cleared = __draftStoreTestUtils.applyClearDraftRecord({
+    const cleared = applyClearDraftRecord({
       record: {
         input: {
           text: "hello",
