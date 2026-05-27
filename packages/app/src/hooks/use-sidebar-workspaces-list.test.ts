@@ -1,26 +1,13 @@
-/**
- * @vitest-environment jsdom
- */
-import { act } from "@testing-library/react";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { createRoot, type Root } from "react-dom/client";
-import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-vi.hoisted(() => {
-  (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
-});
-
+import { describe, expect, it } from "vitest";
+import type { WorkspaceStructureProject } from "@/stores/session-store-hooks";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
   buildSidebarProjectsFromStructure,
-  useSidebarWorkspacesList,
-} from "./use-sidebar-workspaces-list";
-import type { WorkspaceStructureProject } from "@/stores/session-store-hooks";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+  computeSidebarOrderUpdates,
+  deriveSidebarLoadingState,
+  type SidebarProjectEntry,
+} from "./use-sidebar-workspaces-list.pure";
 
 interface OrderedItem {
   key: string;
@@ -46,55 +33,20 @@ function project(input: {
   };
 }
 
-function workspaceDescriptor(id: string): WorkspaceDescriptor {
-  return {
-    id,
-    projectId: "project-1",
-    projectDisplayName: "Project 1",
-    projectRootPath: "/repo/main",
-    workspaceDirectory: `/repo/main/${id}`,
-    projectKind: "git",
-    workspaceKind: "worktree",
-    name: id,
-    status: "done",
-    archivingAt: null,
-    diffStat: null,
-    scripts: [],
-  };
-}
-
-function DisabledHookProbe({ serverId }: { serverId: string }): null {
-  const result = useSidebarWorkspacesList({ serverId, enabled: false });
-
-  expect(result.projects).toEqual([]);
-  expect(result.isLoading).toBe(false);
-  expect(result.isInitialLoad).toBe(false);
-  expect(result.isRevalidating).toBe(false);
-
-  return null;
-}
-
-function DisabledRenderCountProbe({
-  onRender,
-  serverId,
-}: {
-  onRender: () => void;
-  serverId: string;
-}): null {
-  useSidebarWorkspacesList({ serverId, enabled: false });
-  onRender();
-  return null;
-}
-
-function HookResultProbe({
-  onResult,
-  serverId,
-}: {
-  onResult: (result: ReturnType<typeof useSidebarWorkspacesList>) => void;
-  serverId: string;
-}): null {
-  onResult(useSidebarWorkspacesList({ serverId }));
-  return null;
+function sidebarProject(input: {
+  projectKey: string;
+  workspaceKeys: string[];
+  serverId?: string;
+}): SidebarProjectEntry {
+  const projects = buildSidebarProjectsFromStructure({
+    serverId: input.serverId ?? "srv",
+    projects: [project({ projectKey: input.projectKey, workspaceKeys: input.workspaceKeys })],
+  });
+  const result = projects[0];
+  if (!result) {
+    throw new Error("expected a project entry");
+  }
+  return result;
 }
 
 describe("applyStoredOrdering", () => {
@@ -202,97 +154,95 @@ describe("buildSidebarProjectsFromStructure", () => {
   });
 });
 
-describe("useSidebarWorkspacesList", () => {
-  let root: Root | null = null;
-  let container: HTMLElement | null = null;
-
-  afterEach(() => {
-    if (root) {
-      act(() => {
-        root?.unmount();
-      });
-    }
-    root = null;
-    container?.remove();
-    container = null;
-    act(() => {
-      getHostRuntimeStore().syncHosts([]);
-      useSessionStore.getState().clearSession("srv-disabled");
-      useSessionStore.getState().clearSession("srv-loading");
-      useSidebarOrderStore.setState({
-        projectOrderByServerId: {},
-        workspaceOrderByServerAndProject: {},
-      });
+describe("computeSidebarOrderUpdates", () => {
+  it("returns no updates when there are no visible projects", () => {
+    const updates = computeSidebarOrderUpdates({
+      projects: [],
+      persistedProjectOrder: ["stale-project"],
+      getWorkspaceOrder: () => [],
     });
+
+    expect(updates).toEqual({ projectOrder: null, workspaceOrders: [] });
   });
 
-  it("honors enabled false without appending persisted order keys", async () => {
-    act(() => {
-      useSessionStore.getState().initializeSession("srv-disabled", null as unknown as DaemonClient);
-      useSessionStore
-        .getState()
-        .setWorkspaces("srv-disabled", new Map([["ws-main", workspaceDescriptor("ws-main")]]));
-      useSessionStore.getState().setHasHydratedWorkspaces("srv-disabled", true);
+  it("appends unseen projects and workspaces to the persisted orders", () => {
+    const projects = [
+      sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2"] }),
+      sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-3"] }),
+    ];
+
+    const updates = computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder: ["project-a"],
+      getWorkspaceOrder: (projectKey) => (projectKey === "project-a" ? ["srv:ws-1"] : []),
     });
 
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(React.createElement(DisabledHookProbe, { serverId: "srv-disabled" }));
-    });
-
-    expect(useSidebarOrderStore.getState().projectOrderByServerId).toEqual({});
-    expect(useSidebarOrderStore.getState().workspaceOrderByServerAndProject).toEqual({});
+    expect(updates.projectOrder).toEqual(["project-a", "project-b"]);
+    expect(updates.workspaceOrders).toEqual([
+      { projectKey: "project-a", order: ["srv:ws-1", "srv:ws-2"] },
+      { projectKey: "project-b", order: ["srv:ws-3"] },
+    ]);
   });
 
-  it("keeps the sidebar in initial load until workspace hydration succeeds", async () => {
-    const onResult = vi.fn();
+  it("returns no project-order update when persisted order already covers visible keys", () => {
+    const projects = [
+      sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1"] }),
+      sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-2"] }),
+    ];
 
-    act(() => {
-      useSessionStore.getState().initializeSession("srv-loading", null as unknown as DaemonClient);
+    const updates = computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder: ["project-b", "project-a"],
+      getWorkspaceOrder: (projectKey) => (projectKey === "project-a" ? ["srv:ws-1"] : ["srv:ws-2"]),
     });
 
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
+    expect(updates.projectOrder).toBeNull();
+    expect(updates.workspaceOrders).toEqual([]);
+  });
+});
 
-    await act(async () => {
-      root?.render(React.createElement(HookResultProbe, { serverId: "srv-loading", onResult }));
-    });
-
-    expect(onResult).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        projects: [],
-        isLoading: true,
-        isInitialLoad: true,
+describe("deriveSidebarLoadingState", () => {
+  it("reports initial-load while active and unhydrated with no projects", () => {
+    expect(
+      deriveSidebarLoadingState({
+        isActive: true,
+        serverId: "srv",
+        hasHydratedWorkspaces: false,
+        hasProjects: false,
       }),
-    );
+    ).toEqual({ isLoading: true, isInitialLoad: true, isRevalidating: false });
   });
 
-  it("does not subscribe to order updates while disabled", async () => {
-    const onRender = vi.fn();
+  it("stays loading but not initial once projects are visible", () => {
+    expect(
+      deriveSidebarLoadingState({
+        isActive: true,
+        serverId: "srv",
+        hasHydratedWorkspaces: false,
+        hasProjects: true,
+      }),
+    ).toEqual({ isLoading: true, isInitialLoad: false, isRevalidating: false });
+  });
 
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
+  it("clears loading once workspaces have hydrated", () => {
+    expect(
+      deriveSidebarLoadingState({
+        isActive: true,
+        serverId: "srv",
+        hasHydratedWorkspaces: true,
+        hasProjects: true,
+      }),
+    ).toEqual({ isLoading: false, isInitialLoad: false, isRevalidating: false });
+  });
 
-    await act(async () => {
-      root?.render(
-        React.createElement(DisabledRenderCountProbe, {
-          serverId: "srv-disabled",
-          onRender,
-        }),
-      );
-    });
-
-    expect(onRender).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      useSidebarOrderStore.getState().setProjectOrder("srv-disabled", ["project-a"]);
-    });
-
-    expect(onRender).toHaveBeenCalledTimes(1);
+  it("short-circuits to idle when inactive", () => {
+    expect(
+      deriveSidebarLoadingState({
+        isActive: false,
+        serverId: "srv",
+        hasHydratedWorkspaces: false,
+        hasProjects: false,
+      }),
+    ).toEqual({ isLoading: false, isInitialLoad: false, isRevalidating: false });
   });
 });
