@@ -21,8 +21,28 @@ export interface UseProjectsResult {
   refetch: () => void;
 }
 
-interface FetchAllWorkspaceDescriptorsInput {
-  client: Pick<DaemonClient, "fetchWorkspaces">;
+export interface ProjectsRuntimeSnapshot {
+  connectionStatus: string;
+}
+
+export interface ProjectsRuntime {
+  getClient(serverId: string): Pick<DaemonClient, "fetchWorkspaces"> | null;
+  getSnapshot(serverId: string): ProjectsRuntimeSnapshot | null | undefined;
+}
+
+export interface ProjectsHostInput {
+  serverId: string;
+  serverName: string;
+}
+
+export interface FetchAggregatedProjectsInput {
+  hosts: ProjectsHostInput[];
+  runtime: ProjectsRuntime;
+}
+
+export interface FetchAggregatedProjectsResult {
+  projects: ProjectSummary[];
+  hostErrors: ProjectHostError[];
 }
 
 interface HostWorkspacesResult {
@@ -35,13 +55,13 @@ function toErrorMessage(error: unknown): string {
 }
 
 async function fetchAllWorkspaceDescriptors(
-  input: FetchAllWorkspaceDescriptorsInput,
+  client: Pick<DaemonClient, "fetchWorkspaces">,
 ): Promise<WorkspaceDescriptor[]> {
   const entries: WorkspaceDescriptor[] = [];
   let cursor: string | null = null;
 
   while (true) {
-    const payload = await input.client.fetchWorkspaces({
+    const payload = await client.fetchWorkspaces({
       sort: [{ key: "name", direction: "asc" }],
       page: cursor ? { limit: 200, cursor } : { limit: 200 },
     });
@@ -55,10 +75,66 @@ async function fetchAllWorkspaceDescriptors(
   return entries;
 }
 
+export async function fetchAggregatedProjects(
+  input: FetchAggregatedProjectsInput,
+): Promise<FetchAggregatedProjectsResult> {
+  const results = await Promise.all(
+    input.hosts.map(async (host): Promise<HostWorkspacesResult> => {
+      const snapshot = input.runtime.getSnapshot(host.serverId);
+      const isOnline = snapshot?.connectionStatus === "online";
+      const client = input.runtime.getClient(host.serverId);
+
+      if (!client || !isOnline) {
+        return {
+          host: {
+            serverId: host.serverId,
+            serverName: host.serverName,
+            isOnline,
+            workspaces: [],
+          },
+          error: null,
+        };
+      }
+
+      try {
+        return {
+          host: {
+            serverId: host.serverId,
+            serverName: host.serverName,
+            isOnline,
+            workspaces: await fetchAllWorkspaceDescriptors(client),
+          },
+          error: null,
+        };
+      } catch (error) {
+        return {
+          host: {
+            serverId: host.serverId,
+            serverName: host.serverName,
+            isOnline,
+            workspaces: [],
+          },
+          error: {
+            serverId: host.serverId,
+            serverName: host.serverName,
+            message: toErrorMessage(error),
+          },
+        };
+      }
+    }),
+  );
+
+  const hostErrors = results.flatMap((result) => (result.error ? [result.error] : []));
+  return {
+    ...buildProjects({ hosts: results.map((result) => result.host) }),
+    hostErrors,
+  };
+}
+
 export function useProjects(): UseProjectsResult {
   const hosts = useHosts();
   const runtime = getHostRuntimeStore();
-  const hostInputs = useMemo(
+  const hostInputs = useMemo<ProjectsHostInput[]>(
     () =>
       hosts.map((host) => ({
         serverId: host.serverId,
@@ -69,59 +145,7 @@ export function useProjects(): UseProjectsResult {
 
   const projectsQuery = useQuery({
     queryKey: projectsQueryKey,
-    queryFn: async () => {
-      const results = await Promise.all(
-        hostInputs.map(async (host): Promise<HostWorkspacesResult> => {
-          const snapshot = runtime.getSnapshot(host.serverId);
-          const isOnline = snapshot?.connectionStatus === "online";
-          const client = runtime.getClient(host.serverId);
-
-          if (!client || !isOnline) {
-            return {
-              host: {
-                serverId: host.serverId,
-                serverName: host.serverName,
-                isOnline,
-                workspaces: [],
-              },
-              error: null,
-            };
-          }
-
-          try {
-            return {
-              host: {
-                serverId: host.serverId,
-                serverName: host.serverName,
-                isOnline,
-                workspaces: await fetchAllWorkspaceDescriptors({ client }),
-              },
-              error: null,
-            };
-          } catch (error) {
-            return {
-              host: {
-                serverId: host.serverId,
-                serverName: host.serverName,
-                isOnline,
-                workspaces: [],
-              },
-              error: {
-                serverId: host.serverId,
-                serverName: host.serverName,
-                message: toErrorMessage(error),
-              },
-            };
-          }
-        }),
-      );
-
-      const hostErrors = results.flatMap((result) => (result.error ? [result.error] : []));
-      return {
-        ...buildProjects({ hosts: results.map((result) => result.host) }),
-        hostErrors,
-      };
-    },
+    queryFn: () => fetchAggregatedProjects({ hosts: hostInputs, runtime }),
   });
 
   return {
