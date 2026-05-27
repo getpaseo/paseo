@@ -4020,7 +4020,7 @@ test("reloadAgentSession recovers a stale session after startTurn fails before a
       handle: AgentPersistenceHandle,
       overrides?: Partial<AgentSessionConfig>,
     ): Promise<AgentSession> {
-      return new FailsOnceBeforeTurnSession({
+      return new TestAgentSession({
         provider: handle.provider,
         cwd: overrides?.cwd ?? workdir,
       });

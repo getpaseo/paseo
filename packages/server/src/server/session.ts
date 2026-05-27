@@ -69,7 +69,6 @@ import {
   formatSystemNotificationPrompt,
   sendPromptToAgent,
   startCreatedAgentInitialPrompt,
-  waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
 import { experimental_createMCPClient } from "ai";
@@ -1259,11 +1258,9 @@ export class Session {
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       agentId: input.agentId,
-      userMessageText: input.text,
       prompt: input.prompt,
       messageId: input.messageId,
       runOptions: input.runOptions,
-      recordUserMessage: false,
       logger: this.sessionLogger,
     });
   }
@@ -1274,17 +1271,14 @@ export class Session {
     prompt: AgentPromptInput;
     messageId?: string;
     runOptions?: AgentRunOptions;
-    recordUserMessage?: boolean;
   }): Promise<void> {
     await sendPromptToAgent({
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       agentId: input.agentId,
-      userMessageText: input.text,
       prompt: input.prompt,
       messageId: input.messageId,
       runOptions: input.runOptions,
-      ...(input.recordUserMessage === false ? { recordUserMessage: false } : {}),
       logger: this.sessionLogger,
     });
   }
@@ -7941,7 +7935,6 @@ export class Session {
               text: msg.text,
               prompt,
               messageId: msg.messageId,
-              recordUserMessage: false,
             });
             await this.waitForAgentRunStartOrThrow(agentId);
             this.emit({
