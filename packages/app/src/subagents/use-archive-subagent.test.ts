@@ -1,78 +1,54 @@
-/**
- * @vitest-environment jsdom
- */
-import { act, renderHook } from "@testing-library/react";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useArchiveSubagent } from "@/subagents";
-import { useSessionStore, type Agent } from "@/stores/session-store";
-import { resolveArchiveSubagentDialog } from "./use-archive-subagent";
+import { describe, expect, it } from "vitest";
+import type { ConfirmDialogInput } from "@/utils/confirm-dialog";
+import {
+  requestArchiveSubagent,
+  resolveArchiveSubagentDialog,
+  type ArchiveSubagentDeps,
+  type ResolveArchiveSubagentDialogInput,
+} from "./use-archive-subagent.pure";
 
-const { archiveAgentMock, confirmDialogMock } = vi.hoisted(() => ({
-  archiveAgentMock: vi.fn(),
-  confirmDialogMock: vi.fn(),
-}));
-
-vi.mock("@/hooks/use-archive-agent", () => ({
-  useArchiveAgent: () => ({
-    archiveAgent: archiveAgentMock,
-  }),
-}));
-
-vi.mock("@/utils/confirm-dialog", () => ({
-  confirmDialog: confirmDialogMock,
-}));
-
-vi.mock("./track", () => ({
-  SubagentsTrack: () => null,
-}));
-
-const SERVER_ID = "server-1";
-
-function makeAgent(input: { id: string; title?: Agent["title"]; status?: Agent["status"] }): Agent {
-  const createdAt = new Date("2026-03-04T00:00:00.000Z");
-  return {
-    serverId: SERVER_ID,
-    id: input.id,
-    provider: "codex",
-    status: input.status ?? "idle",
-    createdAt,
-    updatedAt: createdAt,
-    lastUserMessageAt: null,
-    lastActivityAt: createdAt,
-    capabilities: {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    currentModeId: null,
-    availableModes: [],
-    pendingPermissions: [],
-    persistence: null,
-    runtimeInfo: {
-      provider: "codex",
-      sessionId: null,
-    },
-    title: input.title ?? null,
-    cwd: "/repo/worktree",
-    model: null,
-    thinkingOptionId: null,
-    parentAgentId: "parent-agent",
-    labels: {},
-    requiresAttention: false,
-    attentionReason: null,
-    attentionTimestamp: null,
-    archivedAt: null,
-  };
+interface RecordedArchive {
+  serverId: string;
+  agentId: string;
 }
 
-function seedSubagent(subagent: Agent): void {
-  const client = { archiveAgent: vi.fn() } as unknown as DaemonClient;
-  useSessionStore.getState().initializeSession(SERVER_ID, client);
-  useSessionStore.getState().setAgents(SERVER_ID, new Map([[subagent.id, subagent]]));
+interface FakeArchiveSubagentEnv {
+  deps: ArchiveSubagentDeps;
+  recordedArchives: RecordedArchive[];
+  recordedConfirmInputs: ConfirmDialogInput[];
+  setSubagent(id: string, snapshot: ResolveArchiveSubagentDialogInput | undefined): void;
+}
+
+function createFakeEnv(
+  options: {
+    confirmResult?: boolean;
+    initialSubagents?: Array<{ id: string; snapshot: ResolveArchiveSubagentDialogInput }>;
+  } = {},
+): FakeArchiveSubagentEnv {
+  const subagents = new Map<string, ResolveArchiveSubagentDialogInput | undefined>();
+  for (const entry of options.initialSubagents ?? []) {
+    subagents.set(entry.id, entry.snapshot);
+  }
+  const recordedArchives: RecordedArchive[] = [];
+  const recordedConfirmInputs: ConfirmDialogInput[] = [];
+
+  return {
+    recordedArchives,
+    recordedConfirmInputs,
+    setSubagent(id, snapshot) {
+      subagents.set(id, snapshot);
+    },
+    deps: {
+      getSubagent: (id) => subagents.get(id),
+      confirm: async (dialog) => {
+        recordedConfirmInputs.push(dialog);
+        return options.confirmResult ?? false;
+      },
+      archiveAgent: async (input) => {
+        recordedArchives.push(input);
+      },
+    },
+  };
 }
 
 describe("resolveArchiveSubagentDialog", () => {
@@ -139,79 +115,84 @@ describe("resolveArchiveSubagentDialog", () => {
   });
 });
 
-describe("useArchiveSubagent", () => {
-  beforeEach(() => {
-    archiveAgentMock.mockReset();
-    archiveAgentMock.mockResolvedValue(undefined);
-    confirmDialogMock.mockReset();
-    useSessionStore.getState().clearSession(SERVER_ID);
-  });
-
-  afterEach(() => {
-    useSessionStore.getState().clearSession(SERVER_ID);
-  });
-
+describe("requestArchiveSubagent", () => {
   it("archives the subagent with the server id when the user confirms", async () => {
-    const subagent = makeAgent({
-      id: "child-agent",
-      title: "Review branch",
-      status: "running",
-    });
-    seedSubagent(subagent);
-    confirmDialogMock.mockResolvedValue(true);
-
-    const { result } = renderHook(() => useArchiveSubagent({ serverId: SERVER_ID }));
-
-    await act(async () => {
-      await (result.current as (subagentId: string) => Promise<void>)(subagent.id);
+    const env = createFakeEnv({
+      confirmResult: true,
+      initialSubagents: [
+        {
+          id: "child-agent",
+          snapshot: { title: "Review branch", status: "running" },
+        },
+      ],
     });
 
-    expect(archiveAgentMock).toHaveBeenCalledTimes(1);
-    expect(archiveAgentMock).toHaveBeenCalledWith({
-      serverId: SERVER_ID,
-      agentId: subagent.id,
-    });
+    await requestArchiveSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps);
+
+    expect(env.recordedArchives).toEqual([{ serverId: "server-1", agentId: "child-agent" }]);
   });
 
   it("does not archive the subagent when the user cancels", async () => {
-    const subagent = makeAgent({
-      id: "child-agent",
-      title: "Review branch",
-      status: "idle",
-    });
-    seedSubagent(subagent);
-    confirmDialogMock.mockResolvedValue(false);
-
-    const { result } = renderHook(() => useArchiveSubagent({ serverId: SERVER_ID }));
-
-    await act(async () => {
-      await (result.current as (subagentId: string) => Promise<void>)(subagent.id);
+    const env = createFakeEnv({
+      confirmResult: false,
+      initialSubagents: [
+        {
+          id: "child-agent",
+          snapshot: { title: "Review branch", status: "idle" },
+        },
+      ],
     });
 
-    expect(archiveAgentMock).not.toHaveBeenCalled();
+    await requestArchiveSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps);
+
+    expect(env.recordedArchives).toEqual([]);
   });
 
-  it("passes the resolved dialog input for the subagent to confirmDialog", async () => {
-    const subagent = makeAgent({
-      id: "child-agent",
-      title: "Review branch",
-      status: "running",
-    });
-    seedSubagent(subagent);
-    confirmDialogMock.mockResolvedValue(false);
-
-    const { result } = renderHook(() => useArchiveSubagent({ serverId: SERVER_ID }));
-
-    await act(async () => {
-      await (result.current as (subagentId: string) => Promise<void>)(subagent.id);
+  it("asks for confirmation using the resolved dialog for the subagent", async () => {
+    const env = createFakeEnv({
+      confirmResult: false,
+      initialSubagents: [
+        {
+          id: "child-agent",
+          snapshot: { title: "Review branch", status: "running" },
+        },
+      ],
     });
 
-    expect(confirmDialogMock).toHaveBeenCalledTimes(1);
-    expect(confirmDialogMock).toHaveBeenCalledWith(
-      resolveArchiveSubagentDialog({
-        title: subagent.title,
-        status: subagent.status,
-      }),
-    );
+    await requestArchiveSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps);
+
+    expect(env.recordedConfirmInputs).toEqual([
+      resolveArchiveSubagentDialog({ title: "Review branch", status: "running" }),
+    ]);
+  });
+
+  it("asks with the missing-subagent dialog when the snapshot is unknown", async () => {
+    const env = createFakeEnv({ confirmResult: false });
+
+    await requestArchiveSubagent({ serverId: "server-1", subagentId: "missing" }, env.deps);
+
+    expect(env.recordedConfirmInputs).toEqual([
+      resolveArchiveSubagentDialog({ title: undefined, status: undefined }),
+    ]);
+    expect(env.recordedArchives).toEqual([]);
+  });
+
+  it("swallows archive errors so the caller never sees them", async () => {
+    const env = createFakeEnv({
+      confirmResult: true,
+      initialSubagents: [
+        {
+          id: "child-agent",
+          snapshot: { title: "Review branch", status: "running" },
+        },
+      ],
+    });
+    env.deps.archiveAgent = async () => {
+      throw new Error("daemon offline");
+    };
+
+    await expect(
+      requestArchiveSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps),
+    ).resolves.toBeUndefined();
   });
 });
