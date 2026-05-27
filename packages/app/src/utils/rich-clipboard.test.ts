@@ -1,21 +1,43 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   createMarkdownClipboardContent,
+  type MarkdownClipboardEnvironment,
   type RichClipboardWriter,
   writeMarkdownToRichClipboard,
 } from "./rich-clipboard";
 
-const { setStringAsyncMock } = vi.hoisted(() => ({
-  setStringAsyncMock: vi.fn(async () => true),
-}));
+interface RecordingClipboard {
+  environment: MarkdownClipboardEnvironment;
+  richWrites: Array<Record<"text/plain" | "text/html", Blob>>;
+  plainTexts: string[];
+}
 
-vi.mock("expo-clipboard", () => ({
-  setStringAsync: setStringAsyncMock,
-}));
+function createRecordingClipboard(
+  options: { supportsHtml?: boolean; richWriteFails?: boolean } = {},
+): RecordingClipboard {
+  const { supportsHtml = true, richWriteFails = false } = options;
+  const richWrites: Array<Record<"text/plain" | "text/html", Blob>> = [];
+  const plainTexts: string[] = [];
 
-beforeEach(() => {
-  setStringAsyncMock.mockClear();
-});
+  const richWriter: RichClipboardWriter = {
+    supportsHtml: () => supportsHtml,
+    write: async (data) => {
+      if (richWriteFails) {
+        throw new Error("clipboard denied");
+      }
+      richWrites.push(data);
+    },
+  };
+
+  const environment: MarkdownClipboardEnvironment = {
+    richWriter,
+    writePlainText: async (text) => {
+      plainTexts.push(text);
+    },
+  };
+
+  return { environment, richWrites, plainTexts };
+}
 
 describe("createMarkdownClipboardContent", () => {
   it("renders markdown structures to clipboard html", () => {
@@ -56,42 +78,25 @@ describe("createMarkdownClipboardContent", () => {
 
 describe("writeMarkdownToRichClipboard", () => {
   it("writes plain text and html when a rich clipboard writer is available", async () => {
-    const markdown = "- item";
-    const writes: Array<Parameters<RichClipboardWriter["write"]>[0]> = [];
-    const richWriter: RichClipboardWriter = {
-      supportsHtml: () => true,
-      write: async (data) => {
-        writes.push(data);
-      },
-    };
+    const clipboard = createRecordingClipboard();
 
-    await writeMarkdownToRichClipboard(markdown, {
-      richWriter,
-      writePlainText: setStringAsyncMock,
-    });
+    await writeMarkdownToRichClipboard("- item", clipboard.environment);
 
-    const written = writes[0];
+    const written = clipboard.richWrites[0];
     if (!written) {
       throw new Error("Expected rich clipboard data to be written");
     }
-    await expect(written["text/plain"].text()).resolves.toBe(markdown);
+    await expect(written["text/plain"].text()).resolves.toBe("- item");
     await expect(written["text/html"].text()).resolves.toContain("<li>item</li>");
-    expect(setStringAsyncMock).not.toHaveBeenCalled();
+    expect(clipboard.plainTexts).toEqual([]);
   });
 
   it("falls back to plain text when rich clipboard writing fails", async () => {
-    const richWriter: RichClipboardWriter = {
-      supportsHtml: () => true,
-      write: async () => {
-        throw new Error("clipboard denied");
-      },
-    };
+    const clipboard = createRecordingClipboard({ richWriteFails: true });
 
-    await writeMarkdownToRichClipboard("**bold**", {
-      richWriter,
-      writePlainText: setStringAsyncMock,
-    });
+    await writeMarkdownToRichClipboard("**bold**", clipboard.environment);
 
-    expect(setStringAsyncMock).toHaveBeenCalledWith("**bold**");
+    expect(clipboard.plainTexts).toEqual(["**bold**"]);
+    expect(clipboard.richWrites).toEqual([]);
   });
 });

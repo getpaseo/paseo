@@ -74,6 +74,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
+import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import {
   getAssistantImageLoadStateFromMetadata,
   getAssistantImageMetadata,
@@ -1149,7 +1150,7 @@ export const TurnCopyButton = memo(function TurnCopyButton({
       return;
     }
 
-    await writeMarkdownToRichClipboard(content);
+    await writeMarkdownToRichClipboard(content, getDefaultMarkdownClipboardEnvironment());
     setCopied(true);
 
     if (copyTimeoutRef.current) {
