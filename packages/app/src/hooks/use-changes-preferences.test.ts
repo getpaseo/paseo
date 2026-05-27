@@ -1,74 +1,89 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it } from "vitest";
+import { createInMemoryKeyValueStorage } from "./use-changes-preferences.test-utils";
+import {
+  CHANGES_PREFERENCES_QUERY_KEY,
+  CHANGES_PREFERENCES_STORAGE_KEY,
+  DEFAULT_CHANGES_PREFERENCES,
+  loadChangesPreferencesFromStorage,
+  saveChangesPreferences,
+} from "./use-changes-preferences.pure";
 
-const asyncStorageMock = vi.hoisted(() => ({
-  getItem: vi.fn<(_: string) => Promise<string | null>>(),
-  setItem: vi.fn<(_: string, __: string) => Promise<void>>(),
-}));
+describe("loadChangesPreferencesFromStorage", () => {
+  it("defaults to unified layout with visible whitespace and writes the defaults back", async () => {
+    const storage = createInMemoryKeyValueStorage();
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: asyncStorageMock,
-}));
+    const result = await loadChangesPreferencesFromStorage(storage);
 
-describe("use-changes-preferences", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    asyncStorageMock.getItem.mockReset();
-    asyncStorageMock.setItem.mockReset();
-  });
-
-  it("defaults to unified layout with visible whitespace", async () => {
-    asyncStorageMock.getItem.mockResolvedValue(null);
-    asyncStorageMock.setItem.mockResolvedValue();
-
-    const mod = await import("./use-changes-preferences");
-    const result = await mod.loadChangesPreferencesFromStorage();
-
-    expect(result).toEqual(mod.DEFAULT_CHANGES_PREFERENCES);
-    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
-      "@paseo:changes-preferences",
-      JSON.stringify(mod.DEFAULT_CHANGES_PREFERENCES),
+    expect(result).toEqual(DEFAULT_CHANGES_PREFERENCES);
+    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(
+      JSON.stringify(DEFAULT_CHANGES_PREFERENCES),
     );
   });
 
   it("migrates the legacy wrap-lines toggle into the new preferences object", async () => {
-    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "diff-wrap-lines") {
-        return "true";
-      }
-      return null;
-    });
-    asyncStorageMock.setItem.mockResolvedValue();
+    const storage = createInMemoryKeyValueStorage({ "diff-wrap-lines": "true" });
 
-    const mod = await import("./use-changes-preferences");
-    const result = await mod.loadChangesPreferencesFromStorage();
+    const result = await loadChangesPreferencesFromStorage(storage);
 
     expect(result).toEqual({
       layout: "unified",
       wrapLines: true,
       hideWhitespace: false,
     });
+    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
 
-  it("loads persisted layout and whitespace preferences", async () => {
-    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "@paseo:changes-preferences") {
-        return JSON.stringify({
-          layout: "split",
-          hideWhitespace: true,
-          wrapLines: false,
-        });
-      }
-      return null;
+  it("loads persisted layout and whitespace preferences without rewriting storage", async () => {
+    const persisted = JSON.stringify({
+      layout: "split",
+      hideWhitespace: true,
+      wrapLines: false,
+    });
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: persisted,
     });
 
-    const mod = await import("./use-changes-preferences");
-    const result = await mod.loadChangesPreferencesFromStorage();
+    const result = await loadChangesPreferencesFromStorage(storage);
 
     expect(result).toEqual({
       layout: "split",
       hideWhitespace: true,
       wrapLines: false,
     });
-    expect(asyncStorageMock.setItem).not.toHaveBeenCalled();
+    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
+    expect(storage.entries.size).toBe(1);
+  });
+});
+
+describe("saveChangesPreferences", () => {
+  it("merges updates onto cached preferences and persists the result", async () => {
+    const storage = createInMemoryKeyValueStorage();
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(CHANGES_PREFERENCES_QUERY_KEY, DEFAULT_CHANGES_PREFERENCES);
+
+    await saveChangesPreferences({
+      queryClient,
+      updates: { layout: "split", hideWhitespace: true },
+      storage,
+    });
+
+    const expected = { ...DEFAULT_CHANGES_PREFERENCES, layout: "split", hideWhitespace: true };
+    expect(queryClient.getQueryData(CHANGES_PREFERENCES_QUERY_KEY)).toEqual(expected);
+    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(expected));
+  });
+
+  it("falls back to defaults when the query cache has no prior preferences", async () => {
+    const storage = createInMemoryKeyValueStorage();
+    const queryClient = new QueryClient();
+
+    await saveChangesPreferences({
+      queryClient,
+      updates: { wrapLines: true },
+      storage,
+    });
+
+    const expected = { ...DEFAULT_CHANGES_PREFERENCES, wrapLines: true };
+    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(expected));
   });
 });

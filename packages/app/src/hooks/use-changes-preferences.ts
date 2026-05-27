@@ -1,57 +1,21 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
+import {
+  CHANGES_PREFERENCES_QUERY_KEY,
+  DEFAULT_CHANGES_PREFERENCES,
+  loadChangesPreferencesFromStorage as loadChangesPreferencesFromStoragePure,
+  saveChangesPreferences as saveChangesPreferencesPure,
+  type ChangesPreferences,
+  type KeyValueStorage,
+} from "./use-changes-preferences.pure";
 
-const CHANGES_PREFERENCES_STORAGE_KEY = "@paseo:changes-preferences";
-const LEGACY_WRAP_LINES_STORAGE_KEY = "diff-wrap-lines";
-const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
+export { DEFAULT_CHANGES_PREFERENCES, type ChangesPreferences, type KeyValueStorage };
 
-const changesPreferencesSchema = z.object({
-  layout: z.enum(["unified", "split"]).optional(),
-  wrapLines: z.boolean().optional(),
-  hideWhitespace: z.boolean().optional(),
-});
+const productionStorage: KeyValueStorage = AsyncStorage;
 
-export interface ChangesPreferences {
-  layout: "unified" | "split";
-  wrapLines: boolean;
-  hideWhitespace: boolean;
-}
-
-export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
-  layout: "unified",
-  wrapLines: false,
-  hideWhitespace: false,
-};
-
-async function loadLegacyWrapLinesPreference(): Promise<boolean | null> {
-  const legacyValue = await AsyncStorage.getItem(LEGACY_WRAP_LINES_STORAGE_KEY);
-  if (legacyValue === "true") {
-    return true;
-  }
-  if (legacyValue === "false") {
-    return false;
-  }
-  return null;
-}
-
-export async function loadChangesPreferencesFromStorage(): Promise<ChangesPreferences> {
-  const stored = await AsyncStorage.getItem(CHANGES_PREFERENCES_STORAGE_KEY);
-  if (stored) {
-    const parsed = changesPreferencesSchema.safeParse(JSON.parse(stored));
-    if (parsed.success) {
-      return { ...DEFAULT_CHANGES_PREFERENCES, ...parsed.data };
-    }
-  }
-
-  const legacyWrapLines = await loadLegacyWrapLinesPreference();
-  const next = {
-    ...DEFAULT_CHANGES_PREFERENCES,
-    ...(legacyWrapLines !== null ? { wrapLines: legacyWrapLines } : {}),
-  } satisfies ChangesPreferences;
-  await AsyncStorage.setItem(CHANGES_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
-  return next;
+export function loadChangesPreferencesFromStorage(): Promise<ChangesPreferences> {
+  return loadChangesPreferencesFromStoragePure(productionStorage);
 }
 
 export interface UseChangesPreferencesReturn {
@@ -71,12 +35,11 @@ export function useChangesPreferences(): UseChangesPreferencesReturn {
 
   const updatePreferences = useCallback(
     async (updates: Partial<ChangesPreferences>) => {
-      const prev =
-        queryClient.getQueryData<ChangesPreferences>(CHANGES_PREFERENCES_QUERY_KEY) ??
-        DEFAULT_CHANGES_PREFERENCES;
-      const next = { ...prev, ...updates };
-      queryClient.setQueryData<ChangesPreferences>(CHANGES_PREFERENCES_QUERY_KEY, next);
-      await AsyncStorage.setItem(CHANGES_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
+      await saveChangesPreferencesPure({
+        queryClient,
+        updates,
+        storage: productionStorage,
+      });
     },
     [queryClient],
   );
