@@ -1,17 +1,18 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { mapPrPaneData, type PrPaneData } from "@/git/pr-pane-data";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { prPaneTimelineQueryKey } from "@/git/query-keys";
 
+type CheckoutPrStatus = CheckoutPrStatusResponse["payload"]["status"];
 type CheckoutPrStatusPayloadError = CheckoutPrStatusResponse["payload"]["error"];
 type PullRequestTimeline = PullRequestTimelineResponse["payload"];
-
-const unsupportedTimelineKeys = new Set<string>();
 
 export interface UsePrPaneDataOptions {
   serverId: string;
@@ -29,23 +30,21 @@ export interface UsePrPaneDataResult {
   githubFeaturesEnabled: boolean;
 }
 
-interface PrRepoIdentity {
+export interface PrRepoIdentity {
   prNumber: number | null;
   repoOwner: string | null;
   repoName: string | null;
 }
 
-function extractPrRepoIdentity(status: CheckoutPrStatusLike): PrRepoIdentity {
+export function extractPrRepoIdentity(status: CheckoutPrStatus | null): PrRepoIdentity {
   const prNumber = status?.number ?? null;
   const repoOwner = status?.repoOwner && status.repoOwner.length > 0 ? status.repoOwner : null;
   const repoName = status?.repoName && status.repoName.length > 0 ? status.repoName : null;
   return { prNumber, repoOwner, repoName };
 }
 
-type CheckoutPrStatusLike = ReturnType<typeof useCheckoutPrStatusQuery>["status"];
-
-interface ShouldFetchTimelineArgs {
-  daemonClient: unknown;
+export interface ShouldFetchTimelineArgs {
+  hasClient: boolean;
   isConnected: boolean;
   timelineEnabled: boolean;
   githubFeaturesEnabled: boolean;
@@ -54,8 +53,8 @@ interface ShouldFetchTimelineArgs {
   timelineUnsupported: boolean;
 }
 
-function shouldFetchTimelineFrom({
-  daemonClient,
+export function shouldFetchTimelineFrom({
+  hasClient,
   isConnected,
   timelineEnabled,
   githubFeaturesEnabled,
@@ -64,7 +63,7 @@ function shouldFetchTimelineFrom({
   timelineUnsupported,
 }: ShouldFetchTimelineArgs): boolean {
   return (
-    !!daemonClient &&
+    hasClient &&
     isConnected &&
     timelineEnabled &&
     githubFeaturesEnabled &&
@@ -74,6 +73,112 @@ function shouldFetchTimelineFrom({
     identity.repoName !== null &&
     !timelineUnsupported
   );
+}
+
+export type PrPaneTimelineClient = Pick<DaemonClient, "pullRequestTimeline">;
+
+export interface UnsupportedTimelineRegistry {
+  has(key: string): boolean;
+  add(key: string): void;
+}
+
+export function unsupportedTimelineKey({
+  serverId,
+  cwd,
+  prNumber,
+}: {
+  serverId: string;
+  cwd: string;
+  prNumber: number;
+}): string {
+  return `${serverId}\0${cwd}\0${prNumber}`;
+}
+
+export function createInMemoryUnsupportedTimelineRegistry(): UnsupportedTimelineRegistry {
+  const keys = new Set<string>();
+  return {
+    has: (key) => keys.has(key),
+    add: (key) => {
+      keys.add(key);
+    },
+  };
+}
+
+const defaultUnsupportedTimelineRegistry = createInMemoryUnsupportedTimelineRegistry();
+
+export interface FetchPrPaneTimelinePageInput {
+  client: PrPaneTimelineClient;
+  registry: UnsupportedTimelineRegistry;
+  serverId: string;
+  cwd: string;
+  prNumber: number;
+  repoOwner: string;
+  repoName: string;
+}
+
+export async function fetchPrPaneTimelinePage(
+  input: FetchPrPaneTimelinePageInput,
+): Promise<PullRequestTimeline> {
+  try {
+    return await input.client.pullRequestTimeline({
+      cwd: input.cwd,
+      prNumber: input.prNumber,
+      repoOwner: input.repoOwner,
+      repoName: input.repoName,
+    });
+  } catch (error) {
+    if (isUnsupportedTimelineError(error)) {
+      input.registry.add(
+        unsupportedTimelineKey({
+          serverId: input.serverId,
+          cwd: input.cwd,
+          prNumber: input.prNumber,
+        }),
+      );
+    }
+    throw error;
+  }
+}
+
+export interface SelectPrPaneStateInput {
+  status: CheckoutPrStatus | null;
+  statusPayloadError: CheckoutPrStatusPayloadError;
+  statusError: Error | null;
+  statusIsLoading: boolean;
+  statusIsFetching: boolean;
+  githubFeaturesEnabled: boolean;
+  timelineEnabled: boolean;
+  shouldFetchTimeline: boolean;
+  timelinePayload: PullRequestTimeline | undefined;
+  timelineError: Error | null;
+  timelineIsLoading: boolean;
+  timelineIsFetching: boolean;
+}
+
+export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataResult {
+  const identity = extractPrRepoIdentity(input.status);
+  const data =
+    identity.prNumber === null || !input.timelineEnabled
+      ? null
+      : mapPrPaneData(input.status, input.timelinePayload);
+  const statusRefreshing = input.statusIsFetching && !input.statusIsLoading;
+  const timelineRefreshing = input.timelineIsFetching && !input.timelineIsLoading;
+
+  return {
+    data,
+    prNumber: identity.prNumber,
+    isLoading:
+      input.statusIsLoading ||
+      (input.shouldFetchTimeline && input.timelineIsLoading && input.timelinePayload === undefined),
+    isRefreshing: statusRefreshing || timelineRefreshing,
+    error: firstNonSuppressedError({
+      statusPayloadError: input.statusPayloadError,
+      statusError: input.statusError,
+      timelineError: input.timelineError,
+      timelinePayloadError: input.timelinePayload?.error ?? null,
+    }),
+    githubFeaturesEnabled: input.githubFeaturesEnabled,
+  };
 }
 
 export function usePrPaneData({
@@ -86,41 +191,47 @@ export function usePrPaneData({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, cwd, enabled });
   const status = checkoutPrStatus.status;
-  const { prNumber, repoOwner, repoName } = extractPrRepoIdentity(status);
+  const identity = extractPrRepoIdentity(status);
   const githubFeaturesEnabled = checkoutPrStatus.githubFeaturesEnabled;
+  const registry = defaultUnsupportedTimelineRegistry;
   const unsupportedKey =
-    prNumber === null ? null : timelineUnsupportedKey({ serverId, cwd, prNumber });
-  const timelineUnsupported = unsupportedKey ? unsupportedTimelineKeys.has(unsupportedKey) : false;
+    identity.prNumber === null
+      ? null
+      : unsupportedTimelineKey({ serverId, cwd, prNumber: identity.prNumber });
+  const timelineUnsupported = unsupportedKey ? registry.has(unsupportedKey) : false;
   const shouldFetchTimeline = shouldFetchTimelineFrom({
-    daemonClient,
+    hasClient: !!daemonClient,
     isConnected,
     timelineEnabled,
     githubFeaturesEnabled,
     cwd,
-    identity: { prNumber, repoOwner, repoName },
+    identity,
     timelineUnsupported,
   });
 
   const timelineQuery = useQuery<PullRequestTimeline>({
-    queryKey: prPaneTimelineQueryKey({ serverId, cwd, prNumber }),
+    queryKey: useMemo(
+      () => prPaneTimelineQueryKey({ serverId, cwd, prNumber: identity.prNumber }),
+      [serverId, cwd, identity.prNumber],
+    ),
     queryFn: async () => {
-      if (!daemonClient || prNumber === null || repoOwner === null || repoName === null) {
+      if (
+        !daemonClient ||
+        identity.prNumber === null ||
+        identity.repoOwner === null ||
+        identity.repoName === null
+      ) {
         throw new Error("Daemon client not available");
       }
-
-      try {
-        return await daemonClient.pullRequestTimeline({
-          cwd,
-          prNumber,
-          repoOwner,
-          repoName,
-        });
-      } catch (error) {
-        if (unsupportedKey && isUnsupportedTimelineError(error)) {
-          unsupportedTimelineKeys.add(unsupportedKey);
-        }
-        throw error;
-      }
+      return fetchPrPaneTimelinePage({
+        client: daemonClient,
+        registry,
+        serverId,
+        cwd,
+        prNumber: identity.prNumber,
+        repoOwner: identity.repoOwner,
+        repoName: identity.repoName,
+      });
     },
     enabled: shouldFetchTimeline,
     staleTime: Infinity,
@@ -131,26 +242,20 @@ export function usePrPaneData({
     retry: (failureCount, error) => !isUnsupportedTimelineError(error) && failureCount < 3,
   });
 
-  const data =
-    prNumber === null || !timelineEnabled ? null : mapPrPaneData(status, timelineQuery.data);
-  const statusRefreshing = checkoutPrStatus.isFetching && !checkoutPrStatus.isLoading;
-  const timelineRefreshing = timelineQuery.isFetching && !timelineQuery.isLoading;
-
-  return {
-    data,
-    prNumber,
-    isLoading:
-      checkoutPrStatus.isLoading ||
-      (shouldFetchTimeline && timelineQuery.isLoading && timelineQuery.data === undefined),
-    isRefreshing: statusRefreshing || timelineRefreshing,
-    error: firstNonSuppressedError({
-      statusPayloadError: checkoutPrStatus.payloadError,
-      statusError: checkoutPrStatus.error,
-      timelineError: timelineQuery.error,
-      timelinePayloadError: timelineQuery.data?.error ?? null,
-    }),
+  return selectPrPaneState({
+    status,
+    statusPayloadError: checkoutPrStatus.payloadError,
+    statusError: checkoutPrStatus.error,
+    statusIsLoading: checkoutPrStatus.isLoading,
+    statusIsFetching: checkoutPrStatus.isFetching,
     githubFeaturesEnabled,
-  };
+    timelineEnabled,
+    shouldFetchTimeline,
+    timelinePayload: timelineQuery.data,
+    timelineError: timelineQuery.error,
+    timelineIsLoading: timelineQuery.isLoading,
+    timelineIsFetching: timelineQuery.isFetching,
+  });
 }
 
 function firstNonSuppressedError({
@@ -183,19 +288,7 @@ function firstNonSuppressedError({
   return null;
 }
 
-function timelineUnsupportedKey({
-  serverId,
-  cwd,
-  prNumber,
-}: {
-  serverId: string;
-  cwd: string;
-  prNumber: number;
-}): string {
-  return `${serverId}\0${cwd}\0${prNumber}`;
-}
-
-function isUnsupportedTimelineError(error: unknown): boolean {
+export function isUnsupportedTimelineError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }

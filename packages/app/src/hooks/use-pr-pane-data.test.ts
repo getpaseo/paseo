@@ -1,58 +1,22 @@
-import React, { act } from "react";
-import { createRoot } from "react-dom/client";
-import { JSDOM } from "jsdom";
-import {
-  QueryClient,
-  QueryClientProvider,
-  focusManager,
-  onlineManager,
-} from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
-import { checkoutPrStatusQueryKey, prPaneTimelineQueryKey } from "@/git/query-keys";
-import { usePrPaneData, type UsePrPaneDataResult } from "./use-pr-pane-data";
-import { useWorkspacePrHint } from "@/git/use-pr-status-query";
+import {
+  createInMemoryUnsupportedTimelineRegistry,
+  extractPrRepoIdentity,
+  fetchPrPaneTimelinePage,
+  isUnsupportedTimelineError,
+  type PrPaneTimelineClient,
+  selectPrPaneState,
+  shouldFetchTimelineFrom,
+  unsupportedTimelineKey,
+} from "./use-pr-pane-data";
 
 type CheckoutPrStatus = NonNullable<CheckoutPrStatusResponse["payload"]["status"]>;
-type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
-
-const { mockRuntime, mockClient, checkoutStatusUpdateHandlers } = vi.hoisted(() => {
-  const hoistedHandlers = new Set<(message: unknown) => void>();
-  const hoistedClient = {
-    checkoutPrStatus: vi.fn(),
-    pullRequestTimeline: vi.fn(),
-    on: vi.fn((type: string, handler: (message: unknown) => void) => {
-      if (type !== "checkout_status_update") {
-        return () => {};
-      }
-      hoistedHandlers.add(handler);
-      return () => {
-        hoistedHandlers.delete(handler);
-      };
-    }),
-  };
-
-  return {
-    mockClient: hoistedClient,
-    checkoutStatusUpdateHandlers: hoistedHandlers,
-    mockRuntime: {
-      client: hoistedClient,
-      isConnected: true,
-    },
-  };
-});
-
-vi.mock("@/runtime/host-runtime", () => ({
-  useHostRuntimeClient: () => mockRuntime.client,
-  useHostRuntimeIsConnected: () => mockRuntime.isConnected,
-}));
-
-const cwd = "/repo";
-const serverId = "server-1";
+type PullRequestTimelineInput = Parameters<PrPaneTimelineClient["pullRequestTimeline"]>[0];
 
 const githubStatus: CheckoutPrStatus["github"] = {
   mergeStateStatus: null,
@@ -72,7 +36,7 @@ const githubStatus: CheckoutPrStatus["github"] = {
   isInMergeQueue: false,
 };
 
-function status(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
+function prStatus(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
   return {
     number: 42,
     url: "https://github.com/getpaseo/paseo/pull/42",
@@ -92,22 +56,11 @@ function status(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
   };
 }
 
-function statusPayload(overrides: Partial<CheckoutPrStatusPayload> = {}): CheckoutPrStatusPayload {
-  return {
-    cwd,
-    status: status(),
-    githubFeaturesEnabled: true,
-    error: null,
-    requestId: "status-1",
-    ...overrides,
-  };
-}
-
 function timelinePayload(
   overrides: Partial<PullRequestTimelinePayload> = {},
 ): PullRequestTimelinePayload {
   return {
-    cwd,
+    cwd: "/repo",
     prNumber: 42,
     items: [],
     truncated: false,
@@ -118,37 +71,26 @@ function timelinePayload(
   };
 }
 
-async function emitCheckoutStatusUpdatePrStatus(payload: CheckoutPrStatusPayload): Promise<void> {
-  await act(async () => {
-    for (const handler of checkoutStatusUpdateHandlers) {
-      handler({
-        type: "checkout_status_update",
-        payload: {
-          cwd: payload.cwd,
-          requestId: `subscription:${payload.cwd}`,
-          isGit: true,
-          isPaseoOwnedWorktree: false,
-          repoRoot: payload.cwd,
-          currentBranch: "main",
-          isDirty: false,
-          baseRef: "main",
-          aheadBehind: { ahead: 0, behind: 0 },
-          aheadOfOrigin: 0,
-          behindOfOrigin: 0,
-          hasRemote: true,
-          remoteUrl: "https://github.com/getpaseo/paseo.git",
-          error: null,
-          prStatus: payload,
-        },
-      });
-    }
-    await Promise.resolve();
-  });
+interface FakeTimelineClient extends PrPaneTimelineClient {
+  calls: PullRequestTimelineInput[];
+}
+
+function createTimelineClient(
+  respond: (input: PullRequestTimelineInput) => Promise<PullRequestTimelinePayload>,
+): FakeTimelineClient {
+  const calls: PullRequestTimelineInput[] = [];
+  return {
+    calls,
+    pullRequestTimeline: async (input) => {
+      calls.push(input);
+      return respond(input);
+    },
+  };
 }
 
 function unsupportedTimelineError(): Error {
   const error = new Error(
-    "Unknown request, try upgrading the daemon (currently v0.1.78) requestType=pull_request_timeline_request code=unknown_schema",
+    "Unknown request, try upgrading the daemon requestType=pull_request_timeline_request code=unknown_schema",
   ) as Error & { code: string; requestType: string };
   error.name = "DaemonRpcError";
   error.code = "unknown_schema";
@@ -156,644 +98,415 @@ function unsupportedTimelineError(): Error {
   return error;
 }
 
-function createTestQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
+const baseSelectInput = {
+  status: null as CheckoutPrStatus | null,
+  statusPayloadError: null,
+  statusError: null as Error | null,
+  statusIsLoading: false,
+  statusIsFetching: false,
+  githubFeaturesEnabled: true,
+  timelineEnabled: true,
+  shouldFetchTimeline: true,
+  timelinePayload: undefined as PullRequestTimelinePayload | undefined,
+  timelineError: null as Error | null,
+  timelineIsLoading: false,
+  timelineIsFetching: false,
+};
+
+describe("extractPrRepoIdentity", () => {
+  it("reads the PR number, owner, and name from a status payload", () => {
+    expect(extractPrRepoIdentity(prStatus())).toEqual({
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+    });
   });
-}
 
-function renderPrPaneHook({
-  queryClient = createTestQueryClient(),
-  options = { serverId, cwd },
-}: {
-  queryClient?: QueryClient;
-  options?: Parameters<typeof usePrPaneData>[0];
-} = {}) {
-  let latest: UsePrPaneDataResult | null = null;
-  let currentOptions = options;
+  it("returns null fields when the status is missing", () => {
+    expect(extractPrRepoIdentity(null)).toEqual({
+      prNumber: null,
+      repoOwner: null,
+      repoName: null,
+    });
+  });
 
-  function Probe({ hookOptions }: { hookOptions: Parameters<typeof usePrPaneData>[0] }) {
-    latest = usePrPaneData(hookOptions);
-    return null;
-  }
+  it("treats empty owner or name strings as missing", () => {
+    expect(extractPrRepoIdentity(prStatus({ repoOwner: "", repoName: "" }))).toMatchObject({
+      repoOwner: null,
+      repoName: null,
+    });
+  });
 
-  const container = document.getElementById("root");
-  if (!container) {
-    throw new Error("Missing root container");
-  }
+  it("reports no PR number when the status omits it", () => {
+    const status = prStatus();
+    delete status.number;
+    expect(extractPrRepoIdentity(status).prNumber).toBeNull();
+  });
+});
 
-  const root = createRoot(container);
+describe("shouldFetchTimelineFrom", () => {
+  const baseGate = {
+    hasClient: true,
+    isConnected: true,
+    timelineEnabled: true,
+    githubFeaturesEnabled: true,
+    cwd: "/repo",
+    identity: { prNumber: 42, repoOwner: "getpaseo", repoName: "paseo" },
+    timelineUnsupported: false,
+  };
 
-  function render() {
-    root.render(
-      React.createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        React.createElement(Probe, { hookOptions: currentOptions }),
-      ),
+  it("fetches when every gate is open", () => {
+    expect(shouldFetchTimelineFrom(baseGate)).toBe(true);
+  });
+
+  it.each([
+    { name: "no client", overrides: { hasClient: false } },
+    { name: "disconnected", overrides: { isConnected: false } },
+    { name: "timeline disabled", overrides: { timelineEnabled: false } },
+    { name: "github features off", overrides: { githubFeaturesEnabled: false } },
+    { name: "empty cwd", overrides: { cwd: "" } },
+    {
+      name: "missing PR number",
+      overrides: { identity: { ...baseGate.identity, prNumber: null } },
+    },
+    { name: "missing owner", overrides: { identity: { ...baseGate.identity, repoOwner: null } } },
+    { name: "missing name", overrides: { identity: { ...baseGate.identity, repoName: null } } },
+    { name: "tuple marked unsupported", overrides: { timelineUnsupported: true } },
+  ])("skips fetching when $name", ({ overrides }) => {
+    expect(shouldFetchTimelineFrom({ ...baseGate, ...overrides })).toBe(false);
+  });
+});
+
+describe("createInMemoryUnsupportedTimelineRegistry", () => {
+  it("remembers added keys and answers has() against them", () => {
+    const registry = createInMemoryUnsupportedTimelineRegistry();
+    const key = unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 99 });
+
+    expect(registry.has(key)).toBe(false);
+    registry.add(key);
+    expect(registry.has(key)).toBe(true);
+  });
+
+  it("uses serverId, cwd, and prNumber to scope each key", () => {
+    expect(unsupportedTimelineKey({ serverId: "host-a", cwd: "/repo", prNumber: 1 })).not.toEqual(
+      unsupportedTimelineKey({ serverId: "host-b", cwd: "/repo", prNumber: 1 }),
     );
-  }
+    expect(unsupportedTimelineKey({ serverId: "host", cwd: "/repo-a", prNumber: 1 })).not.toEqual(
+      unsupportedTimelineKey({ serverId: "host", cwd: "/repo-b", prNumber: 1 }),
+    );
+    expect(unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 1 })).not.toEqual(
+      unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 2 }),
+    );
+  });
+});
 
-  return {
-    get latest() {
-      if (!latest) {
-        throw new Error("Expected hook result");
-      }
-      return latest;
-    },
-    queryClient,
-    async mount() {
-      await act(async () => {
-        render();
-      });
-    },
-    async rerender(nextOptions: Parameters<typeof usePrPaneData>[0]) {
-      currentOptions = nextOptions;
-      await act(async () => {
-        render();
-      });
-    },
-    async unmount() {
-      await act(async () => {
-        root.unmount();
-      });
-    },
-  };
-}
+describe("fetchPrPaneTimelinePage", () => {
+  it("forwards the cwd, PR number, owner, and name to the daemon client", async () => {
+    const client = createTimelineClient(async () => timelinePayload());
+    const registry = createInMemoryUnsupportedTimelineRegistry();
 
-function renderSharedStatusConsumers({ queryClient = createTestQueryClient() } = {}) {
-  let latest: UsePrPaneDataResult | null = null;
-
-  function Probe() {
-    latest = usePrPaneData({ serverId, cwd });
-    useWorkspacePrHint({ serverId, cwd });
-    return null;
-  }
-
-  const container = document.getElementById("root");
-  if (!container) {
-    throw new Error("Missing root container");
-  }
-
-  const root = createRoot(container);
-
-  return {
-    get latest() {
-      if (!latest) {
-        throw new Error("Expected hook result");
-      }
-      return latest;
-    },
-    async mount() {
-      await act(async () => {
-        root.render(
-          React.createElement(
-            QueryClientProvider,
-            { client: queryClient },
-            React.createElement(Probe),
-          ),
-        );
-      });
-    },
-  };
-}
-
-async function waitForExpectation(assertion: () => void): Promise<void> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      });
-    }
-  }
-
-  throw lastError;
-}
-
-describe("usePrPaneData", () => {
-  beforeEach(() => {
-    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", {
-      url: "http://localhost",
+    await fetchPrPaneTimelinePage({
+      client,
+      registry,
+      serverId: "host",
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
     });
 
-    Object.defineProperty(globalThis, "document", {
-      value: dom.window.document,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, "window", {
-      value: dom.window,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, "navigator", {
-      value: dom.window.navigator,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
-      value: true,
-      configurable: true,
-    });
-
-    mockRuntime.client = mockClient;
-    mockRuntime.isConnected = true;
-    mockClient.checkoutPrStatus.mockReset();
-    mockClient.pullRequestTimeline.mockReset();
-    mockClient.on.mockClear();
-    checkoutStatusUpdateHandlers.clear();
+    expect(client.calls).toEqual([
+      { cwd: "/repo", prNumber: 42, repoOwner: "getpaseo", repoName: "paseo" },
+    ]);
   });
 
-  afterEach(() => {
-    focusManager.setFocused(undefined);
-    onlineManager.setOnline(true);
-    vi.useRealTimers();
-  });
+  it("returns the daemon's timeline payload on success", async () => {
+    const payload = timelinePayload({
+      items: [
+        {
+          id: "comment-1",
+          kind: "comment",
+          author: "octocat",
+          body: "Looks good",
+          createdAt: Date.now(),
+          url: "https://github.com/getpaseo/paseo/pull/42#c1",
+        },
+      ],
+    });
+    const client = createTimelineClient(async () => payload);
+    const registry = createInMemoryUnsupportedTimelineRegistry();
 
-  it("returns null when status has no PR number", async () => {
-    const statusWithoutNumber = status();
-    delete statusWithoutNumber.number;
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload({ status: statusWithoutNumber }));
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.isLoading).toBe(false);
+    const result = await fetchPrPaneTimelinePage({
+      client,
+      registry,
+      serverId: "host",
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
     });
 
-    expect(hook.latest.data).toBeNull();
-    expect(mockClient.pullRequestTimeline).not.toHaveBeenCalled();
+    expect(result).toBe(payload);
   });
 
-  it("wires the timeline query only when a PR number is known", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload({ status: null }));
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.isLoading).toBe(false);
+  it("records the tuple in the registry when the daemon rejects the request as unsupported", async () => {
+    const error = unsupportedTimelineError();
+    const client = createTimelineClient(async () => {
+      throw error;
     });
+    const registry = createInMemoryUnsupportedTimelineRegistry();
 
-    expect(mockClient.pullRequestTimeline).not.toHaveBeenCalled();
-    expect(
-      hook.queryClient.getQueryState(prPaneTimelineQueryKey({ serverId, cwd, prNumber: 42 })),
-    ).toBeUndefined();
-
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload());
-    hook.queryClient.invalidateQueries({ queryKey: checkoutPrStatusQueryKey(serverId, cwd) });
-
-    await waitForExpectation(() => {
-      expect(mockClient.pullRequestTimeline).toHaveBeenCalledWith({
-        cwd,
-        prNumber: 42,
+    await expect(
+      fetchPrPaneTimelinePage({
+        client,
+        registry,
+        serverId: "host",
+        cwd: "/repo",
+        prNumber: 99,
         repoOwner: "getpaseo",
         repoName: "paseo",
-      });
-    });
-  });
-
-  it("checks PR status while timeline activity is disabled", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload());
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook({
-      options: { serverId, cwd, enabled: true, timelineEnabled: false },
-    });
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.prNumber).toBe(42);
-    });
-
-    expect(hook.latest.data).toBeNull();
-    expect(mockClient.checkoutPrStatus).toHaveBeenCalledTimes(1);
-    expect(mockClient.pullRequestTimeline).not.toHaveBeenCalled();
-  });
-
-  it("does not request timeline activity until the PR repo identity is known", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(
-      statusPayload({
-        status: status({
-          repoOwner: undefined,
-          repoName: undefined,
-        }),
       }),
-    );
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
+    ).rejects.toBe(error);
 
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.isLoading).toBe(false);
-    });
-
-    expect(hook.latest.data?.number).toBe(42);
-    expect(hook.latest.data?.activity).toEqual([]);
-    expect(mockClient.pullRequestTimeline).not.toHaveBeenCalled();
-  });
-
-  it("shares the checkout PR status query with workspace hint consumers", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload());
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderSharedStatusConsumers();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.number).toBe(42);
-    });
-
-    expect(mockClient.checkoutPrStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it("server-pushed PR status update writes into the checkout PR status cache", async () => {
-    const queryClient = createTestQueryClient();
-    mockClient.checkoutPrStatus.mockResolvedValue(
-      statusPayload({
-        status: status({
-          checksStatus: "pending",
-          checks: [{ name: "test", status: "pending", url: "https://github.com/checks/1" }],
-        }),
-      }),
-    );
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook({ queryClient });
-    await hook.mount();
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.checks[0]?.status).toBe("pending");
-    });
-
-    mockClient.checkoutPrStatus.mockClear();
-    await emitCheckoutStatusUpdatePrStatus(
-      statusPayload({
-        requestId: "server-push",
-        status: status({
-          checksStatus: "success",
-          checks: [{ name: "test", status: "success", url: "https://github.com/checks/1" }],
-        }),
-      }),
-    );
-
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.checks[0]?.status).toBe("success");
-    });
-    expect(queryClient.getQueryData(checkoutPrStatusQueryKey(serverId, cwd))).toEqual(
-      statusPayload({
-        requestId: "server-push",
-        status: status({
-          checksStatus: "success",
-          checks: [{ name: "test", status: "success", url: "https://github.com/checks/1" }],
-        }),
-      }),
-    );
-    expect(mockClient.checkoutPrStatus).not.toHaveBeenCalled();
-  });
-
-  it("server-pushed PR status for a different cwd does not overwrite the current cache", async () => {
-    const queryClient = createTestQueryClient();
-    const initial = statusPayload({
-      status: status({
-        checksStatus: "pending",
-        checks: [{ name: "test", status: "pending", url: "https://github.com/checks/1" }],
-      }),
-    });
-    mockClient.checkoutPrStatus.mockResolvedValue(initial);
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook({ queryClient });
-    await hook.mount();
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.checks[0]?.status).toBe("pending");
-    });
-
-    await emitCheckoutStatusUpdatePrStatus(
-      statusPayload({
-        cwd: "/other-repo",
-        requestId: "other-server-push",
-        status: status({
-          checksStatus: "success",
-          checks: [{ name: "test", status: "success", url: "https://github.com/checks/1" }],
-        }),
-      }),
-    );
-
-    expect(queryClient.getQueryData(checkoutPrStatusQueryKey(serverId, cwd))).toEqual(initial);
     expect(
-      queryClient.getQueryData(checkoutPrStatusQueryKey(serverId, "/other-repo")),
-    ).toBeUndefined();
+      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 99 })),
+    ).toBe(true);
   });
 
-  it("passes repoOwner and repoName to the timeline request when present", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(
-      statusPayload({
-        status: {
-          ...status(),
-          repoOwner: "fork-parent",
-          repoName: "paseo",
-        },
-      }),
-    );
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(mockClient.pullRequestTimeline).toHaveBeenCalledWith({
-        cwd,
-        prNumber: 42,
-        repoOwner: "fork-parent",
-        repoName: "paseo",
-      });
+  it("leaves the registry alone when the failure is a generic error", async () => {
+    const error = new Error("network down");
+    const client = createTimelineClient(async () => {
+      throw error;
     });
+    const registry = createInMemoryUnsupportedTimelineRegistry();
+
+    await expect(
+      fetchPrPaneTimelinePage({
+        client,
+        registry,
+        serverId: "host",
+        cwd: "/repo",
+        prNumber: 99,
+        repoOwner: "getpaseo",
+        repoName: "paseo",
+      }),
+    ).rejects.toBe(error);
+
+    expect(
+      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 99 })),
+    ).toBe(false);
   });
 
-  it("lets the mapper reject stale timeline activity for a mismatched PR number", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload());
-    mockClient.pullRequestTimeline.mockResolvedValue(
-      timelinePayload({
+  it("scopes recorded tuples per serverId+cwd+prNumber so other PRs can still be tried", async () => {
+    const client = createTimelineClient(async (input) => {
+      if (input.cwd === "/repo-a") {
+        throw unsupportedTimelineError();
+      }
+      return timelinePayload({ cwd: input.cwd, prNumber: input.prNumber });
+    });
+    const registry = createInMemoryUnsupportedTimelineRegistry();
+
+    await expect(
+      fetchPrPaneTimelinePage({
+        client,
+        registry,
+        serverId: "host",
+        cwd: "/repo-a",
+        prNumber: 1,
+        repoOwner: "getpaseo",
+        repoName: "paseo",
+      }),
+    ).rejects.toThrow();
+
+    const result = await fetchPrPaneTimelinePage({
+      client,
+      registry,
+      serverId: "host",
+      cwd: "/repo-b",
+      prNumber: 2,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+    });
+
+    expect(result.prNumber).toBe(2);
+    expect(
+      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo-a", prNumber: 1 })),
+    ).toBe(true);
+    expect(
+      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo-b", prNumber: 2 })),
+    ).toBe(false);
+  });
+});
+
+describe("isUnsupportedTimelineError", () => {
+  it("matches the daemon's unknown-schema error for pull_request_timeline_request", () => {
+    expect(isUnsupportedTimelineError(unsupportedTimelineError())).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(isUnsupportedTimelineError(new Error("network down"))).toBe(false);
+    expect(isUnsupportedTimelineError("not an error")).toBe(false);
+  });
+
+  it("rejects daemon errors for a different request type", () => {
+    const error = new Error("nope") as Error & { code: string; requestType: string };
+    error.name = "DaemonRpcError";
+    error.code = "unknown_schema";
+    error.requestType = "something_else_request";
+    expect(isUnsupportedTimelineError(error)).toBe(false);
+  });
+});
+
+describe("selectPrPaneState", () => {
+  it("returns null data and no PR number when the status payload has no PR", () => {
+    const state = selectPrPaneState({ ...baseSelectInput, status: null });
+
+    expect(state.data).toBeNull();
+    expect(state.prNumber).toBeNull();
+  });
+
+  it("composes data from status and timeline when both are present", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      timelinePayload: timelinePayload(),
+    });
+
+    expect(state.data?.number).toBe(42);
+    expect(state.data?.title).toBe("Wire real PR pane data");
+    expect(state.data?.activity).toEqual([]);
+  });
+
+  it("returns null data when the consumer disabled timeline rendering", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      timelineEnabled: false,
+      timelinePayload: timelinePayload(),
+    });
+
+    expect(state.data).toBeNull();
+    expect(state.prNumber).toBe(42);
+  });
+
+  it("drops timeline activity that belongs to a different PR number", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      timelinePayload: timelinePayload({
         prNumber: 41,
         items: [
           {
             id: "comment-1",
             kind: "comment",
             author: "octocat",
-            body: "This belongs to another PR",
+            body: "Belongs to another PR",
             createdAt: Date.now(),
-            url: "https://github.com/getpaseo/paseo/pull/41#issuecomment-1",
+            url: "https://github.com/getpaseo/paseo/pull/41#c1",
           },
         ],
       }),
-    );
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.number).toBe(42);
     });
 
-    expect(hook.latest.data?.activity).toEqual([]);
+    expect(state.data?.activity).toEqual([]);
   });
 
-  it("suppresses old-daemon errors and prevents future timeline requests for that tuple", async () => {
-    const unsupportedError = unsupportedTimelineError();
-    mockClient.checkoutPrStatus.mockResolvedValue(
-      statusPayload({ status: status({ number: 99 }) }),
-    );
-    mockClient.pullRequestTimeline.mockRejectedValue(unsupportedError);
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(mockClient.pullRequestTimeline).toHaveBeenCalledTimes(1);
-    });
-
-    await waitForExpectation(() => {
-      expect(hook.latest.error).toBeNull();
-    });
-
-    await hook.rerender({ serverId, cwd });
-    await hook.queryClient.invalidateQueries({
-      queryKey: prPaneTimelineQueryKey({ serverId, cwd, prNumber: 99 }),
-    });
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-
-    expect(mockClient.pullRequestTimeline).toHaveBeenCalledTimes(1);
-    expect(hook.latest.data?.number).toBe(99);
+  it("reports loading while the status query is loading", () => {
+    expect(selectPrPaneState({ ...baseSelectInput, statusIsLoading: true }).isLoading).toBe(true);
   });
 
-  it("surfaces checkout PR status payload errors", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(
-      statusPayload({
-        error: {
-          code: "UNKNOWN",
-          message: "bad daemon payload",
-        },
-      }),
-    );
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.error).not.toBeNull();
-      expect(hook.latest.error?.message).toContain("bad daemon payload");
+  it("reports loading while the timeline is still pending its first response", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      shouldFetchTimeline: true,
+      timelineIsLoading: true,
     });
+    expect(state.isLoading).toBe(true);
   });
 
-  it("retries timeline requests when the unsupported timeline tuple changes", async () => {
-    const cwdA = "/repo-a";
-    const cwdB = "/repo-b";
-    const prNumberA = 123;
-    const prNumberB = 124;
-    const unsupportedError = unsupportedTimelineError();
-
-    mockClient.checkoutPrStatus.mockImplementation(async (requestedCwd: string) =>
-      statusPayload({
-        cwd: requestedCwd,
-        status: status({ number: requestedCwd === cwdA ? prNumberA : prNumberB }),
-      }),
-    );
-    mockClient.pullRequestTimeline.mockImplementation(async (input: { cwd: string }) => {
-      if (input.cwd === cwdA) {
-        throw unsupportedError;
-      }
-      return timelinePayload({ cwd: input.cwd, prNumber: prNumberB });
+  it("does not report loading on the timeline when no fetch was scheduled", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      shouldFetchTimeline: false,
+      timelineIsLoading: true,
     });
-
-    const hook = renderPrPaneHook({ options: { serverId, cwd: cwdA } });
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(countTimelineCalls({ cwd: cwdA, prNumber: prNumberA })).toBe(1);
-    });
-
-    await hook.rerender({ serverId, cwd: cwdA });
-    await hook.queryClient.invalidateQueries({
-      queryKey: prPaneTimelineQueryKey({ serverId, cwd: cwdA, prNumber: prNumberA }),
-    });
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-
-    expect(countTimelineCalls({ cwd: cwdA, prNumber: prNumberA })).toBe(1);
-
-    await hook.rerender({ serverId, cwd: cwdB });
-
-    await waitForExpectation(() => {
-      expect(countTimelineCalls({ cwd: cwdB, prNumber: prNumberB })).toBe(1);
-    });
-    expect(countTimelineCalls({ cwd: cwdA, prNumber: prNumberA })).toBe(1);
+    expect(state.isLoading).toBe(false);
   });
 
-  it("disables the timeline query when githubFeaturesEnabled is false", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(
-      statusPayload({ githubFeaturesEnabled: false, status: status() }),
-    );
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.number).toBe(42);
-    });
-
-    expect(hook.latest.githubFeaturesEnabled).toBe(false);
-    expect(hook.latest.data?.activity).toEqual([]);
-    expect(mockClient.pullRequestTimeline).not.toHaveBeenCalled();
+  it("reports refreshing during background revalidation of either query", () => {
+    expect(
+      selectPrPaneState({
+        ...baseSelectInput,
+        statusIsFetching: true,
+      }).isRefreshing,
+    ).toBe(true);
+    expect(
+      selectPrPaneState({
+        ...baseSelectInput,
+        timelineIsFetching: true,
+      }).isRefreshing,
+    ).toBe(true);
   });
 
-  it("does not poll PR status or timeline after the initial load", async () => {
-    vi.useFakeTimers();
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload());
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForHookResult(() => {
-      expect(hook.latest.data?.number).toBe(42);
+  it("surfaces status payload errors with the daemon's message", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      statusPayloadError: { code: "UNKNOWN", message: "bad daemon payload" },
     });
 
-    await act(async () => {
-      vi.advanceTimersByTime(120_000);
-      await Promise.resolve();
-    });
-
-    expect(mockClient.checkoutPrStatus).toHaveBeenCalledTimes(1);
-    expect(mockClient.pullRequestTimeline).toHaveBeenCalledTimes(1);
+    expect(state.error?.message).toContain("bad daemon payload");
   });
 
-  it("does not refetch PR data on focus or reconnect", async () => {
-    mockClient.checkoutPrStatus.mockResolvedValue(statusPayload());
-    mockClient.pullRequestTimeline.mockResolvedValue(timelinePayload());
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.number).toBe(42);
+  it("falls back to a generic message when the status payload error is empty", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      statusPayloadError: { code: "UNKNOWN", message: "" },
     });
 
-    await act(async () => {
-      focusManager.setFocused(false);
-      focusManager.setFocused(true);
-      onlineManager.setOnline(false);
-      onlineManager.setOnline(true);
-      await Promise.resolve();
-    });
-
-    expect(mockClient.checkoutPrStatus).toHaveBeenCalledTimes(1);
-    expect(mockClient.pullRequestTimeline).toHaveBeenCalledTimes(1);
+    expect(state.error?.message).toBe("Unable to load pull request status");
   });
 
-  it("reports first-load, background refresh, and non-suppressed errors", async () => {
-    const statusDeferred = createDeferred<CheckoutPrStatusPayload>();
-    mockClient.checkoutPrStatus.mockReturnValue(statusDeferred.promise);
-    mockClient.pullRequestTimeline.mockResolvedValue(
-      timelinePayload({
-        error: {
-          kind: "unknown",
-          message: "rate limited",
-        },
-      }),
-    );
-
-    const hook = renderPrPaneHook();
-    await hook.mount();
-
-    expect(hook.latest.isLoading).toBe(true);
-    expect(hook.latest.isRefreshing).toBe(false);
-
-    await act(async () => {
-      statusDeferred.resolve(statusPayload());
+  it("prefers the status thrown error over the timeline error", () => {
+    const statusError = new Error("status broke");
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      statusError,
+      timelineError: new Error("timeline broke"),
     });
 
-    await waitForExpectation(() => {
-      expect(hook.latest.data?.number).toBe(42);
-      expect(hook.latest.error?.message).toBe("rate limited");
+    expect(state.error).toBe(statusError);
+  });
+
+  it("suppresses unsupported timeline errors", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      timelineError: unsupportedTimelineError(),
     });
 
-    const refreshDeferred = createDeferred<CheckoutPrStatusPayload>();
-    mockClient.checkoutPrStatus.mockReturnValue(refreshDeferred.promise);
-    hook.queryClient.invalidateQueries({ queryKey: checkoutPrStatusQueryKey(serverId, cwd) });
+    expect(state.error).toBeNull();
+  });
 
-    await waitForExpectation(() => {
-      expect(hook.latest.isLoading).toBe(false);
-      expect(hook.latest.isRefreshing).toBe(true);
+  it("surfaces timeline payload errors when nothing earlier failed", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      timelinePayload: timelinePayload({ error: { kind: "unknown", message: "rate limited" } }),
     });
 
-    await act(async () => {
-      refreshDeferred.resolve(statusPayload());
-    });
+    expect(state.error?.message).toBe("rate limited");
+  });
 
-    await waitForExpectation(() => {
-      expect(hook.latest.isRefreshing).toBe(false);
-    });
+  it("passes the daemon's githubFeaturesEnabled flag through", () => {
+    expect(
+      selectPrPaneState({
+        ...baseSelectInput,
+        status: prStatus(),
+        githubFeaturesEnabled: false,
+      }).githubFeaturesEnabled,
+    ).toBe(false);
   });
 });
-
-async function waitForHookResult(assertion: () => void): Promise<void> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await act(async () => {
-        vi.advanceTimersByTime(10);
-        await Promise.resolve();
-      });
-    }
-  }
-
-  throw lastError;
-}
-
-function createDeferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-} {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((promiseResolve) => {
-    resolve = promiseResolve;
-  });
-
-  return { promise, resolve };
-}
-
-function countTimelineCalls({
-  cwd: targetCwd,
-  prNumber,
-}: {
-  cwd: string;
-  prNumber: number;
-}): number {
-  return mockClient.pullRequestTimeline.mock.calls.filter(([input]) => {
-    const request = input as { cwd?: string; prNumber?: number | null };
-    return request.cwd === targetCwd && request.prNumber === prNumber;
-  }).length;
-}
