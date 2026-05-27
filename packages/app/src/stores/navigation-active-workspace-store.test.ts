@@ -1,91 +1,132 @@
-/**
- * @vitest-environment jsdom
- */
-import { renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const routerMock = vi.hoisted(() => ({
-  dismissTo: vi.fn(),
-}));
-const pathnameState = vi.hoisted(() => ({
-  value: "/",
-}));
-const localParamsState = vi.hoisted(() => ({
-  value: {} as { serverId?: string | string[]; workspaceId?: string | string[] },
-}));
-const asyncStorageMock = vi.hoisted(() => ({
-  getItem: vi.fn(async () => null as string | null),
-  setItem: vi.fn(async () => undefined),
-}));
-
-vi.mock("expo-router", () => ({
-  router: routerMock,
-  useLocalSearchParams: () => localParamsState.value,
-  usePathname: () => pathnameState.value,
-}));
-
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: asyncStorageMock,
-}));
-
+import { describe, expect, it } from "vitest";
+import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import {
   navigateToLastWorkspace,
   navigateToWorkspace,
-  useActiveWorkspaceSelection,
-} from "@/stores/navigation-active-workspace-store";
+  parseActiveWorkspaceSelection,
+  type NavigateToLastWorkspaceDeps,
+  type NavigateToWorkspaceDeps,
+} from "@/stores/navigation-active-workspace-store.pure";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+
+interface RecordedAgentTab {
+  workspaceKey: string;
+  agentId: string;
+}
+
+function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
+  const navigations: string[] = [];
+  const remembered: ActiveWorkspaceSelection[] = [];
+  const openedAgentTabs: RecordedAgentTab[] = [];
+  const deps: NavigateToWorkspaceDeps = {
+    getSessionWorkspaces: () => null,
+    getSessionAgents: () => [] as Agent[],
+    openWorkspaceAgentTab: (workspaceKey, agentId) =>
+      openedAgentTabs.push({ workspaceKey, agentId }),
+    rememberLastWorkspace: (selection) => remembered.push(selection),
+    navigateToRoute: (route) => navigations.push(route),
+    ...overrides,
+  };
+  return { deps, navigations, remembered, openedAgentTabs };
+}
+
+function createLastSelectionDeps(
+  initial: ActiveWorkspaceSelection | null,
+  overrides: Partial<NavigateToWorkspaceDeps> = {},
+): {
+  deps: NavigateToLastWorkspaceDeps;
+  navigations: string[];
+  remembered: ActiveWorkspaceSelection[];
+} {
+  let lastSelection = initial;
+  const base = createFakeDeps({
+    rememberLastWorkspace: (selection) => {
+      lastSelection = selection;
+      base.remembered.push(selection);
+    },
+    ...overrides,
+  });
+  return {
+    deps: { ...base.deps, getLastWorkspaceSelection: () => lastSelection },
+    navigations: base.navigations,
+    remembered: base.remembered,
+  };
+}
 
 describe("workspace navigation", () => {
-  beforeEach(() => {
-    routerMock.dismissTo.mockReset();
-    asyncStorageMock.setItem.mockClear();
-    pathnameState.value = "/";
-    localParamsState.value = {};
-  });
-
   it("reports when no last workspace is known", () => {
-    expect(navigateToLastWorkspace()).toBe(false);
+    const { deps } = createLastSelectionDeps(null);
+
+    expect(navigateToLastWorkspace(deps)).toBe(false);
   });
 
-  it("navigates to a workspace route", () => {
-    navigateToWorkspace("server-1", "workspace-a");
+  it("navigates to a workspace route and remembers the selection", () => {
+    const { deps, navigations, remembered } = createFakeDeps();
 
-    expect(routerMock.dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
-    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
-      "paseo:last-workspace-route-selection",
-      JSON.stringify({ serverId: "server-1", workspaceId: "workspace-a" }),
-    );
+    navigateToWorkspace("server-1", "workspace-a", deps);
+
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
+    expect(remembered).toEqual([{ serverId: "server-1", workspaceId: "workspace-a" }]);
+  });
+
+  it("focuses the attention agent's tab when a workspace has one", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const agent = {
+      id: "agent-1",
+      cwd: "/repo/workspace-a",
+      requiresAttention: true,
+      attentionReason: "permission",
+    } as unknown as Agent;
+    const { deps, openedAgentTabs } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => [agent],
+    });
+
+    navigateToWorkspace("server-1", "workspace-a", deps);
+
+    expect(openedAgentTabs).toEqual([{ workspaceKey: "server-1:workspace-a", agentId: "agent-1" }]);
   });
 
   it("reads the active workspace from the current route", () => {
-    pathnameState.value = "/h/server-1/workspace/workspace-a";
-
-    const { result } = renderHook(() => useActiveWorkspaceSelection());
-
-    expect(result.current).toEqual({
-      serverId: "server-1",
-      workspaceId: "workspace-a",
+    const selection = parseActiveWorkspaceSelection({
+      pathname: "/h/server-1/workspace/workspace-a",
+      params: {},
     });
+
+    expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
   });
 
   it("falls back to workspace route params during cold route mount", () => {
-    localParamsState.value = {
-      serverId: "server-1",
-      workspaceId: "b64_L3RtcC9wYXNlby1taXNzaW5nLXdvcmtzcGFjZQ",
-    };
+    const selection = parseActiveWorkspaceSelection({
+      pathname: "/",
+      params: {
+        serverId: "server-1",
+        workspaceId: "b64_L3RtcC9wYXNlby1taXNzaW5nLXdvcmtzcGFjZQ",
+      },
+    });
 
-    const { result } = renderHook(() => useActiveWorkspaceSelection());
-
-    expect(result.current).toEqual({
+    expect(selection).toEqual({
       serverId: "server-1",
       workspaceId: "/tmp/paseo-missing-workspace",
     });
   });
 
-  it("navigates to the last workspace observed by the route reader", () => {
-    pathnameState.value = "/h/server-1/workspace/workspace-a";
-    renderHook(() => useActiveWorkspaceSelection());
+  it("navigates to the last workspace once a route observation has been remembered", () => {
+    const { deps, navigations } = createLastSelectionDeps(null);
 
-    expect(navigateToLastWorkspace()).toBe(true);
-    expect(routerMock.dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
+    const observed = parseActiveWorkspaceSelection({
+      pathname: "/h/server-1/workspace/workspace-a",
+      params: {},
+    });
+    expect(observed).not.toBeNull();
+    if (observed) {
+      deps.rememberLastWorkspace(observed);
+    }
+
+    expect(navigateToLastWorkspace(deps)).toBe(true);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
   });
 });
