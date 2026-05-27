@@ -1,63 +1,53 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import {
+  type CollapsedProjectsState,
+  mergePersistedCollapsedProjects,
+  serializeCollapsedProjects,
+  setProjectCollapsed,
+  toggleProjectCollapsed,
+} from "@/stores/sidebar-collapsed-sections-store.pure";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn(async () => null),
-    setItem: vi.fn(),
-    removeItem: vi.fn(),
-  },
-}));
+function emptyState(): CollapsedProjectsState {
+  return { collapsedProjectKeys: new Set() };
+}
 
-import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-
-describe("sidebar-collapsed-sections-store", () => {
-  beforeEach(() => {
-    useSidebarCollapsedSectionsStore.setState({
-      collapsedProjectKeys: new Set(),
-    });
-  });
-
+describe("sidebar collapsed projects transitions", () => {
   it("tracks collapsed project keys as a Set", () => {
-    const store = useSidebarCollapsedSectionsStore.getState();
+    let state = emptyState();
 
-    store.setProjectCollapsed("project-a", true);
-    store.toggleProjectCollapsed("project-b");
-    store.toggleProjectCollapsed("project-a");
+    state = setProjectCollapsed(state, "project-a", true);
+    state = toggleProjectCollapsed(state, "project-b");
+    state = toggleProjectCollapsed(state, "project-a");
 
-    expect(Array.from(useSidebarCollapsedSectionsStore.getState().collapsedProjectKeys)).toEqual([
-      "project-b",
-    ]);
+    expect(Array.from(state.collapsedProjectKeys)).toEqual(["project-b"]);
   });
 
   it("serializes collapsed project keys for preference storage", () => {
-    useSidebarCollapsedSectionsStore.setState({
+    const state: CollapsedProjectsState = {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
-    });
+    };
 
-    const partialize = useSidebarCollapsedSectionsStore.persist.getOptions().partialize;
-
-    expect(partialize?.(useSidebarCollapsedSectionsStore.getState())).toEqual({
+    expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
     });
   });
 
   it("restores collapsed project keys from persisted preferences", () => {
-    const merge = useSidebarCollapsedSectionsStore.persist.getOptions().merge;
-    const restored = merge?.(
-      {
-        collapsedProjectKeys: ["project-a", "project-b", 42],
-      },
-      useSidebarCollapsedSectionsStore.getState(),
+    const restored = mergePersistedCollapsedProjects(
+      { collapsedProjectKeys: ["project-a", "project-b", 42] },
+      emptyState(),
     );
 
-    expect(Array.from(restored?.collapsedProjectKeys ?? [])).toEqual(["project-a", "project-b"]);
+    expect(Array.from(restored.collapsedProjectKeys)).toEqual(["project-a", "project-b"]);
   });
 
   it("keeps the existing state object when persisted preferences do not change collapsed keys", () => {
-    const merge = useSidebarCollapsedSectionsStore.persist.getOptions().merge;
-    const currentState = useSidebarCollapsedSectionsStore.getState();
+    const currentState = emptyState();
 
-    expect(merge?.({}, currentState)).toBe(currentState);
-    expect(merge?.({ collapsedProjectKeys: [] }, currentState)).toBe(currentState);
+    expect(mergePersistedCollapsedProjects(undefined, currentState)).toBe(currentState);
+    expect(mergePersistedCollapsedProjects({}, currentState)).toBe(currentState);
+    expect(mergePersistedCollapsedProjects({ collapsedProjectKeys: [] }, currentState)).toBe(
+      currentState,
+    );
   });
 });

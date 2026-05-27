@@ -1,41 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import {
+  type CollapsedProjectsState,
+  mergePersistedCollapsedProjects,
+  serializeCollapsedProjects,
+  setProjectCollapsed,
+  toggleProjectCollapsed,
+} from "./sidebar-collapsed-sections-store.pure";
 
-interface SidebarCollapsedSectionsState {
-  collapsedProjectKeys: Set<string>;
+interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
   toggleProjectCollapsed: (projectKey: string) => void;
   setProjectCollapsed: (projectKey: string, collapsed: boolean) => void;
-}
-
-interface PersistedSidebarCollapsedSectionsState {
-  collapsedProjectKeys?: string[];
-}
-
-function serializeCollapsedProjectKeys(keys: Set<string>): string[] {
-  return Array.from(keys);
-}
-
-function deserializeCollapsedProjectKeys(value: unknown): Set<string> {
-  if (!Array.isArray(value)) {
-    return new Set();
-  }
-
-  return new Set(value.filter((key): key is string => typeof key === "string"));
-}
-
-function areSetsEqual(left: Set<string>, right: Set<string>): boolean {
-  if (left.size !== right.size) {
-    return false;
-  }
-
-  for (const key of left) {
-    if (!right.has(key)) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsState>()(
@@ -43,49 +19,19 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
     (set) => ({
       collapsedProjectKeys: new Set(),
       toggleProjectCollapsed: (projectKey) =>
-        set((state) => {
-          const next = new Set(state.collapsedProjectKeys);
-          if (next.has(projectKey)) {
-            next.delete(projectKey);
-          } else {
-            next.add(projectKey);
-          }
-          return { collapsedProjectKeys: next };
-        }),
+        set((state) => toggleProjectCollapsed(state, projectKey)),
       setProjectCollapsed: (projectKey, collapsed) =>
-        set((state) => {
-          const next = new Set(state.collapsedProjectKeys);
-          if (collapsed) {
-            next.add(projectKey);
-          } else {
-            next.delete(projectKey);
-          }
-          return { collapsedProjectKeys: next };
-        }),
+        set((state) => setProjectCollapsed(state, projectKey, collapsed)),
     }),
     {
       name: "sidebar-collapsed-sections",
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        collapsedProjectKeys: serializeCollapsedProjectKeys(state.collapsedProjectKeys),
-      }),
-      merge: (persistedState, currentState) => {
-        const persisted = persistedState as PersistedSidebarCollapsedSectionsState | undefined;
-        if (!persisted?.collapsedProjectKeys) {
-          return currentState;
-        }
-        const collapsedProjectKeys = deserializeCollapsedProjectKeys(
-          persisted.collapsedProjectKeys,
-        );
-        if (areSetsEqual(currentState.collapsedProjectKeys, collapsedProjectKeys)) {
-          return currentState;
-        }
-
-        return {
-          ...currentState,
-          collapsedProjectKeys,
-        };
-      },
+      partialize: (state) => serializeCollapsedProjects(state),
+      merge: (persistedState, currentState) =>
+        mergePersistedCollapsedProjects(
+          persistedState as { collapsedProjectKeys?: unknown } | undefined,
+          currentState,
+        ),
     },
   ),
 );
