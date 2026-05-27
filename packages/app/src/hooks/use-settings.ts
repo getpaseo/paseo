@@ -9,45 +9,55 @@ import {
   useDesktopSettings,
 } from "@/desktop/settings/desktop-settings";
 import { isElectronRuntime } from "@/desktop/host";
-import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import {
+  APP_SETTINGS_KEY,
+  APP_SETTINGS_QUERY_KEY,
+  DEFAULT_APP_SETTINGS,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  MAX_TERMINAL_SCROLLBACK_LINES,
+  MIN_TERMINAL_SCROLLBACK_LINES,
+  loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
+  loadSettingsFromStorage as loadSettingsFromStoragePure,
+  parseTerminalScrollbackLines,
+  saveAppSettings as saveAppSettingsPure,
+  type AppSettings,
+  type DesktopSettingsBridge,
+  type KeyValueStorage,
+  type ReleaseChannel,
+  type SendBehavior,
+  type ServiceUrlBehavior,
+  type Settings,
+  type SettingsDeps,
+} from "./use-settings.pure";
 
-export const APP_SETTINGS_KEY = "@paseo:app-settings";
-const LEGACY_SETTINGS_KEY = "@paseo:settings";
-const APP_SETTINGS_QUERY_KEY = ["app-settings"];
-
-export type SendBehavior = "interrupt" | "queue";
-export type ReleaseChannel = "stable" | "beta";
-export type ServiceUrlBehavior = "ask" | "in-app" | "external";
-
-const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
-const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
-export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
-export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
-export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
-
-export interface AppSettings {
-  theme: ThemeName | "auto";
-  sendBehavior: SendBehavior;
-  serviceUrlBehavior: ServiceUrlBehavior;
-  terminalScrollbackLines: number;
-}
-
-export interface Settings extends AppSettings {
-  manageBuiltInDaemon: boolean;
-  releaseChannel: ReleaseChannel;
-}
-
-export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
-  theme: "auto",
-  sendBehavior: "interrupt",
-  serviceUrlBehavior: "ask",
-  terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
+export {
+  APP_SETTINGS_KEY,
+  DEFAULT_APP_SETTINGS,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  MAX_TERMINAL_SCROLLBACK_LINES,
+  MIN_TERMINAL_SCROLLBACK_LINES,
+  parseTerminalScrollbackLines,
+};
+export type {
+  AppSettings,
+  DesktopSettingsBridge,
+  KeyValueStorage,
+  ReleaseChannel,
+  SendBehavior,
+  ServiceUrlBehavior,
+  Settings,
+  SettingsDeps,
 };
 
-export const DEFAULT_APP_SETTINGS: Settings = {
-  ...DEFAULT_CLIENT_SETTINGS,
-  manageBuiltInDaemon: true,
-  releaseChannel: "stable",
+const productionDeps: SettingsDeps = {
+  storage: AsyncStorage,
+  desktop: {
+    isElectron: isElectronRuntime,
+    loadDesktopSettings,
+    migrateLegacyDesktopSettings,
+  },
 };
 
 export interface UseAppSettingsReturn {
@@ -70,7 +80,7 @@ export function useAppSettings(): UseAppSettingsReturn {
   const queryClient = useQueryClient();
   const { data, isPending, error } = useQuery({
     queryKey: APP_SETTINGS_QUERY_KEY,
-    queryFn: loadAppSettingsFromStorage,
+    queryFn: () => loadAppSettingsFromStorage(),
     staleTime: Infinity,
     gcTime: Infinity,
   });
@@ -180,146 +190,19 @@ export async function persistAppSettings(updates: Partial<AppSettings>): Promise
 export async function saveAppSettings(input: {
   queryClient: QueryClient;
   updates: Partial<AppSettings>;
+  deps?: SettingsDeps;
 }): Promise<void> {
-  const current =
-    input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
-    (await loadAppSettingsFromStorage());
-  const next = { ...current, ...input.updates };
-  input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-  await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+  await saveAppSettingsPure({
+    queryClient: input.queryClient,
+    updates: input.updates,
+    deps: input.deps ?? productionDeps,
+  });
 }
 
-export async function loadAppSettingsFromStorage(): Promise<AppSettings> {
-  try {
-    const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored) as Partial<AppSettings>;
-      return { ...DEFAULT_CLIENT_SETTINGS, ...pickAppSettings(parsed) };
-    }
-
-    const legacyStored = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
-    if (legacyStored) {
-      const legacyParsed = JSON.parse(legacyStored) as Record<string, unknown>;
-      const next = {
-        ...DEFAULT_CLIENT_SETTINGS,
-        ...pickAppSettingsFromLegacy(legacyParsed),
-      } satisfies AppSettings;
-      await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
-      return next;
-    }
-
-    await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(DEFAULT_CLIENT_SETTINGS));
-    return DEFAULT_CLIENT_SETTINGS;
-  } catch (error) {
-    console.error("[AppSettings] Failed to load settings:", error);
-    throw error;
-  }
+export async function loadAppSettingsFromStorage(deps?: SettingsDeps): Promise<AppSettings> {
+  return loadAppSettingsFromStoragePure(deps ?? productionDeps);
 }
 
-export async function loadSettingsFromStorage(): Promise<Settings> {
-  const legacyDesktopSettings = isElectronRuntime()
-    ? await loadLegacyDesktopSettingsFromStorage()
-    : null;
-  const appSettings = await loadAppSettingsFromStorage();
-
-  if (!isElectronRuntime()) {
-    return {
-      ...DEFAULT_APP_SETTINGS,
-      ...appSettings,
-    };
-  }
-
-  if (legacyDesktopSettings) {
-    await migrateLegacyDesktopSettings(legacyDesktopSettings);
-  }
-
-  const desktopSettings = await loadDesktopSettings();
-  return {
-    ...DEFAULT_APP_SETTINGS,
-    ...appSettings,
-    manageBuiltInDaemon: desktopSettings.daemon.manageBuiltInDaemon,
-    releaseChannel: desktopSettings.releaseChannel,
-  };
-}
-
-function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
-  const result: Partial<AppSettings> = {};
-  if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
-    result.theme = stored.theme;
-  }
-  if (stored.sendBehavior === "interrupt" || stored.sendBehavior === "queue") {
-    result.sendBehavior = stored.sendBehavior;
-  }
-  if (
-    typeof stored.serviceUrlBehavior === "string" &&
-    VALID_SERVICE_URL_BEHAVIORS.has(stored.serviceUrlBehavior)
-  ) {
-    result.serviceUrlBehavior = stored.serviceUrlBehavior;
-  }
-  const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
-  if (terminalScrollbackLines !== null) {
-    result.terminalScrollbackLines = terminalScrollbackLines;
-  }
-  return result;
-}
-
-function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<AppSettings> {
-  const result: Partial<AppSettings> = {};
-  if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
-    result.theme = legacy.theme;
-  }
-  return result;
-}
-
-export function parseTerminalScrollbackLines(value: unknown): number | null {
-  let numericValue = NaN;
-  if (typeof value === "number") {
-    numericValue = value;
-  } else if (typeof value === "string" && value.trim().length > 0) {
-    numericValue = Number(value);
-  }
-  if (!Number.isFinite(numericValue)) {
-    return null;
-  }
-  return Math.min(
-    MAX_TERMINAL_SCROLLBACK_LINES,
-    Math.max(MIN_TERMINAL_SCROLLBACK_LINES, Math.floor(numericValue)),
-  );
-}
-
-async function loadLegacyDesktopSettingsFromStorage(): Promise<{
-  manageBuiltInDaemon?: boolean;
-  releaseChannel?: ReleaseChannel;
-} | null> {
-  const stored = await loadRendererSettingsPayload();
-  if (!stored) {
-    return null;
-  }
-
-  const result: {
-    manageBuiltInDaemon?: boolean;
-    releaseChannel?: ReleaseChannel;
-  } = {};
-
-  if (typeof stored.manageBuiltInDaemon === "boolean") {
-    result.manageBuiltInDaemon = stored.manageBuiltInDaemon;
-  }
-  if (stored.releaseChannel === "stable" || stored.releaseChannel === "beta") {
-    result.releaseChannel = stored.releaseChannel;
-  }
-
-  return Object.keys(result).length > 0 ? result : null;
-}
-
-async function loadRendererSettingsPayload(): Promise<Record<string, unknown> | null> {
-  const current = await AsyncStorage.getItem(APP_SETTINGS_KEY);
-  if (current) {
-    return JSON.parse(current) as Record<string, unknown>;
-  }
-
-  const legacy = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
-  if (!legacy) {
-    return null;
-  }
-  return JSON.parse(legacy) as Record<string, unknown>;
+export async function loadSettingsFromStorage(deps?: SettingsDeps): Promise<Settings> {
+  return loadSettingsFromStoragePure(deps ?? productionDeps);
 }
