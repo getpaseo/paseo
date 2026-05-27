@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
-import { getDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
+import { readDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
+import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import {
   type ClientActivityTracker,
   createClientActivityTracker,
@@ -93,7 +94,7 @@ export function useClientActivity({
 
     let disposed = false;
     const pollSystemIdleTime = async () => {
-      const systemIdleMs = await getDesktopSystemIdleTimeMs();
+      const systemIdleMs = await readDesktopSystemIdleTimeMs(invokeDesktopCommand);
       if (disposed) return;
       tracker.notifySystemIdleMs(systemIdleMs);
     };
