@@ -28,11 +28,21 @@ function makeTempDir(): string {
   return dir;
 }
 
-function createExecutable(dir: string, name: string, body = "echo test-version\n"): string {
-  const file = path.join(dir, name);
-  writeFileSync(file, `#!/bin/sh\n${body}`, "utf8");
+interface TestExecutable {
+  command: string;
+  path: string;
+}
+
+function createExecutable(dir: string, name: string, body = "echo test-version\n"): TestExecutable {
+  const command = process.platform === "win32" ? `${name}.cmd` : name;
+  const file = path.join(dir, command);
+  const contents = process.platform === "win32" ? "@echo test-version\r\n" : `#!/bin/sh\n${body}`;
+  writeFileSync(file, contents, "utf8");
   chmodSync(file, 0o755);
-  return file;
+  return {
+    command,
+    path: file,
+  };
 }
 
 describe("resolveProviderCommandPrefix", () => {
@@ -101,15 +111,15 @@ describe("resolveProviderLaunch", () => {
     process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
 
     const launch = await resolveProviderLaunch(
-      { mode: "replace", argv: ["custom-provider", "--wrapped"] },
+      { mode: "replace", argv: [shim.command, "--wrapped"] },
       "provider",
     );
 
     expect(launch).toEqual({
-      command: "custom-provider",
+      command: shim.command,
       args: ["--wrapped"],
       source: "override",
-      resolvedPath: shim,
+      resolvedPath: shim.path,
     });
   });
 
@@ -118,15 +128,15 @@ describe("resolveProviderLaunch", () => {
     const shim = createExecutable(binDir, "custom-provider", "exit 42\n");
 
     const launch = await resolveProviderLaunch(
-      { mode: "replace", argv: [shim, "--wrapped"] },
+      { mode: "replace", argv: [shim.path, "--wrapped"] },
       "provider",
     );
 
     expect(launch).toEqual({
-      command: shim,
+      command: shim.path,
       args: ["--wrapped"],
       source: "override",
-      resolvedPath: shim,
+      resolvedPath: shim.path,
     });
   });
 
@@ -137,14 +147,14 @@ describe("resolveProviderLaunch", () => {
 
     const launch = await resolveProviderLaunch(
       { mode: "append", args: ["--profile", "work"] },
-      "default-provider",
+      binary.command,
     );
 
     expect(launch).toEqual({
-      command: binary,
+      command: binary.path,
       args: ["--profile", "work"],
       source: "path",
-      resolvedPath: binary,
+      resolvedPath: binary.path,
     });
   });
 
@@ -153,13 +163,13 @@ describe("resolveProviderLaunch", () => {
     const binary = createExecutable(binDir, "default-provider");
     process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
 
-    const launch = await resolveProviderLaunch(undefined, "default-provider");
+    const launch = await resolveProviderLaunch(undefined, binary.command);
 
     expect(launch).toEqual({
-      command: binary,
+      command: binary.path,
       args: [],
       source: "path",
-      resolvedPath: binary,
+      resolvedPath: binary.path,
     });
   });
 
