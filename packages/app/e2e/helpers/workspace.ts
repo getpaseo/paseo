@@ -36,6 +36,15 @@ async function configureRemote(input: {
     execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
+    if (originUrl) {
+      // Relabel origin to a display URL after the local tracking remote is set
+      // up, so project grouping shows the remote's owner/repo while branch
+      // tracking refs still resolve locally (no fetch from the synthetic URL).
+      execSync(`git remote set-url origin ${JSON.stringify(originUrl)}`, {
+        cwd: repoPath,
+        stdio: "ignore",
+      });
+    }
     return;
   }
   if (originUrl) {

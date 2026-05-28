@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { connectDaemonClient } from "./daemon-client-loader";
-import { createTempGitRepo } from "./workspace";
+import { createTempDirectory, createTempGitRepo } from "./workspace";
 
 /**
  * The general-purpose E2E daemon client used to seed and drive state out of
@@ -73,10 +73,11 @@ export async function connectSeedClient(): Promise<SeedDaemonClient> {
 }
 
 /**
- * A temp git repo opened as a workspace, with a seed client connected to drive
- * it out of band. `cleanup` closes the client and removes the repo. This is the
- * canonical bootstrap for specs that need a real workspace plus daemon access;
- * domain helpers (e.g. mock-agent) build on it rather than re-rolling the trio.
+ * A temp project opened as a workspace, with a seed client connected to drive
+ * it out of band. `cleanup` closes the client and removes the project. This is
+ * the canonical bootstrap for specs that need a real workspace plus daemon
+ * access; domain helpers (e.g. mock-agent) build on it rather than re-rolling
+ * the trio. `repoPath` is the project root on disk (git repo or plain dir).
  */
 export interface SeededWorkspace {
   client: SeedDaemonClient;
@@ -89,29 +90,35 @@ export interface SeededWorkspace {
 
 export async function seedWorkspace(options: {
   repoPrefix: string;
+  /** Repo fixture options; only applies to git projects (the default). */
   repo?: Parameters<typeof createTempGitRepo>[1];
+  /** Set to false to seed a plain non-git directory instead of a git repo. */
+  git?: boolean;
 }): Promise<SeededWorkspace> {
-  const repo = await createTempGitRepo(options.repoPrefix, options.repo);
+  const project =
+    options.git === false
+      ? await createTempDirectory(options.repoPrefix)
+      : await createTempGitRepo(options.repoPrefix, options.repo);
   const client = await connectSeedClient();
   try {
-    const opened = await client.openProject(repo.path);
+    const opened = await client.openProject(project.path);
     if (!opened.workspace) {
-      throw new Error(opened.error ?? `Failed to open project ${repo.path}`);
+      throw new Error(opened.error ?? `Failed to open project ${project.path}`);
     }
     return {
       client,
-      repoPath: repo.path,
+      repoPath: project.path,
       workspaceId: opened.workspace.id,
       workspaceName: opened.workspace.name,
       workspaceDirectory: opened.workspace.workspaceDirectory,
       cleanup: async () => {
         await client.close().catch(() => undefined);
-        await repo.cleanup().catch(() => undefined);
+        await project.cleanup().catch(() => undefined);
       },
     };
   } catch (error) {
     await client.close().catch(() => undefined);
-    await repo.cleanup().catch(() => undefined);
+    await project.cleanup().catch(() => undefined);
     throw error;
   }
 }
