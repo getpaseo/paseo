@@ -1,6 +1,4 @@
 import { execSync } from "node:child_process";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
@@ -10,7 +8,7 @@ import {
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
 } from "./helpers/sidebar";
-import { createTempGitRepo } from "./helpers/workspace";
+import { createTempDirectory, createTempGitRepo } from "./helpers/workspace";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
 import { connectWorkspaceSetupClient, openProjectViaDaemon } from "./helpers/workspace-setup";
 import { getServerId } from "./helpers/server-id";
@@ -28,18 +26,6 @@ function setGitHubRemote(repoPath: string): void {
     cwd: repoPath,
     stdio: "ignore",
   });
-}
-
-async function createTempDirectory(prefix = "paseo-e2e-dir-") {
-  const tempRoot = process.platform === "win32" ? tmpdir() : await realpath("/tmp");
-  const dirPath = await mkdtemp(path.join(tempRoot, prefix));
-  await writeFile(path.join(dirPath, "README.md"), "# Temp Directory\n");
-  return {
-    path: dirPath,
-    cleanup: async () => {
-      await rm(dirPath, { recursive: true, force: true });
-    },
-  };
 }
 
 async function openWorkspaceFromSidebar(
