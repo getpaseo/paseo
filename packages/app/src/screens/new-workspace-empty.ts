@@ -1,4 +1,3 @@
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
@@ -15,14 +14,15 @@ export interface CreateEmptyWorkspaceInput {
     attachments: AgentAttachment[];
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
+  navigate: (serverId: string, workspaceId: string) => void;
 }
 
 export async function runCreateEmptyWorkspace(input: CreateEmptyWorkspaceInput): Promise<void> {
-  const { payload, ensureWorkspace, serverId } = input;
+  const { payload, ensureWorkspace, serverId, navigate } = input;
   const ensuredWorkspace = await ensureWorkspace({
     cwd: payload.cwd,
     prompt: "",
     attachments: [],
   });
-  navigateToWorkspace(serverId, ensuredWorkspace.id);
+  navigate(serverId, ensuredWorkspace.id);
 }

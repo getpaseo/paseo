@@ -21,6 +21,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useGithubSearchQuery } from "@/git/use-github-search-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
@@ -759,6 +760,7 @@ export function NewWorkspaceScreen({
             payload,
             ensureWorkspace,
             serverId,
+            navigate: navigateToWorkspace,
           });
           return;
         }
