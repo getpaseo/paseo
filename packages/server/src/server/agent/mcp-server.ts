@@ -9,7 +9,7 @@ import type {
   ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import type { AgentProvider } from "./agent-sdk-types.js";
+import type { AgentMode, AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, WaitForAgentResult } from "./agent-manager.js";
 import {
   AgentFeatureSchema,
@@ -49,6 +49,7 @@ import {
 } from "@getpaseo/protocol/schedule/types";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { resolveSnapshotCwd } from "./provider-snapshot-manager.js";
+import type { ProviderCatalog } from "./provider-catalog.js";
 import {
   AgentModelSchema,
   AgentProviderEnum,
@@ -89,6 +90,7 @@ export interface AgentMcpServerOptions {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
+  providerCatalog?: ProviderCatalog | null;
   github?: GitHubService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -115,47 +117,6 @@ export interface AgentMcpServerOptions {
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
   logger: Logger;
-}
-
-const CLAUDE_TO_CODEX_MODE: Record<string, string> = {
-  plan: "read-only",
-  default: "auto",
-  acceptEdits: "auto",
-  bypassPermissions: "full-access",
-};
-
-const CODEX_TO_CLAUDE_MODE: Record<string, string> = {
-  "read-only": "plan",
-  auto: "default",
-  "full-access": "bypassPermissions",
-};
-
-function mapModeAcrossProviders(
-  sourceMode: string,
-  sourceProvider: AgentProvider,
-  targetProvider: AgentProvider,
-): string {
-  if (sourceProvider === targetProvider) {
-    return sourceMode;
-  }
-
-  if (sourceProvider === "claude" && targetProvider === "codex") {
-    const mapped = CLAUDE_TO_CODEX_MODE[sourceMode];
-    if (mapped) {
-      return mapped;
-    }
-    return "auto";
-  }
-
-  if (sourceProvider === "codex" && targetProvider === "claude") {
-    const mapped = CODEX_TO_CLAUDE_MODE[sourceMode];
-    if (mapped) {
-      return mapped;
-    }
-    return "default";
-  }
-
-  return sourceMode;
 }
 
 function addModelVisibleStructuredContent(result: CallToolResult): CallToolResult {
@@ -260,7 +221,11 @@ function resolveAgentListActivityTime(agent: AgentListItemPayload): number {
 function resolveRegisteredProviderIds(
   agentManager: AgentManager,
   providerRegistry: Record<AgentProvider, ProviderDefinition> | null | undefined,
+  providerCatalog: ProviderCatalog | null | undefined,
 ): AgentProvider[] {
+  if (providerCatalog) {
+    return providerCatalog.listRegisteredProviderIds();
+  }
   return providerRegistry ? Object.keys(providerRegistry) : agentManager.getRegisteredProviderIds();
 }
 
@@ -269,36 +234,29 @@ interface ProviderSummary {
   label: string;
   description: string;
   enabled: boolean;
-  modes: ProviderDefinition["modes"];
+  modes: AgentMode[];
   status: string;
   error?: string;
 }
 
-async function resolveProviderSummary(
-  provider: ProviderDefinition,
-  logger: Logger,
-): Promise<ProviderSummary> {
-  const base = {
-    id: provider.id,
-    label: provider.label,
-    description: provider.description,
-    modes: provider.modes,
+function toProviderSummary(entry: {
+  provider: AgentProvider;
+  label?: string;
+  description?: string;
+  enabled: boolean;
+  modes?: AgentMode[];
+  status: string;
+  error?: string;
+}): ProviderSummary {
+  return {
+    id: entry.provider,
+    label: entry.label ?? entry.provider,
+    description: entry.description ?? "",
+    enabled: entry.enabled,
+    modes: entry.modes ?? [],
+    status: entry.status === "ready" ? "available" : entry.status,
+    ...(entry.error ? { error: entry.error } : {}),
   };
-  if (!provider.enabled) {
-    return { ...base, enabled: false, status: "unavailable" };
-  }
-  try {
-    const available = await provider.createClient(logger).isAvailable();
-    return { ...base, enabled: true, status: available ? "available" : "unavailable" };
-  } catch (availabilityError) {
-    return {
-      ...base,
-      enabled: true,
-      status: "unavailable",
-      error:
-        availabilityError instanceof Error ? availabilityError.message : String(availabilityError),
-    };
-  }
 }
 
 function compareAgentListItems(a: AgentListItemPayload, b: AgentListItemPayload): number {
@@ -540,6 +498,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     terminalManager,
     scheduleService,
     providerRegistry,
+    providerCatalog,
     callerAgentId,
     resolveSpeakHandler,
     resolveCallerContext,
@@ -567,6 +526,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       throw new Error(`Parent agent ${callerAgentId} not found`);
     }
     return parentAgent;
+  };
+
+  const requireProviderCatalog = (): ProviderCatalog => {
+    if (!providerCatalog) {
+      throw new Error("Provider catalog is not configured");
+    }
+    return providerCatalog;
   };
 
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
@@ -639,13 +605,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return {
       provider: resolvedProvider,
       cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
-      ...(callerAgent.currentModeId
+      ...(callerAgent.currentModeId && callerAgent.provider === resolvedProvider
         ? {
-            modeId: mapModeAcrossProviders(
-              callerAgent.currentModeId,
-              callerAgent.provider,
-              resolvedProvider,
-            ),
+            modeId: callerAgent.currentModeId,
           }
         : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
@@ -928,6 +890,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           workspaceGitService: options.workspaceGitService,
           terminalManager,
           providerRegistry,
+          providerCatalog,
           createPaseoWorktree: options.createPaseoWorktree,
         },
         {
@@ -1249,7 +1212,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const structuredSnapshot = buildStoredAgentPayload(
         record,
-        resolveRegisteredProviderIds(agentManager, providerRegistry),
+        resolveRegisteredProviderIds(agentManager, providerRegistry, providerCatalog),
       );
       return {
         content: [],
@@ -1296,7 +1259,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       );
       const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
       const storedRecords = await agentStorage.list();
-      const registeredProviderIds = resolveRegisteredProviderIds(agentManager, providerRegistry);
+      const registeredProviderIds = resolveRegisteredProviderIds(
+        agentManager,
+        providerRegistry,
+        providerCatalog,
+      );
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
         .filter((record) => includeArchived || !record.archivedAt)
@@ -1941,10 +1908,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async () => {
-      const providers = await Promise.all(
-        Object.values(providerRegistry ?? {}).map((provider) =>
-          resolveProviderSummary(provider, childLogger),
-        ),
+      const providers = (await requireProviderCatalog().listProviders({ wait: true })).map(
+        toProviderSummary,
       );
       return {
         content: [],
@@ -1967,19 +1932,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ provider }) => {
-      if (!providerRegistry) {
-        throw new Error("Provider registry is not configured");
-      }
-
-      const definition = providerRegistry[provider];
-      if (!definition) {
-        throw new Error(`Provider ${provider} is not configured`);
-      }
-      if (!definition.enabled) {
-        throw new Error(`Provider '${provider}' is disabled`);
-      }
-
-      const models = await definition.fetchModels({ cwd: resolveSnapshotCwd(), force: false });
+      const models = await requireProviderCatalog().listModels({
+        cwd: resolveSnapshotCwd(),
+        provider,
+        wait: true,
+      });
       return {
         content: [],
         structuredContent: ensureValidJson({
@@ -2014,21 +1971,19 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         defaultProvider: provider,
       });
       const providerId = resolvedProviderModel.provider;
-      if (!providerRegistry) {
-        throw new Error("Provider registry is not configured");
-      }
-      const definition = providerRegistry[providerId];
-      if (!definition) {
-        throw new Error(`Provider ${providerId} is not configured`);
-      }
-      const summary = await resolveProviderSummary(definition, childLogger);
-      if (!definition.enabled) {
+      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
+      const entry = await requireProviderCatalog().getProvider({
+        cwd: resolvedCwd,
+        provider: providerId,
+        wait: true,
+      });
+      const summary = toProviderSummary(entry);
+      if (!entry.enabled) {
         throw new Error(`Provider '${providerId}' is disabled`);
       }
-      if (summary.status !== "available") {
-        throw new Error(summary.error ?? `Provider '${providerId}' is unavailable`);
+      if (entry.status !== "ready") {
+        throw new Error(entry.error ?? `Provider '${providerId}' is unavailable`);
       }
-      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
       const selectedModel = settings?.model ?? resolvedProviderModel.model;
       const features = await agentManager.listDraftFeatures({
         provider: providerId,

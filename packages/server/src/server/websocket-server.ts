@@ -34,8 +34,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
-import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import { buildProviderRegistry, createClientsFromRegistry } from "./agent/provider-registry.js";
+import { ProviderRuntime } from "./agent/provider-runtime.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -376,7 +375,7 @@ export class VoiceAssistantWebSocketServer {
   private agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private isDev!: boolean;
-  private readonly providerSnapshotManager: ProviderSnapshotManager;
+  private readonly providerRuntime: ProviderRuntime;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
@@ -438,6 +437,7 @@ export class VoiceAssistantWebSocketServer {
         publicUseTls: boolean;
       };
     },
+    providerRuntime?: ProviderRuntime,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -481,15 +481,15 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost,
       resolveScriptHealth,
     });
-    const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
-    this.providerSnapshotManager = new ProviderSnapshotManager(
-      buildProviderRegistry(providerSnapshotLogger, {
+    const providerRuntimeLogger = this.logger.child({ module: "provider-runtime" });
+    this.providerRuntime =
+      providerRuntime ??
+      new ProviderRuntime(providerRuntimeLogger, {
         runtimeSettings: this.agentProviderRuntimeSettings,
         providerOverrides: this.providerOverrides,
+        workspaceGitService: this.workspaceGitService,
         isDev: this.isDev,
-      }),
-      providerSnapshotLogger,
-    );
+      });
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
@@ -502,13 +502,14 @@ export class VoiceAssistantWebSocketServer {
         this.providerOverrides,
         config.providers,
       );
-      const registry = buildProviderRegistry(providerSnapshotLogger, {
+      this.providerRuntime.replace({
         runtimeSettings: this.agentProviderRuntimeSettings,
         providerOverrides: this.providerOverrides,
+        workspaceGitService: this.workspaceGitService,
         isDev: this.isDev,
       });
-      const clients = createClientsFromRegistry(registry, providerSnapshotLogger);
-      this.providerSnapshotManager.replaceRegistry(registry);
+      const registry = this.providerRuntime.getRegistry();
+      const clients = this.providerRuntime.createClients(providerRuntimeLogger);
       this.agentManager.updateProviderRegistry({ providerDefinitions: registry, clients });
       this.broadcastDaemonConfigChanged(config);
     });
@@ -752,7 +753,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     await Promise.all(cleanupPromises);
-    this.providerSnapshotManager.destroy();
+    this.providerRuntime.destroy();
     this.checkoutDiffManager.dispose();
     this.workspaceGitService.dispose();
     this.pendingConnections.clear();
@@ -907,7 +908,8 @@ export class VoiceAssistantWebSocketServer {
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
-      providerSnapshotManager: this.providerSnapshotManager,
+      providerSnapshotManager: this.providerRuntime.snapshots,
+      providerCatalog: this.providerRuntime.catalog,
       scriptRouteStore: this.scriptRouteStore ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,

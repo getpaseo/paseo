@@ -1,5 +1,6 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { ProviderCreatePolicy } from "./provider-create-policy.js";
 
 export type AgentProvider = string;
 
@@ -48,6 +49,7 @@ export interface AgentMode {
   description?: string;
   icon?: string;
   colorTier?: string;
+  isUnattended?: boolean;
 }
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
@@ -590,6 +592,7 @@ export interface AgentClient {
   ): Promise<AgentSession>;
   listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listModes?(options: ListModesOptions): Promise<AgentMode[]>;
+  createPolicy?: ProviderCreatePolicy;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
   listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;

@@ -14,6 +14,10 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
+import {
+  DEFAULT_PROVIDER_CREATE_POLICY,
+  type ProviderCreatePolicy,
+} from "./provider-create-policy.js";
 import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
@@ -57,6 +61,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    */
   derivedFromProviderId: string | null;
   createClient: (logger: Logger) => AgentClient;
+  createPolicy: ProviderCreatePolicy;
   fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
@@ -414,6 +419,7 @@ function wrapClientProvider(
         profileModelsAreAdditive,
       }),
     listModes: inner.listModes?.bind(inner),
+    createPolicy: inner.createPolicy,
     listPersistedAgents: listPersistedAgents
       ? async (options?: ListPersistedAgentsOptions) =>
           (await listPersistedAgents(options)).map((descriptor) =>
@@ -438,6 +444,7 @@ function createRegistryEntry(
     derivedFromProviderId: resolved.derivedFromProviderId,
     createClient: (providerLogger: Logger) =>
       createResolvedProviderClient(providerLogger, provider, resolved),
+    createPolicy: modelClient.createPolicy ?? DEFAULT_PROVIDER_CREATE_POLICY,
     fetchModels: async (options: ListModelsOptions) =>
       mergeModels(
         provider,

@@ -101,6 +101,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
+import type { ProviderCatalog } from "./agent/provider-catalog.js";
 import type {
   AgentManagerEvent,
   AgentTimelineCursor,
@@ -588,6 +589,7 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
+  providerCatalog?: ProviderCatalog;
   scriptRouteStore?: ScriptRouteStore;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -795,6 +797,7 @@ export class Session {
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager | null;
+  private readonly providerCatalog: ProviderCatalog | null;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly scriptRouteStore: ScriptRouteStore | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
@@ -875,6 +878,7 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
+      providerCatalog,
       scriptRouteStore,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -958,6 +962,7 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager ?? null;
+    this.providerCatalog = providerCatalog ?? null;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -3122,6 +3127,7 @@ export class Session {
           logger: this.sessionLogger,
           paseoHome: this.paseoHome,
           workspaceGitService: this.workspaceGitService,
+          providerCatalog: this.providerCatalog,
         },
         {
           kind: "session",

@@ -99,11 +99,8 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
-import {
-  buildProviderRegistry,
-  createClientsFromRegistry,
-  shutdownProviders,
-} from "./agent/provider-registry.js";
+import { shutdownProviders } from "./agent/provider-registry.js";
+import { ProviderRuntime } from "./agent/provider-runtime.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
@@ -516,15 +513,16 @@ export async function createPaseoDaemon(
       github,
     },
   });
-  const providerRegistry = buildProviderRegistry(logger, {
+  const providerRuntime = new ProviderRuntime(logger.child({ module: "provider-runtime" }), {
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,
     isDev: config.isDev === true,
   });
+  const providerRegistry = providerRuntime.getRegistry();
   const agentManager = new AgentManager({
     clients: {
-      ...createClientsFromRegistry(providerRegistry, logger),
+      ...providerRuntime.createClients(logger),
       ...config.agentClients,
     },
     providerDefinitions: providerRegistry,
@@ -671,6 +669,7 @@ export async function createPaseoDaemon(
         getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
         scheduleService,
         providerRegistry,
+        providerCatalog: providerRuntime.catalog,
         github,
         workspaceGitService,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -963,6 +962,7 @@ export async function createPaseoDaemon(
                 publicUseTls: relayPublicUseTls,
               },
             },
+            providerRuntime,
           );
 
           if (relayEnabled) {
