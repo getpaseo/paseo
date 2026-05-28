@@ -1,12 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Pressable,
-  Text,
-  View,
-  type StyleProp,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
+import { Pressable, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import * as Clipboard from "expo-clipboard";
@@ -45,6 +38,10 @@ function fenceLanguageToExtension(info: string | null | undefined): string | nul
   if (!first) return null;
   const normalized = first.replace(/^\./, "");
   return LANGUAGE_ALIASES[normalized] ?? normalized;
+}
+
+function stripTerminalFenceNewline(code: string): string {
+  return code.endsWith("\n") ? code.slice(0, -1) : code;
 }
 
 // Cross-instance cache for tokenized code blocks. Tokenization is
@@ -88,23 +85,24 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
     () => splitFenceStyle(inheritedStyles, textStyle),
     [inheritedStyles, textStyle],
   );
+  const renderedCode = useMemo(() => stripTerminalFenceNewline(code), [code]);
 
   const keyedLines = useMemo<KeyedLine[] | null>(() => {
     const ext = fenceLanguageToExtension(language);
     if (!ext) return null;
-    const cacheKey = `${ext}:${code}`;
+    const cacheKey = `${ext}:${renderedCode}`;
     const cached = tokenizationCache.get(cacheKey);
     if (cached) return cached;
     let tokenizedLines: HighlightToken[][];
     try {
-      tokenizedLines = highlightCode(code, `x.${ext}`);
+      tokenizedLines = highlightCode(renderedCode, `x.${ext}`);
     } catch {
       return null;
     }
     const result = tokenizedLines.map(toKeyedLine);
     tokenizationCache.set(cacheKey, result);
     return result;
-  }, [code, language]);
+  }, [renderedCode, language]);
 
   const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
@@ -120,18 +118,9 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
       onPointerLeave={handlePointerLeave}
     >
       {keyedLines ? (
-        <MarkdownTextSpan style={innerTextStyle}>
-          {keyedLines.map((line, lineIndex) => (
-            <React.Fragment key={line.key}>
-              {lineIndex > 0 ? "\n" : null}
-              {line.tokens.map(({ key, token }) => (
-                <TokenSpan key={key} token={token} />
-              ))}
-            </React.Fragment>
-          ))}
-        </MarkdownTextSpan>
+        <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
       ) : (
-        <MarkdownTextSpan style={innerTextStyle}>{code}</MarkdownTextSpan>
+        <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
       )}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>
@@ -158,13 +147,38 @@ function toKeyedLine(tokens: HighlightToken[], lineIndex: number): KeyedLine {
   };
 }
 
+function renderCodeSegments(keyedLines: KeyedLine[]): React.ReactNode[] {
+  const segments: React.ReactNode[] = [];
+  for (let lineIndex = 0; lineIndex < keyedLines.length; lineIndex += 1) {
+    const line = keyedLines[lineIndex];
+    if (lineIndex > 0) {
+      segments.push(<CodeTextSpan key={`${line.key}-newline`} text={"\n"} />);
+    }
+    for (const { key, token } of line.tokens) {
+      segments.push(<TokenSpan key={`${line.key}-${key}`} token={token} />);
+    }
+  }
+  return segments;
+}
+
 interface TokenSpanProps {
   token: HighlightToken;
 }
 
 const TokenSpan = React.memo(function TokenSpan({ token }: TokenSpanProps) {
-  if (!token.style) return token.text;
-  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
+  return (
+    <MarkdownTextSpan style={token.style ? syntaxTokenStyleFor(token.style) : undefined}>
+      {token.text}
+    </MarkdownTextSpan>
+  );
+});
+
+interface CodeTextSpanProps {
+  text: string;
+}
+
+const CodeTextSpan = React.memo(function CodeTextSpan({ text }: CodeTextSpanProps) {
+  return <MarkdownTextSpan>{text}</MarkdownTextSpan>;
 });
 
 interface SplitStyles {
@@ -180,6 +194,7 @@ function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): Spli
   const textOnly: TextStyle = { ...WEB_SELECTABLE };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
   if (fontSize !== undefined) textOnly.fontSize = fontSize;
+  if (fontSize !== undefined) textOnly.lineHeight = Math.round(fontSize * 1.45);
   if (color !== undefined) textOnly.color = color;
   return {
     containerStyle: [box as ViewStyle, CONTAINER_BASE],

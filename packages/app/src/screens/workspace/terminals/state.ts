@@ -1,4 +1,4 @@
-import type { CreateTerminalResponse, ListTerminalsResponse } from "@server/shared/messages";
+import type { CreateTerminalResponse, ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { upsertTerminalListEntry } from "@/utils/terminal-list";
 
 export const TERMINALS_QUERY_STALE_TIME = 5_000;

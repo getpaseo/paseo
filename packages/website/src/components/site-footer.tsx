@@ -92,6 +92,14 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               Discord
             </a>
             <a
+              href="https://www.reddit.com/r/PaseoAI/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Reddit
+            </a>
+            <a
               href="https://github.com/getpaseo/paseo"
               target="_blank"
               rel="noopener noreferrer"

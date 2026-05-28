@@ -1,4 +1,4 @@
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 
 function hasMeaningfulUnknownValue(value: unknown): boolean {
   if (value === null || value === undefined) {

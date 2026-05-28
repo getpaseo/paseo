@@ -1,7 +1,5 @@
-/**
- * @vitest-environment jsdom
- */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { DesktopHostBridge } from "@/desktop/host";
 import {
   extractTerminalDropPaths,
   isTerminalDragLeaveOutside,
@@ -10,13 +8,6 @@ import {
   prepareDroppedPathsForTerminal,
 } from "./terminal-file-drop";
 
-function setDesktopBridge(bridge: unknown): void {
-  Object.defineProperty(window, "paseoDesktop", {
-    configurable: true,
-    value: bridge,
-  });
-}
-
 function dataTransfer(input: { types?: string[]; files?: File[] }): DataTransfer {
   return {
     types: input.types ?? [],
@@ -24,10 +15,25 @@ function dataTransfer(input: { types?: string[]; files?: File[] }): DataTransfer
   } as unknown as DataTransfer;
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  delete (window as unknown as { paseoDesktop?: unknown }).paseoDesktop;
-});
+function fakeFile(input: { name: string; legacyPath?: string }): File {
+  const file = { name: input.name } as unknown as File;
+  if (input.legacyPath !== undefined) {
+    Object.defineProperty(file, "path", {
+      configurable: true,
+      value: input.legacyPath,
+    });
+  }
+  return file;
+}
+
+function makeNode(children: readonly EventTarget[] = []): EventTarget {
+  return {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+    contains: (other: EventTarget | null) => other !== null && children.includes(other),
+  } as unknown as EventTarget;
+}
 
 describe("terminal file drop", () => {
   it("detects file drags", () => {
@@ -37,77 +43,75 @@ describe("terminal file drop", () => {
   });
 
   it("keeps drag highlight active when moving between terminal children", () => {
-    const root = document.createElement("div");
-    const child = document.createElement("div");
-    const outside = document.createElement("div");
-    root.appendChild(child);
+    const child = makeNode();
+    const outside = makeNode();
+    const root = makeNode([child]);
 
     expect(isTerminalDragLeaveOutside({ currentTarget: root, relatedTarget: child })).toBe(false);
     expect(isTerminalDragLeaveOutside({ currentTarget: root, relatedTarget: outside })).toBe(true);
     expect(isTerminalDragLeaveOutside({ currentTarget: root, relatedTarget: null })).toBe(true);
+    expect(isTerminalDragLeaveOutside({ currentTarget: null, relatedTarget: child })).toBe(true);
   });
 
   it("extracts paths through Electron webUtils", () => {
-    const file = new File(["image"], "photo.png", { type: "image/png" });
+    const file = fakeFile({ name: "photo.png" });
     const getPathForFile = vi.fn(() => "/Users/me/Desktop/photo.png");
-    setDesktopBridge({
-      webUtils: { getPathForFile },
-    });
+    const bridge: DesktopHostBridge = { webUtils: { getPathForFile } };
 
-    expect(extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }))).toEqual([
-      "/Users/me/Desktop/photo.png",
-    ]);
+    expect(
+      extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }), bridge),
+    ).toEqual(["/Users/me/Desktop/photo.png"]);
     expect(getPathForFile).toHaveBeenCalledWith(file);
   });
 
   it("falls back to legacy Electron file paths", () => {
-    const file = new File(["image"], "photo.png", { type: "image/png" });
-    Object.defineProperty(file, "path", {
-      configurable: true,
-      value: "/tmp/legacy-photo.png",
-    });
-    setDesktopBridge({
+    const file = fakeFile({ name: "photo.png", legacyPath: "/tmp/legacy-photo.png" });
+    const bridge: DesktopHostBridge = {
       webUtils: {
         getPathForFile: vi.fn(() => {
           throw new Error("not available");
         }),
       },
-    });
+    };
 
-    expect(extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }))).toEqual([
-      "/tmp/legacy-photo.png",
-    ]);
+    expect(
+      extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }), bridge),
+    ).toEqual(["/tmp/legacy-photo.png"]);
   });
 
   it("drops browser files that have no filesystem path", () => {
-    const file = new File(["image"], "photo.png", { type: "image/png" });
+    const file = fakeFile({ name: "photo.png" });
 
-    expect(extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }))).toEqual([]);
+    expect(
+      extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }), null),
+    ).toEqual([]);
   });
 
   it("prepares POSIX paths with conservative escaping", () => {
-    setDesktopBridge({ platform: "darwin" });
+    const bridge: DesktopHostBridge = { platform: "darwin" };
 
-    expect(prepareDroppedPathForTerminal("/tmp/my image.png")).toBe("'/tmp/my image.png'");
-    expect(prepareDroppedPathForTerminal("/tmp/a$(touch bad).png")).toBe("'/tmp/a(touch bad).png'");
-    expect(prepareDroppedPathForTerminal("/tmp/it's.png")).toBe("'/tmp/it\\'s.png'");
+    expect(prepareDroppedPathForTerminal("/tmp/my image.png", bridge)).toBe("'/tmp/my image.png'");
+    expect(prepareDroppedPathForTerminal("/tmp/a$(touch bad).png", bridge)).toBe(
+      "'/tmp/a(touch bad).png'",
+    );
+    expect(prepareDroppedPathForTerminal("/tmp/it's.png", bridge)).toBe("'/tmp/it\\'s.png'");
   });
 
   it("prepares Windows paths with space quoting", () => {
-    setDesktopBridge({ platform: "win32" });
+    const bridge: DesktopHostBridge = { platform: "win32" };
 
-    expect(prepareDroppedPathForTerminal("C:\\Users\\me\\photo.png")).toBe(
+    expect(prepareDroppedPathForTerminal("C:\\Users\\me\\photo.png", bridge)).toBe(
       "C:\\Users\\me\\photo.png",
     );
-    expect(prepareDroppedPathForTerminal("C:\\Users\\me\\photo one.png")).toBe(
+    expect(prepareDroppedPathForTerminal("C:\\Users\\me\\photo one.png", bridge)).toBe(
       '"C:\\Users\\me\\photo one.png"',
     );
   });
 
   it("joins multiple dropped paths for one terminal input", () => {
-    setDesktopBridge({ platform: "darwin" });
+    const bridge: DesktopHostBridge = { platform: "darwin" };
 
-    expect(prepareDroppedPathsForTerminal(["/tmp/a.png", "/tmp/b c.png"])).toBe(
+    expect(prepareDroppedPathsForTerminal(["/tmp/a.png", "/tmp/b c.png"], bridge)).toBe(
       "'/tmp/a.png' '/tmp/b c.png'",
     );
   });

@@ -11,8 +11,8 @@ import {
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
+import { buildSubagentRowPresentationData, formatHeaderLabel } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -31,48 +31,10 @@ export interface SubagentsTrackProps {
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
-function formatHeaderLabel(rows: SubagentRow[]): string {
-  let runningCount = 0;
-  for (const row of rows) {
-    if (row.status === "running") {
-      runningCount += 1;
-    }
-  }
-
-  const parts = [`${rows.length} ${rows.length === 1 ? "subagent" : "subagents"}`];
-  if (runningCount > 0) {
-    parts.push(`${runningCount} running`);
-  }
-  return parts.join(" · ");
-}
-
-function resolveRowLabel(title: SubagentRow["title"]): string | null {
-  if (typeof title !== "string") {
-    return null;
-  }
-  const normalized = title.trim();
-  if (!normalized) {
-    return null;
-  }
-  if (normalized.toLowerCase() === "new agent") {
-    return null;
-  }
-  return normalized;
-}
-
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
-  const label = resolveRowLabel(row.title);
   return {
-    key: `subagent_${row.id}`,
-    kind: "agent",
-    label: label ?? "",
-    subtitle: "",
-    titleState: label ? "ready" : "loading",
+    ...buildSubagentRowPresentationData(row),
     icon: getProviderIcon(row.provider),
-    statusBucket: deriveSidebarStateBucket({
-      status: row.status,
-      requiresAttention: false,
-    }),
   };
 }
 

@@ -1,6 +1,9 @@
 import { resolve } from "node:path";
 
-import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from "../shared/messages.js";
+import type {
+  ProjectCheckoutLitePayload,
+  ProjectPlacementPayload,
+} from "@getpaseo/protocol/messages";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 

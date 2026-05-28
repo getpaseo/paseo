@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { Command } from "commander";
-import type { DaemonClient } from "@getpaseo/server";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, OutputSchema, SingleResult } from "../../output/index.js";
 import { buildCreateWorktreeRequest, type WorktreeCreateOptions } from "./create-input.js";

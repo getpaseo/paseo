@@ -3,7 +3,7 @@
  */
 import React from "react";
 import { act } from "@testing-library/react";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";

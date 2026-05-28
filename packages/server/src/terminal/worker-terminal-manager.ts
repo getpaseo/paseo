@@ -1,8 +1,8 @@
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import type { TerminalState } from "../shared/messages.js";
-import { TerminalInputModeTracker } from "../shared/terminal-input-mode.js";
+import type { TerminalState } from "@getpaseo/protocol/messages";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import type {
   ClientMessage,
   ServerMessage,

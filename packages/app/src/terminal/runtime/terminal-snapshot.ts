@@ -1,1 +1,1 @@
-export { renderTerminalSnapshotToAnsi } from "@server/shared/terminal-snapshot";
+export { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";

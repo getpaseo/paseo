@@ -1158,7 +1158,7 @@ const styles = StyleSheet.create((theme) => ({
   codeText: {
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.code,
     flexShrink: 0,
   },
   previewImageScrollContent: {

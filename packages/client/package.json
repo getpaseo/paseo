@@ -1,0 +1,45 @@
+{
+  "name": "@getpaseo/client",
+  "version": "0.1.84",
+  "description": "Paseo client SDK package",
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal/daemon-client": {
+      "types": "./dist/daemon-client.d.ts",
+      "default": "./dist/daemon-client.js"
+    },
+    "./internal/daemon-client-transport-types": {
+      "types": "./dist/daemon-client-transport-types.d.ts",
+      "default": "./dist/daemon-client-transport-types.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
+    "prepack": "npm run build",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@getpaseo/protocol": "0.1.84",
+    "@getpaseo/relay": "0.1.84",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "typescript": "^5.2.2",
+    "vitest": "^4.1.6"
+  }
+}

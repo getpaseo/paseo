@@ -3,6 +3,10 @@ import {
   addHardwareKeyboardSubmitListener,
   setHardwareKeyboardSubmitEnabled,
 } from "@/native/ios-hardware-keyboard-submit";
+import {
+  createHardwareKeyboardSubmitController,
+  type HardwareKeyboardSubmitController,
+} from "./hardware-keyboard-submit-controller";
 
 interface UseIosHardwareKeyboardSubmitInput {
   isEnabled: boolean;
@@ -10,25 +14,22 @@ interface UseIosHardwareKeyboardSubmitInput {
 }
 
 export function useIosHardwareKeyboardSubmit(input: UseIosHardwareKeyboardSubmitInput) {
-  const onSubmitRef = useRef(input.onSubmit);
+  const controllerRef = useRef<HardwareKeyboardSubmitController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createHardwareKeyboardSubmitController({
+      addListener: addHardwareKeyboardSubmitListener,
+      setEnabled: setHardwareKeyboardSubmitEnabled,
+    });
+  }
+  const controller = controllerRef.current;
 
-  useEffect(() => {
-    onSubmitRef.current = input.onSubmit;
-  }, [input.onSubmit]);
+  controller.setOnSubmit(input.onSubmit);
 
   useEffect(() => {
     if (!input.isEnabled) {
       return;
     }
-
-    const subscription = addHardwareKeyboardSubmitListener(() => {
-      onSubmitRef.current();
-    });
-    setHardwareKeyboardSubmitEnabled(true);
-
-    return () => {
-      setHardwareKeyboardSubmitEnabled(false);
-      subscription.remove();
-    };
-  }, [input.isEnabled]);
+    controller.enable();
+    return () => controller.disable();
+  }, [controller, input.isEnabled]);
 }

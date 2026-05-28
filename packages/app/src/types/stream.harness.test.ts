@@ -6,8 +6,8 @@ import {
   type AgentToolCallItem,
   isAgentToolCallItem,
 } from "./stream";
-import type { AgentStreamEventPayload } from "@server/shared/messages";
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 
 interface HarnessUpdate {
   event: AgentStreamEventPayload;

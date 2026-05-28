@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 
 export function computeCanStartDictation(input: {
   client: DaemonClient | null;

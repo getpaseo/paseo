@@ -6,7 +6,7 @@ import type { SpeechStreamResult, TextToSpeechProvider } from "../../../speech-p
 import { chunkBuffer, float32ToPcm16le } from "../../../audio.js";
 import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
-export type SherpaTtsPreset = "kokoro-en-v0_19" | "kitten-nano-en-v0_1-fp16";
+export type SherpaTtsPreset = "kokoro-en-v0_19";
 
 export interface SherpaTtsConfig {
   preset: SherpaTtsPreset;
@@ -41,9 +41,6 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
   private readonly logger: pino.Logger;
 
   constructor(config: SherpaTtsConfig, logger: pino.Logger) {
-    if (config.preset !== "kokoro-en-v0_19" && config.preset !== "kitten-nano-en-v0_1-fp16") {
-      throw new Error(`Unsupported Sherpa TTS preset: ${config.preset}`);
-    }
     this.logger = logger.child({ module: "speech", provider: "local", component: "tts" });
     this.speakerId = config.speakerId ?? 0;
     this.speed = config.speed ?? 1.0;
@@ -53,8 +50,7 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       throw new Error("sherpa-onnx-node OfflineTts is unavailable");
     }
 
-    const modelFile = config.preset === "kokoro-en-v0_19" ? "model.onnx" : "model.fp16.onnx";
-    const modelPath = `${config.modelDir}/${modelFile}`;
+    const modelPath = `${config.modelDir}/model.onnx`;
     const voicesPath = `${config.modelDir}/voices.bin`;
     const tokensPath = `${config.modelDir}/tokens.txt`;
     const dataDir = `${config.modelDir}/espeak-ng-data`;
@@ -64,26 +60,15 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     assertFileExists(tokensPath, "TTS tokens");
     assertFileExists(dataDir, "TTS espeak-ng dataDir");
 
-    const modelConfig =
-      config.preset === "kokoro-en-v0_19"
-        ? {
-            kokoro: {
-              model: modelPath,
-              voices: voicesPath,
-              tokens: tokensPath,
-              dataDir,
-              lengthScale: config.lengthScale ?? 1.0,
-            },
-          }
-        : {
-            kitten: {
-              model: modelPath,
-              voices: voicesPath,
-              tokens: tokensPath,
-              dataDir,
-              lengthScale: config.lengthScale ?? 1.0,
-            },
-          };
+    const modelConfig = {
+      kokoro: {
+        model: modelPath,
+        voices: voicesPath,
+        tokens: tokensPath,
+        dataDir,
+        lengthScale: config.lengthScale ?? 1.0,
+      },
+    };
 
     const offlineTtsConfig = {
       model: modelConfig,

@@ -69,17 +69,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Build server dependency
-        run: npm run build --workspace=@getpaseo/server
+      - name: Build server stack
+        run: npm run build:server
 
       - name: Typecheck all packages
         run: npm run typecheck
+
+      - name: Verify public package contents
+        run: |
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
   server-tests:
     strategy:
@@ -107,11 +107,8 @@ jobs:
       - name: Install agent CLIs for provider tests
         run: npm install -g @anthropic-ai/claude-code opencode-ai
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
+      - name: Build server dependencies
+        run: npm run build:server-deps
 
       - name: Run server tests
         run: npm run test --workspace=@getpaseo/server
@@ -137,14 +134,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Build server dependency
-        run: npm run build --workspace=@getpaseo/server
+      - name: Build server stack
+        run: npm run build:server
 
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
@@ -165,11 +156,36 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
+      - name: Build app dependencies
+        run: npm run build:app-deps
 
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
+
+  sdk-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client dependencies
+        run: npm run build:client
+
+      - name: Run protocol tests
+        run: npm run test --workspace=@getpaseo/protocol
+
+      - name: Run client tests
+        run: npm run test --workspace=@getpaseo/client
+
+      - name: Typecheck client examples
+        run: npm run typecheck:examples --workspace=@getpaseo/client
 
   playwright:
     runs-on: ubuntu-latest
@@ -187,14 +203,11 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
+      - name: Build app dependencies
+        run: npm run build:app-deps
 
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Build server dependency
-        run: npm run build --workspace=@getpaseo/server
+      - name: Build server stack
+        run: npm run build:server
 
       - name: Install agent CLIs for provider tests
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
@@ -228,7 +241,7 @@ jobs:
         run: npm ci
 
       - name: Build relay
-        run: npm run build --workspace=@getpaseo/relay
+        run: npm run build:relay
 
       - name: Run relay tests
         run: npm run test --workspace=@getpaseo/relay
@@ -253,9 +266,6 @@ jobs:
 
       - name: Install agent CLIs for provider tests
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
-
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
 
       - name: Run CLI tests
         run: npm run test --workspace=@getpaseo/cli

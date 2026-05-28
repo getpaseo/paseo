@@ -19,11 +19,3 @@ export function setHardwareKeyboardSubmitEnabled(enabled: boolean) {
 export function addHardwareKeyboardSubmitListener(handler: HardwareKeyboardSubmitHandler) {
   return module.addListener("onHardwareKeyboardSubmit", handler);
 }
-
-export function emitHardwareKeyboardSubmitForTest() {}
-
-export function resetHardwareKeyboardSubmitForTest() {}
-
-export function getHardwareKeyboardSubmitEnabledForTest() {
-  return false;
-}

@@ -27,7 +27,7 @@ import type {
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
-import { getAgentProviderDefinition } from "../provider-manifest.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
 export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";

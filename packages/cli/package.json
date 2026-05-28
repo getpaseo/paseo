@@ -1,13 +1,14 @@
 {
   "name": "@getpaseo/cli",
-  "version": "0.1.83",
+  "version": "0.1.84",
   "description": "Paseo CLI - control your AI coding agents from the command line",
   "bin": {
     "paseo": "bin/paseo"
   },
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "type": "module",
   "publishConfig": {
@@ -24,7 +25,9 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@getpaseo/server": "0.1.83",
+    "@getpaseo/client": "0.1.84",
+    "@getpaseo/protocol": "0.1.84",
+    "@getpaseo/server": "0.1.84",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",

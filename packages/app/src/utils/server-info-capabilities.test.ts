@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ServerCapabilities } from "@server/shared/messages";
+import type { ServerCapabilities } from "@getpaseo/protocol/messages";
 import type { DaemonServerInfo } from "@/stores/session-store";
 import {
   getServerCapabilities,

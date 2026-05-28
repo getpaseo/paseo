@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { CheckoutPrStatusResponse } from "@server/shared/messages";
+import type { CheckoutPrStatusResponse } from "@getpaseo/protocol/messages";
 import { checkoutPrStatusQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutPrStatusQueryOptions {
@@ -21,6 +21,15 @@ export interface PrHint {
   reviewDecision?: "approved" | "changes_requested" | "pending" | null;
 }
 
+interface PrStatusLike {
+  url: string;
+  state: string;
+  isMerged: boolean;
+  checks?: Array<{ name: string; status: string; url: string | null }>;
+  checksStatus?: string;
+  reviewDecision?: string | null;
+}
+
 function parsePullRequestNumber(url: string): number | null {
   try {
     const pathname = new URL(url).pathname;
@@ -36,8 +45,7 @@ function parsePullRequestNumber(url: string): number | null {
   }
 }
 
-function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null {
-  const status = payload.status;
+export function selectPrHintFromStatus(status: PrStatusLike | null | undefined): PrHint | null {
   if (!status?.url) {
     return null;
   }
@@ -60,6 +68,10 @@ function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null 
     checksStatus: status.checksStatus as PrHint["checksStatus"],
     reviewDecision: status.reviewDecision as PrHint["reviewDecision"],
   };
+}
+
+function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null {
+  return selectPrHintFromStatus(payload.status);
 }
 
 export function useCheckoutPrStatusQuery({

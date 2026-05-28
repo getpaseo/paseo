@@ -1,4 +1,4 @@
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 
 const SHELL_FILE_COMMANDS = new Set([
   "cat",

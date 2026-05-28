@@ -15,7 +15,7 @@ import {
   type GitHubCurrentPullRequestStatus,
   type GitHubReadOptions,
 } from "./github-service.js";
-import { CheckoutPrStatusResponseSchema } from "../shared/messages.js";
+import { CheckoutPrStatusResponseSchema } from "@getpaseo/protocol/messages";
 
 const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;

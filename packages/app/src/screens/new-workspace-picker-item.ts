@@ -1,5 +1,5 @@
-import type { CreatePaseoWorktreeInput } from "@server/client/daemon-client";
-import type { GitHubSearchItem } from "@server/shared/messages";
+import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
 
 export type PickerItem =
   | { kind: "branch"; name: string }

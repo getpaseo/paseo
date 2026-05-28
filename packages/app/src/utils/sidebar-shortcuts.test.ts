@@ -25,6 +25,7 @@ function workspace(input: {
     statusBucket: "done",
     archivingAt: null,
     diffStat: null,
+    prHint: null,
     archiveHasUncommittedChanges: null,
     archiveUnpushedCommitCount: null,
     scripts: [],

@@ -1,27 +1,13 @@
-interface DesktopFilePathBridge {
-  platform?: string;
-  webUtils?: {
-    getPathForFile?: (file: File) => string;
-  };
-}
+import type { DesktopHostBridge } from "@/desktop/host";
 
 const DANGEROUS_NON_WINDOWS_PATH_CHARS = /[`$|&>~#!^*;<]/g;
-
-function getDesktopBridge(): DesktopFilePathBridge | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const bridge = (window as unknown as { paseoDesktop?: DesktopFilePathBridge }).paseoDesktop;
-  return bridge && typeof bridge === "object" ? bridge : null;
-}
 
 function getLegacyFilePath(file: File): string | null {
   const path = Reflect.get(file, "path");
   return typeof path === "string" && path.length > 0 ? path : null;
 }
 
-function getFilePath(file: File): string | null {
-  const bridge = getDesktopBridge();
+function getFilePath(file: File, bridge: DesktopHostBridge | null): string | null {
   const getPathForFile = bridge?.webUtils?.getPathForFile;
   if (typeof getPathForFile === "function") {
     try {
@@ -40,24 +26,39 @@ export function isTerminalFileDrag(dataTransfer: DataTransfer | null): boolean {
   return Boolean(dataTransfer && Array.from(dataTransfer.types).includes("Files"));
 }
 
+interface ContainsTarget {
+  contains: (other: EventTarget | null) => boolean;
+}
+
+function asContainsTarget(value: EventTarget | null): ContainsTarget | null {
+  if (!value || typeof (value as Partial<ContainsTarget>).contains !== "function") {
+    return null;
+  }
+  return value as unknown as ContainsTarget;
+}
+
 export function isTerminalDragLeaveOutside(input: {
   currentTarget: EventTarget | null;
   relatedTarget: EventTarget | null;
 }): boolean {
-  if (!(input.currentTarget instanceof Node) || !(input.relatedTarget instanceof Node)) {
+  const currentTarget = asContainsTarget(input.currentTarget);
+  if (!currentTarget || !input.relatedTarget) {
     return true;
   }
-  return !input.currentTarget.contains(input.relatedTarget);
+  return !currentTarget.contains(input.relatedTarget);
 }
 
-export function extractTerminalDropPaths(dataTransfer: DataTransfer | null): string[] {
+export function extractTerminalDropPaths(
+  dataTransfer: DataTransfer | null,
+  bridge: DesktopHostBridge | null,
+): string[] {
   if (!dataTransfer) {
     return [];
   }
 
   const paths: string[] = [];
   for (const file of Array.from(dataTransfer.files)) {
-    const path = getFilePath(file);
+    const path = getFilePath(file, bridge);
     if (path) {
       paths.push(path);
     }
@@ -89,14 +90,19 @@ function escapeWindowsPath(path: string): string {
   return `"${path}"`;
 }
 
-export function prepareDroppedPathForTerminal(path: string): string {
-  const platform = getDesktopBridge()?.platform;
-  if (platform === "win32") {
+export function prepareDroppedPathForTerminal(
+  path: string,
+  bridge: DesktopHostBridge | null,
+): string {
+  if (bridge?.platform === "win32") {
     return escapeWindowsPath(path);
   }
   return escapeNonWindowsPath(path);
 }
 
-export function prepareDroppedPathsForTerminal(paths: readonly string[]): string {
-  return paths.map(prepareDroppedPathForTerminal).join(" ");
+export function prepareDroppedPathsForTerminal(
+  paths: readonly string[],
+  bridge: DesktopHostBridge | null,
+): string {
+  return paths.map((path) => prepareDroppedPathForTerminal(path, bridge)).join(" ");
 }

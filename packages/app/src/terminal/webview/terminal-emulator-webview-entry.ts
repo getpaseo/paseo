@@ -1,7 +1,7 @@
 import type { ITheme } from "@xterm/xterm";
 import xtermCss from "@xterm/xterm/css/xterm.css";
-import type { TerminalState } from "@server/shared/messages";
-import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
+import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { PendingTerminalModifiers } from "@/utils/terminal-keys";
 import {
   encodeTerminalOutput,

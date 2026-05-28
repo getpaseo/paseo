@@ -1,9 +1,10 @@
 {
   "name": "@getpaseo/relay",
-  "version": "0.1.83",
+  "version": "0.1.84",
   "description": "Paseo relay for bridging daemon and client connections",
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "type": "module",
   "types": "./dist/index.d.ts",

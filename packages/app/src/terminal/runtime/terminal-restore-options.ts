@@ -1,4 +1,4 @@
-import type { SubscribeTerminalRequest } from "@server/shared/messages";
+import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 
 export const TERMINAL_VISIBLE_RESTORE_SCROLLBACK_LINES = 200;
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { DaemonClient, FetchAgentsEntry } from "@server/client/daemon-client";
-import type { AgentSnapshotPayload } from "@server/shared/messages";
-import { PARENT_AGENT_ID_LABEL } from "@server/shared/agent-labels";
+import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { useSessionStore } from "@/stores/session-store";
 import { replaceFetchedAgentDirectory } from "./agent-directory-sync";
 

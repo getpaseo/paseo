@@ -8,7 +8,7 @@ import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
-import { CLIENT_CAPS, type ClientCapability } from "../shared/client-capabilities.js";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
   isLegacyEditorTargetId,
   serializeAgentStreamEvent,
@@ -38,7 +38,7 @@ import {
   encodeFileTransferFrame,
   FileTransferOpcode,
   type TerminalStreamFrame,
-} from "../shared/binary-frames/index.js";
+} from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { TTSManager } from "./agent/tts-manager.js";
@@ -71,6 +71,8 @@ import {
   startCreatedAgentInitialPrompt,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
+import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
+import { respondToAgentPermission } from "./agent/permission-response.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
@@ -83,20 +85,14 @@ import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
-import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
-import { getErrorMessage, getErrorMessageOr } from "../shared/error-utils.js";
-import { getAgentStatusPriority } from "../shared/agent-state-bucket.js";
+import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
+import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitService,
   WorkspaceGitSnapshotOptions,
 } from "./workspace-git-service.js";
 
-import { buildProviderRegistry } from "./agent/provider-registry.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
-} from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -105,8 +101,14 @@ import type {
   AgentTimelineFetchDirection,
   ManagedAgent,
 } from "./agent/agent-manager.js";
-import { scheduleAgentMetadataGeneration } from "./agent/agent-metadata-generator.js";
-import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
+import { createAgentCommand } from "./agent/create-agent/create.js";
+import {
+  archiveAgentCommand,
+  cancelAgentRunCommand,
+  closeAgentCommand,
+  setAgentModeCommand,
+  updateAgentCommand,
+} from "./agent/lifecycle-command.js";
 import {
   buildStoredAgentPayload,
   resolveEffectiveThinkingOptionId,
@@ -137,7 +139,6 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentSessionConfig,
-  type AgentStreamEvent,
   type ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
@@ -198,7 +199,7 @@ import {
   createPullRequest,
   renameCurrentBranch,
 } from "../utils/checkout-git.js";
-import { validateBranchSlug } from "../utils/branch-slug.js";
+import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
@@ -212,7 +213,6 @@ import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "./speech/speech-runtime.js";
 import type pino from "pino";
-import { resolveClientMessageId } from "./client-message-id.js";
 import {
   ChatServiceError,
   FileBackedChatService,
@@ -581,7 +581,7 @@ export interface SessionOptions {
   sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
-  providerSnapshotManager?: ProviderSnapshotManager;
+  providerSnapshotManager: ProviderSnapshotManager;
   scriptRouteStore?: ScriptRouteStore;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -608,9 +608,6 @@ export interface SessionOptions {
     sttLanguage?: string;
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
-  agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
-  providerOverrides?: Record<string, ProviderOverride>;
-  isDev?: boolean;
   serverId?: string;
   daemonVersion?: string;
   daemonRuntimeConfig?: {
@@ -788,7 +785,7 @@ export class Session {
   } | null = null;
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
-  private readonly providerSnapshotManager: ProviderSnapshotManager | null;
+  private readonly providerSnapshotManager: ProviderSnapshotManager;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly scriptRouteStore: ScriptRouteStore | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
@@ -830,9 +827,6 @@ export class Session {
   private unregisterVoiceCallerContext?: (agentId: string) => void;
   private getSpeechReadiness?: () => SpeechReadinessSnapshot;
   private readonly sttLanguage: string;
-  private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
-  private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
-  private readonly isDev: boolean;
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
   private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
@@ -879,9 +873,6 @@ export class Session {
       voice,
       voiceBridge,
       dictation,
-      agentProviderRuntimeSettings,
-      providerOverrides,
-      isDev,
       serverId,
       daemonVersion,
       daemonRuntimeConfig,
@@ -951,7 +942,7 @@ export class Session {
         this.terminalController.killTerminalsUnderPath(rootPath),
       logger: this.sessionLogger,
     });
-    this.providerSnapshotManager = providerSnapshotManager ?? null;
+    this.providerSnapshotManager = providerSnapshotManager;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -962,9 +953,6 @@ export class Session {
     this.sttLanguage = sttLanguage ?? "en";
     this.subscribeToOptionalManagers();
     this.bindVoiceBridges({ voice, voiceBridge, dictation });
-    this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
-    this.providerOverrides = providerOverrides;
-    this.isDev = isDev === true;
     this.serverId = serverId;
     this.daemonVersion = daemonVersion;
     this.daemonRuntimeConfig = daemonRuntimeConfig;
@@ -1169,52 +1157,6 @@ export class Session {
     return this.agentManager.hasInFlightRun(agentId);
   }
 
-  /**
-   * Start streaming an agent run and forward results via the websocket broadcast
-   */
-  private startAgentStream(
-    agentId: string,
-    prompt: AgentPromptInput,
-    runOptions?: AgentRunOptions,
-  ): { ok: true } | { ok: false; error: string } {
-    this.sessionLogger.trace(
-      {
-        agentId,
-        promptType: typeof prompt === "string" ? "string" : "structured",
-        hasRunOptions: Boolean(runOptions),
-      },
-      "agent.session.start_stream.request",
-    );
-    let iterator: AsyncGenerator<AgentStreamEvent>;
-    try {
-      const shouldReplace = this.agentManager.hasInFlightRun(agentId);
-      iterator = shouldReplace
-        ? this.agentManager.replaceAgentRun(agentId, prompt, runOptions)
-        : this.agentManager.streamAgent(agentId, prompt, runOptions);
-      this.sessionLogger.trace(
-        { agentId, shouldReplace },
-        "agent.session.start_stream.iterator_returned",
-      );
-    } catch (error) {
-      this.handleAgentRunError(agentId, error, "Failed to start agent run");
-      return { ok: false, error: errorToFriendlyMessage(error) };
-    }
-
-    void (async () => {
-      try {
-        for await (const _ of iterator) {
-          // Events are forwarded via the session's AgentManager subscription.
-        }
-        this.sessionLogger.trace({ agentId }, "agent.session.iterator.drained");
-      } catch (error) {
-        this.sessionLogger.trace({ agentId, err: error }, "agent.session.iterator.error");
-        this.handleAgentRunError(agentId, error, "Agent stream failed");
-      }
-    })();
-
-    return { ok: true };
-  }
-
   private handleAgentRunError(agentId: string, error: unknown, context: string): void {
     const message = errorToFriendlyMessage(error);
     this.sessionLogger.error({ err: error, agentId, context }, `${context} for agent ${agentId}`);
@@ -1324,27 +1266,25 @@ export class Session {
    */
   private subscribeToOptionalManagers(): void {
     this.terminalController.start();
-    if (this.providerSnapshotManager) {
-      const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
-        // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
-        const visibleEntries = entries.filter((entry) =>
-          this.isProviderVisibleToClient(entry.provider),
-        );
-        const snapshotCwd = cwd === resolveSnapshotCwd() ? undefined : cwd;
-        this.emit({
-          type: "providers_snapshot_update",
-          payload: {
-            ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
-            entries: this.downgradeEntryModesForClient(visibleEntries),
-            generatedAt: new Date().toISOString(),
-          },
-        });
-      };
-      this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
-      this.unsubscribeProviderSnapshotEvents = () => {
-        this.providerSnapshotManager?.off("change", handleProviderSnapshotChange);
-      };
-    }
+    const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
+      // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
+      const visibleEntries = entries.filter((entry) =>
+        this.isProviderVisibleToClient(entry.provider),
+      );
+      const snapshotCwd = cwd === resolveSnapshotCwd() ? undefined : cwd;
+      this.emit({
+        type: "providers_snapshot_update",
+        payload: {
+          ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+          entries: this.downgradeEntryModesForClient(visibleEntries),
+          generatedAt: new Date().toISOString(),
+        },
+      });
+    };
+    this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
+    this.unsubscribeProviderSnapshotEvents = () => {
+      this.providerSnapshotManager.off("change", handleProviderSnapshotChange);
+    };
   }
 
   private bindVoiceBridges(params: {
@@ -1524,25 +1464,9 @@ export class Session {
     return payload;
   }
 
-  private getProviderRegistry(): ReturnType<typeof buildProviderRegistry> {
-    return buildProviderRegistry(this.sessionLogger, {
-      runtimeSettings: this.agentProviderRuntimeSettings,
-      providerOverrides: applyMutableProviderConfigToOverrides(
-        this.providerOverrides,
-        this.daemonConfigStore.get().providers,
-      ),
-      workspaceGitService: this.workspaceGitService,
-      isDev: this.isDev,
-    });
-  }
-
-  private getRegisteredProviderIds(): AgentProvider[] {
-    return Object.keys(this.getProviderRegistry());
-  }
-
   private buildStoredAgentPayload(
     record: StoredAgentRecord,
-    registeredProviderIds = this.getRegisteredProviderIds(),
+    registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds(),
   ): AgentSnapshotPayload {
     return buildStoredAgentPayload(record, registeredProviderIds);
   }
@@ -2421,7 +2345,7 @@ export class Session {
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
 
     try {
-      await this.agentManager.closeAgent(agentId);
+      await closeAgentCommand({ agentManager: this.agentManager }, agentId);
     } catch (error) {
       this.sessionLogger.warn(
         { err: error, agentId },
@@ -2475,43 +2399,17 @@ export class Session {
     });
   }
 
-  private async archiveStoredAgentForClose(
-    agentId: string,
-  ): Promise<{ agentId: string; archivedAt: string }> {
-    const existing = await this.agentStorage.get(agentId);
-    if (!existing) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    if (existing.archivedAt) {
-      return {
-        agentId,
-        archivedAt: existing.archivedAt,
-      };
-    }
-
-    const archivedAt = new Date().toISOString();
-    await this.agentManager.archiveSnapshot(agentId, archivedAt);
-
-    return { agentId, archivedAt };
-  }
-
   private async archiveAgentForClose(
     agentId: string,
   ): Promise<{ agentId: string; archivedAt: string }> {
-    const liveAgent = this.agentManager.getAgent(agentId);
-    if (liveAgent) {
-      await this.interruptAgentIfRunning(agentId);
-      await this.agentManager.clearAgentAttention(agentId).catch(() => undefined);
-      await this.agentManager.archiveAgent(agentId);
-    } else {
-      await this.archiveStoredAgentForClose(agentId);
-    }
-
-    const archivedRecord = await this.agentStorage.get(agentId);
-    if (!archivedRecord) {
-      throw new Error(`Agent not found in storage after archive: ${agentId}`);
-    }
+    const { archivedAt, record: archivedRecord } = await archiveAgentCommand(
+      {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      },
+      agentId,
+    );
 
     if (this.agentUpdatesSubscription) {
       const payload = this.buildStoredAgentPayload(archivedRecord);
@@ -2544,11 +2442,7 @@ export class Session {
       await this.emitWorkspaceUpdateForCwd(payload.cwd);
     }
 
-    if (!archivedRecord.archivedAt) {
-      throw new Error(`Agent missing archivedAt after archive: ${agentId}`);
-    }
-
-    return { agentId, archivedAt: archivedRecord.archivedAt };
+    return { agentId, archivedAt };
   }
 
   private async handleCloseItemsRequest(msg: CloseItemsRequest): Promise<void> {
@@ -2623,27 +2517,24 @@ export class Session {
       "session: update_agent_request",
     );
 
-    const normalizedName = name?.trim();
-    const normalizedLabels = labels && Object.keys(labels).length > 0 ? labels : undefined;
-
-    if (!normalizedName && !normalizedLabels) {
-      this.emit({
-        type: "update_agent_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: "Nothing to update (provide name and/or labels)",
-        },
-      });
-      return;
-    }
-
     try {
-      await this.agentManager.updateAgentMetadata(agentId, {
-        ...(normalizedName ? { title: normalizedName } : {}),
-        ...(normalizedLabels ? { labels: normalizedLabels } : {}),
-      });
+      const result = await updateAgentCommand(
+        { agentManager: this.agentManager },
+        { agentId, name, labels },
+      );
+
+      if (!result.accepted) {
+        this.emit({
+          type: "update_agent_response",
+          payload: {
+            requestId,
+            agentId,
+            accepted: false,
+            error: result.error,
+          },
+        });
+        return;
+      }
 
       this.emit({
         type: "update_agent_response",
@@ -3253,7 +3144,6 @@ export class Session {
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
       });
-      const resolvedConfig: AgentSessionConfig = config;
 
       const firstAgentContext: FirstAgentContext = {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
@@ -3267,44 +3157,46 @@ export class Session {
       });
       createdWorktreeForCleanup = createdWorktree;
       const createAgentConfig: AgentSessionConfig = createdWorktree
-        ? { ...resolvedConfig, cwd: createdWorktree.worktree.worktreePath }
-        : resolvedConfig;
-      const { sessionConfig, setupContinuation } = await this.buildAgentSessionConfig(
-        createAgentConfig,
-        git,
-        worktreeName,
-        firstAgentContext,
+        ? { ...config, cwd: createdWorktree.worktree.worktreePath }
+        : config;
+
+      const { snapshot, liveSnapshot } = await createAgentCommand(
+        {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+          paseoHome: this.paseoHome,
+          workspaceGitService: this.workspaceGitService,
+          providerSnapshotManager: this.providerSnapshotManager,
+        },
+        {
+          kind: "session",
+          config: createAgentConfig,
+          workspaceId: msg.workspaceId,
+          worktreeName,
+          initialPrompt,
+          clientMessageId,
+          outputSchema,
+          images,
+          attachments,
+          git,
+          labels,
+          env,
+          provisionalTitle,
+          explicitTitle,
+          firstAgentContext,
+          buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
+            this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
+          resolveWorkspace: ({ cwd, workspaceId }) =>
+            this.resolveCreateAgentWorkspace(cwd, workspaceId),
+        },
       );
-      let resolvedWorkspace = msg.workspaceId
-        ? await this.workspaceRegistry.get(msg.workspaceId)
-        : ((await this.findWorkspaceByDirectory(sessionConfig.cwd)) ??
-          (await this.findOrCreateWorkspaceForDirectory(sessionConfig.cwd)));
-      if (!resolvedWorkspace) {
-        throw new Error(`Workspace not found: ${msg.workspaceId}`);
-      }
-      const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, {
-        labels,
-        workspaceId: resolvedWorkspace.workspaceId,
-        initialPrompt: trimmedPrompt,
-        env,
-        initialTitle: provisionalTitle,
-      });
       createdAgentId = snapshot.id;
       await this.forwardAgentUpdate(snapshot);
       this.createAgentLifecycleDispatch.registerAutoArchiveIfRequested({
         autoArchive,
         agentId: snapshot.id,
         createdWorktree,
-      });
-
-      const liveSnapshot = await this.sendInitialCreateAgentPrompt({
-        snapshot,
-        trimmedPrompt,
-        images,
-        attachments,
-        clientMessageId,
-        outputSchema,
-        explicitTitle,
       });
 
       if (requestId) {
@@ -3319,10 +3211,6 @@ export class Session {
           },
         });
       }
-
-      setupContinuation?.startAfterAgentCreate({
-        agentId: snapshot.id,
-      });
 
       this.sessionLogger.info(
         { agentId: snapshot.id, provider: snapshot.provider },
@@ -3358,44 +3246,18 @@ export class Session {
     }
   }
 
-  private async sendInitialCreateAgentPrompt(params: {
-    snapshot: ManagedAgent;
-    trimmedPrompt: string | undefined;
-    images: Array<{ data: string; mimeType: string }> | undefined;
-    attachments: AgentAttachment[] | undefined;
-    clientMessageId: string | undefined;
-    outputSchema: Record<string, unknown> | undefined;
-    explicitTitle: string | null;
-  }): Promise<ManagedAgent> {
-    const { snapshot, trimmedPrompt, images, attachments, clientMessageId, outputSchema } = params;
-    const hasPrompt = Boolean(trimmedPrompt);
-    const hasImages = (images?.length ?? 0) > 0;
-    const hasAttachments = (attachments?.length ?? 0) > 0;
-    if (!hasPrompt && !hasImages && !hasAttachments) {
-      return snapshot;
+  private async resolveCreateAgentWorkspace(
+    cwd: string,
+    workspaceId?: string,
+  ): Promise<{ workspaceId: string }> {
+    const resolvedWorkspace = workspaceId
+      ? await this.workspaceRegistry.get(workspaceId)
+      : ((await this.findWorkspaceByDirectory(cwd)) ??
+        (await this.findOrCreateWorkspaceForDirectory(cwd)));
+    if (!resolvedWorkspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`);
     }
-    scheduleAgentMetadataGeneration({
-      agentManager: this.agentManager,
-      agentId: snapshot.id,
-      cwd: snapshot.cwd,
-      workspaceGitService: this.workspaceGitService,
-      initialPrompt: trimmedPrompt,
-      explicitTitle: params.explicitTitle,
-      paseoHome: this.paseoHome,
-      logger: this.sessionLogger,
-    });
-    const prompt = this.buildAgentPrompt(trimmedPrompt || "", images, attachments);
-
-    return await startCreatedAgentInitialPrompt({
-      agentManager: this.agentManager,
-      agentId: snapshot.id,
-      snapshot,
-      prompt,
-      runOptions: outputSchema ? { outputSchema } : undefined,
-      logger: this.sessionLogger.child({
-        clientMessageId: resolveClientMessageId(clientMessageId),
-      }),
-    });
+    return { workspaceId: resolvedWorkspace.workspaceId };
   }
 
   private async handleResumeAgentRequest(
@@ -3562,11 +3424,11 @@ export class Session {
         if (!record) {
           throw new Error(`Agent not found: ${agentId}`);
         }
-        const providerRegistry = this.getProviderRegistry();
-        if (!isStoredAgentProviderAvailable(record, Object.keys(providerRegistry))) {
+        const registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds();
+        if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
           throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
         }
-        const handle = toAgentPersistenceHandle(providerRegistry, record.persistence);
+        const handle = toAgentPersistenceHandle(registeredProviderIds, record.persistence);
         if (!handle) {
           throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
         }
@@ -3621,7 +3483,10 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Cancel request received for agent ${agentId}`);
 
     try {
-      await this.interruptAgentIfRunning(agentId);
+      await cancelAgentRunCommand(
+        { agentManager: this.agentManager, logger: this.sessionLogger },
+        agentId,
+      );
       if (requestId) {
         const agent = this.agentManager.getAgent(agentId);
         const payload = agent ? await this.buildAgentPayload(agent) : null;
@@ -3782,47 +3647,6 @@ export class Session {
   ): Promise<void> {
     const cwd = resolveSnapshotCwd(msg.cwd ? expandTilde(msg.cwd) : undefined);
     const fetchedAt = new Date().toISOString();
-    const manager = this.providerSnapshotManager;
-
-    if (!manager) {
-      try {
-        const definition = this.getProviderRegistry()[msg.provider];
-        if (!definition.enabled) {
-          this.emitProviderDisabledResponse("models", msg.provider, msg.requestId, fetchedAt);
-          return;
-        }
-
-        const models = await definition.fetchModels({
-          cwd,
-          force: false,
-        });
-        this.emit({
-          type: "list_provider_models_response",
-          payload: {
-            provider: msg.provider,
-            models,
-            error: null,
-            fetchedAt,
-            requestId: msg.requestId,
-          },
-        });
-      } catch (error) {
-        this.sessionLogger.error(
-          { err: error, provider: msg.provider },
-          `Failed to list models for ${msg.provider}`,
-        );
-        this.emit({
-          type: "list_provider_models_response",
-          payload: {
-            provider: msg.provider,
-            error: getErrorMessage(error),
-            fetchedAt,
-            requestId: msg.requestId,
-          },
-        });
-      }
-      return;
-    }
 
     const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
 
@@ -3879,53 +3703,14 @@ export class Session {
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
     const cwd = resolveSnapshotCwd(msg.cwd ? expandTilde(msg.cwd) : undefined);
-    const manager = this.providerSnapshotManager;
+    const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
 
-    if (manager) {
-      const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
-
-      if (!entry) {
-        this.emit({
-          type: "list_provider_modes_response",
-          payload: {
-            provider: msg.provider,
-            error: `Unknown provider: ${msg.provider}`,
-            fetchedAt,
-            requestId: msg.requestId,
-          },
-        });
-        return;
-      }
-
-      if (!entry.enabled) {
-        this.emitProviderDisabledResponse("modes", msg.provider, msg.requestId, fetchedAt);
-        return;
-      }
-
-      if (entry.status === "ready") {
-        this.emit({
-          type: "list_provider_modes_response",
-          payload: {
-            provider: msg.provider,
-            modes: this.downgradeModeIconsForClient(entry.modes ?? []),
-            error: null,
-            fetchedAt: entry.fetchedAt ?? fetchedAt,
-            requestId: msg.requestId,
-          },
-        });
-        return;
-      }
-
-      const errorMessage =
-        entry.status === "error"
-          ? (entry.error ?? `Failed to list modes for ${msg.provider}`)
-          : `Provider ${msg.provider} is not available`;
-
+    if (!entry) {
       this.emit({
         type: "list_provider_modes_response",
         payload: {
           provider: msg.provider,
-          error: errorMessage,
+          error: `Unknown provider: ${msg.provider}`,
           fetchedAt,
           requestId: msg.requestId,
         },
@@ -3933,42 +3718,39 @@ export class Session {
       return;
     }
 
-    try {
-      const definition = this.getProviderRegistry()[msg.provider];
-      if (!definition.enabled) {
-        this.emitProviderDisabledResponse("modes", msg.provider, msg.requestId, fetchedAt);
-        return;
-      }
-
-      const modes = await definition.fetchModes({
-        cwd,
-        force: false,
-      });
-      this.emit({
-        type: "list_provider_modes_response",
-        payload: {
-          provider: msg.provider,
-          modes: this.downgradeModeIconsForClient(modes),
-          error: null,
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, provider: msg.provider },
-        `Failed to list modes for ${msg.provider}`,
-      );
-      this.emit({
-        type: "list_provider_modes_response",
-        payload: {
-          provider: msg.provider,
-          error: getErrorMessage(error),
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
+    if (!entry.enabled) {
+      this.emitProviderDisabledResponse("modes", msg.provider, msg.requestId, fetchedAt);
+      return;
     }
+
+    if (entry.status === "ready") {
+      this.emit({
+        type: "list_provider_modes_response",
+        payload: {
+          provider: msg.provider,
+          modes: this.downgradeModeIconsForClient(entry.modes ?? []),
+          error: null,
+          fetchedAt: entry.fetchedAt ?? fetchedAt,
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
+    const errorMessage =
+      entry.status === "error"
+        ? (entry.error ?? `Failed to list modes for ${msg.provider}`)
+        : `Provider ${msg.provider} is not available`;
+
+    this.emit({
+      type: "list_provider_modes_response",
+      payload: {
+        provider: msg.provider,
+        error: errorMessage,
+        fetchedAt,
+        requestId: msg.requestId,
+      },
+    });
   }
 
   private async getProviderSnapshotEntryForRead(
@@ -3976,10 +3758,6 @@ export class Session {
     provider: AgentProvider,
   ): Promise<ProviderSnapshotEntry | undefined> {
     const manager = this.providerSnapshotManager;
-    if (!manager) {
-      return undefined;
-    }
-
     const findEntry = () =>
       manager.getSnapshot(cwd).find((candidate) => candidate.provider === provider);
 
@@ -4164,10 +3942,8 @@ export class Session {
   ): Promise<void> {
     // COMPAT(providersSnapshot): keep legacy provider-list RPCs alongside snapshot flow.
     const entries = this.providerSnapshotManager
-      ? this.providerSnapshotManager
-          .getSnapshot(msg.cwd ? expandTilde(msg.cwd) : undefined)
-          .filter((entry) => this.isProviderVisibleToClient(entry.provider))
-      : [];
+      .getSnapshot(msg.cwd ? expandTilde(msg.cwd) : undefined)
+      .filter((entry) => this.isProviderVisibleToClient(entry.provider));
 
     this.emit({
       type: "get_providers_snapshot_response",
@@ -4183,12 +3959,12 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "refresh_providers_snapshot_request" }>,
   ): Promise<void> {
     if (msg.cwd) {
-      await this.providerSnapshotManager?.refreshSnapshotForCwd({
+      await this.providerSnapshotManager.refreshSnapshotForCwd({
         cwd: expandTilde(msg.cwd),
         providers: msg.providers,
       });
     } else {
-      await this.providerSnapshotManager?.refreshSettingsSnapshot({
+      await this.providerSnapshotManager.refreshSettingsSnapshot({
         providers: msg.providers,
       });
     }
@@ -4205,10 +3981,7 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "provider_diagnostic_request" }>,
   ): Promise<void> {
     try {
-      const client = this.getProviderRegistry()[msg.provider].createClient(this.sessionLogger);
-      const diagnostic = client.getDiagnostic
-        ? (await client.getDiagnostic()).diagnostic
-        : "No diagnostic available for this provider.";
+      const { diagnostic } = await this.providerSnapshotManager.getProviderDiagnostic(msg.provider);
       this.emit({
         type: "provider_diagnostic_response",
         payload: {
@@ -4491,7 +4264,7 @@ export class Session {
     this.sessionLogger.info({ agentId, modeId, requestId }, "session: set_agent_mode_request");
 
     try {
-      await this.agentManager.setAgentMode(agentId, modeId);
+      await setAgentModeCommand({ agentManager: this.agentManager }, { agentId, modeId });
       this.sessionLogger.info(
         { agentId, modeId, requestId },
         "session: set_agent_mode_request success",
@@ -4812,22 +4585,14 @@ export class Session {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<void> {
-    this.sessionLogger.debug(
-      { agentId, requestId },
-      `Handling permission response for agent ${agentId}, request ${requestId}`,
-    );
-
     try {
-      const result = await this.agentManager.respondToPermission(agentId, requestId, response);
-      this.sessionLogger.debug({ agentId }, `Permission response forwarded to agent ${agentId}`);
-
-      if (result?.followUpPrompt) {
-        this.sessionLogger.debug(
-          { agentId },
-          "Permission response requires follow-up turn, starting agent stream",
-        );
-        this.startAgentStream(agentId, result.followUpPrompt);
-      }
+      await respondToAgentPermission({
+        agentManager: this.agentManager,
+        agentId,
+        requestId,
+        response,
+        logger: this.sessionLogger,
+      });
     } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, requestId },
@@ -6207,7 +5972,7 @@ export class Session {
     // (excluding internal agents which are for ephemeral system tasks)
     const registryRecords = await this.agentStorage.list();
     const liveIds = new Set(agentSnapshots.map((a) => a.id));
-    const registeredProviderIds = this.getRegisteredProviderIds();
+    const registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds();
     const persistedAgents = registryRecords
       .filter((record) => !liveIds.has(record.id) && !record.internal)
       .filter(
@@ -7173,7 +6938,7 @@ export class Session {
         request,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
-        providerRegistry: this.getProviderRegistry(),
+        providerSnapshotManager: this.providerSnapshotManager,
       });
       this.emit({
         type: "fetch_recent_provider_sessions_response",

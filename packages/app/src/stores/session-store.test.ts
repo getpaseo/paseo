@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { DaemonClient } from "@server/client/daemon-client";
-import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,

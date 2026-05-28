@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useRef, type ReactElement } from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -8,19 +8,17 @@ import {
   type Modifier,
   useSensor,
   useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   useSortable,
-  arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { useWebScrollViewScrollbar } from "./use-web-scrollbar";
+import { getPointerActivationConstraint, useDragReorderState } from "./drag-reorder";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -30,8 +28,11 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 });
 
 const DND_MODIFIERS = [restrictToVerticalAxis];
-const DEFAULT_POINTER_ACTIVATION_CONSTRAINT = { distance: 6 };
-const HANDLE_POINTER_ACTIVATION_CONSTRAINT = { delay: 250, tolerance: 8 };
+const POINTER_ACTIVATION_CONFIG = {
+  defaultDistance: 6,
+  holdDelayMs: 250,
+  holdTolerance: 8,
+};
 
 interface SortableItemProps<T> {
   id: string;
@@ -137,17 +138,21 @@ export function DraggableList<T>({
   onDragBegin,
   nestable: _nestable = false,
 }: DraggableListProps<T>) {
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [dragItems, setDragItems] = useState<T[] | null>(null);
-  const items = dragItems ?? data;
+  const { activeId, items, handlers } = useDragReorderState({
+    data,
+    keyExtractor,
+    onDragEnd,
+    onDragBegin,
+  });
   const showCustomScrollbar = enableDesktopWebScrollbar && scrollEnabled;
   const scrollViewRef = useRef<ScrollView>(null);
   const scrollbar = useWebScrollViewScrollbar(scrollViewRef, {
     enabled: showCustomScrollbar,
   });
-  const pointerActivationConstraint = useDragHandle
-    ? HANDLE_POINTER_ACTIVATION_CONSTRAINT
-    : DEFAULT_POINTER_ACTIVATION_CONSTRAINT;
+  const pointerActivationConstraint = getPointerActivationConstraint(
+    useDragHandle,
+    POINTER_ACTIVATION_CONFIG,
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -156,39 +161,6 @@ export function DraggableList<T>({
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
-  );
-
-  const handleDragStart = useCallback(
-    (event: DragStartEvent) => {
-      setDragItems(data);
-      setActiveId(String(event.active.id));
-      onDragBegin?.();
-    },
-    [data, onDragBegin],
-  );
-
-  const clearDragState = useCallback(() => {
-    setActiveId(null);
-    setDragItems(null);
-  }, []);
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-
-      clearDragState();
-
-      if (over && active.id !== over.id) {
-        const oldIndex = items.findIndex((item, i) => keyExtractor(item, i) === active.id);
-        const newIndex = items.findIndex((item, i) => keyExtractor(item, i) === over.id);
-
-        if (oldIndex >= 0 && newIndex >= 0 && oldIndex !== newIndex) {
-          const newItems = arrayMove(items, oldIndex, newIndex);
-          onDragEnd(newItems);
-        }
-      }
-    },
-    [clearDragState, items, keyExtractor, onDragEnd],
   );
 
   const ids = useMemo(
@@ -224,9 +196,9 @@ export function DraggableList<T>({
             sensors={sensors}
             collisionDetection={closestCenter}
             modifiers={DND_MODIFIERS}
-            onDragStart={handleDragStart}
-            onDragCancel={clearDragState}
-            onDragEnd={handleDragEnd}
+            onDragStart={handlers.onDragStart}
+            onDragCancel={handlers.onDragCancel}
+            onDragEnd={handlers.onDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
               {items.map((item, index) => {
@@ -255,9 +227,9 @@ export function DraggableList<T>({
             sensors={sensors}
             collisionDetection={closestCenter}
             modifiers={DND_MODIFIERS}
-            onDragStart={handleDragStart}
-            onDragCancel={clearDragState}
-            onDragEnd={handleDragEnd}
+            onDragStart={handlers.onDragStart}
+            onDragCancel={handlers.onDragCancel}
+            onDragEnd={handlers.onDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
               {items.map((item, index) => {

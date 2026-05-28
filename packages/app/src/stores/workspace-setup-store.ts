@@ -1,4 +1,4 @@
-import type { SessionOutboundMessage } from "@server/shared/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 

@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceTabSnapshot,
@@ -8,62 +8,6 @@ import {
 import { selectSubagentsForParent } from "@/subagents";
 import { buildWorkspaceTabPersistenceKey, useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
-
-vi.mock("lucide-react-native", () => ({
-  Archive: () => null,
-  Check: () => null,
-  ChevronDown: () => null,
-  ChevronRight: () => null,
-}));
-
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: unknown) =>
-      typeof factory === "function"
-        ? factory({
-            spacing: { 0: 0, 1: 4, 2: 8, 3: 12, 4: 16 },
-            borderWidth: { 1: 1 },
-            borderRadius: { sm: 4, md: 6, lg: 8, "2xl": 16, full: 999 },
-            fontSize: { xs: 11, sm: 13, base: 15 },
-            fontWeight: { normal: "400", medium: "500" },
-            iconSize: { sm: 14, md: 18 },
-            colors: {
-              foreground: "#fff",
-              foregroundMuted: "#aaa",
-              surface0: "#000",
-              surface1: "#111",
-              surface2: "#222",
-              surface3: "#333",
-              border: "#444",
-              borderAccent: "#555",
-              accent: "#0a84ff",
-              palette: {
-                amber: { 500: "#ffbf00", 700: "#aa8000" },
-                blue: { 500: "#0a84ff" },
-                red: { 500: "#ff453a" },
-                green: { 500: "#30d158" },
-              },
-            },
-          })
-        : factory,
-  },
-  useUnistyles: () => ({ theme: { colors: {} } }),
-  withUnistyles: <T>(component: T) => component,
-}));
-
-vi.mock("@/components/provider-icons", () => ({
-  getProviderIcon: () => null,
-}));
-
-vi.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: unknown }) => children,
-  TooltipTrigger: ({ children }: { children: unknown }) => children,
-  TooltipContent: () => null,
-}));
-
-vi.mock("@/screens/workspace/workspace-tab-presentation", () => ({
-  WorkspaceTabIcon: () => null,
-}));
 
 vi.mock("@react-native-async-storage/async-storage", () => {
   const storage = new Map<string, string>();

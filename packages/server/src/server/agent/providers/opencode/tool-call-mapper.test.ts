@@ -296,6 +296,29 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
+  it("maps completed edit calls with OpenCode camelCase input and success text", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "edit",
+        callId: "opencode-edit-camel",
+        status: "completed",
+        input: {
+          filePath: "/Users/moboudra/dev/paseo/packages/website/src/data/agent-pages.ts",
+          oldString: 'metaTitle: "Junie agent Mobile and Desktop App, Open Source"',
+          newString: 'metaTitle: "Junie Agent Mobile and Desktop App, Open Source"',
+        },
+        output: "Edit applied successfully.",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "/Users/moboudra/dev/paseo/packages/website/src/data/agent-pages.ts",
+      oldString: 'metaTitle: "Junie agent Mobile and Desktop App, Open Source"',
+      newString: 'metaTitle: "Junie Agent Mobile and Desktop App, Open Source"',
+    });
+  });
+
   it("maps skill calls to plain text detail with the loaded skill name", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

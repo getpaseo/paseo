@@ -17,8 +17,8 @@ import type { DOMProps } from "expo/dom";
 import { useDOMImperativeHandle, type DOMImperativeFactory } from "expo/dom";
 import "@xterm/xterm/css/xterm.css";
 import type { ITheme } from "@xterm/xterm";
-import type { TerminalState } from "@server/shared/messages";
-import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
+import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import {
   TerminalEmulatorRuntime,
@@ -41,6 +41,7 @@ import {
   isTerminalFileDrag,
   prepareDroppedPathsForTerminal,
 } from "../terminal/drop/terminal-file-drop";
+import { getDesktopHost } from "@/desktop/host";
 
 export interface TerminalEmulatorHandle {
   writeOutput: (data: TerminalOutputData) => void;
@@ -833,13 +834,14 @@ export default function TerminalEmulator({
       event.stopPropagation();
       clearTerminalDropActive();
 
-      const paths = extractTerminalDropPaths(event.dataTransfer);
+      const bridge = getDesktopHost();
+      const paths = extractTerminalDropPaths(event.dataTransfer, bridge);
       if (paths.length === 0) {
         return;
       }
 
       runtimeRef.current?.focus();
-      mountCallbacksRef.current.onInput?.(prepareDroppedPathsForTerminal(paths));
+      mountCallbacksRef.current.onInput?.(prepareDroppedPathsForTerminal(paths, bridge));
     };
 
     root.addEventListener("dragenter", handleDragEnter, { capture: true });

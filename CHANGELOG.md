@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.84 - 2026-05-28
+
+### Added
+
+- **Auto-accept tool calls for OpenCode agents**
+
+### Improved
+
+- Copy an OpenCode resume command to continue the session outside Paseo
+- Model selector lists every enabled provider, with a Retry button when one fails to load
+- Provider settings are easier to search and manage
+- Other agents connecting to Paseo via MCP see the same providers, models, and modes as the app ([#1198](https://github.com/getpaseo/paseo/pull/1198))
+- OpenCode Edit tool calls render as inline diffs
+- Typing a slash command shows the best match first
+- Daemon starts faster on workspaces with many git folders
+- Markdown lists have tighter spacing
+- Less jank when streaming agent responses
+- User message footer controls align with the rest of the chat
+- Agent mode controls use a cleaner monochrome treatment
+- Compact layouts move the context ring to the footer right edge
+
+### Fixed
+
+- Allow selecting text in the chat on mobile ([#1153](https://github.com/getpaseo/paseo/pull/1153) by [@muzhi1991](https://github.com/muzhi1991))
+- Submitting a Pi question no longer looks like a second prompt opened ([#1188](https://github.com/getpaseo/paseo/pull/1188) by [@yuruiz](https://github.com/yuruiz))
+- Daemon memory leak from unbounded workspace git caches ([#1200](https://github.com/getpaseo/paseo/pull/1200))
+- Provider diagnostics include the command override binary path ([#1191](https://github.com/getpaseo/paseo/pull/1191))
+- OpenCode MCP servers connect correctly when the daemon binds to wildcard addresses
+- Tool calls from MCP servers that return non-spec output no longer fail validation
+
 ## 0.1.83 - 2026-05-26
 
 ### Fixed

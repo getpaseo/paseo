@@ -15,6 +15,7 @@ OUT_DIR="/tmp/paseo-workspace-create-android-focus-$(date +%s)"
 VIDEO_DIR="/tmp/paseo-maestro-videos"
 DEVICE_VIDEO="/sdcard/paseo-maestro-workspace-create-focused.mp4"
 LOCAL_VIDEO="$VIDEO_DIR/paseo-maestro-workspace-create-focused.mp4"
+CLIENT_EXPORTS="$REPO_ROOT/packages/client/dist/daemon-client.js"
 
 export PASEO_MAESTRO_APP_ID="${PASEO_MAESTRO_APP_ID:-sh.paseo.debug}"
 export PASEO_MAESTRO_DIRECT_ENDPOINT="${PASEO_MAESTRO_DIRECT_ENDPOINT:-127.0.0.1:6767}"
@@ -54,6 +55,12 @@ require_command node
 require_command perl
 
 mkdir -p "$OUT_DIR" "$VIDEO_DIR"
+
+if [ ! -f "$CLIENT_EXPORTS" ]; then
+  echo "Missing client build artifact: $CLIENT_EXPORTS" >&2
+  echo "Run: npm run build:client" >&2
+  exit 1
+fi
 
 if [ -z "${PASEO_MAESTRO_PROJECT_PATH:-}" ]; then
   PROJECT_PARENT="$(mktemp -d /tmp/paseo-maestro-project-XXXXXX)"
@@ -96,7 +103,7 @@ if (!repoRoot || !projectPath || !daemonUrl) {
   throw new Error("Missing required environment for daemon project setup.");
 }
 
-const moduleUrl = pathToFileURL(`${repoRoot}/packages/server/dist/server/server/exports.js`).href;
+const moduleUrl = pathToFileURL(`${repoRoot}/packages/client/dist/daemon-client.js`).href;
 const { DaemonClient } = await import(moduleUrl);
 const client = new DaemonClient({
   url: daemonUrl,

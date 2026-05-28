@@ -29,6 +29,79 @@ export interface GitCommandResult {
   signal: NodeJS.Signals | null;
 }
 
+export interface GitCommandMetric {
+  args: string[];
+  cwd: string;
+  startedAtMs: number;
+  durationMs: number;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  success: boolean;
+}
+
+export interface GitCommandMetricsSnapshot {
+  commands: GitCommandMetric[];
+  total: number;
+  failed: number;
+  maxConcurrent: number;
+}
+
+interface GitCommandMetricsState {
+  commands: GitCommandMetric[];
+  active: number;
+  maxConcurrent: number;
+}
+
+let gitCommandMetricsState: GitCommandMetricsState | null = null;
+
+export function startGitCommandMetrics(): void {
+  gitCommandMetricsState = {
+    commands: [],
+    active: 0,
+    maxConcurrent: 0,
+  };
+}
+
+export function stopGitCommandMetrics(): GitCommandMetricsSnapshot {
+  const state = gitCommandMetricsState;
+  gitCommandMetricsState = null;
+  if (!state) {
+    return {
+      commands: [],
+      total: 0,
+      failed: 0,
+      maxConcurrent: 0,
+    };
+  }
+  return {
+    commands: [...state.commands],
+    total: state.commands.length,
+    failed: state.commands.filter((command) => !command.success).length,
+    maxConcurrent: state.maxConcurrent,
+  };
+}
+
+function beginGitCommandMetric(): GitCommandMetricsState | null {
+  const state = gitCommandMetricsState;
+  if (!state) {
+    return null;
+  }
+  state.active += 1;
+  state.maxConcurrent = Math.max(state.maxConcurrent, state.active);
+  return state;
+}
+
+function finishGitCommandMetric(
+  state: GitCommandMetricsState | null,
+  metric: GitCommandMetric,
+): void {
+  if (!state) {
+    return;
+  }
+  state.active = Math.max(0, state.active - 1);
+  state.commands.push(metric);
+}
+
 function mergeEnvOverlays(
   env: ProcessEnvRecord | undefined,
   envOverlay: ProcessEnvRecord | undefined,
@@ -59,6 +132,7 @@ export function runGitCommand(
         const command = formatGitCommand(args);
         const envOverlay = mergeEnvOverlays(options.env, options.envOverlay);
         const startedAt = Date.now();
+        const metricsState = beginGitCommandMetric();
         const logger = typeof options.logger?.trace === "function" ? options.logger : undefined;
         const traceContext = logger
           ? {
@@ -87,6 +161,7 @@ export function runGitCommand(
         });
 
         let settled = false;
+        let metricFinished = false;
         let truncated = false;
         let stdoutBytes = 0;
         let stderrBytes = 0;
@@ -100,9 +175,24 @@ export function runGitCommand(
           callback();
         };
 
+        const finishMetricOnce = (metric: GitCommandMetric) => {
+          if (metricFinished) return;
+          metricFinished = true;
+          finishGitCommandMetric(metricsState, metric);
+        };
+
         const timer = setTimeout(() => {
           const error = new Error(`Git command timed out after ${timeout}ms: ${command}`);
           child.kill("SIGKILL");
+          finishMetricOnce({
+            args,
+            cwd: options.cwd,
+            startedAtMs: startedAt,
+            durationMs: Date.now() - startedAt,
+            exitCode: null,
+            signal: "SIGKILL",
+            success: false,
+          });
           settle(() => reject(error));
         }, timeout);
 
@@ -147,6 +237,15 @@ export function runGitCommand(
         });
 
         child.on("error", (error) => {
+          finishMetricOnce({
+            args,
+            cwd: options.cwd,
+            startedAtMs: startedAt,
+            durationMs: Date.now() - startedAt,
+            exitCode: null,
+            signal: null,
+            success: false,
+          });
           if (logger && traceContext) {
             logger.trace(
               {
@@ -184,6 +283,15 @@ export function runGitCommand(
           }
 
           if (!truncated && !acceptExitCodes.includes(exitCode ?? -1)) {
+            finishMetricOnce({
+              args,
+              cwd: options.cwd,
+              startedAtMs: startedAt,
+              durationMs: Date.now() - startedAt,
+              exitCode,
+              signal,
+              success: false,
+            });
             const stderrPreview = result.stderr.trim() || "(no stderr)";
             const truncationNote = result.truncated ? " (stdout truncated)" : "";
 
@@ -197,6 +305,15 @@ export function runGitCommand(
             return;
           }
 
+          finishMetricOnce({
+            args,
+            cwd: options.cwd,
+            startedAtMs: startedAt,
+            durationMs: Date.now() - startedAt,
+            exitCode,
+            signal,
+            success: true,
+          });
           settle(() => resolve(result));
         });
       }),

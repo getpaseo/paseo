@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearWorkspaceArchivePending,

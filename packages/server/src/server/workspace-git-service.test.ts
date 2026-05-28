@@ -4,7 +4,11 @@ import path, { join } from "node:path";
 import type { FSWatcher } from "node:fs";
 import type pino from "pino";
 import type { GitHubService } from "../services/github-service.js";
-import type { CheckoutStatusGit, PullRequestStatusResult } from "../utils/checkout-git.js";
+import type {
+  CheckoutSnapshotFacts,
+  CheckoutStatusGit,
+  PullRequestStatusResult,
+} from "../utils/checkout-git.js";
 import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
@@ -102,6 +106,26 @@ function createCheckoutStatus(
   };
 }
 
+function createCheckoutSnapshotFacts(cwd: string): CheckoutSnapshotFacts {
+  return {
+    isGit: true,
+    worktreeRoot: cwd,
+    currentBranch: "main",
+    remoteUrl: "https://github.com/acme/repo.git",
+    absoluteGitDir: join(cwd, ".git"),
+    gitCommonDir: join(cwd, ".git"),
+    paseoWorktree: { isPaseoOwnedWorktree: false },
+    storedBaseRef: null,
+    resolvedBaseRef: "main",
+    mainRepoRoot: null,
+    comparisonBaseRef: null,
+    branchRemoteName: "origin",
+    branchMergeRef: "refs/heads/main",
+    trackedOriginBranch: "main",
+    pullRequestLookupTarget: { headRef: "main" },
+  };
+}
+
 function createPullRequestStatusResult(
   overrides?: Partial<PullRequestStatusResult>,
 ): PullRequestStatusResult {
@@ -179,6 +203,7 @@ function createGitHubServiceStub(): GitHubService {
 
 interface CreateServiceTestOptions {
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
+  getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
   github?: GitHubService;
@@ -195,6 +220,7 @@ function buildDefaultTestServiceDeps() {
   return {
     watch: (() => createWatcher()) as unknown as typeof import("node:fs").watch,
     readdir: vi.fn(async () => []),
+    getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutSnapshotFacts(cwd)),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
     getCheckoutShortstat: vi.fn(async () => ({
       additions: 1,
@@ -403,10 +429,12 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("multiple listeners on the same workspace share one observation setup", async () => {
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createCheckoutSnapshotFacts(cwd));
     const resolveAbsoluteGitDir = vi.fn(async () => join(REPO_CWD, ".git"));
 
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const service = createService({
+      getCheckoutSnapshotFacts,
       getPullRequestStatus,
       resolveAbsoluteGitDir,
       now: () => new Date(nowMs),
@@ -417,7 +445,8 @@ describe("WorkspaceGitServiceImpl", () => {
     await flushPromises();
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(0);
-    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
 
     first.unsubscribe();
     second.unsubscribe();
@@ -449,7 +478,7 @@ describe("WorkspaceGitServiceImpl", () => {
     );
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
-    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
 
     subscription.unsubscribe();
     service.dispose();
@@ -458,9 +487,15 @@ describe("WorkspaceGitServiceImpl", () => {
   test("repo-level fetch intervals are shared for workspaces in the same repo", async () => {
     const runGitFetch = vi.fn(async () => {});
     const hasOriginRemote = vi.fn(async () => true);
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
     const resolveAbsoluteGitDir = vi.fn(async () => join(REPO_CWD, ".git"));
 
     const service = createService({
+      getCheckoutSnapshotFacts,
       resolveAbsoluteGitDir,
       hasOriginRemote,
       runGitFetch,
@@ -472,11 +507,12 @@ describe("WorkspaceGitServiceImpl", () => {
       vi.fn(),
     );
     await vi.waitFor(() => {
-      expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
       expect(runGitFetch).toHaveBeenCalledTimes(1);
     });
 
-    expect(hasOriginRemote).toHaveBeenCalledTimes(1);
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
+    expect(hasOriginRemote).toHaveBeenCalledTimes(0);
     expect(runGitFetch).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(180_000);
@@ -859,6 +895,32 @@ describe("WorkspaceGitServiceImpl", () => {
 
     diffSubscription.unsubscribe();
     workspaceSubscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("checkoutDiffCache evicts least-recently-used entries past its size cap", async () => {
+    vi.useRealTimers();
+    const getCheckoutDiff = vi.fn(async (cwd: string) => ({
+      diff: `diff for ${cwd}`,
+    }));
+    const service = createService({
+      getCheckoutDiff: getCheckoutDiff as unknown as ReturnType<typeof vi.fn>,
+    });
+
+    const CACHE_MAX = 64;
+    const OVERFLOW = 5;
+
+    for (let i = 0; i < CACHE_MAX + OVERFLOW; i++) {
+      await service.getCheckoutDiff(`/tmp/repo-${i}`, { mode: "uncommitted" });
+    }
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW);
+
+    await service.getCheckoutDiff(`/tmp/repo-${CACHE_MAX - 1}`, { mode: "uncommitted" });
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW);
+
+    await service.getCheckoutDiff("/tmp/repo-0", { mode: "uncommitted" });
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW + 1);
+
     service.dispose();
   });
 });

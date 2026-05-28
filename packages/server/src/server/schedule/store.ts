@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { StoredScheduleSchema, type StoredSchedule } from "./types.js";
+import { StoredScheduleSchema, type StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 function generateScheduleId(): string {
   return randomBytes(4).toString("hex");

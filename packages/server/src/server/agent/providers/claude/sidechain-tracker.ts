@@ -1,7 +1,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { mapClaudeRunningToolCall } from "./tool-call-mapper.js";
-import { buildToolCallDisplayModel } from "../../../../shared/tool-call-display.js";
+import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 

@@ -2,7 +2,7 @@ import type {
   CheckoutPrStatusResponse,
   CheckoutStatusResponse,
   SessionOutboundMessage,
-} from "../../shared/messages.js";
+} from "@getpaseo/protocol/messages";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 
 type CheckoutPrStatusPayload = Extract<

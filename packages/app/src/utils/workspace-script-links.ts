@@ -1,5 +1,5 @@
-import { parseHostPort } from "@server/shared/daemon-endpoints";
-import type { WorkspaceScriptPayload } from "@server/shared/messages";
+import { parseHostPort } from "@getpaseo/protocol/daemon-endpoints";
+import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
 
 export interface ResolvedWorkspaceScriptLink {

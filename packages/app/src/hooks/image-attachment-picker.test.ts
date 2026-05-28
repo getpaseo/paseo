@@ -1,23 +1,29 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
-const desktopHostState = vi.hoisted(() => ({
-  api: null as unknown,
-}));
-
-vi.mock("@/desktop/host", () => ({
-  getDesktopHost: () => desktopHostState.api,
-}));
-
+import { describe, expect, it } from "vitest";
+import type { DesktopDialogBridge, DesktopDialogOpenOptions } from "@/desktop/host";
 import {
   normalizePickedImageAssets,
   openImagePathsWithDesktopDialog,
 } from "./image-attachment-picker";
 
-describe("image-attachment-picker", () => {
-  beforeEach(() => {
-    desktopHostState.api = null;
-  });
+function fakeDialogReturning(selection: string | string[] | null): {
+  dialog: DesktopDialogBridge;
+  recordedOptions: DesktopDialogOpenOptions[];
+} {
+  const recordedOptions: DesktopDialogOpenOptions[] = [];
+  return {
+    dialog: {
+      open: async (options?: DesktopDialogOpenOptions) => {
+        if (options) {
+          recordedOptions.push(options);
+        }
+        return selection;
+      },
+    },
+    recordedOptions,
+  };
+}
 
+describe("image-attachment-picker", () => {
   it("normalizes a picked File into a blob source", async () => {
     const file = new File(["hello"], "picked.png", { type: "image/png" });
 
@@ -70,27 +76,24 @@ describe("image-attachment-picker", () => {
   });
 
   it("uses the desktop dialog api when available", async () => {
-    const open = vi.fn().mockResolvedValue(["/tmp/one.png", "/tmp/two.jpg"]);
-    desktopHostState.api = {
-      dialog: { open },
-    };
+    const { dialog, recordedOptions } = fakeDialogReturning(["/tmp/one.png", "/tmp/two.jpg"]);
 
-    const result = await openImagePathsWithDesktopDialog();
+    const result = await openImagePathsWithDesktopDialog(dialog);
 
-    expect(open).toHaveBeenCalledWith(
-      expect.objectContaining({
-        multiple: true,
-        directory: false,
-        title: "Attach images",
-      }),
-    );
+    expect(recordedOptions).toHaveLength(1);
+    expect(recordedOptions[0]).toMatchObject({
+      multiple: true,
+      directory: false,
+      title: "Attach images",
+    });
     expect(result).toEqual(["/tmp/one.png", "/tmp/two.jpg"]);
   });
 
   it("throws when desktop dialog API is not available", async () => {
-    desktopHostState.api = {};
-
-    await expect(openImagePathsWithDesktopDialog()).rejects.toThrow(
+    await expect(openImagePathsWithDesktopDialog(null)).rejects.toThrow(
+      "Desktop dialog API is not available.",
+    );
+    await expect(openImagePathsWithDesktopDialog({})).rejects.toThrow(
       "Desktop dialog API is not available.",
     );
   });

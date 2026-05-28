@@ -9,7 +9,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { EditorTargetDescriptorPayload } from "@server/shared/messages";
+import type { EditorTargetDescriptorPayload } from "@getpaseo/protocol/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {

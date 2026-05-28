@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
-} from "@server/shared/agent-lifecycle";
+} from "@getpaseo/protocol/agent-lifecycle";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 
