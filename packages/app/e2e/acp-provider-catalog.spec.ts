@@ -1,5 +1,6 @@
 import { test } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
+import { getServerId } from "./helpers/server-id";
 import {
   expectProviderInstalledInSettings,
   installAcpCatalogProvider,
@@ -12,19 +13,11 @@ const ACP_PROVIDER = {
   name: "Hermes",
 };
 
-function getSeededServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
-
 test.describe("ACP provider catalog", () => {
   test("adds a catalog provider from settings", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
-    await openSettingsHost(page, getSeededServerId());
+    await openSettingsHost(page, getServerId());
     await openAddProviderModal(page);
 
     await installAcpCatalogProvider(page, ACP_PROVIDER.name);

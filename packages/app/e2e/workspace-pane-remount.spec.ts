@@ -7,6 +7,7 @@ import {
 } from "./helpers/archive-tab";
 import { expectComposerVisible } from "./helpers/composer";
 import { createTempGitRepo } from "./helpers/workspace";
+import { getServerId } from "./helpers/server-id";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 
 test.describe("Workspace pane mounting", () => {
@@ -14,10 +15,7 @@ test.describe("Workspace pane mounting", () => {
     page,
   }) => {
     test.setTimeout(90_000);
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const client = await connectArchiveTabDaemonClient();
     const repo = await createTempGitRepo("pane-remount-");

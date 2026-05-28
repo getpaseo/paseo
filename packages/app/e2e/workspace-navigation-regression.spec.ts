@@ -37,6 +37,7 @@ import {
   expectWorkspaceDeckEntryCount,
 } from "./helpers/workspace-ui";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
+import { getServerId } from "./helpers/server-id";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 
@@ -166,11 +167,8 @@ test.describe("Workspace navigation regression", () => {
   });
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {
-    const serverId = process.env.E2E_SERVER_ID;
+    const serverId = getServerId();
     const daemonPort = process.env.E2E_DAEMON_PORT;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
     if (!daemonPort) {
       throw new Error("E2E_DAEMON_PORT is not set.");
     }
@@ -246,11 +244,8 @@ test.describe("Workspace navigation regression", () => {
   test("cold offline workspace route gates the screen interior but keeps settings reachable", async ({
     page,
   }) => {
-    const serverId = process.env.E2E_SERVER_ID;
+    const serverId = getServerId();
     const daemonPort = process.env.E2E_DAEMON_PORT;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
     if (!daemonPort) {
       throw new Error("E2E_DAEMON_PORT is not set.");
     }
@@ -272,10 +267,7 @@ test.describe("Workspace navigation regression", () => {
   });
 
   test("cold workspace URL keeps sidebar workspace navigation functional", async ({ page }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const workspaceClient = await connectNewWorkspaceDaemonClient();
     const workspaceIds = new Set<string>();
@@ -316,10 +308,7 @@ test.describe("Workspace navigation regression", () => {
   test("sidebar navigation and reload keep workspace selection and tabs aligned", async ({
     page,
   }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const workspaceClient = await connectNewWorkspaceDaemonClient();
     const archiveClient = await connectArchiveTabDaemonClient();
