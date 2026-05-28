@@ -26,6 +26,8 @@ export interface BuildWorkspacePaneContentModelInput {
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
   onOpenImportSheet: () => void;
+  onOpenArchivedSheet: () => void;
+  archivedSessionCount: number;
 }
 
 export function buildWorkspacePaneContentModel({
@@ -37,6 +39,8 @@ export function buildWorkspacePaneContentModel({
   onRetargetCurrentTab,
   onOpenWorkspaceFile,
   onOpenImportSheet,
+  onOpenArchivedSheet,
+  archivedSessionCount,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
   ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.kind);
@@ -54,6 +58,8 @@ export function buildWorkspacePaneContentModel({
       retargetCurrentTab: onRetargetCurrentTab,
       openFileInWorkspace: onOpenWorkspaceFile,
       openImportSheet: onOpenImportSheet,
+      openArchivedSheet: onOpenArchivedSheet,
+      archivedSessionCount,
     },
   };
 }
