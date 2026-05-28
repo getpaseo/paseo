@@ -6,7 +6,7 @@ import {
   createSetAgentInitializing,
   ensureAgentIsInitialized,
   refreshAgent,
-} from "./use-agent-initialization.pure";
+} from "./use-agent-initialization";
 
 const serverId = "server-1";
 const agentId = "agent-1";
