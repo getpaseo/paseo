@@ -5,8 +5,12 @@ import {
 } from "@gorhom/bottom-sheet";
 import { Portal } from "@gorhom/portal";
 import React, { createContext, useContext } from "react";
-import { forwardRef, useCallback, useEffect, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
 import type { ElementRef } from "react";
+import {
+  type BottomSheetController,
+  createBottomSheetVisibilityTracker,
+} from "./visibility-tracker";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
 
@@ -68,88 +72,31 @@ export function useIsolatedBottomSheetVisibility({
   isEnabled?: boolean;
   onClose: () => void;
 }) {
-  const sheetRef = useRef<IsolatedBottomSheetModalRef | null>(null);
-  const visibleRef = useRef(visible);
-  const isEnabledRef = useRef(isEnabled);
-  const isPresentedRef = useRef(false);
-  const hasNotifiedCloseRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
-  visibleRef.current = visible;
-  isEnabledRef.current = isEnabled;
-
-  const presentSheet = useCallback((sheet: IsolatedBottomSheetModalRef) => {
-    if (isPresentedRef.current) {
-      return;
-    }
-
-    isPresentedRef.current = true;
-    hasNotifiedCloseRef.current = false;
-    sheet.present();
-  }, []);
-
-  const dismissSheet = useCallback((sheet: IsolatedBottomSheetModalRef) => {
-    if (!isPresentedRef.current) {
-      return;
-    }
-
-    isPresentedRef.current = false;
-    sheet.dismiss();
-  }, []);
-
-  const notifyClose = useCallback(() => {
-    if (hasNotifiedCloseRef.current) {
-      return;
-    }
-
-    hasNotifiedCloseRef.current = true;
-    onClose();
-  }, [onClose]);
-
-  const handleSheetDismiss = useCallback(() => {
-    isPresentedRef.current = false;
-    if (visibleRef.current) {
-      notifyClose();
-      return;
-    }
-    hasNotifiedCloseRef.current = false;
-  }, [notifyClose]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1 && visibleRef.current) {
-        notifyClose();
-      }
-    },
-    [notifyClose],
+  const tracker = useMemo(
+    () => createBottomSheetVisibilityTracker({ onClose: () => onCloseRef.current() }),
+    [],
   );
 
   const setSheetRef = useCallback(
     (instance: IsolatedBottomSheetModalRef | null) => {
-      sheetRef.current = instance;
-      if (instance && visibleRef.current && isEnabledRef.current !== false) {
-        presentSheet(instance);
-      }
+      tracker.attachController(instance as BottomSheetController | null);
     },
-    [presentSheet],
+    [tracker],
   );
 
+  const handleSheetChange = useCallback(
+    (index: number) => tracker.handleSheetIndexChange(index),
+    [tracker],
+  );
+
+  const handleSheetDismiss = useCallback(() => tracker.handleSheetDismiss(), [tracker]);
+
   useEffect(() => {
-    if (isEnabled === false) return;
-
-    const sheet = sheetRef.current;
-    if (visible) {
-      if (!sheet) {
-        return;
-      }
-
-      presentSheet(sheet);
-      return;
-    }
-
-    if (sheet) {
-      dismissSheet(sheet);
-    }
-  }, [dismissSheet, isEnabled, presentSheet, visible]);
+    tracker.syncDesired({ visible, isEnabled });
+  }, [isEnabled, tracker, visible]);
 
   return {
     sheetRef: setSheetRef,
