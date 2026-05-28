@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { createTempGitRepo } from "./helpers/workspace";
-import { connectWorkspaceSetupClient } from "./helpers/workspace-setup";
+import { connectWorkspaceSetupClient, openProjectViaDaemon } from "./helpers/workspace-setup";
 import { captureWsSessionFrames } from "./helpers/rename";
 
 function getServerId(): string {
@@ -19,21 +19,6 @@ function workspaceRowTestId(workspaceId: string): string {
 
 function workspaceRenameModalTestId(workspaceId: string, suffix: string): string {
   return `sidebar-workspace-rename-modal-${getServerId()}:${workspaceId}-${suffix}`;
-}
-
-async function openProjectViaDaemon(
-  client: Awaited<ReturnType<typeof connectWorkspaceSetupClient>>,
-  cwd: string,
-): Promise<{ id: string; name: string; workspaceDirectory: string }> {
-  const result = await client.openProject(cwd);
-  if (!result.workspace || result.error) {
-    throw new Error(result.error ?? `Failed to open project ${cwd}`);
-  }
-  return {
-    id: String(result.workspace.id),
-    name: result.workspace.name,
-    workspaceDirectory: result.workspace.workspaceDirectory,
-  };
 }
 
 async function openRenameModal(page: Page, workspaceId: string) {

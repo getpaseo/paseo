@@ -12,7 +12,7 @@ import {
 } from "./helpers/sidebar";
 import { createTempGitRepo } from "./helpers/workspace";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
-import { connectWorkspaceSetupClient } from "./helpers/workspace-setup";
+import { connectWorkspaceSetupClient, openProjectViaDaemon } from "./helpers/workspace-setup";
 
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
@@ -46,20 +46,6 @@ async function createTempDirectory(prefix = "paseo-e2e-dir-") {
     cleanup: async () => {
       await rm(dirPath, { recursive: true, force: true });
     },
-  };
-}
-
-async function openProjectViaDaemon(
-  client: Awaited<ReturnType<typeof connectWorkspaceSetupClient>>,
-  cwd: string,
-): Promise<{ id: string; name: string }> {
-  const result = await client.openProject(cwd);
-  if (!result.workspace || result.error) {
-    throw new Error(result.error ?? `Failed to open project ${cwd}`);
-  }
-  return {
-    id: result.workspace.id,
-    name: result.workspace.name,
   };
 }
 

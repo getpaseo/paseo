@@ -90,14 +90,26 @@ export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemo
   return client;
 }
 
-export async function seedProjectForWorkspaceSetup(
+export async function openProjectViaDaemon(
   client: WorkspaceSetupDaemonClient,
   repoPath: string,
-): Promise<void> {
+): Promise<{ id: string; name: string; workspaceDirectory: string }> {
   const result = await client.openProject(repoPath);
   if (!result.workspace || result.error) {
     throw new Error(result.error ?? `Failed to open project ${repoPath}`);
   }
+  return {
+    id: result.workspace.id,
+    name: result.workspace.name,
+    workspaceDirectory: result.workspace.workspaceDirectory,
+  };
+}
+
+export async function seedProjectForWorkspaceSetup(
+  client: WorkspaceSetupDaemonClient,
+  repoPath: string,
+): Promise<void> {
+  await openProjectViaDaemon(client, repoPath);
 }
 
 export function projectNameFromPath(repoPath: string): string {
