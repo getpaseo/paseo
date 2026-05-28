@@ -2,8 +2,10 @@ import { useCallback } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { QrCode, Link2, ClipboardPaste } from "lucide-react-native";
-import { AdaptiveModalSheet } from "./adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
 import { isNative } from "@/constants/platform";
+
+const ADD_CONNECTION_HEADER: SheetHeader = { title: "Add connection" };
 
 const styles = StyleSheet.create((theme) => ({
   option: {
@@ -62,7 +64,7 @@ export function AddHostMethodModal({
 
   return (
     <AdaptiveModalSheet
-      title="Add connection"
+      header={ADD_CONNECTION_HEADER}
       visible={visible}
       onClose={onClose}
       testID="add-host-method-modal"

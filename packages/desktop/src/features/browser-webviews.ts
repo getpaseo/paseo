@@ -1,14 +1,18 @@
 import { webContents as allWebContents, type WebContents } from "electron";
 
 const browserIdsByWebContentsId = new Map<number, string>();
-let activeBrowserPaneId: string | null = null;
+let workspaceActiveBrowserId: string | null = null;
+
+export function listRegisteredPaseoBrowserIds(): string[] {
+  return Array.from(new Set(browserIdsByWebContentsId.values())).sort();
+}
 
 export function registerPaseoBrowserWebContents(contents: WebContents, browserId: string): void {
   browserIdsByWebContentsId.set(contents.id, browserId);
   contents.once("destroyed", () => {
     browserIdsByWebContentsId.delete(contents.id);
-    if (activeBrowserPaneId === browserId) {
-      activeBrowserPaneId = null;
+    if (workspaceActiveBrowserId === browserId) {
+      workspaceActiveBrowserId = null;
     }
   });
 }
@@ -20,20 +24,24 @@ export function getPaseoBrowserIdForWebContents(contents: WebContents | null): s
   return browserIdsByWebContentsId.get(contents.id) ?? null;
 }
 
-export function setActivePaseoBrowserPaneId(browserId: string | null): void {
-  activeBrowserPaneId = browserId;
+export function setWorkspaceActivePaseoBrowserId(browserId: string | null): void {
+  workspaceActiveBrowserId = browserId;
 }
 
-export function getActivePaseoBrowserWebContents(): WebContents | null {
-  if (!activeBrowserPaneId) {
-    return null;
-  }
-  for (const [contentsId, browserId] of browserIdsByWebContentsId) {
-    if (browserId !== activeBrowserPaneId) continue;
+export function getPaseoBrowserWebContents(browserId: string): WebContents | null {
+  for (const [contentsId, registeredBrowserId] of browserIdsByWebContentsId) {
+    if (registeredBrowserId !== browserId) continue;
     const contents = allWebContents.fromId(contentsId);
     if (contents && !contents.isDestroyed()) {
       return contents;
     }
   }
   return null;
+}
+
+export function getWorkspaceActivePaseoBrowserWebContents(): WebContents | null {
+  if (!workspaceActiveBrowserId) {
+    return null;
+  }
+  return getPaseoBrowserWebContents(workspaceActiveBrowserId);
 }

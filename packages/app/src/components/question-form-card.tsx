@@ -11,56 +11,18 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CircleHelp, X } from "lucide-react-native";
 import type { PendingPermission } from "@/types/shared";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
-
-interface QuestionOption {
-  label: string;
-  description?: string;
-}
-
-interface Question {
-  question: string;
-  header: string;
-  options: QuestionOption[];
-  multiSelect: boolean;
-}
-
-function parseQuestions(input: unknown): Question[] | null {
-  if (
-    typeof input !== "object" ||
-    input === null ||
-    !("questions" in input) ||
-    !Array.isArray((input as Record<string, unknown>).questions)
-  ) {
-    return null;
-  }
-  const raw = (input as Record<string, unknown>).questions as unknown[];
-  const questions: Question[] = [];
-  for (const item of raw) {
-    if (typeof item !== "object" || item === null) return null;
-    const q = item as Record<string, unknown>;
-    if (typeof q.question !== "string" || typeof q.header !== "string") return null;
-    if (!Array.isArray(q.options)) return null;
-    const options: QuestionOption[] = [];
-    for (const opt of q.options as unknown[]) {
-      if (typeof opt !== "object" || opt === null) return null;
-      const o = opt as Record<string, unknown>;
-      if (typeof o.label !== "string") return null;
-      options.push({
-        label: o.label,
-        description: typeof o.description === "string" ? o.description : undefined,
-      });
-    }
-    questions.push({
-      question: q.question,
-      header: q.header,
-      options,
-      multiSelect: q.multiSelect === true,
-    });
-  }
-  return questions.length > 0 ? questions : null;
-}
+import {
+  areQuestionsAnswered,
+  buildQuestionFormAnswers,
+  parseQuestionFormQuestions,
+  questionShowsTextInput,
+  resolveDismissLabel,
+  shouldSubmitEmptyOnDismiss,
+  type QuestionFormQuestion,
+  type QuestionOption,
+} from "./question-form-card-core";
 
 interface QuestionFormCardProps {
   permission: PendingPermission;
@@ -69,6 +31,12 @@ interface QuestionFormCardProps {
 }
 
 const IS_WEB = isWeb;
+
+function getQuestionInputPlaceholder(question: QuestionFormQuestion): string {
+  return (
+    question.placeholder ?? (question.options.length === 0 ? "Type your answer..." : "Other...")
+  );
+}
 
 interface QuestionOptionRowProps {
   qIndex: number;
@@ -137,6 +105,7 @@ function QuestionOptionRow({
 interface QuestionOtherInputProps {
   qIndex: number;
   value: string;
+  placeholder: string;
   isResponding: boolean;
   onChange: (qIndex: number, text: string) => void;
   onSubmit: () => void;
@@ -145,6 +114,7 @@ interface QuestionOtherInputProps {
 function QuestionOtherInput({
   qIndex,
   value,
+  placeholder,
   isResponding,
   onChange,
   onSubmit,
@@ -179,7 +149,7 @@ function QuestionOtherInput({
     <TextInput
       // @ts-expect-error - outlineStyle is web-only
       style={otherInputStyle}
-      placeholder="Other..."
+      placeholder={placeholder}
       placeholderTextColor={theme.colors.foregroundMuted}
       value={value}
       onChangeText={handleChange}
@@ -193,7 +163,7 @@ function QuestionOtherInput({
 export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const questions = parseQuestions(permission.request.input);
+  const questions = parseQuestionFormQuestions(permission.request.input);
 
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
@@ -237,33 +207,17 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     }
   }, []);
 
-  const allAnswered =
-    questions?.every((_, qIndex) => {
-      const selected = selections[qIndex];
-      const otherText = otherTexts[qIndex]?.trim();
-      return (selected && selected.size > 0) || (otherText && otherText.length > 0);
-    }) ?? false;
+  const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
 
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
     setRespondingAction("submit");
-    const answers: Record<string, string> = {};
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
-      const selected = selections[i];
-      const otherText = otherTexts[i]?.trim();
-
-      if (otherText && otherText.length > 0) {
-        answers[q.header] = otherText;
-      } else if (selected && selected.size > 0) {
-        const labels = Array.from(selected).map((idx) => q.options[idx].label);
-        answers[q.header] = labels.join(", ");
-      }
-    }
-
     onRespond({
       behavior: "allow",
-      updatedInput: { ...permission.request.input, answers },
+      updatedInput: {
+        ...permission.request.input,
+        answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+      },
     });
   }, [
     questions,
@@ -276,12 +230,23 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   ]);
 
   const handleDeny = useCallback(() => {
+    if (!questions) return;
     setRespondingAction("dismiss");
+    if (shouldSubmitEmptyOnDismiss(questions)) {
+      onRespond({
+        behavior: "allow",
+        updatedInput: {
+          ...permission.request.input,
+          answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+        },
+      });
+      return;
+    }
     onRespond({
       behavior: "deny",
       message: "Dismissed by user",
     });
-  }, [onRespond]);
+  }, [questions, onRespond, otherTexts, permission.request.input, selections]);
 
   const dismissButtonStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -349,11 +314,14 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     return null;
   }
 
+  const dismissLabel = resolveDismissLabel(questions);
+
   return (
     <View style={containerStyle}>
       {questions.map((q, qIndex) => {
         const selected = selections[qIndex] ?? new Set<number>();
         const otherText = otherTexts[qIndex] ?? "";
+        const showTextInput = questionShowsTextInput(q);
 
         return (
           <View key={q.question} style={styles.questionBlock}>
@@ -361,27 +329,32 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
               <Text style={questionTextStyle}>{q.question}</Text>
               <CircleHelp size={14} color={theme.colors.foregroundMuted} />
             </View>
-            <View style={styles.optionsWrap}>
-              {q.options.map((opt, optIndex) => (
-                <QuestionOptionRow
-                  key={opt.label}
-                  qIndex={qIndex}
-                  optIndex={optIndex}
-                  option={opt}
-                  isSelected={selected.has(optIndex)}
-                  multiSelect={q.multiSelect}
-                  isResponding={isResponding}
-                  onToggle={toggleOption}
-                />
-              ))}
-            </View>
-            <QuestionOtherInput
-              qIndex={qIndex}
-              value={otherText}
-              isResponding={isResponding}
-              onChange={setOtherText}
-              onSubmit={handleSubmit}
-            />
+            {q.options.length > 0 ? (
+              <View style={styles.optionsWrap}>
+                {q.options.map((opt, optIndex) => (
+                  <QuestionOptionRow
+                    key={opt.label}
+                    qIndex={qIndex}
+                    optIndex={optIndex}
+                    option={opt}
+                    isSelected={selected.has(optIndex)}
+                    multiSelect={q.multiSelect}
+                    isResponding={isResponding}
+                    onToggle={toggleOption}
+                  />
+                ))}
+              </View>
+            ) : null}
+            {showTextInput ? (
+              <QuestionOtherInput
+                qIndex={qIndex}
+                value={otherText}
+                placeholder={getQuestionInputPlaceholder(q)}
+                isResponding={isResponding}
+                onChange={setOtherText}
+                onSubmit={handleSubmit}
+              />
+            ) : null}
           </View>
         );
       })}
@@ -393,7 +366,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
           ) : (
             <View style={styles.actionContent}>
               <X size={14} color={theme.colors.foregroundMuted} />
-              <Text style={dismissActionTextStyle}>Dismiss</Text>
+              <Text style={dismissActionTextStyle}>{dismissLabel}</Text>
             </View>
           )}
         </Pressable>

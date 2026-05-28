@@ -3,6 +3,9 @@ pre-commit:
   jobs:
     - name: format
       glob: "*.{css,js,json,jsonc,jsx,md,ts,tsx,yaml,yml}"
+      exclude:
+        - "package-lock.json"
+        - "**/package-lock.json"
       run: npm run format:check:files -- {staged_files}
     - name: lint
       glob: "*.{js,jsx,ts,tsx}"

@@ -8,18 +8,17 @@ import {
   type Transport as RelayTransport,
   type KeyPair,
 } from "@getpaseo/relay/e2ee";
-import {
-  buildRelayWebSocketUrl,
-  shouldUseTlsForDefaultHostedRelay,
-} from "../shared/daemon-endpoints.js";
+import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
 interface RelayTransportOptions {
   logger: pino.Logger;
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>;
   relayEndpoint: string; // "host:port"
+  relayUseTls: boolean;
   serverId: string;
   daemonKeyPair?: KeyPair;
+  createWebSocket?: RelayWebSocketFactory;
 }
 
 export interface RelayTransportController {
@@ -34,6 +33,17 @@ interface RelaySocketLike {
   once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
 }
 
+interface RelayWebSocketLike extends RelaySocketLike {
+  terminate: () => void;
+  ping: () => void;
+  on: (
+    event: "open" | "message" | "close" | "error" | "pong",
+    listener: (...args: unknown[]) => void,
+  ) => void;
+}
+
+type RelayWebSocketFactory = (url: string) => RelayWebSocketLike;
+
 type ControlMessage =
   | { type: "sync"; connectionIds: string[] }
   | { type: "connected"; connectionId: string }
@@ -44,6 +54,11 @@ type ControlMessage =
 const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
+const RELAY_WEBSOCKET_OPTIONS = { handshakeTimeout: 10_000, perMessageDeflate: false } as const;
+
+function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
+  return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
+}
 
 function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): string | ArrayBuffer {
   if (typeof data === "string") return data;
@@ -105,16 +120,18 @@ export function startRelayTransport({
   logger,
   attachSocket,
   relayEndpoint,
+  relayUseTls,
   serverId,
   daemonKeyPair,
+  createWebSocket = createDefaultRelayWebSocket,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
 
   let stopped = false;
-  let controlWs: WebSocket | null = null;
+  let controlWs: RelayWebSocketLike | null = null;
   let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
-  const dataSockets = new Map<string, WebSocket>(); // connectionId -> ws
+  const dataSockets = new Map<string, RelayWebSocketLike>(); // connectionId -> ws
   let controlKeepaliveInterval: ReturnType<typeof setInterval> | null = null;
   let controlReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   let controlLastSeenAt = 0;
@@ -158,11 +175,11 @@ export function startRelayTransport({
     const connectionId = ++controlConnectionSeq;
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
-      useTls: shouldUseTlsForDefaultHostedRelay(relayEndpoint),
+      useTls: relayUseTls,
       serverId,
       role: "server",
     });
-    const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
+    const socket = createWebSocket(url);
     controlWs = socket;
     let controlConnected = false;
 
@@ -212,7 +229,9 @@ export function startRelayTransport({
         const now = Date.now();
         const staleForMs = now - controlLastSeenAt;
         // If the control socket is half-open or silently dropped, ws may never emit "close".
-        // Use app-level ping/pong to detect staleness and force a reconnect.
+        // Use a WebSocket protocol ping to detect staleness and force a reconnect.
+        // Cloudflare's runtime auto-responds to protocol pings at the edge without waking the
+        // hibernated relay Durable Object, so this keepalive does not incur DO CPU billing.
         if (staleForMs > CONTROL_STALE_TIMEOUT_MS) {
           relayLogger.warn(
             { url, staleForMs, connectionId, staleTimeoutMs: CONTROL_STALE_TIMEOUT_MS },
@@ -227,7 +246,7 @@ export function startRelayTransport({
         }
 
         try {
-          socket.send(JSON.stringify({ type: "ping", ts: now }));
+          socket.ping();
         } catch (error) {
           relayLogger.warn({ err: error, connectionId }, "relay_control_ping_send_failed");
           try {
@@ -238,7 +257,7 @@ export function startRelayTransport({
         }
       }, CONTROL_PING_INTERVAL_MS);
       try {
-        socket.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+        socket.ping();
       } catch (error) {
         relayLogger.warn({ err: error, connectionId }, "relay_control_ping_send_failed");
         try {
@@ -272,6 +291,12 @@ export function startRelayTransport({
       if (controlWs !== socket) return;
       relayLogger.warn({ err, connectionId }, "relay_error");
       // close event will schedule reconnect
+    });
+
+    socket.on("pong", () => {
+      if (controlWs !== socket) return;
+      controlLastSeenAt = Date.now();
+      relayLogger.debug({ connectionId }, "relay_control_pong_received");
     });
 
     socket.on("message", (data) => {
@@ -334,12 +359,12 @@ export function startRelayTransport({
 
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
-      useTls: shouldUseTlsForDefaultHostedRelay(relayEndpoint),
+      useTls: relayUseTls,
       serverId,
       role: "server",
       connectionId,
     });
-    const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
+    const socket = createWebSocket(url);
     dataSockets.set(connectionId, socket);
 
     let attached = false;
@@ -398,7 +423,7 @@ export function startRelayTransport({
 }
 
 async function attachEncryptedSocket(
-  socket: WebSocket,
+  socket: RelayWebSocketLike,
   daemonKeyPair: KeyPair,
   logger: pino.Logger,
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
@@ -407,8 +432,17 @@ async function attachEncryptedSocket(
   try {
     const relayTransport = createRelayTransportAdapter(socket, logger);
     const emitter = new EventEmitter();
+    const pendingMessages: Array<string | ArrayBuffer> = [];
+    let attached = false;
+    const emitMessage = (data: string | ArrayBuffer) => {
+      if (attached) {
+        emitter.emit("message", data);
+        return;
+      }
+      pendingMessages.push(data);
+    };
     const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
-      onmessage: (data) => emitter.emit("message", data),
+      onmessage: emitMessage,
       onclose: (code, reason) => emitter.emit("close", code, reason),
       onerror: (error) => {
         logger.warn({ err: error }, "relay_e2ee_error");
@@ -417,6 +451,11 @@ async function attachEncryptedSocket(
     });
     const encryptedSocket = createEncryptedSocket(channel, emitter);
     await attachSocket(encryptedSocket, metadata);
+    attached = true;
+    for (const message of pendingMessages) {
+      emitter.emit("message", message);
+    }
+    pendingMessages.length = 0;
   } catch (error) {
     logger.warn({ err: error }, "relay_e2ee_handshake_failed");
     try {
@@ -427,7 +466,10 @@ async function attachEncryptedSocket(
   }
 }
 
-function createRelayTransportAdapter(socket: WebSocket, logger: pino.Logger): RelayTransport {
+function createRelayTransportAdapter(
+  socket: RelayWebSocketLike,
+  logger: pino.Logger,
+): RelayTransport {
   const relayTransport: RelayTransport = {
     send: (data) => {
       try {
@@ -446,10 +488,11 @@ function createRelayTransportAdapter(socket: WebSocket, logger: pino.Logger): Re
   };
 
   socket.on("message", (data, isBinary) => {
-    relayTransport.onmessage?.(normalizeMessageData(data, isBinary));
+    relayTransport.onmessage?.(normalizeMessageData(data, isBinary === true));
   });
   socket.on("close", (code, reason) => {
-    relayTransport.onclose?.(code, reason.toString());
+    const closeCode = typeof code === "number" ? code : 1006;
+    relayTransport.onclose?.(closeCode, String(reason ?? ""));
   });
   socket.on("error", (err) => {
     relayTransport.onerror?.(err instanceof Error ? err : new Error(String(err)));
@@ -540,5 +583,3 @@ function bufferFromWsData(data: unknown): Buffer | null {
   }
   return null;
 }
-
-// buildRelayWebSocketUrl + parseHostPort live in ../shared/daemon-endpoints.ts

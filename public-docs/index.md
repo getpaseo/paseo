@@ -1,58 +1,42 @@
 ---
 title: Getting started
-description: Learn how to set up and use Paseo to manage your coding agents from anywhere.
+description: Install Paseo and start running coding agents from anywhere.
 nav: Getting started
 order: 1
 ---
 
 # Getting started
 
-Paseo has three main pieces: the daemon is the local server that manages your agents, the app is the client you use from mobile, web, or desktop, and the CLI is the terminal interface that can also launch the daemon.
+Paseo runs your coding agents on your machine and gives you a mobile, desktop, web, and CLI client to drive them from anywhere. Two ways to install.
 
-## Prerequisites
+## Desktop app (recommended)
 
-Paseo manages existing agent CLIs. Install at least one agent and make sure it already works with your credentials before you set up Paseo.
+Download from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open it and you're done.
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- [Codex](https://github.com/openai/codex)
-- [OpenCode](https://github.com/anomalyco/opencode)
+The desktop app bundles its own daemon and starts it automatically, no separate install required. On first launch you'll see a brief startup screen, then connect from your phone by scanning the QR code in Settings.
 
-## Desktop App
+## Server / CLI
 
-Download the desktop app from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open it and you're done.
-
-The desktop app bundles and manages its own daemon automatically, so you do not need a separate CLI install on that machine unless you want it.
-
-On first launch, you may briefly see a startup screen while the local server starts and the app connects to it. After that, connect from your phone by scanning the QR code in Settings if you want mobile access.
-
-## CLI / Server
-
-Use this path for headless setups, servers, or remote machines where you want the daemon running without the desktop app.
+For headless machines, dev boxes, or any setup where you want the daemon running without the desktop UI:
 
 ```bash
 npm install -g @getpaseo/cli
-```
-
-```bash
 paseo
 ```
 
 Paseo prints a QR code in the terminal. Scan it from the mobile app, or enter the daemon address manually from another client.
 
-Configuration and local state live under `PASEO_HOME`.
+Configuration and local state live under `PASEO_HOME` (defaults to `~/.paseo`).
 
-## Voice Setup
+## Where next
 
-Paseo includes first-class voice support with a local-first architecture and configurable speech providers.
+- [Providers](/docs/providers), what a provider is and how Paseo wraps existing CLIs.
+- [CLI reference](/docs/cli), every command.
+- [GitHub repo](https://github.com/getpaseo/paseo)
+- [Report an issue](https://github.com/getpaseo/paseo/issues)
 
-For architecture, local model behavior, and provider configuration, see the Voice docs page.
+## Prerequisites
 
-[Voice docs](/docs/voice)
+Paseo manages other agents, it doesn't ship one. Before it's useful, install at least one provider CLI yourself and make sure it works with your credentials. See [Supported providers](/docs/supported-providers) for the full list.
 
-## Next
-
-- [Updates](/docs/updates)
-- [Voice](/docs/voice)
-- [Providers](/docs/providers)
-- [Configuration](/docs/configuration)
-- [Security](/docs/security)
+You'll also want the [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated, Paseo uses it for PR-aware worktrees and a few orchestration features.

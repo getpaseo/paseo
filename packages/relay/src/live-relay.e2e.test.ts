@@ -9,6 +9,9 @@ import {
   decrypt,
 } from "./crypto.js";
 
+// This live test uses the hosted relay's real TLS endpoint. Self-hosted relay TLS
+// opt-in is covered at URL-building/integration level so the local E2E does not
+// need to provision trusted certificates.
 const RELAY_BASE_URL = "wss://relay.paseo.sh";
 
 async function withRetry<T>(

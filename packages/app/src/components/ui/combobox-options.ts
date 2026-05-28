@@ -1,4 +1,4 @@
-import { compareMatchScores, type MatchScore, scoreMatch } from "../../utils/score-match";
+import { compareMatchScores, type MatchScore, scoreTextFields } from "../../utils/score-match";
 
 export type ComboboxOptionKind = "directory" | "file";
 
@@ -12,18 +12,12 @@ export interface ComboboxOptionModel {
 const DESCRIPTION_FALLBACK_TIER = 99;
 
 function scoreOption(opt: ComboboxOptionModel, search: string): MatchScore | null {
-  const labelScore = scoreMatch(search, opt.label);
-  const idScore = scoreMatch(search, opt.id);
-  let best: MatchScore | null = null;
-  if (labelScore) best = labelScore;
-  if (idScore && (!best || compareMatchScores(idScore, best) < 0)) {
-    best = idScore;
-  }
+  const best = scoreTextFields(search, [opt.label, opt.id]);
   if (best) return best;
-  if (opt.description && opt.description.toLowerCase().includes(search)) {
-    return { tier: DESCRIPTION_FALLBACK_TIER, offset: 0 };
-  }
-  return null;
+  if (!opt.description) return null;
+  const descriptionScore = scoreTextFields(search, [opt.description]);
+  if (!descriptionScore) return null;
+  return { ...descriptionScore, tier: descriptionScore.tier + DESCRIPTION_FALLBACK_TIER };
 }
 
 export interface BuildVisibleComboboxOptionsInput {

@@ -541,7 +541,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   logText: {
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.code,
     lineHeight: 20,
     color: theme.colors.foreground,
   },

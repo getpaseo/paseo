@@ -2,20 +2,14 @@ import { EventEmitter } from "node:events";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { OpenCodeServerManager } from "./opencode-agent.js";
+import { OpenCodeServerManager, type OpenCodeServerGeneration } from "./opencode/server-manager.js";
 
 type FakeServerProcess = EventEmitter & {
   killed: boolean;
   kill: ReturnType<typeof vi.fn>;
 };
 
-interface FakeGeneration {
-  process: FakeServerProcess;
-  port: number;
-  url: string;
-  refCount: number;
-  retired: boolean;
-}
+type FakeGeneration = OpenCodeServerGeneration & { process: FakeServerProcess };
 
 describe("OpenCodeServerManager generations", () => {
   test("rotation creates a new current server without killing a referenced old server", async () => {
@@ -110,6 +104,19 @@ describe("OpenCodeServerManager generations", () => {
 
     expect(first.process.kill).toHaveBeenCalledWith("SIGTERM");
     expect(second.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  test("shutdown still signals a process after an earlier kill signal if it has not exited", async () => {
+    const manager = createTestManager();
+    const first = createGeneration(4451);
+    stubGenerations(manager, [first]);
+
+    await manager.acquire({ force: false });
+    first.process.killed = true;
+
+    await manager.shutdown();
+
+    expect(first.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   test("repeated rotations leave zero unreferenced retired servers", async () => {

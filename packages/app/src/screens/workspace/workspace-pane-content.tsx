@@ -9,6 +9,7 @@ import {
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 
 export interface WorkspacePaneContentModel {
   key: string;
@@ -23,7 +24,8 @@ export interface BuildWorkspacePaneContentModelInput {
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
-  onOpenWorkspaceFile: (filePath: string) => void;
+  onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+  onOpenImportSheet: () => void;
 }
 
 export function buildWorkspacePaneContentModel({
@@ -34,12 +36,13 @@ export function buildWorkspacePaneContentModel({
   onCloseCurrentTab,
   onRetargetCurrentTab,
   onOpenWorkspaceFile,
+  onOpenImportSheet,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
   ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.kind);
   invariant(registration, `No panel registration for kind: ${tab.kind}`);
   return {
-    key: `${normalizedServerId}:${normalizedWorkspaceId}:${tab.tabId}:${tab.kind}`,
+    key: `${normalizedServerId}:${normalizedWorkspaceId}:${tab.tabId}`,
     Component: registration.component,
     paneContextValue: {
       serverId: normalizedServerId,
@@ -50,6 +53,7 @@ export function buildWorkspacePaneContentModel({
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
       openFileInWorkspace: onOpenWorkspaceFile,
+      openImportSheet: onOpenImportSheet,
     },
   };
 }

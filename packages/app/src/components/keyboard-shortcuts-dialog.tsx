@@ -2,13 +2,14 @@ import { useCallback, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { buildKeyboardShortcutHelpSections } from "@/keyboard/keyboard-shortcuts";
 
 const SNAP_POINTS: string[] = ["70%", "92%"];
+const SHORTCUTS_HEADER: SheetHeader = { title: "Shortcuts" };
 
 export function KeyboardShortcutsDialog() {
   const open = useKeyboardShortcutsStore((s) => s.shortcutsDialogOpen);
@@ -25,7 +26,7 @@ export function KeyboardShortcutsDialog() {
 
   return (
     <AdaptiveModalSheet
-      title="Shortcuts"
+      header={SHORTCUTS_HEADER}
       visible={open}
       onClose={handleClose}
       testID="keyboard-shortcuts-dialog"

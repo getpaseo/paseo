@@ -111,92 +111,55 @@ export async function ensureSherpaOnnxModel(
   logger.info({ modelsDir: options.modelsDir }, "Starting model download");
 
   try {
-    if (spec.archiveUrl) {
-      const downloadsDir = path.join(options.modelsDir, ".downloads");
-      const archiveFilename = path.basename(new URL(spec.archiveUrl).pathname);
-      const archivePath = path.join(downloadsDir, archiveFilename);
+    const downloadsDir = path.join(options.modelsDir, ".downloads");
+    const archiveFilename = path.basename(new URL(spec.archiveUrl).pathname);
+    const archivePath = path.join(downloadsDir, archiveFilename);
 
-      if (!(await isNonEmptyFile(archivePath))) {
-        await downloadToFile({
-          url: spec.archiveUrl,
-          outputPath: archivePath,
-        });
-      }
-
-      logger.info(
-        {
-          modelId: options.modelId,
-          archivePath,
-          modelDir,
-        },
-        "Extracting model archive",
-      );
-      await extractTarArchive(archivePath, options.modelsDir);
-
-      logger.info(
-        {
-          modelId: options.modelId,
-          modelDir,
-        },
-        "Verifying downloaded model files",
-      );
-      if (!(await hasRequiredFiles(modelDir, spec.requiredFiles))) {
-        throw new Error(
-          `Downloaded and extracted ${archiveFilename}, but required files are still missing in ${modelDir}.`,
-        );
-      }
-
-      logger.info(
-        {
-          modelId: options.modelId,
-          archivePath,
-        },
-        "Finalizing model artifacts",
-      );
-      try {
-        await rm(archivePath, { force: true });
-      } catch {
-        // ignore
-      }
-
-      logger.info({ modelDir }, "Model download completed");
-      return modelDir;
+    if (!(await isNonEmptyFile(archivePath))) {
+      await downloadToFile({
+        url: spec.archiveUrl,
+        outputPath: archivePath,
+      });
     }
 
-    if (spec.downloadFiles && spec.downloadFiles.length > 0) {
-      await mkdir(modelDir, { recursive: true });
+    logger.info(
+      {
+        modelId: options.modelId,
+        archivePath,
+        modelDir,
+      },
+      "Extracting model archive",
+    );
+    await extractTarArchive(archivePath, options.modelsDir);
 
-      await Promise.all(
-        spec.downloadFiles.map(async (file) => {
-          const dst = path.join(modelDir, file.relPath);
-          if (await isNonEmptyFile(dst)) {
-            return;
-          }
-          await downloadToFile({
-            url: file.url,
-            outputPath: dst,
-          });
-        }),
+    logger.info(
+      {
+        modelId: options.modelId,
+        modelDir,
+      },
+      "Verifying downloaded model files",
+    );
+    if (!(await hasRequiredFiles(modelDir, spec.requiredFiles))) {
+      throw new Error(
+        `Downloaded and extracted ${archiveFilename}, but required files are still missing in ${modelDir}.`,
       );
-
-      logger.info(
-        {
-          modelId: options.modelId,
-          modelDir,
-        },
-        "Verifying downloaded model files",
-      );
-      if (!(await hasRequiredFiles(modelDir, spec.requiredFiles))) {
-        throw new Error(
-          `Downloaded files for ${options.modelId}, but required files are still missing in ${modelDir}.`,
-        );
-      }
-
-      logger.info({ modelDir }, "Model download completed");
-      return modelDir;
     }
 
-    throw new Error(`Model spec for ${options.modelId} has no archiveUrl or downloadFiles`);
+    logger.info(
+      {
+        modelId: options.modelId,
+        archivePath,
+      },
+      "Finalizing model artifacts",
+    );
+    try {
+      await rm(archivePath, { force: true });
+    } catch {
+      // ignore
+    }
+
+    logger.info({ modelDir }, "Model download completed");
+    return modelDir;
   } catch (error) {
     logger.error({ err: error }, "Model download failed");
     throw error;

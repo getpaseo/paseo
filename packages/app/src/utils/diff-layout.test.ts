@@ -4,7 +4,7 @@ import {
   buildSplitDiffRows,
   buildUnifiedDiffLines,
 } from "./diff-layout";
-import type { ParsedDiffFile } from "@/hooks/use-checkout-diff-query";
+import type { ParsedDiffFile } from "@/git/use-diff-query";
 import type { ReviewableDiffTarget } from "./diff-layout";
 
 function makeFile(

@@ -31,7 +31,6 @@ describe("persistence hooks", () => {
     const record = createRecord({
       title: "Voice agent (current)",
       config: {
-        title: "Voice agent (created)",
         modeId: "default",
         model: "gpt-5.4-mini",
         thinkingOptionId: "minimal",
@@ -51,7 +50,6 @@ describe("persistence hooks", () => {
       modeId: "plan",
       model: "gpt-5.4-mini",
       thinkingOptionId: "minimal",
-      title: "Voice agent (created)",
       systemPrompt: "Use speak first.",
       mcpServers: {
         paseo: {
@@ -68,7 +66,6 @@ describe("persistence hooks", () => {
       provider: "codex",
       title: "Renamed title",
       config: {
-        title: "Creation title",
         modeId: "default",
         model: "gpt-5.4-mini",
         systemPrompt: "Confirm and speak first.",
@@ -87,7 +84,6 @@ describe("persistence hooks", () => {
       cwd: "/tmp/project",
       modeId: "plan",
       model: "gpt-5.4-mini",
-      title: "Creation title",
       systemPrompt: "Confirm and speak first.",
       mcpServers: {
         paseo: {

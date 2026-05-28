@@ -12,6 +12,13 @@ const PersistedProjectRecordSchema = z.object({
   rootPath: z.string(),
   kind: z.enum(["git", "non_git"]),
   displayName: z.string(),
+  // User-set override layered over the derived displayName. Reconciliation
+  // never touches this. Null means "use the derived name". Added for #987.
+  customName: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -56,7 +63,7 @@ type RegistryRecord = PersistedProjectRecord | PersistedWorkspaceRecord;
 class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly filePath: string;
   private readonly logger: Logger;
-  private readonly schema: z.ZodSchema<TRecord>;
+  private readonly schema: z.ZodType<TRecord, z.ZodTypeDef, unknown>;
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
   private readonly cache = new Map<string, TRecord>();
@@ -65,7 +72,7 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   constructor(options: {
     filePath: string;
     logger: Logger;
-    schema: z.ZodSchema<TRecord>;
+    schema: z.ZodType<TRecord, z.ZodTypeDef, unknown>;
     getId: (record: TRecord) => string;
     component: string;
   }) {
@@ -202,14 +209,20 @@ export function createPersistedProjectRecord(input: {
   rootPath: string;
   kind: PersistedProjectKind;
   displayName: string;
+  customName?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
 }): PersistedProjectRecord {
   return PersistedProjectRecordSchema.parse({
     ...input,
+    customName: input.customName ?? null,
     archivedAt: input.archivedAt ?? null,
   });
+}
+
+export function resolveProjectDisplayName(record: PersistedProjectRecord): string {
+  return record.customName ?? record.displayName;
 }
 
 export function createPersistedWorkspaceRecord(input: {

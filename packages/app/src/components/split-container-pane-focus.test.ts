@@ -23,4 +23,13 @@ describe("shouldFocusPaneFromEventTarget", () => {
     ).toBe(true);
     expect(shouldFocusPaneFromEventTarget(null)).toBe(true);
   });
+
+  it("returns true for composer text inputs so focusing the composer focuses the pane", () => {
+    expect(
+      shouldFocusPaneFromEventTarget({
+        closest: (selector: string) =>
+          selector.includes("input") ? ({ tagName: "INPUT" } as Element) : null,
+      } as unknown as EventTarget),
+    ).toBe(true);
+  });
 });

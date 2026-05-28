@@ -1,10 +1,16 @@
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey } from "./agent-history-query-key";
-import { __private__, applyArchivedAgentCloseResults } from "./use-archive-agent";
+import {
+  applyArchivedAgentCloseResults,
+  isAgentArchiving,
+  removeAgentFromListPayload,
+  selectPendingArchiveAgentIds,
+  setAgentArchiving,
+} from "./use-archive-agent";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -31,6 +37,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     title: "Agent 1",
     cwd: "/repo",
     model: null,
+    parentAgentId: null,
     labels: {},
     archivedAt: null,
     ...overrides,
@@ -46,14 +53,14 @@ describe("useArchiveAgent", () => {
     const queryClient = new QueryClient();
 
     expect(
-      __private__.isAgentArchiving({
+      isAgentArchiving({
         queryClient,
         serverId: "server-a",
         agentId: "agent-1",
       }),
     ).toBe(false);
 
-    __private__.setAgentArchiving({
+    setAgentArchiving({
       queryClient,
       serverId: "server-a",
       agentId: "agent-1",
@@ -61,21 +68,21 @@ describe("useArchiveAgent", () => {
     });
 
     expect(
-      __private__.isAgentArchiving({
+      isAgentArchiving({
         queryClient,
         serverId: "server-a",
         agentId: "agent-1",
       }),
     ).toBe(true);
     expect(
-      __private__.isAgentArchiving({
+      isAgentArchiving({
         queryClient,
         serverId: "server-a",
         agentId: "agent-2",
       }),
     ).toBe(false);
 
-    __private__.setAgentArchiving({
+    setAgentArchiving({
       queryClient,
       serverId: "server-a",
       agentId: "agent-1",
@@ -83,12 +90,25 @@ describe("useArchiveAgent", () => {
     });
 
     expect(
-      __private__.isAgentArchiving({
+      isAgentArchiving({
         queryClient,
         serverId: "server-a",
         agentId: "agent-1",
       }),
     ).toBe(false);
+  });
+
+  it("selects pending archive ids for a single server", () => {
+    const pendingIds = selectPendingArchiveAgentIds(
+      {
+        "server-a:agent-1": true,
+        "server-a:agent-2": true,
+        "server-b:agent-3": true,
+      },
+      "server-a",
+    );
+
+    expect(Array.from(pendingIds)).toEqual(["agent-1", "agent-2"]);
   });
 
   it("removes an archived agent from cached list payloads", () => {
@@ -97,7 +117,7 @@ describe("useArchiveAgent", () => {
       pageInfo: { hasMore: false },
     };
 
-    const next = __private__.removeAgentFromListPayload(payload, "agent-1");
+    const next = removeAgentFromListPayload(payload, "agent-1");
 
     expect(next.entries).toEqual([{ agent: { id: "agent-2" } }]);
     expect(next.pageInfo).toEqual({ hasMore: false });

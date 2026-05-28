@@ -2,10 +2,12 @@ import type { ChildProcess } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import pino from "pino";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { PiCliRuntime } from "./pi/cli-runtime.js";
 
 interface SpawnResult {
   code: number | null;
@@ -16,16 +18,21 @@ interface SpawnResult {
 }
 
 interface ProviderLaunchCase {
-  provider: "claude" | "codex" | "opencode" | "generic-acp";
+  provider: "claude" | "codex" | "opencode" | "generic-acp" | "pi";
   binaryName: string;
   args: string[];
   shell?: boolean;
+  launchMode?: "spawnProcess" | "piRuntime";
 }
 
 const JSON_ARG = '{"mcpServers":{"paseo":{"type":"http","url":"http://127.0.0.1:6767/mcp"}}}';
 const tempDirs: string[] = [];
 
-function makeFixture(binaryName: string, expectedArgs: string[]) {
+function makeFixture(
+  binaryName: string,
+  expectedArgs: string[],
+  launchMode: "spawnProcess" | "piRuntime" = "spawnProcess",
+) {
   const root = mkdtempSync(path.join(tmpdir(), `paseo ${binaryName} launch `));
   tempDirs.push(root);
 
@@ -41,14 +48,50 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 
-const expected = JSON.parse(process.env.PASEO_EXPECTED_ARGV_JSON);
+const expected = ${JSON.stringify(expectedArgs)};
 const actual = process.argv.slice(2);
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
   console.error("ARGV_MISMATCH");
   console.error(JSON.stringify({ expected, actual }));
   process.exit(42);
 }
-console.log("ARGV_OK");
+if (${JSON.stringify(launchMode)} === "piRuntime") {
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    for (;;) {
+      const newlineIndex = buffer.indexOf("\\n");
+      if (newlineIndex === -1) {
+        break;
+      }
+      const line = buffer.slice(0, newlineIndex).replace(/\\r$/, "");
+      buffer = buffer.slice(newlineIndex + 1);
+      const command = JSON.parse(line);
+      if (command.type === "get_state") {
+        process.stdout.write(
+          JSON.stringify({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: true,
+            data: {
+              sessionId: "pi-session-1",
+              thinkingLevel: "medium",
+              isStreaming: false,
+              isCompacting: false,
+              messageCount: 0,
+              pendingMessageCount: 0,
+            },
+          }) + "\\n",
+        );
+      }
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+} else {
+  console.log("ARGV_OK");
+}
 `,
   );
 
@@ -112,14 +155,27 @@ async function runProviderFixture(params: {
   shell?: boolean;
 }): Promise<SpawnResult> {
   const child = spawnProcess(params.command, params.args, {
-    env: {
-      ...process.env,
-      PASEO_EXPECTED_ARGV_JSON: JSON.stringify(params.expectedArgs),
-    },
     stdio: ["ignore", "pipe", "pipe"],
     ...(params.shell === undefined ? {} : { shell: params.shell }),
   });
   return collectChild(child);
+}
+
+async function runPiRuntimeFixture(params: { command: string; cwd: string }): Promise<void> {
+  const runtime = new PiCliRuntime({
+    logger: pino({ level: "silent" }),
+    command: [params.command],
+  });
+  const session = await runtime.startSession({ cwd: params.cwd });
+
+  try {
+    await expect(session.getState()).resolves.toMatchObject({
+      sessionId: "pi-session-1",
+      thinkingLevel: "medium",
+    });
+  } finally {
+    await session.close();
+  }
 }
 
 function withPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
@@ -167,6 +223,12 @@ const providerLaunchCases: ProviderLaunchCase[] = [
     binaryName: "generic-acp",
     args: ["--mcp-config", JSON_ARG],
   },
+  {
+    provider: "pi",
+    binaryName: "pi",
+    args: ["--mode", "rpc"],
+    launchMode: "piRuntime",
+  },
 ];
 
 describe.runIf(process.platform === "win32")("Windows provider launch parity", () => {
@@ -194,9 +256,17 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
   });
 
   test.each(providerLaunchCases)(
-    "$provider launches a cmd shim from a path with spaces through spawnProcess",
-    async ({ binaryName, args, shell }) => {
-      const fixture = makeFixture(binaryName, args);
+    "$provider launches a cmd shim from a path with spaces through its Windows-safe launch path",
+    async ({ binaryName, args, shell, launchMode }) => {
+      const fixture = makeFixture(binaryName, args, launchMode);
+
+      if (launchMode === "piRuntime") {
+        await runPiRuntimeFixture({
+          command: fixture.shim,
+          cwd: fixture.root,
+        });
+        return;
+      }
 
       const result = await runProviderFixture({
         command: fixture.shim,

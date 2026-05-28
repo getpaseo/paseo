@@ -11,7 +11,6 @@ import type { AgentSessionConfig } from "./agent-sdk-types.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
-    title: z.string().nullable().optional(),
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
@@ -68,7 +67,6 @@ const STORED_AGENT_SCHEMA = z.object({
 
 export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
-  | "title"
   | "modeId"
   | "model"
   | "thinkingOptionId"
@@ -115,44 +113,51 @@ export class AgentStorage {
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
+    await this.queueRecordWrite(record);
+  }
+
+  private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     const agentId = record.id;
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
       if (this.deleting.has(agentId)) {
-        return;
+        return undefined;
       }
 
-      const nextPath = this.buildRecordPath(record);
-      const previousPath = this.pathById.get(agentId);
-
-      await fs.mkdir(path.dirname(nextPath), { recursive: true });
-      await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
-      this.addIndexedPath(agentId, nextPath);
-
-      if (previousPath && previousPath !== nextPath) {
-        try {
-          await fs.unlink(previousPath);
-        } catch {
-          // ignore cleanup errors
-        }
-        this.removeIndexedPath(agentId, previousPath);
-      }
-
-      this.cache.set(agentId, record);
-      this.pathById.set(agentId, nextPath);
-      return;
+      await this.writeRecord(record);
+      return undefined;
     });
 
-    this.pendingWrites.set(
-      agentId,
-      next.finally(() => {
-        if (this.pendingWrites.get(agentId) === next) {
-          this.pendingWrites.delete(agentId);
-        }
-      }),
-    );
+    const tracked = next.finally(() => {
+      if (this.pendingWrites.get(agentId) === tracked) {
+        this.pendingWrites.delete(agentId);
+      }
+    });
 
-    await next;
+    this.pendingWrites.set(agentId, tracked);
+    return tracked;
+  }
+
+  private async writeRecord(record: StoredAgentRecord): Promise<void> {
+    const agentId = record.id;
+    const nextPath = this.buildRecordPath(record);
+    const previousPath = this.pathById.get(agentId);
+
+    await fs.mkdir(path.dirname(nextPath), { recursive: true });
+    await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
+    this.addIndexedPath(agentId, nextPath);
+
+    if (previousPath && previousPath !== nextPath) {
+      try {
+        await fs.unlink(previousPath);
+      } catch {
+        // ignore cleanup errors
+      }
+      this.removeIndexedPath(agentId, previousPath);
+    }
+
+    this.cache.set(agentId, record);
+    this.pathById.set(agentId, nextPath);
   }
 
   beginDelete(agentId: string): void {
@@ -223,6 +228,22 @@ export class AgentStorage {
       throw new Error(`Agent ${agentId} not found`);
     }
     await this.upsert({ ...record, title });
+  }
+
+  async setGeneratedTitle(agentId: string, title: string): Promise<StoredAgentRecord> {
+    await this.load();
+    await this.waitForPendingWrite(agentId);
+    const record = this.cache.get(agentId) ?? null;
+    if (!record) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    const nextRecord = {
+      ...record,
+      title,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.queueRecordWrite(nextRecord);
+    return nextRecord;
   }
 
   async flush(): Promise<void> {

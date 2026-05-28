@@ -33,3 +33,22 @@ export function syncPickerPrAttachment(input: {
 
   return { attachments: nextAttachments, attachedPrNumber };
 }
+
+export function findCheckoutHintPrAttachment(input: {
+  attachments: ReadonlyArray<UserComposerAttachment>;
+  selectedItem: PickerItem | null;
+  dismissedPrNumbers: ReadonlySet<number>;
+}): Extract<UserComposerAttachment, { kind: "github_pr" }> | null {
+  const selectedPrNumber =
+    input.selectedItem?.kind === "github-pr" ? input.selectedItem.item.number : null;
+
+  for (const attachment of input.attachments) {
+    if (attachment.kind !== "github_pr") continue;
+    const prNumber = attachment.item.number;
+    if (prNumber === selectedPrNumber) continue;
+    if (input.dismissedPrNumbers.has(prNumber)) continue;
+    return attachment;
+  }
+
+  return null;
+}

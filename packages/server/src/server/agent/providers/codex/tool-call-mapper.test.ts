@@ -1,47 +1,50 @@
 import { describe, expect, it } from "vitest";
 
-import { mapCodexRolloutToolCall, mapCodexToolCallFromThreadItem } from "./tool-call-mapper.js";
+import { mapCodexToolCallEnvelope, mapCodexToolCallFromThreadItem } from "./tool-call-mapper.js";
 
 function expectMapped<T>(item: T | null): T {
-  expect(item).toBeTruthy();
-  if (!item) {
-    throw new Error("Expected mapped tool call");
-  }
-  return item;
+  expect(item).not.toBeNull();
+  return item as T;
 }
 
 describe("codex tool-call mapper", () => {
   it("maps commandExecution start into running canonical call", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "commandExecution",
-      id: "codex-call-1",
-      status: "running",
-      command: "pwd",
-      cwd: "/tmp/repo",
-    });
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-1",
+        status: "running",
+        command: "pwd",
+        cwd: "/tmp/repo",
+      }),
+    );
 
-    expect(item).toBeTruthy();
-    expect(item?.status).toBe("running");
-    expect(item?.error).toBeNull();
-    expect(item?.callId).toBe("codex-call-1");
-    expect(item?.name).toBe("shell");
-    expect(item?.detail).toEqual({
-      type: "shell",
-      command: "pwd",
-      cwd: "/tmp/repo",
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-call-1",
+      name: "shell",
+      status: "running",
+      error: null,
+      detail: {
+        type: "shell",
+        command: "pwd",
+        cwd: "/tmp/repo",
+      },
     });
   });
 
   it("unwraps shell wrapper arrays for commandExecution", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "commandExecution",
-      id: "codex-call-wrapper-array",
-      status: "running",
-      command: ["/bin/zsh", "-lc", "echo hello"],
-      cwd: "/tmp/repo",
-    });
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-wrapper-array",
+        status: "running",
+        command: ["/bin/zsh", "-lc", "echo hello"],
+        cwd: "/tmp/repo",
+      }),
+    );
 
-    expect(item?.detail).toEqual({
+    expect(item.detail).toEqual({
       type: "shell",
       command: "echo hello",
       cwd: "/tmp/repo",
@@ -49,42 +52,81 @@ describe("codex tool-call mapper", () => {
   });
 
   it("unwraps shell wrapper strings for commandExecution", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "commandExecution",
-      id: "codex-call-wrapper-string",
-      status: "running",
-      command: '/bin/zsh -lc "echo hello"',
-      cwd: "/tmp/repo",
-    });
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-wrapper-string",
+        status: "running",
+        command: '/bin/zsh -lc "echo hello"',
+        cwd: "/tmp/repo",
+      }),
+    );
 
-    expect(item?.detail).toEqual({
+    expect(item.detail).toEqual({
       type: "shell",
       command: "echo hello",
       cwd: "/tmp/repo",
     });
   });
 
+  it("unwraps pwsh wrapper strings for commandExecution on Windows", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-wrapper-pwsh-string",
+        status: "running",
+        command:
+          '"C:\\Users\\example\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe" -NoLogo -NoProfile -Command "echo hello"',
+        cwd: "C:\\repo",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "shell",
+      command: "echo hello",
+      cwd: "C:\\repo",
+    });
+  });
+
+  it("unwraps cmd wrapper arrays for commandExecution on Windows", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-wrapper-cmd-array",
+        status: "running",
+        command: ["cmd.exe", "/c", "echo hello"],
+        cwd: "C:\\repo",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "shell",
+      command: "echo hello",
+      cwd: "C:\\repo",
+    });
+  });
+
   it("keeps only command output body when commandExecution output is wrapped in shell envelope", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "commandExecution",
-      id: "codex-call-envelope-output",
-      status: "completed",
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-envelope-output",
+        status: "completed",
+        command: "echo hello",
+        cwd: "/tmp/repo",
+        aggregatedOutput:
+          'Chunk ID: e87d40\nWall time: 0.0521 seconds\nProcess exited with code 0\nOriginal token count: 192\nOutput:\n214  export type AgentPermissionRequestKind = "tool";',
+        exitCode: 0,
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "shell",
       command: "echo hello",
       cwd: "/tmp/repo",
-      aggregatedOutput:
-        'Chunk ID: e87d40\nWall time: 0.0521 seconds\nProcess exited with code 0\nOriginal token count: 192\nOutput:\n214  export type AgentPermissionRequestKind = "tool";',
+      output: '214  export type AgentPermissionRequestKind = "tool";',
       exitCode: 0,
     });
-
-    expect(item?.detail?.type).toBe("shell");
-    if (item?.detail?.type === "shell") {
-      expect(item.detail.output).toBe('214  export type AgentPermissionRequestKind = "tool";');
-      expect(item.detail.output).not.toContain("Chunk ID:");
-      expect(item.detail.output).not.toContain("Wall time:");
-      expect(item.detail.output).not.toContain("Process exited with code");
-      expect(item.detail.output).not.toContain("Original token count:");
-      expect(item.detail.output).not.toContain("Output:");
-    }
   });
 
   it("maps running known tool variants with detail for early summaries", () => {
@@ -99,7 +141,7 @@ describe("codex tool-call mapper", () => {
       },
       { cwd: "/tmp/repo" },
     );
-    expect(readItem?.detail).toEqual({
+    expect(expectMapped(readItem).detail).toEqual({
       type: "read",
       filePath: "README.md",
     });
@@ -115,7 +157,7 @@ describe("codex tool-call mapper", () => {
       },
       { cwd: "/tmp/repo" },
     );
-    expect(writeItem?.detail).toEqual({
+    expect(expectMapped(writeItem).detail).toEqual({
       type: "write",
       filePath: "src/new.ts",
     });
@@ -131,7 +173,7 @@ describe("codex tool-call mapper", () => {
       },
       { cwd: "/tmp/repo" },
     );
-    expect(editItem?.detail).toEqual({
+    expect(expectMapped(editItem).detail).toEqual({
       type: "edit",
       filePath: "src/index.ts",
     });
@@ -143,7 +185,7 @@ describe("codex tool-call mapper", () => {
       query: "codex timeline",
       action: null,
     });
-    expect(searchItem?.detail).toEqual({
+    expect(expectMapped(searchItem).detail).toEqual({
       type: "search",
       query: "codex timeline",
       toolName: "web_search",
@@ -179,154 +221,222 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("maps mcp read_file completion with detail", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "mcpToolCall",
-        id: "codex-call-2",
-        status: "completed",
-        tool: "read_file",
-        arguments: { path: "/tmp/repo/README.md" },
-        result: { content: "hello" },
+  it("does not fail a collabAgentToolCall from child error state alone", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-sub-agent-transient-child-error",
+      tool: "spawnAgent",
+      status: "completed",
+      prompt: "Inspect the Codex stream path.",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: "error", message: "Sub-agent failed" },
       },
-      { cwd: "/tmp/repo" },
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-sub-agent-transient-child-error",
+      name: "Sub-agent",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Inspect the Codex stream path.",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
+  it("still fails a collabAgentToolCall from an explicitly failed child state", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-sub-agent-child-failed",
+      tool: "spawnAgent",
+      status: "completed",
+      prompt: "Inspect the Codex stream path.",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: "failed", message: "Child failed" },
+      },
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-sub-agent-child-failed",
+      name: "Sub-agent",
+      status: "failed",
+      error: { message: "Sub-agent failed" },
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Inspect the Codex stream path.",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
+  it("maps mcp read_file completion with detail", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem(
+        {
+          type: "mcpToolCall",
+          id: "codex-call-2",
+          status: "completed",
+          tool: "read_file",
+          arguments: { path: "/tmp/repo/README.md" },
+          result: { content: "hello" },
+        },
+        { cwd: "/tmp/repo" },
+      ),
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.status).toBe("completed");
-    expect(item?.error).toBeNull();
-    expect(item?.callId).toBe("codex-call-2");
-    expect(item?.name).toBe("read_file");
-    expect(item?.detail?.type).toBe("read");
-    if (item?.detail?.type === "read") {
-      expect(item.detail.filePath).toBe("README.md");
-      expect(item.detail.content).toBe("hello");
-    }
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-call-2",
+      name: "read_file",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "read",
+        filePath: "README.md",
+        content: "hello",
+      },
+    });
   });
 
   it("retains read_file content when provider returns content array objects", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "mcpToolCall",
-        id: "codex-read-array",
-        status: "completed",
-        tool: "read_file",
-        arguments: { path: "/tmp/repo/README.md" },
-        result: {
-          content: [
-            { type: "text", text: "line one" },
-            { type: "text", text: "line two" },
-          ],
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem(
+        {
+          type: "mcpToolCall",
+          id: "codex-read-array",
+          status: "completed",
+          tool: "read_file",
+          arguments: { path: "/tmp/repo/README.md" },
+          result: {
+            content: [
+              { type: "text", text: "line one" },
+              { type: "text", text: "line two" },
+            ],
+          },
         },
-      },
-      { cwd: "/tmp/repo" },
+        { cwd: "/tmp/repo" },
+      ),
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.detail?.type).toBe("read");
-    if (item?.detail?.type === "read") {
-      expect(item.detail.filePath).toBe("README.md");
-      expect(item.detail.content).toBe("line one\nline two");
-    }
+    expect(item.detail).toEqual({
+      type: "read",
+      filePath: "README.md",
+      content: "line one\nline two",
+    });
   });
 
   it("truncates large diff payloads deterministically in canonical detail", () => {
     const hugeDiff = `@@\\n-${"a".repeat(14_000)}\\n+${"b".repeat(14_000)}\\n`;
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "fileChange",
-        id: "codex-diff-1",
-        status: "completed",
-        changes: [{ path: "/tmp/repo/src/index.ts", kind: "modify", diff: hugeDiff }],
-      },
-      { cwd: "/tmp/repo" },
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem(
+        {
+          type: "fileChange",
+          id: "codex-diff-1",
+          status: "completed",
+          changes: [{ path: "/tmp/repo/src/index.ts", kind: "modify", diff: hugeDiff }],
+        },
+        { cwd: "/tmp/repo" },
+      ),
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.status).toBe("completed");
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.unifiedDiff).toBeDefined();
-      expect(item.detail.unifiedDiff?.includes("...[truncated ")).toBe(true);
-      expect((item.detail.unifiedDiff?.length ?? 0) < hugeDiff.length).toBe(true);
-    }
+    expect(item.status).toBe("completed");
+    expect(item.detail.type).toBe("edit");
+    expect(item.detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/index.ts",
+        "type": "edit",
+        "unifiedDiff": "@@\\n-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ...[truncated 27 chars]",
+      }
+    `);
+    expect(String(item.detail.unifiedDiff).length).toBeLessThan(hugeDiff.length);
   });
 
   it("maps fileChange content fallback into editable text when unified diff is absent", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "fileChange",
-        id: "codex-content-1",
-        status: "completed",
-        changes: [
-          {
-            path: "/tmp/repo/src/content-only.ts",
-            kind: "modify",
-            content: "line one\nline two\n",
-          },
-        ],
-      },
-      { cwd: "/tmp/repo" },
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem(
+        {
+          type: "fileChange",
+          id: "codex-content-1",
+          status: "completed",
+          changes: [
+            {
+              path: "/tmp/repo/src/content-only.ts",
+              kind: "modify",
+              content: "line one\nline two\n",
+            },
+          ],
+        },
+        { cwd: "/tmp/repo" },
+      ),
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.filePath).toBe("src/content-only.ts");
-      expect(item.detail.newString).toContain("line one");
-      expect(item.detail.unifiedDiff).toBeUndefined();
-    }
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "src/content-only.ts",
+      newString: "line one\nline two\n",
+    });
   });
 
   it("maps fileChange object-style change payloads keyed by path", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "fileChange",
-        id: "codex-content-object-map",
-        status: "completed",
-        changes: {
-          "/tmp/repo/src/object-map.ts": {
-            type: "modify",
-            unified_diff: "@@\n-old\n+new\n",
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem(
+        {
+          type: "fileChange",
+          id: "codex-content-object-map",
+          status: "completed",
+          changes: {
+            "/tmp/repo/src/object-map.ts": {
+              type: "modify",
+              unified_diff: "@@\n-old\n+new\n",
+            },
           },
         },
-      },
-      { cwd: "/tmp/repo" },
+        { cwd: "/tmp/repo" },
+      ),
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.filePath).toBe("src/object-map.ts");
-      expect(item.detail.unifiedDiff).toContain("-old");
-      expect(item.detail.unifiedDiff).toContain("+new");
-    }
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "src/object-map.ts",
+      unifiedDiff: "@@\n-old\n+new\n",
+    });
   });
 
   it("maps fileChange array payloads that use file_path aliases", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "fileChange",
-        id: "codex-content-file-path-alias",
-        status: "completed",
-        changes: [
-          {
-            file_path: "/tmp/repo/src/file-path-alias.ts",
-            kind: "modify",
-            patch: "@@\n-before\n+after\n",
-          },
-        ],
-      },
-      { cwd: "/tmp/repo" },
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem(
+        {
+          type: "fileChange",
+          id: "codex-content-file-path-alias",
+          status: "completed",
+          changes: [
+            {
+              file_path: "/tmp/repo/src/file-path-alias.ts",
+              kind: "modify",
+              patch: "@@\n-before\n+after\n",
+            },
+          ],
+        },
+        { cwd: "/tmp/repo" },
+      ),
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.filePath).toBe("src/file-path-alias.ts");
-      expect(item.detail.unifiedDiff).toContain("-before");
-      expect(item.detail.unifiedDiff).toContain("+after");
-    }
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "src/file-path-alias.ts",
+      unifiedDiff: "@@\n-before\n+after\n",
+    });
   });
 
   it("maps write/edit/search known variants with distinct detail types", () => {
@@ -341,10 +451,11 @@ describe("codex tool-call mapper", () => {
       },
       { cwd: "/tmp/repo" },
     );
-    expect(writeItem?.detail?.type).toBe("write");
-    if (writeItem?.detail?.type === "write") {
-      expect(writeItem.detail.filePath).toBe("src/new.ts");
-    }
+    expect(expectMapped(writeItem).detail).toEqual({
+      type: "write",
+      filePath: "src/new.ts",
+      content: "export {}",
+    });
 
     const editItem = mapCodexToolCallFromThreadItem(
       {
@@ -357,10 +468,11 @@ describe("codex tool-call mapper", () => {
       },
       { cwd: "/tmp/repo" },
     );
-    expect(editItem?.detail?.type).toBe("edit");
-    if (editItem?.detail?.type === "edit") {
-      expect(editItem.detail.filePath).toBe("src/index.ts");
-    }
+    expect(expectMapped(editItem).detail).toEqual({
+      type: "edit",
+      filePath: "src/index.ts",
+      unifiedDiff: "@@\\n-a\\n+b\\n",
+    });
 
     const searchItem = mapCodexToolCallFromThreadItem({
       type: "webSearch",
@@ -369,7 +481,7 @@ describe("codex tool-call mapper", () => {
       query: "codex timeline",
       action: { results: [] },
     });
-    expect(searchItem?.detail).toEqual({
+    expect(expectMapped(searchItem).detail).toEqual({
       type: "search",
       query: "codex timeline",
       toolName: "web_search",
@@ -377,26 +489,36 @@ describe("codex tool-call mapper", () => {
   });
 
   it("maps failed tool calls with required error", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "mcpToolCall",
-      id: "codex-call-3",
-      status: "failed",
-      server: "custom",
-      tool: "run",
-      arguments: { foo: "bar" },
-      result: null,
-      error: { message: "boom" },
-    });
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "mcpToolCall",
+        id: "codex-call-3",
+        status: "failed",
+        server: "custom",
+        tool: "run",
+        arguments: { foo: "bar" },
+        result: null,
+        error: { message: "boom" },
+      }),
+    );
 
-    expect(item).toBeTruthy();
-    expect(item?.status).toBe("failed");
-    expect(item?.error).toEqual({ message: "boom" });
-    expect(item?.callId).toBe("codex-call-3");
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-call-3",
+      name: "custom.run",
+      status: "failed",
+      error: { message: "boom" },
+      detail: {
+        type: "unknown",
+        input: { foo: "bar" },
+        output: null,
+      },
+    });
   });
 
   it("maps unknown tools to unknown detail with raw payloads", () => {
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-4",
         name: "my_custom_tool",
         input: { foo: "bar" },
@@ -414,7 +536,7 @@ describe("codex tool-call mapper", () => {
     expect(item.callId).toBe("codex-call-4");
   });
 
-  it("maps apply_patch rollout calls with raw patch input into edit detail", () => {
+  it("maps apply_patch tool-call calls with raw patch input into edit detail", () => {
     const patch = [
       "*** Begin Patch",
       "*** Update File: /tmp/repo/src/index.ts",
@@ -424,7 +546,7 @@ describe("codex tool-call mapper", () => {
       "*** End Patch",
     ].join("\n");
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-apply",
         name: "apply_patch",
         input: patch,
@@ -435,16 +557,18 @@ describe("codex tool-call mapper", () => {
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
-    expect(item.detail.type).toBe("edit");
-    if (item.detail.type === "edit") {
-      expect(item.detail.filePath).toBe("src/index.ts");
-      expect(item.detail.unifiedDiff).toContain("diff --git");
-      expect(item.detail.unifiedDiff).toContain("@@");
-      expect(item.detail.unifiedDiff).toContain("-old");
-      expect(item.detail.unifiedDiff).toContain("+new");
-      expect(item.detail.unifiedDiff).not.toContain("*** Begin Patch");
-      expect(item.detail.newString).toBeUndefined();
-    }
+    expect(item.detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/index.ts",
+        "type": "edit",
+        "unifiedDiff": "diff --git a//tmp/repo/src/index.ts b//tmp/repo/src/index.ts
+      --- a//tmp/repo/src/index.ts
+      +++ b//tmp/repo/src/index.ts
+      @@
+      -old
+      +new",
+      }
+    `);
   });
 
   it("maps apply_patch object content payloads into unified diff detail", () => {
@@ -458,7 +582,7 @@ describe("codex tool-call mapper", () => {
     ].join("\n");
 
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-apply-object",
         name: "apply_patch",
         input: {
@@ -470,16 +594,18 @@ describe("codex tool-call mapper", () => {
       }),
     );
 
-    expect(item.detail.type).toBe("edit");
-    if (item.detail.type === "edit") {
-      expect(item.detail.filePath).toBe("src/object.ts");
-      expect(item.detail.unifiedDiff).toContain("diff --git");
-      expect(item.detail.unifiedDiff).toContain("@@");
-      expect(item.detail.unifiedDiff).toContain("-before");
-      expect(item.detail.unifiedDiff).toContain("+after");
-      expect(item.detail.unifiedDiff).not.toContain("*** Begin Patch");
-      expect(item.detail.newString).toBeUndefined();
-    }
+    expect(item.detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/object.ts",
+        "type": "edit",
+        "unifiedDiff": "diff --git a//tmp/repo/src/object.ts b//tmp/repo/src/object.ts
+      --- a//tmp/repo/src/object.ts
+      +++ b//tmp/repo/src/object.ts
+      @@
+      -before
+      +after",
+      }
+    `);
   });
 
   it("maps fileChange content that contains codex patch envelopes as unified diffs", () => {
@@ -502,14 +628,18 @@ describe("codex tool-call mapper", () => {
       { cwd: "/tmp/repo" },
     );
 
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.filePath).toBe("src/from-file-change.ts");
-      expect(item.detail.unifiedDiff).toContain("-alpha");
-      expect(item.detail.unifiedDiff).toContain("+beta");
-      expect(item.detail.unifiedDiff).not.toContain("*** Begin Patch");
-      expect(item.detail.newString).toBeUndefined();
-    }
+    expect(expectMapped(item).detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/from-file-change.ts",
+        "type": "edit",
+        "unifiedDiff": "diff --git a//tmp/repo/src/from-file-change.ts b//tmp/repo/src/from-file-change.ts
+      --- a//tmp/repo/src/from-file-change.ts
+      +++ b//tmp/repo/src/from-file-change.ts
+      @@
+      -alpha
+      +beta",
+      }
+    `);
   });
 
   it("maps path-only fileChange payloads to unknown detail instead of empty edit detail", () => {
@@ -523,45 +653,50 @@ describe("codex tool-call mapper", () => {
       { cwd: "/tmp/repo" },
     );
 
-    expect(item?.detail.type).toBe("unknown");
-    if (item?.detail.type === "unknown") {
-      expect(item.detail.input).toEqual({
+    expect(expectMapped(item).detail).toEqual({
+      type: "unknown",
+      input: {
         files: [{ path: "src/path-only.ts", kind: "modify" }],
-      });
-    }
+      },
+      output: {
+        files: [{ path: "src/path-only.ts", kind: "modify" }],
+      },
+    });
   });
 
-  it("maps path-only apply_patch rollout payloads to unknown detail instead of empty edit detail", () => {
+  it("maps path-only apply_patch tool-call payloads to unknown detail instead of empty edit detail", () => {
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-call-apply-path-only",
         name: "apply_patch",
-        input: { path: "/tmp/repo/src/path-only-rollout.ts" },
-        output: { files: [{ path: "/tmp/repo/src/path-only-rollout.ts", kind: "modify" }] },
+        input: { path: "/tmp/repo/src/path-only-tool-call.ts" },
+        output: { files: [{ path: "/tmp/repo/src/path-only-tool-call.ts", kind: "modify" }] },
         cwd: "/tmp/repo",
       }),
     );
 
-    expect(item.detail.type).toBe("unknown");
-    if (item.detail.type === "unknown") {
-      expect(item.detail.input).toEqual({ path: "/tmp/repo/src/path-only-rollout.ts" });
-    }
+    expect(item.detail).toEqual({
+      type: "unknown",
+      input: { path: "/tmp/repo/src/path-only-tool-call.ts" },
+      output: { files: [{ path: "/tmp/repo/src/path-only-tool-call.ts", kind: "modify" }] },
+    });
   });
 
   it("normalizes codex paseo speak mcp calls and extracts spoken text", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "mcpToolCall",
-      id: "codex-speak-thread-1",
-      status: "completed",
-      server: "paseo",
-      tool: "speak",
-      arguments: { text: "Voice response from Codex." },
-      result: { ok: true },
-    });
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "mcpToolCall",
+        id: "codex-speak-thread-1",
+        status: "completed",
+        server: "paseo",
+        tool: "speak",
+        arguments: { text: "Voice response from Codex." },
+        result: { ok: true },
+      }),
+    );
 
-    expect(item).toBeTruthy();
-    expect(item?.name).toBe("speak");
-    expect(item?.detail).toEqual({
+    expect(item.name).toBe("speak");
+    expect(item.detail).toEqual({
       type: "unknown",
       input: "Voice response from Codex.",
       output: null,
@@ -569,31 +704,32 @@ describe("codex tool-call mapper", () => {
   });
 
   it("normalizes codex paseo_voice.speak mcp calls and extracts spoken text", () => {
-    const item = mapCodexToolCallFromThreadItem({
-      type: "mcpToolCall",
-      id: "codex-speak-thread-2",
-      status: "completed",
-      server: "paseo_voice",
-      tool: "speak",
-      arguments: { text: "Voice response from Codex via paseo_voice." },
-      result: { ok: true },
-    });
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "mcpToolCall",
+        id: "codex-speak-thread-2",
+        status: "completed",
+        server: "paseo_voice",
+        tool: "speak",
+        arguments: { text: "Voice response from Codex via paseo_voice." },
+        result: { ok: true },
+      }),
+    );
 
-    expect(item).toBeTruthy();
-    expect(item?.name).toBe("speak");
-    expect(item?.detail).toEqual({
+    expect(item.name).toBe("speak");
+    expect(item.detail).toEqual({
       type: "unknown",
       input: "Voice response from Codex via paseo_voice.",
       output: null,
     });
   });
 
-  it("normalizes codex paseo speak rollout names and extracts spoken text", () => {
+  it("normalizes codex paseo speak tool-call names and extracts spoken text", () => {
     const item = expectMapped(
-      mapCodexRolloutToolCall({
-        callId: "codex-speak-rollout-1",
+      mapCodexToolCallEnvelope({
+        callId: "codex-speak-tool-call-1",
         name: "paseo.speak",
-        input: { text: "Rollout speech text." },
+        input: { text: "Tool call speech text." },
         output: { ok: true },
       }),
     );
@@ -601,13 +737,13 @@ describe("codex tool-call mapper", () => {
     expect(item.name).toBe("speak");
     expect(item.detail).toEqual({
       type: "unknown",
-      input: "Rollout speech text.",
+      input: "Tool call speech text.",
       output: null,
     });
   });
 
-  it("drops rollout tool calls when callId is missing", () => {
-    const item = mapCodexRolloutToolCall({
+  it("drops tool-call tool calls when callId is missing", () => {
+    const item = mapCodexToolCallEnvelope({
       callId: null,
       name: "read_file",
       input: { path: "/tmp/repo/README.md" },
@@ -636,8 +772,8 @@ describe("codex tool-call mapper", () => {
       "*** End Patch",
     ].join("\n");
     const item = expectMapped(
-      mapCodexRolloutToolCall({
-        callId: "codex-delete-rollout",
+      mapCodexToolCallEnvelope({
+        callId: "codex-delete-tool-call",
         name: "apply_patch",
         input: patch,
         output:
@@ -647,15 +783,19 @@ describe("codex tool-call mapper", () => {
     );
 
     expect(item.status).toBe("completed");
-    expect(item.detail.type).toBe("edit");
-    if (item.detail.type === "edit") {
-      expect(item.detail.filePath).toBe("src/dead-module.ts");
-      expect(item.detail.unifiedDiff).toContain("/dev/null");
-    }
+    expect(item.detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/dead-module.ts",
+        "type": "edit",
+        "unifiedDiff": "diff --git a//tmp/repo/src/dead-module.ts b//tmp/repo/src/dead-module.ts
+      --- a//tmp/repo/src/dead-module.ts
+      +++ /dev/null",
+      }
+    `);
   });
 
   it("maps multi-file apply_patch with update + delete into edit detail referencing the deleted file", () => {
-    // Exact data shape from real Codex rollout: update one file, delete another
+    // Exact data shape from real Codex tool-call: update one file, delete another
     const patch = [
       "*** Begin Patch",
       "*** Update File: /tmp/repo/src/app/index.tsx",
@@ -669,7 +809,7 @@ describe("codex tool-call mapper", () => {
     ].join("\n");
 
     const item = expectMapped(
-      mapCodexRolloutToolCall({
+      mapCodexToolCallEnvelope({
         callId: "codex-delete-multi",
         name: "apply_patch",
         input: patch,
@@ -682,16 +822,24 @@ describe("codex tool-call mapper", () => {
       }),
     );
 
-    expect(item.detail.type).toBe("edit");
-    if (item.detail.type === "edit") {
-      // The unified diff should contain both file sections
-      const diff = item.detail.unifiedDiff ?? "";
-      // The update file section should have normal diff lines
-      expect(diff).toContain("-import");
-      expect(diff).toContain("+const WELCOME_ROUTE");
-      // The delete file section should reference /dev/null
-      expect(diff).toContain("/dev/null");
-    }
+    expect(item.detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/app/index.tsx",
+        "type": "edit",
+        "unifiedDiff": "diff --git a//tmp/repo/src/app/index.tsx b//tmp/repo/src/app/index.tsx
+      --- a//tmp/repo/src/app/index.tsx
+      +++ b//tmp/repo/src/app/index.tsx
+      @@
+       import { useEffect } from "react";
+      -import { WELCOME_ROUTE } from "@/app-support/index-startup";
+      +
+      +const WELCOME_ROUTE = "/welcome";
+
+      diff --git a//tmp/repo/src/app-support/index-startup.ts b//tmp/repo/src/app-support/index-startup.ts
+      --- a//tmp/repo/src/app-support/index-startup.ts
+      +++ /dev/null",
+      }
+    `);
   });
 
   it("maps fileChange delete with content as removed lines, not added lines", () => {
@@ -711,20 +859,18 @@ describe("codex tool-call mapper", () => {
       { cwd: "/tmp/repo" },
     );
 
-    expect(item).toBeTruthy();
-    expect(item?.detail.type).toBe("edit");
-    if (item?.detail.type === "edit") {
-      expect(item.detail.filePath).toBe("src/dead-module.ts");
-      const diff = item.detail.unifiedDiff ?? "";
-      // For a deletion, the content should appear as REMOVED lines (-)
-      // not as ADDED lines (+). This is the core bug.
-      expect(diff).toContain("/dev/null");
-      expect(diff).toContain("-export const FOO");
-      expect(diff).toContain("-export function hello");
-      // The content must NOT appear as added lines
-      expect(diff).not.toContain("+export const FOO");
-      expect(diff).not.toContain("+export function hello");
-    }
+    expect(expectMapped(item).detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/dead-module.ts",
+        "type": "edit",
+        "unifiedDiff": "diff --git a/src/dead-module.ts b/src/dead-module.ts
+      --- a/src/dead-module.ts
+      +++ /dev/null
+      @@ -1,2 +0,0 @@
+      -export const FOO = "bar";
+      -export function hello() {}",
+      }
+    `);
   });
 
   it("maps fileChange delete without content to edit detail with /dev/null marker", () => {
@@ -743,12 +889,15 @@ describe("codex tool-call mapper", () => {
       { cwd: "/tmp/repo" },
     );
 
-    expect(item).toBeTruthy();
-    // A delete without content should still produce a meaningful detail
-    if (item?.detail.type === "edit") {
-      expect(item.detail.filePath).toBe("src/dead-module.ts");
-      const diff = item.detail.unifiedDiff ?? "";
-      expect(diff).toContain("/dev/null");
-    }
+    // A delete without content should still produce a meaningful detail.
+    expect(expectMapped(item).detail).toMatchInlineSnapshot(`
+      {
+        "filePath": "src/dead-module.ts",
+        "type": "edit",
+        "unifiedDiff": "diff --git a/src/dead-module.ts b/src/dead-module.ts
+      --- a/src/dead-module.ts
+      +++ /dev/null",
+      }
+    `);
   });
 });

@@ -4,15 +4,17 @@ This app uses [`react-native-unistyles` v3](https://www.unistyl.es/) for theme-a
 
 That model is powerful, but it has sharp edges. Use this note when adding theme-dependent styles.
 
-## STOP — `useUnistyles()` Is Forbidden
+## STOP — `useUnistyles()` Is Banned
 
-**Do not call `useUnistyles()` unless every alternative below has been ruled out and you can explain in a code comment why.** The library authors themselves [strongly advise against it](https://www.unistyl.es/v3/references/use-unistyles):
+**Do not call `useUnistyles()`. Anywhere. New code MUST NOT add a call; existing call sites are tolerated only because nobody has rewritten them yet and will be converted as they are touched.** The library authors themselves [strongly advise against it](https://www.unistyl.es/v3/references/use-unistyles):
 
 > We strongly recommend **not using** this hook, as it will re-render your component on every change. This hook was created to simplify the migration process and should only be used when other methods fail.
 
-We have hit this gotcha repeatedly in Paseo. It manifests as periodic, lockstep re-renders of warm subtrees (agent streams, panels, sidebars) even when nothing the user can see has changed — confirmed in profiling: `AgentStreamView` re-rendering constantly with `theme` showing as the only changed input on every render. The hook subscribes the component to **all** Unistyles runtime changes (theme, breakpoint, insets, color scheme, scale) and returns a fresh object reference each call, which also breaks every downstream `useMemo`/`memo` boundary that includes a derived theme value.
+We have hit this gotcha repeatedly in Paseo. The hook subscribes the component to **every** Unistyles runtime change (theme, breakpoint, insets, color scheme, scale) and returns a fresh object reference each call. That means a periodic lockstep re-render of warm subtrees (agent streams, panels, sidebars) even when nothing the user can see has changed — confirmed in profiling, with `theme` as the only changed input every cycle. It also breaks every downstream `useMemo`/`memo` boundary that includes a derived theme value.
 
-Before reaching for `useUnistyles()`, work down this list of alternatives in order:
+Reviewers MUST reject PRs that introduce a new `useUnistyles()` call. There is no last-resort carveout. If you cannot solve a case with the alternatives below, file an issue and stop — do not paper over it with the hook.
+
+Use these alternatives in order:
 
 ### 1. `StyleSheet.create((theme) => ...)` — default
 
@@ -46,31 +48,9 @@ const ThemedBlur = withUnistyles(BlurView);
 
 (Mind the `> *` child-selector leak documented further down.)
 
-### 4. Lift the read into a tiny leaf component
+### 4. There is no "last resort"
 
-If only one prop in a large component needs a theme value at runtime, extract a small leaf component that calls `useUnistyles()` and accept its re-renders in isolation. Never let a whole stream / panel / sidebar / virtualized list subscribe.
-
-### 5. (Last resort) `useUnistyles()`
-
-Only acceptable when both of:
-
-- (a) The value is consumed by a 3rd-party library that cannot be wrapped with `withUnistyles` (per the upstream "When to use it?" list), AND
-- (b) The component is small, leaf-level, and not on a hot render path.
-
-If you add a new `useUnistyles()` call, leave a comment on the line explaining which of (a)/(b) applies and why each higher-priority alternative was ruled out.
-
-### Hot-path forbidden list
-
-Do not introduce `useUnistyles()` in or above any of these subtrees — re-renders here are observably expensive:
-
-- `AgentStreamView` and anything it renders (message rows, tool calls, plan card, todo list, activity log, compaction marker, copy buttons)
-- `AgentPanel` body / `AgentStreamSection` / `AgentComposerSection`
-- `Composer` and `MessageInput`
-- `WorkspaceScreen` shell, tabs row, deck wrapper
-- `LeftSidebar` row items, `SidebarWorkspaceList`, `CommandCenter`
-- Anything inside a virtualized list (`@tanstack/react-virtual`, `FlashList`)
-
-Reviewers must reject PRs that add `useUnistyles()` calls in these areas without a written justification matching the last-resort criteria above.
+There is no escape hatch. If none of (1)–(3) fit, the problem is upstream — fix it there or file an issue. The hook is not on the table.
 
 ## How Updates Propagate
 
@@ -79,6 +59,34 @@ For standard React Native components, the [Unistyles Babel plugin](https://www.u
 The important detail: the automatic native path tracks `props.style`. It does not generally track every prop that happens to carry style-like values.
 
 [`useUnistyles()`](https://www.unistyl.es/v3/references/use-unistyles) is different. It gives React access to the current theme/runtime and can make a component re-render when those values change. Use it for values that must be rendered through React props, such as icon colors or small escape hatches. Do not expect direct reads from `UnistylesRuntime` to re-render a component; [issue #817](https://github.com/jpudysz/react-native-unistyles/issues/817) is a useful reminder of that invariant.
+
+## Dynamic Pixel Styles On Web
+
+Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and appends a CSS rule to `#unistyles-web`; those rules are not reclaimed during the page lifetime, so pointer-driven positioning can turn into steady stylesheet growth.
+
+Use the inline style escape hatch below for high-churn values. Do not split a component into plain/web/native variants just to keep one measured value out of the CSS registry. Raw DOM wrappers are reserved for real DOM infrastructure, such as terminal hosts, virtualized web rows, or third-party drag wrappers.
+
+## Inline Style Escape Hatch
+
+When a style value is high-churn and must bypass Unistyles' CSS registry, keep the component on the normal Unistyles path and mark only that style object with `inlineUnistylesStyle`.
+
+```tsx
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+
+const styles = StyleSheet.create({
+  thumb: {
+    position: "absolute",
+  },
+});
+
+<View style={[styles.thumb, inlineUnistylesStyle({ height, transform: [{ translateY }] })]} />;
+```
+
+This uses Unistyles' own animated-style lane: ordinary styles still become Unistyles classes, while the marked style object stays in React Native's inline style array. Use it for measured geometry, scroll or drag transforms, and pressed/hovered/open state where generating CSS classes is the wrong ownership boundary.
+
+Do not split a component into plain and Unistyles variants just to handle one high-churn value. The component remains a normal Unistyles component; only the specific style object escapes.
+
+When a reusable component has a prop whose whole job is dynamic geometry, make that prop the seam. For example, `FloatingSurface.frameStyle` and `FloatingScrollView.style` own their own escape hatch so menu, tooltip, hover-card, and combobox callers can stay declarative instead of knowing about Unistyles internals.
 
 ## Main Gotcha: `contentContainerStyle`
 
@@ -124,18 +132,9 @@ const styles = StyleSheet.create((theme) => ({
 
 This is the pattern used by the settings screen: the screen background lives on a normal `View style={styles.container}`, while the scroll content container only carries layout.
 
-When the content container itself needs themed behavior, wrap the component with [`withUnistyles`](https://www.unistyl.es/v3/references/with-unistyles):
+In practice the wrapper-`View` pattern is the one we use. Across the app, `withUnistyles` is now reserved for wrapping leaf components — mostly lucide icons (`ThemedActivityIndicator`, `ThemedChevronDown`, …) and small third-party components like `MarkdownWithStableRenderer` — so they pick up theme-reactive `color`/`tintColor` props without re-rendering their parent.
 
-```tsx
-import { ScrollView } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-
-const ThemedScrollView = withUnistyles(ScrollView);
-
-<ThemedScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer} />;
-```
-
-`withUnistyles` extracts dependency metadata from both `style` and `contentContainerStyle`, subscribes to the relevant theme/runtime changes, and re-renders only that wrapped component when needed. Its [auto-mapping behavior for `style` and `contentContainerStyle`](https://www.unistyl.es/v3/references/with-unistyles#auto-mapping-for-style-and-contentcontainerstyle-props) is the reason it fixes themed `ScrollView` content containers. Reach for it when wrapper-view layout would be awkward or when a third-party component needs theme-aware non-`style` props mapped through Unistyles.
+In principle, [`withUnistyles`](https://www.unistyl.es/v3/references/with-unistyles) can also wrap a `ScrollView` to make `contentContainerStyle` theme-reactive via its [auto-mapping behavior for `style` and `contentContainerStyle`](https://www.unistyl.es/v3/references/with-unistyles#auto-mapping-for-style-and-contentcontainerstyle-props). We previously did this on the welcome screen and hit the `> *` child-selector leak documented below; we have since moved the welcome screen to the wrapper-`View` pattern. If you find yourself reaching for `withUnistyles(ScrollView)`, treat it as a smell and check whether a wrapper view works first.
 
 The smallest escape hatch is to use `useUnistyles()` and pass an inline value through React:
 
@@ -155,7 +154,7 @@ Use this sparingly. It works because React re-renders the prop, but it gives up 
 
 The sharp edge: Unistyles hashes styles by value. If `withUnistyles` receives a style whose value is **identical** to a style used elsewhere in the app on a plain `View`, both usages get the same hash — and both CSS rules (the element rule and the `> *` child rule) are emitted under the same class name. The `> *` rule then leaks onto the direct children of every `View` that shares the hash.
 
-Concrete regression we hit: `welcome-screen.tsx` had `const ThemedScrollView = withUnistyles(ScrollView)` with `style={{ flex: 1, backgroundColor: theme.colors.surface0 }}`. `agent-panel.tsx` had `root` and `container` styles with the exact same value. All three collided on class `unistyles_j2k2iilhfz`, so the browser stylesheet contained:
+Concrete regression we hit: `welcome-screen.tsx` had `const ThemedScrollView = withUnistyles(ScrollView)` with `style={{ flex: 1, backgroundColor: theme.colors.surface0 }}`. `panels/agent-panel.tsx` had `root` and `container` styles with the exact same value. All three collided on class `unistyles_j2k2iilhfz`, so the browser stylesheet contained:
 
 ```css
 .unistyles_j2k2iilhfz {
@@ -231,15 +230,49 @@ If a style factory is cheap, skipping `useMemo` entirely is also fine.
 
 Do not import `theme` from `@/styles/theme` for live UI colors. That export is a dark-theme compatibility default, so using it in render code leaves icons, placeholders, or third-party props pinned to dark colors in light mode.
 
-Use `useUnistyles()` inside the component instead:
+Wrap the icon (or other leaf component) with `withUnistyles` instead, so only that node re-renders when the theme changes:
 
 ```tsx
-const { theme } = useUnistyles();
+import { ChevronDown } from "lucide-react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
-<ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />;
+const ThemedChevronDown = withUnistyles(ChevronDown);
+
+const styles = StyleSheet.create((theme) => ({
+  icon: { color: theme.colors.foregroundMuted },
+}));
+
+<ThemedChevronDown size={theme.iconSize.md} style={styles.icon} />;
 ```
 
-Importing `baseColors`, theme-name constants, or `type Theme` is fine when the value is intentionally static or type-only.
+This is the dominant pattern in the app today (see `sidebar-workspace-list.tsx`, `message.tsx`, the workspace screens). Reserve `useUnistyles()` for the last-resort cases described at the top of this file. Importing `baseColors`, theme-name constants, or `type Theme` is fine when the value is intentionally static or type-only.
+
+## Reanimated `Animated.View` + Dynamic Styles Crashes
+
+Do not apply `StyleSheet.create((theme) => ...)` styles to a Reanimated `Animated.View`. Unistyles wraps styled components in a `<UnistylesComponent>` and patches native view props from C++ via the ShadowRegistry. Reanimated also reaches into the same native node from its worklet runtime. When a theme change fires, both systems try to mutate the same node and the app crashes with `Unable to find node on an unmounted component.` This was a real iOS sidebar crash on theme toggle (commit `4896cfe9`).
+
+Fix: keep static positioning on the `Animated.View` in plain React Native `StyleSheet`, and pass theme-dependent values (e.g. `backgroundColor`) as inline style from `useUnistyles()` — the inline path is acceptable here because no other escape works:
+
+```tsx
+import { StyleSheet as RNStyleSheet } from "react-native";
+import Animated from "react-native-reanimated";
+import { useUnistyles } from "react-native-unistyles";
+
+const positionStyles = RNStyleSheet.create({
+  sidebar: { position: "absolute", inset: 0, width: 280 },
+});
+
+function Sidebar() {
+  const { theme } = useUnistyles();
+  return (
+    <Animated.View
+      style={[positionStyles.sidebar, animatedStyle, { backgroundColor: theme.colors.surface1 }]}
+    />
+  );
+}
+```
+
+This is one of the rare places `useUnistyles()` is the right tool: there is no `withUnistyles(Animated.View)` equivalent, the affected component is small, and the alternative is a crash.
 
 ## Adaptive Themes And Persisted Settings
 

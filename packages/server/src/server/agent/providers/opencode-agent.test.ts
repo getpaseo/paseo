@@ -1,8 +1,7 @@
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { describe, expect, test, vi } from "vitest";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
@@ -12,6 +11,10 @@ import {
   translateOpenCodeEvent,
 } from "./opencode-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
+import {
+  TestOpenCodeClient,
+  TestOpenCodeRuntime,
+} from "./opencode/test-utils/test-opencode-runtime.js";
 import type {
   AgentSessionConfig,
   AgentStreamEvent,
@@ -29,8 +32,7 @@ function tmpCwd(): string {
   }
 }
 
-// Dynamic model selection - will be set in beforeAll
-let TEST_MODEL: string | undefined;
+const TEST_MODEL = "opencode/big-pickle";
 
 interface TurnResult {
   events: AgentStreamEvent[];
@@ -78,18 +80,39 @@ async function collectTurnEvents(iterator: AsyncGenerator<AgentStreamEvent>): Pr
   return result;
 }
 
-function isBinaryInstalled(binary: string): boolean {
-  try {
-    const out = execFileSync("which", [binary], { encoding: "utf8" }).trim();
-    return out.length > 0;
-  } catch {
-    return false;
-  }
+function assistantTurnEvents({
+  sessionId = "session-1",
+  text = "Hello from OpenCode",
+}: {
+  sessionId?: string;
+  text?: string;
+} = {}): unknown[] {
+  return [
+    {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_assistant",
+          sessionID: sessionId,
+          role: "assistant",
+        },
+      },
+    },
+    {
+      type: "message.part.delta",
+      properties: {
+        sessionID: sessionId,
+        messageID: "msg_assistant",
+        partID: "prt_text",
+        field: "text",
+        delta: text,
+      },
+    },
+    { type: "session.idle", properties: { sessionID: sessionId } },
+  ];
 }
 
-const hasOpenCode = isBinaryInstalled("opencode");
-
-(hasOpenCode ? describe : describe.skip)("OpenCodeAgentClient", () => {
+describe("OpenCodeAgentClient adapter smoke tests", () => {
   const logger = createTestLogger();
   const buildConfig = (cwd: string): AgentSessionConfig => ({
     provider: "opencode",
@@ -97,52 +120,13 @@ const hasOpenCode = isBinaryInstalled("opencode");
     model: TEST_MODEL,
   });
 
-  beforeAll(async () => {
-    const startTime = Date.now();
-    logger.info("beforeAll: Starting model selection");
-
-    const client = new OpenCodeAgentClient(logger);
-    const models = await client.listModels({ cwd: os.homedir(), force: false });
-
-    logger.info(
-      { modelCount: models.length, elapsed: Date.now() - startTime },
-      "beforeAll: Retrieved models",
-    );
-
-    // Prefer cheap models that support tool use (required by OpenCode agents).
-    // Avoid free-tier OpenRouter models — they often lack tool-use support.
-    const fastModel = models.find(
-      (m) =>
-        m.id.includes("gpt-4.1-nano") ||
-        m.id.includes("gpt-4.1-mini") ||
-        m.id.includes("gpt-5-nano") ||
-        m.id.includes("gpt-5.4-mini") ||
-        m.id.includes("gpt-4o-mini"),
-    );
-
-    if (fastModel) {
-      TEST_MODEL = fastModel.id;
-    } else if (models.length > 0) {
-      // Fallback to any available model
-      TEST_MODEL = models[0].id;
-    } else {
-      throw new Error(
-        "No OpenCode models available. Please authenticate with a provider (e.g., set OPENAI_API_KEY).",
-      );
-    }
-
-    logger.info(
-      { model: TEST_MODEL, totalElapsed: Date.now() - startTime },
-      "beforeAll: Selected OpenCode test model",
-    );
-  }, 30_000);
-
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
-    const client = new OpenCodeAgentClient(logger);
+    const runtime = new TestOpenCodeRuntime();
+    runtime.enqueueClient(new TestOpenCodeClient());
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
     const session = await client.createSession(buildConfig(cwd));
 
-    // HARD ASSERT: Session has required fields
     expect(typeof session.id).toBe("string");
     expect(session.id.length).toBeGreaterThan(0);
     expect(session.provider).toBe("opencode");
@@ -153,43 +137,68 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
   test("single turn completes with streaming deltas", async () => {
     const cwd = tmpCwd();
-    const client = new OpenCodeAgentClient(logger);
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionPromptAsyncEvents = assistantTurnEvents();
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
     const session = await client.createSession(buildConfig(cwd));
 
     const iterator = streamSession(session, "Say hello");
     const turn = await collectTurnEvents(iterator);
 
-    // HARD ASSERT: Turn completed successfully
     expect(turn.turnCompleted).toBe(true);
     expect(turn.turnFailed).toBe(false);
-
-    // HARD ASSERT: Got at least one assistant message
     expect(turn.assistantMessages.length).toBeGreaterThan(0);
-
-    // HARD ASSERT: Each delta is non-empty
     for (const msg of turn.assistantMessages) {
       expect(msg.text.length).toBeGreaterThan(0);
     }
-
-    // HARD ASSERT: Concatenated deltas form non-empty response
     const fullResponse = turn.assistantMessages.map((m) => m.text).join("");
-    expect(fullResponse.length).toBeGreaterThan(0);
+    expect(fullResponse).toBe("Hello from OpenCode");
+    expect(openCodeClient.calls.sessionPromptAsync).toEqual([
+      expect.objectContaining({
+        sessionID: "session-1",
+        directory: cwd,
+        model: { providerID: "opencode", modelID: "big-pickle" },
+        agent: "build",
+      }),
+    ]);
 
     await session.close();
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
 
   test("listModels returns models with required fields", async () => {
-    const client = new OpenCodeAgentClient(logger);
-    const models = await client.listModels({ cwd: os.homedir(), force: false });
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.providerListResponse = {
+      data: {
+        connected: ["opencode"],
+        all: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            source: "api",
+            models: {
+              "big-pickle": {
+                name: "Big Pickle",
+                limit: {
+                  context: 200_000,
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
+    const cwd = os.homedir();
+    const models = await client.listModels({ cwd, force: false });
 
-    // HARD ASSERT: Returns an array
     expect(Array.isArray(models)).toBe(true);
+    expect(models).toHaveLength(1);
 
-    // HARD ASSERT: At least one model is returned (OpenCode has connected providers)
-    expect(models.length).toBeGreaterThan(0);
-
-    // HARD ASSERT: Each model has required fields with correct types
     for (const model of models) {
       expect(model.provider).toBe("opencode");
       expect(typeof model.id).toBe("string");
@@ -202,14 +211,26 @@ const hasOpenCode = isBinaryInstalled("opencode");
       expect(model.metadata).toMatchObject({
         providerId: expect.any(String),
         modelId: expect.any(String),
-        contextWindowMaxTokens: expect.any(Number),
       });
+      expect(typeof model.metadata?.contextWindowMaxTokens).toBe("number");
     }
+    expect(models[0]).toMatchObject({
+      id: TEST_MODEL,
+      label: "Big Pickle",
+      metadata: {
+        providerId: "opencode",
+        modelId: "big-pickle",
+        contextWindowMaxTokens: 200_000,
+      },
+    });
+    expect(openCodeClient.calls.providerList).toEqual([{ directory: cwd }]);
   }, 60_000);
 
   test("available modes include build and plan", async () => {
     const cwd = tmpCwd();
-    const client = new OpenCodeAgentClient(logger);
+    const runtime = new TestOpenCodeRuntime();
+    runtime.enqueueClient(new TestOpenCodeClient());
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
     const session = await client.createSession(buildConfig(cwd));
 
     const modes = await session.getAvailableModes();
@@ -223,19 +244,23 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
   test("custom agents defined in opencode.json appear in available modes", async () => {
     const cwd = tmpCwd();
-    writeFileSync(
-      path.join(cwd, "opencode.json"),
-      JSON.stringify({
-        agent: {
-          "paseo-test-custom": {
-            description: "Custom agent defined for Paseo integration test",
-            mode: "primary",
-          },
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.appAgentsResponse = {
+      data: [
+        {
+          name: "paseo-test-custom",
+          description: "Custom agent defined for Paseo integration test",
+          mode: "primary",
         },
-      }),
-    );
+        { name: "compaction", mode: "subagent" },
+        { name: "summary", mode: "subagent" },
+        { name: "title", mode: "subagent" },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
 
-    const client = new OpenCodeAgentClient(logger);
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
     const session = await client.createSession(buildConfig(cwd));
 
     const modes = await session.getAvailableModes();
@@ -257,10 +282,46 @@ const hasOpenCode = isBinaryInstalled("opencode");
     rmSync(cwd, { recursive: true, force: true });
   }, 60_000);
 
-  test("plan mode blocks edits while build mode can write files", async () => {
+  test("plan and build modes are sent to OpenCode as distinct runtime agents", async () => {
     const cwd = tmpCwd();
-    const planFile = path.join(cwd, "plan-mode-output.txt");
-    const client = new OpenCodeAgentClient(logger);
+    const runtime = new TestOpenCodeRuntime();
+    const planOpenCodeClient = new TestOpenCodeClient();
+    planOpenCodeClient.sessionPromptAsyncEvents = assistantTurnEvents({ text: "Plan response" });
+    const buildOpenCodeClient = new TestOpenCodeClient();
+    buildOpenCodeClient.sessionPromptAsyncEvents = [
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "msg_assistant",
+            sessionID: "session-1",
+            role: "assistant",
+          },
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_tool",
+            sessionID: "session-1",
+            messageID: "msg_assistant",
+            type: "tool",
+            tool: "write",
+            callID: "call_write",
+            state: {
+              status: "completed",
+              input: { filePath: "build-mode-output.txt", content: "hello" },
+              output: "created build-mode-output.txt",
+            },
+          },
+        },
+      },
+      ...assistantTurnEvents({ text: "Build response" }),
+    ];
+    runtime.enqueueClient(planOpenCodeClient);
+    runtime.enqueueClient(buildOpenCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
 
     const planSession = await client.createSession({
       ...buildConfig(cwd),
@@ -276,8 +337,14 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
     expect(planTurn.turnCompleted).toBe(true);
     expect(planTurn.turnFailed).toBe(false);
-    expect(existsSync(planFile)).toBe(false);
     expect(planTurn.toolCalls).toHaveLength(0);
+    expect(planOpenCodeClient.calls.sessionPromptAsync).toEqual([
+      expect.objectContaining({
+        sessionID: "session-1",
+        directory: cwd,
+        agent: "plan",
+      }),
+    ]);
 
     const planResponse = planTurn.assistantMessages
       .map((message) => message.text)
@@ -302,6 +369,13 @@ const hasOpenCode = isBinaryInstalled("opencode");
     expect(buildTurn.turnCompleted).toBe(true);
     expect(buildTurn.turnFailed).toBe(false);
     expect(buildTurn.toolCalls.some((toolCall) => toolCall.status === "completed")).toBe(true);
+    expect(buildOpenCodeClient.calls.sessionPromptAsync).toEqual([
+      expect.objectContaining({
+        sessionID: "session-1",
+        directory: cwd,
+        agent: "build",
+      }),
+    ]);
 
     const buildResponse = buildTurn.assistantMessages
       .map((message) => message.text)
@@ -475,6 +549,50 @@ describe("OpenCode adapter context-window normalization", () => {
     ).toBeUndefined();
   });
 
+  test("includes api-source providers in context window lookup even when absent from connected", () => {
+    // Providers with source "api" are managed by the OpenCode console/subscription and are
+    // usable even when they don't appear in `connected`.
+    const lookup = __openCodeInternals.buildOpenCodeModelContextWindowLookup({
+      connected: [],
+      all: [
+        {
+          id: "pi",
+          source: "api",
+          models: {
+            "pi-model-1": { limit: { context: 200_000 } },
+          },
+        },
+      ],
+    });
+
+    expect(lookup.get("pi/pi-model-1")).toBe(200_000);
+  });
+
+  test("excludes non-api-source providers absent from connected in context window lookup", () => {
+    const lookup = __openCodeInternals.buildOpenCodeModelContextWindowLookup({
+      connected: ["openai"],
+      all: [
+        {
+          id: "openai",
+          source: "env",
+          models: {
+            "gpt-5": { limit: { context: 400_000 } },
+          },
+        },
+        {
+          id: "anthropic",
+          source: "env",
+          models: {
+            "claude-opus": { limit: { context: 1_000_000 } },
+          },
+        },
+      ],
+    });
+
+    expect(lookup.get("openai/gpt-5")).toBe(400_000);
+    expect(lookup.get("anthropic/claude-opus")).toBeUndefined();
+  });
+
   test("normalizes step-finish usage into AgentUsage context window fields", () => {
     const usage = { contextWindowMaxTokens: 400_000 };
 
@@ -563,9 +681,376 @@ describe("OpenCode adapter context-window normalization", () => {
       false,
     );
   });
+
+  test("carries only hex OpenCode agent colors as mode color tiers", () => {
+    expect(
+      __openCodeInternals.mapOpenCodeAgentToMode({
+        name: "review",
+        description: "Review code",
+        color: "#ff6b6b",
+      }),
+    ).toMatchObject({
+      id: "review",
+      label: "Review",
+      description: "Review code",
+      colorTier: "#ff6b6b",
+    });
+
+    expect(
+      __openCodeInternals.mapOpenCodeAgentToMode({
+        name: "creative",
+        color: "accent",
+      }),
+    ).not.toHaveProperty("colorTier");
+
+    expect(
+      __openCodeInternals.mapOpenCodeAgentToMode({
+        name: "debug",
+        color: "#fff",
+      }),
+    ).not.toHaveProperty("colorTier");
+  });
 });
 
 describe("OpenCode adapter startTurn error handling", () => {
+  test("dynamically adds injected MCP servers without config-backed connect", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+
+    try {
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd,
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test-agent",
+          },
+        },
+      });
+
+      await collectTurnEvents(streamSession(session, "hello"));
+
+      expect(openCodeClient.calls.mcpAdd).toEqual([
+        {
+          directory: cwd,
+          name: "paseo",
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test-agent",
+            enabled: true,
+          },
+        },
+      ]);
+      expect(openCodeClient.calls.mcpConnect).toEqual([]);
+
+      await session.close();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("fails the turn when OpenCode reports MCP add failure in data payload", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.mcpAddResponse = {
+      data: {
+        paseo: {
+          status: "failed",
+          error: "SSE error: Non-200 status code (400)",
+        },
+      },
+    };
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+
+    try {
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd,
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test-agent",
+          },
+        },
+      });
+
+      await expect(collectTurnEvents(streamSession(session, "hello"))).rejects.toThrow(
+        /Failed to add OpenCode MCP server 'paseo': SSE error/,
+      );
+
+      await session.close();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("emits turn_started before live OpenCode timeline items", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvents = [
+      {
+        payload: {
+          type: "server.connected",
+          properties: {},
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: "msg_assistant",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+            },
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "ses_unit_test",
+            messageID: "msg_assistant",
+            partID: "prt_text",
+            field: "text",
+            delta: "Hello from global",
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "session.status",
+          properties: {
+            sessionID: "ses_unit_test",
+            status: { type: "idle" },
+          },
+        },
+      },
+    ];
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            await eventsGate.promise;
+            yield* globalEvents;
+          })(),
+        }),
+      },
+      session: {
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(turn.events.map((event) => event.type)).toEqual([
+      "turn_started",
+      "timeline",
+      "turn_completed",
+    ]);
+    expect(turn.events.map((event) => ("turnId" in event ? event.turnId : undefined))).toEqual([
+      "opencode-turn-0",
+      "opencode-turn-0",
+      "opencode-turn-0",
+    ]);
+  });
+
+  test("unwraps OpenCode global event payloads during a turn", async () => {
+    const eventsGate = createTestDeferred<void>();
+    const globalEvents = [
+      {
+        payload: {
+          type: "server.connected",
+          properties: {},
+        },
+      },
+      {
+        directory: "/tmp/other",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "other-session",
+            messageID: "msg_other",
+            partID: "prt_other",
+            field: "text",
+            delta: "ignore me",
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: "msg_assistant",
+              sessionID: "ses_unit_test",
+              role: "assistant",
+            },
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "ses_unit_test",
+            messageID: "msg_assistant",
+            partID: "prt_text",
+            field: "text",
+            delta: "Hello from global",
+          },
+        },
+      },
+      {
+        directory: "/tmp/test",
+        payload: {
+          type: "session.status",
+          properties: {
+            sessionID: "ses_unit_test",
+            status: { type: "idle" },
+          },
+        },
+      },
+    ];
+    const fakeClient = {
+      event: {
+        subscribe: vi.fn(),
+      },
+      global: {
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            await eventsGate.promise;
+            yield* globalEvents;
+          })(),
+        }),
+      },
+      session: {
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const turn = await collectTurnEvents(streamSession(session, "hello"));
+
+    expect(fakeClient.global.event).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal),
+      sseMaxRetryAttempts: 0,
+    });
+    expect(fakeClient.event.subscribe).not.toHaveBeenCalled();
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.turnFailed).toBe(false);
+    expect(turn.assistantMessages.map((message) => message.text).join("")).toBe(
+      "Hello from global",
+    );
+  });
+
+  test("keeps a turn active while OpenCode is retrying", async () => {
+    vi.useFakeTimers();
+    const eventsGate = createTestDeferred<void>();
+    const retryStream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]: () => {
+        let emitted = false;
+        return {
+          next: async () => {
+            await eventsGate.promise;
+            if (!emitted) {
+              emitted = true;
+              return {
+                done: false,
+                value: {
+                  payload: {
+                    type: "session.status",
+                    properties: {
+                      sessionID: "ses_unit_test",
+                      status: {
+                        type: "retry",
+                        attempt: 1,
+                        message: "model does not exist",
+                      },
+                    },
+                  },
+                },
+              };
+            }
+            return new Promise(() => {});
+          },
+        };
+      },
+    };
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockResolvedValue({ stream: retryStream }),
+      },
+      session: {
+        abort: vi.fn().mockResolvedValue({ error: null }),
+        update: vi.fn().mockResolvedValue({ error: null }),
+        promptAsync: vi.fn().mockImplementation(async () => {
+          eventsGate.resolve();
+          return { data: {}, error: undefined };
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("hello");
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "error",
+          message: "Provider retry (attempt 1): model does not exist",
+        },
+        turnId: "opencode-turn-0",
+      });
+      expect(events.some((event) => event.type === "turn_failed")).toBe(false);
+      await session.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("deletes provider session on close when persistence is disabled", async () => {
     const fakeClient = {
       session: {
@@ -614,20 +1099,343 @@ describe("OpenCode adapter startTurn error handling", () => {
     expect(fakeClient.session.delete).not.toHaveBeenCalled();
   });
 
+  test("streamHistory preserves OpenCode replay timestamps from message and part times", async () => {
+    const fakeClient = {
+      session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: {
+                id: "msg_user",
+                sessionID: "ses_unit_test",
+                role: "user",
+                time: { created: 1778762475873 },
+              },
+              parts: [
+                {
+                  id: "prt_user",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "text",
+                  text: "Reply with exactly: probe ok",
+                },
+              ],
+            },
+            {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+                time: { created: 1778762475884, completed: 1778762489358 },
+              },
+              parts: [
+                {
+                  id: "prt_reasoning",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "reasoning",
+                  text: "thinking",
+                  time: { start: 1778762482953, end: 1778762483610 },
+                },
+                {
+                  id: "prt_text",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "text",
+                  text: "probe ok",
+                  time: { start: 1778762483612, end: 1778762489351 },
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-05-14T12:41:15.873Z",
+        item: {
+          type: "user_message",
+          text: "Reply with exactly: probe ok",
+          messageId: "msg_user",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-05-14T12:41:22.953Z",
+        item: { type: "reasoning", text: "thinking" },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        timestamp: "2026-05-14T12:41:23.612Z",
+        item: { type: "assistant_message", text: "probe ok" },
+      },
+    ]);
+  });
+
+  test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
+    const fakeClient = {
+      session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+              },
+              parts: [
+                {
+                  id: "prt_text",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "text",
+                  text: "no clocks here",
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: "no clocks here" },
+      },
+    ]);
+  });
+
+  test("streamHistory maps persisted OpenCode tool parts through canonical detail branches", async () => {
+    const patchText = [
+      "*** Begin Patch",
+      "*** Delete File: /tmp/repo/src/App.tsx",
+      "*** End Patch",
+    ].join("\n");
+
+    const fakeClient = {
+      session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: {
+                id: "msg_assistant",
+                sessionID: "ses_unit_test",
+                role: "assistant",
+              },
+              parts: [
+                {
+                  id: "part-grep",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "grep",
+                  callID: "call-grep",
+                  state: {
+                    status: "completed",
+                    input: { pattern: "sendCorrelatedSessionRequest" },
+                  },
+                },
+                {
+                  id: "part-skill",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "skill",
+                  callID: "call-skill",
+                  state: {
+                    status: "completed",
+                    input: { name: "diagnose" },
+                    output: '<skill_content name="diagnose"># Skill: diagnose</skill_content>',
+                  },
+                },
+                {
+                  id: "part-apply-patch",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "apply_patch",
+                  callID: "call-apply-patch",
+                  state: {
+                    status: "completed",
+                    input: { patchText },
+                    output: "Success. Updated the following files:\nD /tmp/repo/src/App.tsx",
+                  },
+                },
+                {
+                  id: "part-todowrite",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_assistant",
+                  type: "tool",
+                  tool: "todowrite",
+                  callID: "call-todowrite",
+                  state: {
+                    status: "completed",
+                    input: {
+                      todos: [
+                        {
+                          content: "Inspect current directory and existing files",
+                          status: "completed",
+                          priority: "high",
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/repo" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "tool_call",
+          callId: "call-grep",
+          name: "grep",
+          status: "completed",
+          detail: {
+            type: "search",
+            query: "sendCorrelatedSessionRequest",
+            toolName: "grep",
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "tool_call",
+          callId: "call-skill",
+          name: "skill",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            label: "diagnose",
+            icon: "sparkles",
+            text: '<skill_content name="diagnose"># Skill: diagnose</skill_content>',
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "tool_call",
+          callId: "call-apply-patch",
+          name: "apply_patch",
+          status: "completed",
+          detail: {
+            type: "edit",
+            filePath: "/tmp/repo/src/App.tsx",
+            unifiedDiff: [
+              "diff --git a//tmp/repo/src/App.tsx b//tmp/repo/src/App.tsx",
+              "--- a//tmp/repo/src/App.tsx",
+              "+++ /dev/null",
+            ].join("\n"),
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "todo",
+          items: [{ text: "Inspect current directory and existing files", completed: true }],
+        },
+      },
+    ]);
+  });
+
   test("emits turn_failed when client.session.promptAsync throws synchronously", async () => {
-    // Async iterable that never yields and never resolves. The IIFE in
-    // startTurn synchronously hits the promptAsync throw and finishes the
-    // turn before this iterator is ever pulled, so the never-resolving
-    // promise inside next() is fine and gets garbage-collected.
+    // Yield the server-connected event, then park forever. The adapter waits
+    // for that first event before sending the prompt.
     const neverYieldingStream: AsyncIterable<OpenCodeEvent> = {
-      [Symbol.asyncIterator]: () => ({
-        next: () => new Promise(() => {}),
-      }),
+      [Symbol.asyncIterator]: () => {
+        let emittedConnected = false;
+        return {
+          next: () => {
+            if (!emittedConnected) {
+              emittedConnected = true;
+              return Promise.resolve({
+                done: false,
+                value: { type: "server.connected", properties: {} } as OpenCodeEvent,
+              });
+            }
+            return new Promise(() => {});
+          },
+        };
+      },
     };
 
     const fakeClient = {
-      event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: neverYieldingStream }),
+      global: {
+        event: vi.fn().mockResolvedValue({ stream: neverYieldingStream }),
       },
       session: {
         promptAsync: vi.fn(() => {
@@ -655,4 +1463,309 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(failed.error).toContain("boom: synchronous throw");
     }
   });
+
+  test("delays the next prompt until a slow interrupt abort settles", async () => {
+    vi.useFakeTimers();
+    const abortDeferred = createTestDeferred<{ data: boolean; error: undefined }>();
+    const promptAsync = vi.fn().mockResolvedValue({ data: {}, error: undefined });
+    const abort = vi
+      .fn()
+      .mockReturnValueOnce(abortDeferred.promise)
+      .mockResolvedValue({ data: true, error: undefined });
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockImplementation(
+          async (options: {
+            signal: AbortSignal;
+          }): Promise<{ stream: AsyncIterable<OpenCodeEvent> }> => ({
+            stream: abortableOpenCodeStream(options.signal),
+          }),
+        ),
+      },
+      session: {
+        promptAsync,
+        abort,
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    await session.startTurn("first");
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    const interruptPromise = session.interrupt();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await interruptPromise;
+    expect(abort).toHaveBeenCalledTimes(1);
+
+    const secondTurnPromise = session.startTurn("second");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    abortDeferred.resolve({ data: true, error: undefined });
+    await secondTurnPromise;
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    await session.interrupt();
+    vi.useRealTimers();
+  });
 });
+
+describe("OpenCodeAgentClient env", () => {
+  test("passes launch-context env to env-specific server acquisition", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+
+    try {
+      const session = await client.createSession(
+        {
+          provider: "opencode",
+          cwd,
+        },
+        {
+          env: {
+            CHUNK14_PROBE: "expected",
+          },
+        },
+      );
+      await session.close();
+
+      expect(runtime.acquisitions[0]).toMatchObject({
+        force: false,
+        env: {
+          CHUNK14_PROBE: "expected",
+        },
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("OpenCode persisted sessions", () => {
+  test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    const cwd = "/workspace/repo";
+    const otherCwd = "/workspace/other";
+
+    openCodeClient.experimentalSessionListResponse = {
+      data: [
+        {
+          id: "ses_old",
+          directory: cwd,
+          title: "Old session",
+          time: { created: 1000, updated: 1000 },
+        },
+        {
+          id: "ses_new",
+          directory: cwd,
+          title: "New session",
+          time: { created: 2000, updated: 3000 },
+        },
+        {
+          id: "ses_other",
+          directory: otherCwd,
+          title: "Other cwd",
+          time: { created: 4000, updated: 4000 },
+        },
+      ],
+    };
+    openCodeClient.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_user",
+            sessionID: "ses_new",
+            role: "user",
+            time: { created: 2100 },
+            agent: "build",
+            model: { providerID: "opencode", modelID: "big-pickle" },
+          },
+          parts: [
+            {
+              id: "prt_user",
+              sessionID: "ses_new",
+              messageID: "msg_user",
+              type: "text",
+              text: "hello world",
+              time: { start: 2100 },
+            },
+          ],
+        },
+        {
+          info: {
+            id: "msg_assistant",
+            sessionID: "ses_new",
+            role: "assistant",
+            time: { created: 2200, completed: 2400 },
+            structured: { fallback: false },
+            agent: "build",
+            providerID: "opencode",
+            modelID: "big-pickle",
+          },
+          parts: [
+            {
+              id: "prt_reasoning",
+              sessionID: "ses_new",
+              messageID: "msg_assistant",
+              type: "reasoning",
+              text: "thinking clearly",
+              time: { start: 2200 },
+            },
+            {
+              id: "prt_tool",
+              sessionID: "ses_new",
+              messageID: "msg_assistant",
+              type: "tool",
+              tool: "bash",
+              callID: "call_shell",
+              state: {
+                status: "completed",
+                input: { command: "echo hello" },
+                output: "hello\n",
+              },
+              time: { start: 2250, end: 2300 },
+            },
+            {
+              id: "prt_assistant",
+              sessionID: "ses_new",
+              messageID: "msg_assistant",
+              type: "text",
+              text: "hello back",
+              time: { start: 2350 },
+            },
+          ],
+        },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const descriptors = await client.listPersistedAgents({ cwd, limit: 1 });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      provider: "opencode",
+      sessionId: "ses_new",
+      cwd,
+      title: "New session",
+      persistence: {
+        provider: "opencode",
+        sessionId: "ses_new",
+        nativeHandle: "ses_new",
+        metadata: {
+          modeId: "build",
+          model: "opencode/big-pickle",
+        },
+      },
+    });
+    expect(descriptors[0]?.lastActivityAt.toISOString()).toBe("1970-01-01T00:00:03.000Z");
+    expect(descriptors[0]?.timeline).toEqual([
+      { type: "user_message", text: "hello world", messageId: "msg_user" },
+      { type: "reasoning", text: "thinking clearly" },
+      expect.objectContaining({
+        type: "tool_call",
+        callId: "call_shell",
+        status: "completed",
+      }),
+      { type: "assistant_message", text: "hello back" },
+    ]);
+    expect(runtime.clientCreations).toEqual([{ baseUrl: runtime.server.url, directory: cwd }]);
+    expect(openCodeClient.calls.experimentalSessionList).toEqual([
+      { archived: true, roots: true, limit: 200 },
+    ]);
+    expect(openCodeClient.calls.sessionMessages).toEqual([
+      { sessionID: "ses_new", directory: cwd },
+    ]);
+  });
+
+  test("listPersistedAgents matches Windows cwd paths with forward slashes", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    const requestedCwd = "C:/Users/Administrator/GhostFactory";
+    const storedCwd = "C:\\Users\\Administrator\\GhostFactory";
+
+    openCodeClient.experimentalSessionListResponse = {
+      data: [
+        {
+          id: "ses_windows",
+          directory: storedCwd,
+          title: "Windows session",
+          time: { created: 2000, updated: 3000 },
+        },
+        {
+          id: "ses_other",
+          directory: "C:\\Users\\Administrator\\OtherProject",
+          title: "Other cwd",
+          time: { created: 4000, updated: 4000 },
+        },
+      ],
+    };
+    runtime.enqueueClient(openCodeClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const descriptors = await client.listPersistedAgents({ cwd: requestedCwd, limit: 1 });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      provider: "opencode",
+      sessionId: "ses_windows",
+      cwd: storedCwd,
+      title: "Windows session",
+    });
+    expect(openCodeClient.calls.experimentalSessionList).toEqual([
+      { archived: true, roots: true, limit: 200 },
+    ]);
+  });
+});
+
+function createTestDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function abortableOpenCodeStream(signal: AbortSignal): AsyncIterable<OpenCodeEvent> {
+  return {
+    [Symbol.asyncIterator]: () => {
+      let emittedConnected = false;
+      return {
+        next: () => {
+          if (!emittedConnected) {
+            emittedConnected = true;
+            return Promise.resolve({
+              done: false,
+              value: { type: "server.connected", properties: {} } as OpenCodeEvent,
+            });
+          }
+          return new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
+            if (signal.aborted) {
+              resolve({ done: true, value: undefined });
+              return;
+            }
+            signal.addEventListener("abort", () => resolve({ done: true, value: undefined }), {
+              once: true,
+            });
+          });
+        },
+      };
+    },
+  };
+}

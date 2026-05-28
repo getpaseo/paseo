@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.1.69",
+  "version": "0.1.84",
   "private": true,
   "description": "Paseo desktop app (Electron wrapper)",
   "homepage": "https://paseo.sh",
@@ -15,7 +15,7 @@
   },
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm --prefix ../.. run build:daemon && npm run build:main && electron-builder --config electron-builder.yml",
+    "build": "npm --prefix ../.. run build:server && npm run build:main && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
@@ -33,11 +33,11 @@
   "devDependencies": {
     "@types/node": "24.6.0",
     "@types/ws": "^8.5.14",
-    "electron": "41.0.3",
+    "electron": "41.2.0",
     "electron-builder": "26.8.1",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.6",
     "wait-on": "8.0.5"
   }
 }

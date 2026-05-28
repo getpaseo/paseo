@@ -4,7 +4,11 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 
-import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
+import {
+  createDaemonTestContext,
+  createTempGithubRepoName,
+  type DaemonTestContext,
+} from "../test-utils/index.js";
 import {
   createWorktree as createWorktreePrimitive,
   type CreateWorktreeOptions,
@@ -76,11 +80,6 @@ function initGitRepo(repoDir: string): void {
   });
 }
 
-function createTempRepoName(): string {
-  const rand = Math.random().toString(16).slice(2, 8);
-  return `paseo-checkout-ship-${Date.now()}-${rand}`;
-}
-
 function getGhLogin(): string {
   return execSync("gh api user --jq .login", { stdio: "pipe" }).toString().trim();
 }
@@ -128,7 +127,7 @@ describe("daemon checkout ship loop", () => {
         initGitRepo(repoDir);
 
         const owner = getGhLogin();
-        const repoName = createTempRepoName();
+        const repoName = createTempGithubRepoName("checkout-ship");
         repoFullName = `${owner}/${repoName}`;
         createPrivateRepo(repoName);
 

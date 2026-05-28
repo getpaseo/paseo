@@ -5,7 +5,7 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
-import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
+import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";

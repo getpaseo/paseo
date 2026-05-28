@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { AgentStreamEventPayload } from "@server/shared/messages";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { ThoughtItem } from "@/types/stream";
 import { applyStreamEvent } from "@/types/stream";
 
 const baseTimestamp = new Date(0);
 
-const assistantChunk = (text: string): AgentStreamEventPayload => ({
+const assistantChunk = (text: string, messageId?: string): AgentStreamEventPayload => ({
   type: "timeline",
   provider: "codex",
   item: {
     type: "assistant_message",
     text,
+    ...(messageId ? { messageId } : {}),
   },
 });
 
@@ -129,6 +130,36 @@ describe("applyStreamEvent", () => {
     expect(result.head).toHaveLength(0);
     expect(result.tail).toHaveLength(1);
     expect(result.tail[0].kind).toBe("assistant_message");
+  });
+
+  it("does not continue a tail assistant message when the incoming message id differs", () => {
+    const result = applyStreamEvent({
+      tail: [
+        {
+          kind: "assistant_message",
+          id: "msg-first",
+          messageId: "msg-first",
+          text: "First answer.",
+          timestamp: baseTimestamp,
+        },
+      ],
+      head: [],
+      event: assistantChunk("Second answer.", "msg-second"),
+      timestamp: baseTimestamp,
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.head).toHaveLength(1);
+    expect(result.tail[0].kind).toBe("assistant_message");
+    expect(result.head[0].kind).toBe("assistant_message");
+    if (
+      result.tail[0].kind === "assistant_message" &&
+      result.head[0].kind === "assistant_message"
+    ) {
+      expect(result.tail[0].text).toBe("First answer.");
+      expect(result.head[0].text).toBe("Second answer.");
+      expect(result.head[0].messageId).toBe("msg-second");
+    }
   });
 
   it("flushes reasoning when assistant message starts", () => {

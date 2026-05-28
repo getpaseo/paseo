@@ -13,15 +13,13 @@ import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { createAllClients, shutdownProviders } from "./provider-registry.js";
+import { isProviderAvailable } from "../daemon-e2e/agent-configs.js";
 import pino from "pino";
 
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 const hasOpenAICredentials = !!process.env.OPENAI_API_KEY;
-const hasClaudeCredentials =
-  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const shouldRun = !process.env.CI && (hasOpenAICredentials || hasClaudeCredentials);
 
 interface AgentMcpServerHandle {
   url: string;
@@ -147,13 +145,20 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
   };
 }
 
-(shouldRun ? describe : describe.skip)("getStructuredAgentResponse (e2e)", () => {
+describe("getStructuredAgentResponse (e2e)", () => {
   let manager: AgentManager;
   let cwd: string;
   let agentMcpServer: AgentMcpServerHandle;
+  let canRunCodex = false;
+  let canRunClaude = false;
   const logger = pino({ level: "silent" });
 
   beforeAll(async () => {
+    canRunCodex = !process.env.CI && hasOpenAICredentials;
+    canRunClaude = await isProviderAvailable("claude");
+    if (!canRunCodex && !canRunClaude) {
+      return;
+    }
     agentMcpServer = await startAgentMcpServer(logger);
   });
 
@@ -174,72 +179,70 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
     await shutdownProviders(logger);
   }, 60000);
 
-  test.runIf(hasOpenAICredentials)(
-    "returns schema-valid JSON from a real Codex agent",
-    async () => {
-      const schema = z.object({
-        title: z.string(),
-        count: z.number(),
-      });
+  test("returns schema-valid JSON from a real Codex agent", async (context) => {
+    if (!canRunCodex) {
+      context.skip();
+    }
+    const schema = z.object({
+      title: z.string(),
+      count: z.number(),
+    });
 
-      const result = await generateStructuredAgentResponse({
-        manager,
-        agentConfig: {
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd,
-          title: "Structured Response Test",
-        },
-        prompt: "Return JSON with a short title and count 2.",
-        schema,
-        maxRetries: 1,
-      });
+    const result = await generateStructuredAgentResponse({
+      manager,
+      agentConfig: {
+        provider: "codex",
+        model: CODEX_TEST_MODEL,
+        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        cwd,
+        title: "Structured Response Test",
+      },
+      prompt: "Return JSON with a short title and count 2.",
+      schema,
+      maxRetries: 1,
+    });
 
-      expect(result.title.length).toBeGreaterThan(0);
-      expect(typeof result.count).toBe("number");
-    },
-    180000,
-  );
+    expect(result.title.length).toBeGreaterThan(0);
+    expect(typeof result.count).toBe("number");
+  }, 180000);
 
-  test.runIf(hasClaudeCredentials)(
-    "returns schema-valid JSON from Claude Haiku",
-    async () => {
-      const schema = z.object({
-        message: z.string(),
-      });
+  test("returns schema-valid JSON from Claude Haiku", async (context) => {
+    if (!canRunClaude) {
+      context.skip();
+    }
+    const schema = z.object({
+      message: z.string(),
+    });
 
-      let result: { message: string } | null = null;
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          result = await generateStructuredAgentResponse({
-            manager,
-            agentConfig: {
-              provider: "claude",
-              model: "haiku",
-              thinkingOptionId: "on",
-              cwd,
-              title: "Claude Haiku Structured Test",
-              internal: true,
-            },
-            prompt:
-              'Respond with exactly this JSON (no markdown, no extra keys, no extra text): {"message":"hello"}',
-            schema,
-            maxRetries: 6,
-          });
-          lastError = null;
-          break;
-        } catch (error) {
-          lastError = error;
-        }
+    let result: { message: string } | null = null;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        result = await generateStructuredAgentResponse({
+          manager,
+          agentConfig: {
+            provider: "claude",
+            model: "haiku",
+            thinkingOptionId: "on",
+            cwd,
+            title: "Claude Haiku Structured Test",
+            internal: true,
+          },
+          prompt:
+            'Respond with exactly this JSON (no markdown, no extra keys, no extra text): {"message":"hello"}',
+          schema,
+          maxRetries: 6,
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
       }
-      if (!result) {
-        throw lastError;
-      }
+    }
+    if (!result) {
+      throw lastError;
+    }
 
-      expect(result.message.trim().toLowerCase()).toBe("hello");
-    },
-    180000,
-  );
+    expect(result.message.trim().toLowerCase()).toBe("hello");
+  }, 180000);
 });

@@ -67,7 +67,7 @@ import {
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
-import { workspaceTabTargetsEqual } from "@/utils/workspace-tab-identity";
+import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { isNative } from "@/constants/platform";
 
 interface SplitContainerProps {
@@ -86,6 +86,7 @@ interface SplitContainerProps {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
@@ -362,6 +363,7 @@ export function SplitContainer({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -406,6 +408,7 @@ export function SplitContainer({
     }
     return { kind: "pane" as const, pane: focusedPane };
   }, [focusModeEnabled, layout.root, layout.focusedPaneId, panesById]);
+  const renderRoot = useMemo(() => wrapRootPaneForStableMount(effectiveRoot), [effectiveRoot]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const data = asWorkspaceTabDragData(event.active.data.current);
@@ -560,7 +563,7 @@ export function SplitContainer({
       onDragEnd={handleDragEnd}
     >
       <SplitNodeView
-        node={effectiveRoot}
+        node={renderRoot}
         workspaceKey={workspaceKey}
         uiTabs={uiTabs}
         focusedPaneId={layout.focusedPaneId}
@@ -576,6 +579,7 @@ export function SplitContainer({
         onCopyResumeCommand={onCopyResumeCommand}
         onCopyAgentId={onCopyAgentId}
         onReloadAgent={onReloadAgent}
+        onRenameTab={onRenameTab}
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
@@ -715,6 +719,7 @@ function SplitNodeView({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -767,6 +772,7 @@ function SplitNodeView({
         onCopyResumeCommand={onCopyResumeCommand}
         onCopyAgentId={onCopyAgentId}
         onReloadAgent={onReloadAgent}
+        onRenameTab={onRenameTab}
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
@@ -812,6 +818,7 @@ function SplitNodeView({
               onCopyResumeCommand={onCopyResumeCommand}
               onCopyAgentId={onCopyAgentId}
               onReloadAgent={onReloadAgent}
+              onRenameTab={onRenameTab}
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
@@ -863,6 +870,7 @@ function SplitPaneView({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -1003,6 +1011,7 @@ function SplitPaneView({
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onReloadAgent={onReloadAgent}
+          onRenameTab={onRenameTab}
           onCloseTabsToLeft={handleCloseTabsToLeft}
           onCloseTabsToRight={handleCloseTabsToRight}
           onCloseOtherTabs={handleCloseOtherTabs}
@@ -1069,6 +1078,22 @@ function getNodeKey(node: SplitNode): string {
     return node.pane.id;
   }
   return node.group.id;
+}
+
+function wrapRootPaneForStableMount(node: SplitNode): SplitNode {
+  if (node.kind === "group") {
+    return node;
+  }
+
+  return {
+    kind: "group",
+    group: {
+      id: `root:${node.pane.id}`,
+      direction: "horizontal",
+      children: [node],
+      sizes: [1],
+    },
+  };
 }
 
 const styles = StyleSheet.create((theme) => ({

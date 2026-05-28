@@ -31,6 +31,7 @@ interface WorkspaceScriptsButtonProps {
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
+  presentation?: "split" | "ghost";
 }
 
 interface ScriptActionButtonProps {
@@ -48,6 +49,8 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 
+const GHOST_TRIGGER_ICON_SIZE = 16;
+
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
 });
@@ -64,6 +67,7 @@ const redColorMapping = (theme: Theme) => ({
   color: theme.colors.palette.red[500],
 });
 const playFillTransparent = { fill: "transparent" };
+const ghostPlayStroke = { strokeWidth: 1.5 };
 
 interface ScriptActionButtonChildrenProps {
   hovered?: boolean;
@@ -366,6 +370,7 @@ export function WorkspaceScriptsButton({
   onViewTerminal,
   onOpenUrlInBrowserTab,
   hideLabels,
+  presentation = "split",
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
@@ -397,10 +402,11 @@ export function WorkspaceScriptsButton({
 
   const triggerStyle = useCallback(
     ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
-      styles.splitButtonPrimary,
-      (hovered || pressed || open) && styles.splitButtonPrimaryHovered,
+      presentation === "ghost" ? styles.ghostButton : styles.splitButtonPrimary,
+      (hovered || pressed || open) &&
+        (presentation === "ghost" ? styles.ghostButtonHovered : styles.splitButtonPrimaryHovered),
     ],
-    [],
+    [presentation],
   );
 
   const handleStartScript = useCallback(
@@ -414,10 +420,13 @@ export function WorkspaceScriptsButton({
 
   const hasAnyRunning = scripts.some((s) => s.lifecycle === "running");
   const triggerPlayMapping = hasAnyRunning ? blueColorMapping : mutedColorMapping;
+  const triggerIconSize = presentation === "ghost" ? GHOST_TRIGGER_ICON_SIZE : 14;
+  const triggerPlayProps =
+    presentation === "ghost" ? { ...playFillTransparent, ...ghostPlayStroke } : playFillTransparent;
 
   return (
     <View style={styles.row}>
-      <View style={styles.splitButton}>
+      <View style={presentation === "ghost" ? styles.ghostButtonFrame : styles.splitButton}>
         <DropdownMenu>
           <DropdownMenuTrigger
             testID="workspace-scripts-button"
@@ -426,9 +435,15 @@ export function WorkspaceScriptsButton({
             accessibilityLabel="Workspace scripts"
           >
             <View style={styles.splitButtonContent}>
-              <ThemedPlay size={14} uniProps={triggerPlayMapping} {...playFillTransparent} />
+              <ThemedPlay
+                size={triggerIconSize}
+                uniProps={triggerPlayMapping}
+                {...triggerPlayProps}
+              />
               {!hideLabels && <Text style={styles.splitButtonText}>Scripts</Text>}
-              <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+              {presentation === "split" ? (
+                <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+              ) : null}
             </View>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -474,6 +489,21 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
+  },
+  ghostButtonFrame: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  ghostButton: {
+    width: theme.spacing[8],
+    height: theme.spacing[8],
+    padding: 0,
+    borderRadius: theme.borderRadius.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ghostButtonHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   splitButtonPrimary: {
     paddingHorizontal: theme.spacing[3],

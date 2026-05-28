@@ -2,4 +2,4 @@ export {
   buildToolCallDisplayModel,
   type ToolCallDisplayInput,
   type ToolCallDisplayModel,
-} from "@server/shared/tool-call-display";
+} from "@getpaseo/protocol/tool-call-display";

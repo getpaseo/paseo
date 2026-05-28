@@ -275,6 +275,55 @@ describe("runGitCommand", () => {
     });
   });
 
+  it("traces git command spawn and close metadata when a logger is provided", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+    const trace = vi.fn();
+
+    enqueueSpawnBehaviors({ delayMs: 0, stdoutData: "ok" });
+
+    await expect(
+      runGitCommand(["status", "--short"], {
+        acceptExitCodes: [0, 1],
+        cwd: process.cwd(),
+        envOverlay: { GIT_OPTIONAL_LOCKS: "0" },
+        logger: { trace } as never,
+      }),
+    ).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "ok",
+      truncated: false,
+    });
+
+    expect(trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "git",
+        args: ["status", "--short"],
+        cwd: process.cwd(),
+        cwdExists: true,
+        timeout: 30_000,
+        maxOutputBytes: 20 * 1024 * 1024,
+        acceptExitCodes: [0, 1],
+        envOverlayKeys: ["GIT_OPTIONAL_LOCKS"],
+      }),
+      "Spawning git command",
+    );
+    expect(trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "git",
+        args: ["status", "--short"],
+        cwd: process.cwd(),
+        cwdExists: true,
+        durationMs: expect.any(Number),
+        exitCode: 0,
+        signal: null,
+        truncated: false,
+        stdoutBytes: 2,
+        stderrBytes: 0,
+      }),
+      "Git command closed",
+    );
+  });
+
   it("rejects non-zero exit codes that are not accepted and frees the slot", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);
 

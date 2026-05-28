@@ -49,21 +49,44 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
+const terminalConstructorOptions = vi.hoisted(() => ({
+  values: [] as unknown[],
+}));
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class Terminal {
+    rows = 24;
+    cols = 80;
+    unicode = { activeVersion: "" };
+    parser = {
+      registerCsiHandler: () => undefined,
+    };
+    constructor(options: unknown) {
+      terminalConstructorOptions.values.push(options);
+    }
+    loadAddon(): void {}
+    registerLinkProvider(): { dispose: () => void } {
+      return { dispose: () => undefined };
+    }
+    open(): void {}
+    onData(): { dispose: () => void } {
+      return { dispose: () => undefined };
+    }
+    attachCustomKeyEventHandler(): void {}
     dispose(): void {}
+    refresh(): void {}
   },
 }));
 
-import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
 interface StubTerminal {
-  write: (text: string, callback?: () => void) => void;
+  write: (data: string | Uint8Array, callback?: () => void) => void;
   reset: () => void;
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown };
+  options?: { theme?: unknown; scrollback?: number };
   rows?: number;
   cols?: number;
 }
@@ -82,8 +105,8 @@ function createRuntimeWithTerminal(): {
   let resetCalls = 0;
 
   const terminal: StubTerminal & { resetCalls: number } = {
-    write: (text: string, callback?: () => void) => {
-      writeTexts.push(text);
+    write: (data: string | Uint8Array, callback?: () => void) => {
+      writeTexts.push(decodeTerminalOutput(data));
       if (callback) {
         writeCallbacks.push(callback);
       }
@@ -111,6 +134,17 @@ function createRuntimeWithTerminal(): {
   };
 }
 
+function terminalOutput(text: string): Uint8Array {
+  return encodeTerminalOutput(text);
+}
+
+function decodeTerminalOutput(data: string | Uint8Array): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  return new TextDecoder().decode(data);
+}
+
 describe("terminal-emulator-runtime", () => {
   const originalWindow = (globalThis as { window?: unknown }).window;
 
@@ -118,6 +152,7 @@ describe("terminal-emulator-runtime", () => {
     (globalThis as { window?: { __paseoTerminal?: unknown } }).window = {
       __paseoTerminal: undefined,
     };
+    terminalConstructorOptions.values = [];
   });
 
   afterEach(() => {
@@ -130,7 +165,7 @@ describe("terminal-emulator-runtime", () => {
     const committed: string[] = [];
 
     runtime.write({
-      text: "first",
+      data: terminalOutput("first"),
       onCommitted: () => {
         committed.push("first");
       },
@@ -141,7 +176,7 @@ describe("terminal-emulator-runtime", () => {
       },
     });
     runtime.write({
-      text: "second",
+      data: terminalOutput("second"),
       onCommitted: () => {
         committed.push("second");
       },
@@ -167,7 +202,7 @@ describe("terminal-emulator-runtime", () => {
     const onCommitted = vi.fn();
 
     runtime.write({
-      text: "stuck",
+      data: terminalOutput("stuck"),
       onCommitted,
     });
 
@@ -176,18 +211,50 @@ describe("terminal-emulator-runtime", () => {
     expect(onCommitted).toHaveBeenCalledTimes(1);
   });
 
+  it("reports input mode changes from terminal output and resets them on snapshots", () => {
+    const { runtime, writeCallbacks } = createRuntimeWithTerminal();
+    const inputModeChanges: Array<{ kittyKeyboardFlags: number; win32InputMode: boolean }> = [];
+    runtime.setCallbacks({
+      callbacks: {
+        onInputModeChange: (state) => {
+          inputModeChanges.push(state);
+        },
+      },
+    });
+
+    runtime.write({ data: terminalOutput("\x1b[>7u") });
+    runtime.renderSnapshot({
+      state: {
+        rows: 2,
+        cols: 8,
+        scrollback: [],
+        grid: [[{ char: "$" }, { char: " " }]],
+        cursor: {
+          row: 0,
+          col: 2,
+        },
+      },
+    });
+    writeCallbacks[0]?.();
+
+    expect(inputModeChanges).toEqual([
+      { kittyKeyboardFlags: 7, win32InputMode: false },
+      { kittyKeyboardFlags: 0, win32InputMode: false },
+    ]);
+  });
+
   it("ignores stale duplicate write callbacks from a previous operation", () => {
     const { runtime, writeCallbacks } = createRuntimeWithTerminal();
     const committed: string[] = [];
 
     runtime.write({
-      text: "first",
+      data: terminalOutput("first"),
       onCommitted: () => {
         committed.push("first");
       },
     });
     runtime.write({
-      text: "second",
+      data: terminalOutput("second"),
       onCommitted: () => {
         committed.push("second");
       },
@@ -209,11 +276,11 @@ describe("terminal-emulator-runtime", () => {
     const onCommittedB = vi.fn();
 
     runtime.write({
-      text: "a",
+      data: terminalOutput("a"),
       onCommitted: onCommittedA,
     });
     runtime.write({
-      text: "b",
+      data: terminalOutput("b"),
       onCommitted: onCommittedB,
     });
 
@@ -246,6 +313,15 @@ describe("terminal-emulator-runtime", () => {
     expect(writeTexts).toHaveLength(1);
     expect(writeTexts[0]?.startsWith("\u001bc")).toBe(true);
     expect(writeTexts[0]).toContain("hi");
+  });
+
+  it("restores server-rendered ANSI snapshots through the snapshot write path", () => {
+    const { runtime, terminal, writeTexts } = createRuntimeWithTerminal();
+
+    runtime.restoreOutput({ data: terminalOutput("restored screen") });
+
+    expect(terminal.resetCalls).toBe(0);
+    expect(writeTexts).toEqual(["\u001bcrestored screen"]);
   });
 
   it("forces a refit when resize is requested", () => {
@@ -282,6 +358,26 @@ describe("terminal-emulator-runtime", () => {
       background: "after",
       overviewRulerBorder: "after",
     });
+    expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("updates terminal scrollback without remounting", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { scrollback: 10_000 },
+      rows: 12,
+      cols: 40,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+
+    runtime.setScrollback({ lines: 42_000 });
+
+    expect(terminal.options?.scrollback).toBe(42_000);
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 

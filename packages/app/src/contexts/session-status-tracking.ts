@@ -1,4 +1,4 @@
-import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
+import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type { Agent } from "@/stores/session-store";
 
 export function reconcilePreviousAgentStatuses(

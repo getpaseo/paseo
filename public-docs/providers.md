@@ -1,206 +1,27 @@
 ---
 title: Providers
-description: First-class agent providers in Paseo, and how to configure custom providers, ACP agents, and profiles.
+description: How Paseo thinks about coding agents, wrapping existing CLIs, native vs ACP support, and where to go next.
 nav: Providers
-order: 7
+order: 3
 ---
 
 # Providers
 
-A provider is an agent CLI that Paseo knows how to launch, stream, and control. Paseo ships with first-class providers for the major coding agents, and lets you add your own through `config.json` — either by pointing an existing provider at a different API, adding extra profiles, or plugging in any [ACP](https://agentclientprotocol.com)-compatible agent.
+Paseo doesn't ship its own coding agent. It launches and supervises **existing CLIs you've already installed and authenticated**, Claude Code, Codex, OpenCode, Cursor, Gemini, and the rest. Your subscriptions, your config, your skills, your MCP servers all stay intact. Paseo just gives you a UI, a CLI, a relay, and orchestration on top.
 
-## First-class providers
+## Mental model
 
-These work out of the box once the underlying CLI is installed and authenticated. Paseo discovers them automatically, wires up modes, and exposes them in the app and CLI.
+A provider is the contract between Paseo and one external agent CLI: how to launch it, how to stream its output, how to send input back, what modes it supports. The actual binary lives on your machine and runs as a normal subprocess.
 
-- `claude` — Anthropic's Claude Code. Multi-tool assistant with MCP support, streaming, and deep reasoning.
-- `codex` — OpenAI's Codex workspace agent with sandbox controls and optional network access.
-- `opencode` — Open-source coding assistant with multi-provider model support.
-- `copilot` — GitHub Copilot via ACP, with dynamic modes and session support.
-- `pi` — Minimal terminal-based coding agent with multi-provider LLM support.
+## Two tiers
 
-## Custom providers
+- **Native support**, Paseo ships a bundled adapter for the major agents (Claude Code, Codex, OpenCode, pi). Auto-discovered when the underlying CLI is installed, with mode metadata and voice support where applicable.
+- **ACP catalog**, any agent speaking the [Agent Client Protocol](https://agentclientprotocol.com) is supported through a generic adapter. Paseo ships a curated catalog of one-click installs (Cursor, Gemini, GitHub Copilot, Hermes, Kimi, Qwen Code, and 25+ more), and you can add any other ACP agent yourself.
 
-Everything beyond the defaults lives under `agents.providers` in `~/.paseo/config.json`. You can:
+Either way, **you install the underlying CLI**. Paseo runs it.
 
-- **Extend** a first-class provider to point at a different API (Z.AI, Alibaba/Qwen, a proxy, a self-hosted endpoint).
-- **Add profiles** — multiple entries against the same underlying provider with different credentials or curated model lists.
-- **Override the binary** — run a nightly build, a wrapper script, or a Docker image instead of the installed CLI.
-- **Add ACP agents** — Gemini CLI, Hermes, or any agent speaking the Agent Client Protocol over stdio.
-- **Disable** a provider you don't use.
+## Where to go next
 
-Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`). Every custom entry needs `extends` (a first-class provider ID or `"acp"`) and a `label`.
-
-The examples below are a quick tour. The full, up-to-date reference is on GitHub: [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
-
-## Extending a first-class provider
-
-```json
-{
-  "agents": {
-    "providers": {
-      "my-claude": {
-        "extends": "claude",
-        "label": "My Claude",
-        "env": {
-          "ANTHROPIC_API_KEY": "sk-ant-...",
-          "ANTHROPIC_BASE_URL": "https://my-proxy.example.com/v1"
-        }
-      }
-    }
-  }
-}
-```
-
-## Z.AI (GLM) coding plan
-
-Z.AI exposes GLM models through an Anthropic-compatible endpoint. Point `ANTHROPIC_BASE_URL` at their API and use `ANTHROPIC_AUTH_TOKEN` for the key. Third-party endpoints don't support Anthropic's server-side tools, so disable `WebSearch`.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "zai": {
-        "extends": "claude",
-        "label": "ZAI",
-        "env": {
-          "ANTHROPIC_AUTH_TOKEN": "<your-zai-api-key>",
-          "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
-          "API_TIMEOUT_MS": "3000000"
-        },
-        "disallowedTools": ["WebSearch"],
-        "models": [
-          { "id": "glm-5-turbo", "label": "GLM 5 Turbo", "isDefault": true },
-          { "id": "glm-5.1", "label": "GLM 5.1" }
-        ]
-      }
-    }
-  }
-}
-```
-
-## Alibaba Cloud (Qwen) coding plan
-
-Alibaba's coding plan routes Claude Code to Qwen models via an Anthropic-compatible API. Subscription keys look like `sk-sp-...` and must be created in the Singapore region.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "qwen": {
-        "extends": "claude",
-        "label": "Qwen (Alibaba)",
-        "env": {
-          "ANTHROPIC_AUTH_TOKEN": "sk-sp-<coding-plan-key>",
-          "ANTHROPIC_BASE_URL": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic"
-        },
-        "disallowedTools": ["WebSearch"],
-        "models": [
-          { "id": "qwen3.5-plus", "label": "Qwen 3.5 Plus", "isDefault": true },
-          { "id": "qwen3-coder-next", "label": "Qwen 3 Coder Next" }
-        ]
-      }
-    }
-  }
-}
-```
-
-## Multiple profiles
-
-Create as many entries as you want against the same first-class provider. Each one shows up as a separate option in the app with its own credentials and models.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "claude-work": {
-        "extends": "claude",
-        "label": "Claude (Work)",
-        "env": { "ANTHROPIC_API_KEY": "sk-ant-work-..." }
-      },
-      "claude-personal": {
-        "extends": "claude",
-        "label": "Claude (Personal)",
-        "env": { "ANTHROPIC_API_KEY": "sk-ant-personal-..." }
-      }
-    }
-  }
-}
-```
-
-## Custom binary
-
-`command` is an array — first element is the binary, the rest are arguments. It fully replaces the default launch command for that provider.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "claude": {
-        "command": ["/opt/claude-nightly/claude"]
-      }
-    }
-  }
-}
-```
-
-## ACP providers
-
-Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be added with `extends: "acp"` and a `command`. Paseo spawns the process, sends an `initialize` JSON-RPC request, and the agent reports its capabilities, modes, and models at runtime.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "gemini": {
-        "extends": "acp",
-        "label": "Google Gemini",
-        "command": ["gemini", "--acp"]
-      },
-      "hermes": {
-        "extends": "acp",
-        "label": "Hermes",
-        "command": ["hermes", "acp"]
-      }
-    }
-  }
-}
-```
-
-## Adding or relabeling models
-
-`models` replaces the model list entirely. `additionalModels` merges with runtime-discovered models (ACP) or with `models` — use it to add an extra entry or relabel a discovered one without redeclaring the full list. An entry with the same `id` as a discovered model updates it in place.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "gemini": {
-        "extends": "acp",
-        "label": "Google Gemini",
-        "command": ["gemini", "--acp"],
-        "additionalModels": [
-          { "id": "experimental-model", "label": "Experimental", "isDefault": true },
-          { "id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro (preferred)" }
-        ]
-      }
-    }
-  }
-}
-```
-
-## Disabling a provider
-
-```json
-{
-  "agents": {
-    "providers": {
-      "copilot": { "enabled": false }
-    }
-  }
-}
-```
-
-## Full reference
-
-For the complete field reference (`extends`, `label`, `command`, `env`, `models`, `additionalModels`, `disallowedTools`, `enabled`, `order`), model and thinking-option schemas, and deeper examples for each plan, see [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md) on GitHub.
+- [Supported providers](/docs/supported-providers), the full list with install links.
+- [Custom providers](/docs/custom-providers), add your own provider, point an existing one at a different endpoint, run multiple profiles, or override the binary in `~/.paseo/config.json`.
+- [paseo.sh/agents](/agents), per-agent landing page for each supported provider.

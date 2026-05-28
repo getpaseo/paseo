@@ -13,30 +13,39 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
         <div className="space-y-3">
           <p className="text-white/60 font-medium">Product</p>
           <div className="space-y-2">
-            <a href="/blog" className="block text-white/40 hover:text-white/60 transition-colors">
+            <a
+              href="/blog"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
               Blog
             </a>
-            <a href="/docs" className="block text-white/40 hover:text-white/60 transition-colors">
+            <a
+              href="/docs"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
               Docs
             </a>
             <a
               href="/changelog"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Changelog
             </a>
-            <a href="/cloud" className="block text-white/40 hover:text-white/60 transition-colors">
+            <a
+              href="/cloud"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
               Cloud
             </a>
             <a
               href="/docs/cli"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               CLI
             </a>
             <a
               href="/privacy"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Privacy
             </a>
@@ -47,18 +56,27 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
           <div className="space-y-2">
             <a
               href="/claude-code"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Claude Code
             </a>
-            <a href="/codex" className="block text-white/40 hover:text-white/60 transition-colors">
+            <a
+              href="/codex"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
               Codex
             </a>
             <a
               href="/opencode"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               OpenCode
+            </a>
+            <a
+              href="/agents"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              All providers
             </a>
           </div>
         </div>
@@ -69,15 +87,23 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               href="https://discord.gg/jz8T2uahpH"
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Discord
+            </a>
+            <a
+              href="https://www.reddit.com/r/PaseoAI/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Reddit
             </a>
             <a
               href="https://github.com/getpaseo/paseo"
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               GitHub
             </a>
@@ -90,7 +116,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               href={appStoreUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               App Store
             </a>
@@ -98,7 +124,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               href={playStoreUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Google Play
             </a>
@@ -106,7 +132,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               href="https://github.com/getpaseo/paseo/releases"
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Desktop
             </a>
@@ -114,7 +140,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               href={webAppUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-white/40 hover:text-white/60 transition-colors"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Web App
             </a>

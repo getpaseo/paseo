@@ -1,0 +1,60 @@
+diff --git a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
+index 76eb808..0debe83 100644
+--- a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
++++ b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
+@@ -58,7 +58,14 @@ class PointerEventManager extends _EventManager.default {
+     const adaptedEvent = this.mapEvent(event, _interfaces.EventTypes.UP);
+     const target = event.target;
+     if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+-      target.releasePointerCapture(adaptedEvent.pointerId);
++      try {
++        if (target.hasPointerCapture(adaptedEvent.pointerId)) {
++          target.releasePointerCapture(adaptedEvent.pointerId);
++        }
++      } catch {
++        // Pointer capture is implicitly released after pointerup/pointercancel.
++        // Some browsers can report stale capture state during gesture teardown.
++      }
+     }
+     this.markAsOutOfBounds(adaptedEvent.pointerId);
+     this.trackedPointers.delete(adaptedEvent.pointerId);
+diff --git a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
+index 6ce3b8f..3976f3f 100644
+--- a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
++++ b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
+@@ -53,7 +53,14 @@ export default class PointerEventManager extends EventManager {
+     const adaptedEvent = this.mapEvent(event, EventTypes.UP);
+     const target = event.target;
+     if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+-      target.releasePointerCapture(adaptedEvent.pointerId);
++      try {
++        if (target.hasPointerCapture(adaptedEvent.pointerId)) {
++          target.releasePointerCapture(adaptedEvent.pointerId);
++        }
++      } catch {
++        // Pointer capture is implicitly released after pointerup/pointercancel.
++        // Some browsers can report stale capture state during gesture teardown.
++      }
+     }
+     this.markAsOutOfBounds(adaptedEvent.pointerId);
+     this.trackedPointers.delete(adaptedEvent.pointerId);
+diff --git a/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts b/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
+index 18d3627..769b0fe 100644
+--- a/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
++++ b/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
+@@ -67,7 +67,14 @@ export default class PointerEventManager extends EventManager<HTMLElement> {
+     const target = event.target as HTMLElement;
+ 
+     if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+-      target.releasePointerCapture(adaptedEvent.pointerId);
++      try {
++        if (target.hasPointerCapture(adaptedEvent.pointerId)) {
++          target.releasePointerCapture(adaptedEvent.pointerId);
++        }
++      } catch {
++        // Pointer capture is implicitly released after pointerup/pointercancel.
++        // Some browsers can report stale capture state during gesture teardown.
++      }
+     }
+ 
+     this.markAsOutOfBounds(adaptedEvent.pointerId);

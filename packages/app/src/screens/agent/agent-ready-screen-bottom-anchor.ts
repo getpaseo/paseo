@@ -1,4 +1,4 @@
-import type { BottomAnchorRouteRequest } from "@/components/use-bottom-anchor-controller";
+import type { BottomAnchorRouteRequest } from "@/agent-stream/bottom-anchor-controller";
 
 export interface RouteBottomAnchorIntent {
   routeKey: string;

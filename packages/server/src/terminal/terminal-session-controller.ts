@@ -4,6 +4,7 @@ import type {
   CreateTerminalRequest,
   KillTerminalRequest,
   ListTerminalsRequest,
+  RenameTerminalRequest,
   SessionInboundMessage,
   SessionOutboundMessage,
   SubscribeTerminalRequest,
@@ -16,11 +17,19 @@ import { killTerminalsUnderPath as killWorktreeTerminalsUnderPath } from "../ser
 import {
   TerminalStreamOpcode,
   decodeTerminalResizePayload,
-  encodeTerminalSnapshotPayload,
   encodeTerminalStreamFrame,
   type TerminalStreamFrame,
-} from "../shared/binary-frames/index.js";
+} from "@getpaseo/protocol/binary-frames/index";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
+import {
+  MAX_TERMINAL_OUTPUT_FRAME_BYTES,
+  encodeLegacyTerminalSnapshotFrame,
+  encodeTerminalRestoreFrame,
+  resolveRestoreAfterOutputOverflow,
+  resolveTerminalRestoreSnapshotOptions,
+  resolveTerminalSubscriptionSnapshotMode,
+  type TerminalRestoreOptions,
+} from "./terminal-restore.js";
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 
@@ -37,8 +46,16 @@ interface ActiveTerminalStream {
   unsubscribe: () => void;
   needsSnapshot: boolean;
   snapshotInFlight: boolean;
+  readyRevision?: number;
+  restore?: TerminalRestoreOptions;
   bufferedOutputs: BufferedTerminalOutput[];
+  outputBytesSinceSnapshot: number;
   outputCoalescer: TerminalOutputCoalescer;
+}
+
+interface SnapshotSendResult {
+  shouldContinue: boolean;
+  replayRevision?: number;
 }
 
 export interface TerminalSessionControllerOptions {
@@ -64,7 +81,8 @@ type TerminalDispatchableMessage =
   | UnsubscribeTerminalRequest
   | TerminalInput
   | KillTerminalRequest
-  | CaptureTerminalRequest;
+  | CaptureTerminalRequest
+  | RenameTerminalRequest;
 
 const TERMINAL_MESSAGE_TYPES: ReadonlySet<TerminalDispatchableMessage["type"]> = new Set([
   "subscribe_terminals_request",
@@ -76,6 +94,7 @@ const TERMINAL_MESSAGE_TYPES: ReadonlySet<TerminalDispatchableMessage["type"]> =
   "terminal_input",
   "kill_terminal_request",
   "capture_terminal_request",
+  "terminal.rename.request",
 ]);
 
 export class TerminalSessionController {
@@ -145,6 +164,8 @@ export class TerminalSessionController {
         return this.handleKillTerminalRequest(msg);
       case "capture_terminal_request":
         return this.handleCaptureTerminalRequest(msg);
+      case "terminal.rename.request":
+        return this.handleRenameTerminalRequest(msg);
       default:
         return undefined;
     }
@@ -430,6 +451,32 @@ export class TerminalSessionController {
     }
   }
 
+  private async handleRenameTerminalRequest(msg: RenameTerminalRequest): Promise<void> {
+    const respond = (success: boolean, error: string | null): void => {
+      this.emit({
+        type: "terminal.rename.response",
+        payload: { requestId: msg.requestId, success, error },
+      });
+    };
+
+    const title = msg.title.trim();
+    if (title.length === 0) {
+      respond(false, "Title is required");
+      return;
+    }
+    if (title.length > 200) {
+      respond(false, "Title is too long");
+      return;
+    }
+    if (!this.terminalManager) {
+      respond(false, "Terminal manager not available");
+      return;
+    }
+
+    const renamed = this.terminalManager.setTerminalTitle(msg.terminalId, title);
+    respond(renamed, renamed ? null : "Terminal not found");
+  }
+
   private async handleSubscribeTerminalRequest(msg: SubscribeTerminalRequest): Promise<void> {
     if (!this.terminalManager) {
       this.emit({
@@ -457,7 +504,21 @@ export class TerminalSessionController {
     }
     this.ensureExitSubscription(session);
 
-    const slot = this.bindActiveStream(session);
+    if (msg.restore?.size) {
+      const currentSize = session.getSize();
+      if (
+        currentSize.rows !== msg.restore.size.rows ||
+        currentSize.cols !== msg.restore.size.cols
+      ) {
+        session.send({
+          type: "resize",
+          rows: msg.restore.size.rows,
+          cols: msg.restore.size.cols,
+        });
+      }
+    }
+
+    const slot = this.bindActiveStream(session, { restore: msg.restore });
     if (slot === null) {
       this.sessionLogger.warn(
         {
@@ -597,7 +658,10 @@ export class TerminalSessionController {
     }
   }
 
-  private bindActiveStream(terminal: TerminalSession): number | null {
+  private bindActiveStream(
+    terminal: TerminalSession,
+    options?: { restore?: TerminalRestoreOptions },
+  ): number | null {
     if (!this.hasBinaryChannel()) {
       return null;
     }
@@ -607,6 +671,7 @@ export class TerminalSessionController {
       const existingStream = this.activeStreams.get(existingSlot);
       if (existingStream) {
         existingStream.needsSnapshot = true;
+        existingStream.restore = options?.restore;
         return existingSlot;
       }
       this.idToSlot.delete(terminal.id);
@@ -623,11 +688,21 @@ export class TerminalSessionController {
       unsubscribe: () => {},
       needsSnapshot: true,
       snapshotInFlight: false,
+      readyRevision: undefined,
+      restore: options?.restore,
       bufferedOutputs: [],
+      outputBytesSinceSnapshot: 0,
       outputCoalescer: new TerminalOutputCoalescer({
         timers: { setTimeout, clearTimeout },
         onFlush: ({ payload }) => {
           if (this.activeStreams.get(slot) !== activeStream) {
+            return;
+          }
+          activeStream.outputBytesSinceSnapshot += payload.byteLength;
+          if (activeStream.outputBytesSinceSnapshot > MAX_TERMINAL_OUTPUT_FRAME_BYTES) {
+            activeStream.restore = resolveRestoreAfterOutputOverflow(activeStream.restore);
+            activeStream.needsSnapshot = true;
+            void this.trySendSnapshot(activeStream);
             return;
           }
           this.emitBinary(
@@ -644,31 +719,35 @@ export class TerminalSessionController {
     this.activeStreams.set(slot, activeStream);
     this.idToSlot.set(terminal.id, slot);
 
-    activeStream.unsubscribe = terminal.subscribe((message) => {
-      if (this.activeStreams.get(slot) !== activeStream) {
-        return;
-      }
-      if (message.type === "snapshot") {
-        activeStream.outputCoalescer.flush();
-        activeStream.needsSnapshot = true;
-        void this.trySendSnapshot(activeStream);
-        return;
-      }
-      if (message.type === "titleChange") {
-        return;
-      }
-      if (message.data.length === 0) {
-        return;
-      }
-      if (activeStream.needsSnapshot || activeStream.snapshotInFlight) {
-        activeStream.bufferedOutputs.push({
-          data: message.data,
-          revision: message.revision,
-        });
-        return;
-      }
-      activeStream.outputCoalescer.handle(message.data);
-    });
+    activeStream.unsubscribe = terminal.subscribe(
+      (message) => {
+        if (this.activeStreams.get(slot) !== activeStream) {
+          return;
+        }
+        if (message.type === "snapshot" || message.type === "snapshotReady") {
+          activeStream.readyRevision = message.revision;
+          activeStream.outputCoalescer.flush();
+          activeStream.needsSnapshot = true;
+          void this.trySendSnapshot(activeStream);
+          return;
+        }
+        if (message.type === "titleChange") {
+          return;
+        }
+        if (message.data.length === 0) {
+          return;
+        }
+        if (activeStream.needsSnapshot || activeStream.snapshotInFlight) {
+          activeStream.bufferedOutputs.push({
+            data: message.data,
+            revision: message.revision,
+          });
+          return;
+        }
+        activeStream.outputCoalescer.handle(message.data);
+      },
+      { initialSnapshot: resolveTerminalSubscriptionSnapshotMode(options?.restore) },
+    );
     return slot;
   }
 
@@ -681,42 +760,33 @@ export class TerminalSessionController {
       return;
     }
 
-    if (!this.terminalManager?.getTerminal(activeStream.terminalId)) {
+    const terminalManager = this.terminalManager;
+    if (!terminalManager) {
       this.detachStream(activeStream.terminalId, { emitExit: true });
+      return;
+    }
+    const terminal = terminalManager.getTerminal(activeStream.terminalId);
+    if (!terminal) {
+      this.detachStream(activeStream.terminalId, { emitExit: true });
+      return;
+    }
+    if (activeStream.restore && activeStream.readyRevision === undefined) {
       return;
     }
 
     activeStream.outputCoalescer.flush();
     activeStream.snapshotInFlight = true;
     try {
-      const snapshot = await this.terminalManager.getTerminalState(activeStream.terminalId);
-      if (this.activeStreams.get(activeStream.slot) !== activeStream) {
+      const restore = activeStream.restore;
+      const snapshotResult = restore
+        ? await this.emitRestoreSnapshot(activeStream, terminalManager, restore)
+        : await this.emitLegacySnapshot(activeStream, terminalManager);
+      if (!snapshotResult.shouldContinue) {
         return;
       }
-      if (!snapshot) {
-        this.detachStream(activeStream.terminalId, { emitExit: true });
-        return;
-      }
-
-      this.emitBinary(
-        encodeTerminalStreamFrame({
-          opcode: TerminalStreamOpcode.Snapshot,
-          slot: activeStream.slot,
-          payload: encodeTerminalSnapshotPayload(snapshot.state),
-        }),
-      );
-
-      const bufferedOutputs = activeStream.bufferedOutputs.splice(
-        0,
-        activeStream.bufferedOutputs.length,
-      );
-      for (const output of bufferedOutputs) {
-        if (output.revision !== undefined && output.revision <= snapshot.revision) {
-          continue;
-        }
-        activeStream.outputCoalescer.handle(output.data);
-      }
+      this.replayTerminalOutputAfterSnapshot(activeStream, terminal, snapshotResult.replayRevision);
       activeStream.needsSnapshot = false;
+      activeStream.outputBytesSinceSnapshot = 0;
     } catch (error) {
       this.sessionLogger.warn(
         { err: error, terminalId: activeStream.terminalId },
@@ -725,6 +795,85 @@ export class TerminalSessionController {
       activeStream.needsSnapshot = true;
     } finally {
       activeStream.snapshotInFlight = false;
+    }
+  }
+
+  private async emitLegacySnapshot(
+    activeStream: ActiveTerminalStream,
+    terminalManager: TerminalManager,
+  ): Promise<SnapshotSendResult> {
+    const snapshot = await terminalManager.getTerminalState(activeStream.terminalId);
+    if (this.activeStreams.get(activeStream.slot) !== activeStream) {
+      return { shouldContinue: false };
+    }
+    if (!snapshot) {
+      this.detachStream(activeStream.terminalId, { emitExit: true });
+      return { shouldContinue: false };
+    }
+
+    this.emitBinary(
+      encodeLegacyTerminalSnapshotFrame({
+        slot: activeStream.slot,
+        snapshot,
+      }),
+    );
+    return { shouldContinue: true, replayRevision: snapshot.revision };
+  }
+
+  private async emitRestoreSnapshot(
+    activeStream: ActiveTerminalStream,
+    terminalManager: TerminalManager,
+    restore: TerminalRestoreOptions,
+  ): Promise<SnapshotSendResult> {
+    const snapshotOptions = resolveTerminalRestoreSnapshotOptions(restore);
+    if (snapshotOptions === null) {
+      return { shouldContinue: true };
+    }
+
+    const snapshot = await terminalManager.getTerminalState(
+      activeStream.terminalId,
+      snapshotOptions,
+    );
+    if (this.activeStreams.get(activeStream.slot) !== activeStream) {
+      return { shouldContinue: false };
+    }
+    if (!snapshot) {
+      this.detachStream(activeStream.terminalId, { emitExit: true });
+      return { shouldContinue: false };
+    }
+
+    this.emitBinary(
+      encodeTerminalRestoreFrame({
+        slot: activeStream.slot,
+        snapshot,
+      }),
+    );
+    return { shouldContinue: true, replayRevision: snapshot.revision };
+  }
+
+  private replayTerminalOutputAfterSnapshot(
+    activeStream: ActiveTerminalStream,
+    terminal: TerminalSession,
+    replayRevision: number | undefined,
+  ): void {
+    const replayPreamble = terminal.getReplayPreamble();
+    if (replayPreamble.length > 0) {
+      activeStream.outputCoalescer.handle(replayPreamble);
+    }
+
+    const bufferedOutputs = activeStream.bufferedOutputs.splice(
+      0,
+      activeStream.bufferedOutputs.length,
+    );
+    for (const output of bufferedOutputs) {
+      if (
+        replayRevision !== undefined &&
+        output.revision !== undefined &&
+        output.revision <= replayRevision
+      ) {
+        continue;
+      }
+      activeStream.outputCoalescer.handle(output.data);
     }
   }
 

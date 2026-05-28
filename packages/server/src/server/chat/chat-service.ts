@@ -10,7 +10,7 @@ import {
   type ChatMessage,
   type ChatRoom,
   type ChatRoomDetail,
-} from "./chat-types.js";
+} from "@getpaseo/protocol/chat/types";
 
 const ChatStorePayloadSchema = z.object({
   rooms: z.array(ChatRoomSchema),
@@ -87,6 +87,10 @@ export interface ReadChatMessagesInput {
   limit?: number;
   since?: string;
   authorAgentId?: string;
+}
+
+export interface ListChatRoomPosterAgentIdsInput {
+  room: string;
 }
 
 export interface WaitForChatMessagesInput {
@@ -247,6 +251,16 @@ export class FileBackedChatService {
       return filtered;
     }
     return filtered.slice(filtered.length - limit);
+  }
+
+  async listRoomPosterAgentIds(input: ListChatRoomPosterAgentIdsInput): Promise<string[]> {
+    await this.load();
+    const room = this.resolveRoom(input.room);
+    const posters = new Set<string>();
+    for (const message of this.getRoomMessages(room.id)) {
+      posters.add(message.authorAgentId);
+    }
+    return Array.from(posters);
   }
 
   async waitForMessages(input: WaitForChatMessagesInput): Promise<ChatMessage[]> {

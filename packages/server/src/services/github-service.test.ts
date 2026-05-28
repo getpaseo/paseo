@@ -15,15 +15,19 @@ import {
   type GitHubCurrentPullRequestStatus,
   type GitHubReadOptions,
 } from "./github-service.js";
-import { CheckoutPrStatusResponseSchema } from "../shared/messages.js";
+import { CheckoutPrStatusResponseSchema } from "@getpaseo/protocol/messages";
 
 const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
+const CURRENT_PR_STATUS_BASE_FIELDS =
+  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 interface RunnerCall {
   args: string[];
   cwd: string;
+  envOverlay?: Record<string, string>;
 }
 
 interface TestRunner {
@@ -46,7 +50,7 @@ function createRunner(stdoutByCall: string[]): TestRunner {
   return {
     calls,
     runner: async (args: string[], options: GitHubCommandRunnerOptions) => {
-      calls.push({ args, cwd: options.cwd });
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
       const stdout = stdoutByCall.shift() ?? "[]";
       return { stdout, stderr: "" };
     },
@@ -60,7 +64,7 @@ function createScriptedRunner(steps: RunnerStep[]): TestRunner {
   return {
     calls,
     runner: async (args: string[], options: GitHubCommandRunnerOptions) => {
-      calls.push({ args, cwd: options.cwd });
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
       const step = steps.shift() ?? "";
       if (typeof step === "string") {
         return { stdout: step, stderr: "" };
@@ -81,7 +85,7 @@ function createDeferredRunner(): TestRunner {
   return {
     calls,
     runner: (args: string[], options: GitHubCommandRunnerOptions) => {
-      calls.push({ args, cwd: options.cwd });
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
       return new Promise((resolve) => {
         resolveNext = (stdout: string) => resolve({ stdout, stderr: "" });
       });
@@ -111,6 +115,31 @@ function currentPullRequestJson(overrides: Record<string, unknown> = {}): string
   });
 }
 
+function currentPullRequestGithubFactsJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    data: {
+      repository: {
+        autoMergeAllowed: true,
+        mergeCommitAllowed: false,
+        squashMergeAllowed: true,
+        rebaseMergeAllowed: false,
+        viewerDefaultMergeMethod: "SQUASH",
+        pullRequest: {
+          mergeStateStatus: "BLOCKED",
+          autoMergeRequest: null,
+          viewerCanEnableAutoMerge: true,
+          viewerCanDisableAutoMerge: false,
+          viewerCanMergeAsAdmin: false,
+          viewerCanUpdateBranch: true,
+          isMergeQueueEnabled: false,
+          isInMergeQueue: false,
+        },
+        ...overrides,
+      },
+    },
+  });
+}
+
 function createCurrentPullRequestStatus(
   overrides: Partial<GitHubCurrentPullRequestStatus> = {},
 ): GitHubCurrentPullRequestStatus {
@@ -125,9 +154,33 @@ function createCurrentPullRequestStatus(
     headRefName: "feature",
     isMerged: false,
     isDraft: false,
+    mergeable: "MERGEABLE",
     checks: [],
     checksStatus: "none",
     reviewDecision: null,
+    ...overrides,
+  };
+}
+
+function githubStatusFacts(
+  overrides: Partial<NonNullable<GitHubCurrentPullRequestStatus["github"]>> = {},
+): NonNullable<GitHubCurrentPullRequestStatus["github"]> {
+  return {
+    mergeStateStatus: "CLEAN",
+    autoMergeRequest: null,
+    viewerCanEnableAutoMerge: false,
+    viewerCanDisableAutoMerge: false,
+    viewerCanMergeAsAdmin: false,
+    viewerCanUpdateBranch: false,
+    repository: {
+      autoMergeAllowed: true,
+      mergeCommitAllowed: true,
+      squashMergeAllowed: true,
+      rebaseMergeAllowed: true,
+      viewerDefaultMergeMethod: "SQUASH",
+    },
+    isMergeQueueEnabled: false,
+    isInMergeQueue: false,
     ...overrides,
   };
 }
@@ -142,12 +195,28 @@ function recordCurrentPullRequestStatusReads(service: ReturnType<typeof createGi
   return reads;
 }
 
+function currentPullRequestStatusCalls(calls: RunnerCall[]): RunnerCall[] {
+  return calls.filter(
+    (call) => call.args[0] === "pr" && (call.args[1] === "view" || call.args[1] === "list"),
+  );
+}
+
 function noPullRequestError(args: string[] = ["pr", "view"]): GitHubCommandError {
   return new GitHubCommandError({
     args,
     cwd: "/repo",
     exitCode: 1,
     stderr: "no pull requests found for branch",
+  });
+}
+
+function statusCheckRollupPermissionError(args: string[]): GitHubCommandError {
+  return new GitHubCommandError({
+    args,
+    cwd: "/repo",
+    exitCode: 1,
+    stderr:
+      "GraphQL: Resource not accessible by personal access token (repository.pullRequest.statusCheckRollup)",
   });
 }
 
@@ -284,6 +353,226 @@ describe("GitHubService", () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    ["merge", ["pr", "merge", "42", "--merge"]],
+    ["squash", ["pr", "merge", "42", "--squash"]],
+    ["rebase", ["pr", "merge", "42", "--rebase"]],
+  ] as const)("merges pull requests with gh using %s", async (mergeMethod, expectedArgs) => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.mergePullRequest({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod,
+        status: createCurrentPullRequestStatus({
+          github: githubStatusFacts(),
+        }),
+      }),
+    ).resolves.toEqual({ success: true });
+
+    expect(runner.calls).toEqual([
+      {
+        args: expectedArgs,
+        cwd: "/tmp/repo",
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      },
+    ]);
+  });
+
+  it("rejects direct merge when GitHub facts are unavailable", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.mergePullRequest({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod: "squash",
+        status: createCurrentPullRequestStatus(),
+      }),
+    ).rejects.toThrow("GitHub merge facts are unavailable");
+
+    expect(runner.calls).toEqual([]);
+  });
+
+  it.each(["BLOCKED", "DIRTY", null] as const)(
+    "rejects direct merge when GitHub mergeStateStatus is %s",
+    async (mergeStateStatus) => {
+      const runner = createRunner([""]);
+      const service = createGitHubService({
+        runner: runner.runner,
+      });
+
+      await expect(
+        service.mergePullRequest({
+          cwd: "/tmp/repo",
+          prNumber: 42,
+          mergeMethod: "squash",
+          status: createCurrentPullRequestStatus({
+            github: githubStatusFacts({ mergeStateStatus }),
+          }),
+        }),
+      ).rejects.toThrow("ready for direct merge");
+
+      expect(runner.calls).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["merge queue enabled", { isMergeQueueEnabled: true }],
+    ["PR already in merge queue", { isInMergeQueue: true }],
+  ] as const)("rejects direct merge when %s", async (_name, overrides) => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.mergePullRequest({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod: "squash",
+        status: createCurrentPullRequestStatus({
+          github: githubStatusFacts(overrides),
+        }),
+      }),
+    ).rejects.toThrow("merge queue");
+
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("rejects direct merge when auto-merge is already enabled", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.mergePullRequest({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod: "squash",
+        status: createCurrentPullRequestStatus({
+          github: githubStatusFacts({
+            autoMergeRequest: {
+              enabledAt: "2026-05-13T12:00:00Z",
+              mergeMethod: "SQUASH",
+              enabledBy: "octocat",
+            },
+          }),
+        }),
+      }),
+    ).rejects.toThrow("auto-merge is already enabled");
+
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("rejects direct merge when the requested method is disabled by repository policy", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.mergePullRequest({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod: "squash",
+        status: createCurrentPullRequestStatus({
+          github: githubStatusFacts({
+            repository: {
+              autoMergeAllowed: true,
+              mergeCommitAllowed: true,
+              squashMergeAllowed: false,
+              rebaseMergeAllowed: true,
+              viewerDefaultMergeMethod: "MERGE",
+            },
+          }),
+        }),
+      }),
+    ).rejects.toThrow("squash is disabled");
+
+    expect(runner.calls).toEqual([]);
+  });
+
+  it.each([
+    ["merge", ["pr", "merge", "42", "--auto", "--merge"]],
+    ["squash", ["pr", "merge", "42", "--auto", "--squash"]],
+    ["rebase", ["pr", "merge", "42", "--auto", "--rebase"]],
+  ] as const)("enables auto-merge with gh using %s", async (mergeMethod, expectedArgs) => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.enablePullRequestAutoMerge({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        mergeMethod,
+        status: createCurrentPullRequestStatus({
+          github: githubStatusFacts({
+            mergeStateStatus: "BLOCKED",
+            viewerCanEnableAutoMerge: true,
+            repository: {
+              autoMergeAllowed: true,
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+              viewerDefaultMergeMethod: "SQUASH",
+            },
+          }),
+        }),
+      }),
+    ).resolves.toEqual({ success: true });
+
+    expect(runner.calls).toEqual([
+      {
+        args: expectedArgs,
+        cwd: "/tmp/repo",
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      },
+    ]);
+  });
+
+  it("disables auto-merge with gh", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(
+      service.disablePullRequestAutoMerge({
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        status: createCurrentPullRequestStatus({
+          github: githubStatusFacts({
+            autoMergeRequest: {
+              enabledAt: "2026-05-13T12:00:00Z",
+              mergeMethod: "SQUASH",
+              enabledBy: "octocat",
+            },
+            viewerCanDisableAutoMerge: true,
+          }),
+        }),
+      }),
+    ).resolves.toEqual({ success: true });
+
+    expect(runner.calls).toEqual([
+      {
+        args: ["pr", "merge", "42", "--disable-auto"],
+        cwd: "/tmp/repo",
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      },
+    ]);
+  });
+
   it("computes fast cadence for pending and slow cadence for stable PR states", () => {
     const pendingStatus = createCurrentPullRequestStatus({ checksStatus: "pending" });
     const runningCheckStatus = createCurrentPullRequestStatus({
@@ -366,7 +655,7 @@ describe("GitHubService", () => {
     now = EXPECTED_GITHUB_FAST_POLL_MS;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
 
-    expect(runner.calls).toHaveLength(2);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(2);
     expect(reads.map((read) => read.reason)).toEqual([undefined, "self-heal-github"]);
 
     subscription?.unsubscribe();
@@ -399,11 +688,11 @@ describe("GitHubService", () => {
 
     now = EXPECTED_GITHUB_FAST_POLL_MS;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
-    expect(runner.calls).toHaveLength(1);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
 
     now = EXPECTED_GITHUB_SLOW_POLL_MS;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS - EXPECTED_GITHUB_FAST_POLL_MS);
-    expect(runner.calls).toHaveLength(2);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(2);
     expect(reads.map((read) => read.reason)).toEqual([undefined, "self-heal-github"]);
 
     subscription?.unsubscribe();
@@ -416,14 +705,17 @@ describe("GitHubService", () => {
       currentPullRequestJson({
         statusCheckRollup: [{ __typename: "StatusContext", context: "ci", state: "PENDING" }],
       }),
+      currentPullRequestGithubFactsJson(),
       { error: new Error("network down") },
       { error: new Error("network still down") },
       currentPullRequestJson({
         statusCheckRollup: [{ __typename: "StatusContext", context: "ci", state: "SUCCESS" }],
       }),
+      currentPullRequestGithubFactsJson(),
       currentPullRequestJson({
         statusCheckRollup: [{ __typename: "StatusContext", context: "ci", state: "SUCCESS" }],
       }),
+      currentPullRequestGithubFactsJson(),
     ]);
     const service = createGitHubService({
       ttlMs: 0,
@@ -448,7 +740,7 @@ describe("GitHubService", () => {
     now += EXPECTED_GITHUB_SLOW_POLL_MS;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
 
-    expect(runner.calls).toHaveLength(5);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(5);
     expect(reads.map((read) => read.reason)).toEqual([
       undefined,
       "self-heal-github",
@@ -485,7 +777,7 @@ describe("GitHubService", () => {
     now = EXPECTED_GITHUB_FAST_POLL_MS;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
 
-    expect(runner.calls).toHaveLength(1);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
 
     service.dispose?.();
   });
@@ -511,7 +803,7 @@ describe("GitHubService", () => {
     now = EXPECTED_GITHUB_FAST_POLL_MS;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
 
-    expect(runner.calls).toHaveLength(1);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
   });
 
   it("fetches PR reviews and issue comments with one GraphQL call sorted chronologically", async () => {
@@ -1044,12 +1336,7 @@ describe("GitHubService", () => {
       headRef: "feature/pr-pane",
     });
 
-    expect(runner.calls[0]?.args).toEqual([
-      "pr",
-      "view",
-      "--json",
-      "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
-    ]);
+    expect(runner.calls[0]?.args).toEqual(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS]);
     expect(status).toEqual({
       number: 42,
       repoOwner: "acme",
@@ -1061,6 +1348,7 @@ describe("GitHubService", () => {
       headRefName: "feature/pr-pane",
       isMerged: false,
       isDraft: true,
+      mergeable: "UNKNOWN",
       checks: [
         {
           name: "server-tests",
@@ -1077,6 +1365,125 @@ describe("GitHubService", () => {
       ],
       checksStatus: "success",
       reviewDecision: "pending",
+    });
+  });
+
+  it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {
+    const runner = createScriptedRunner([
+      {
+        error: statusCheckRollupPermissionError(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS]),
+      },
+      currentPullRequestJson({
+        headRefName: "feature/pr-pane",
+        reviewDecision: "APPROVED",
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/pr-pane",
+    });
+
+    expect(runner.calls.slice(0, 2).map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
+      ["pr", "view", "--json", CURRENT_PR_STATUS_BASE_FIELDS],
+    ]);
+    expect(status).toMatchObject({
+      title: "Fork PR",
+      headRefName: "feature/pr-pane",
+      checks: [],
+      checksStatus: "none",
+      reviewDecision: "approved",
+    });
+  });
+
+  it("defaults unexpected PR mergeability values to unknown", async () => {
+    const runner = createRunner([
+      currentPullRequestJson({
+        mergeable: "",
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+    });
+
+    expect(status?.mergeable).toBe("UNKNOWN");
+  });
+
+  it("loads GitHub merge, auto-merge, permission, policy, and queue facts for PR 993 shape", async () => {
+    const runner = createScriptedRunner([
+      currentPullRequestJson({
+        number: 993,
+        url: "https://github.com/getpaseo/paseo/pull/993",
+        title: "Auto-merge UX",
+        headRefName: "github-pr-auto-merge-ux",
+        mergeable: "MERGEABLE",
+        reviewDecision: "APPROVED",
+        statusCheckRollup: [
+          {
+            __typename: "CheckRun",
+            name: "server tests",
+            workflowName: "CI",
+            status: "IN_PROGRESS",
+            conclusion: null,
+            detailsUrl: "https://github.com/getpaseo/paseo/actions/runs/993",
+          },
+        ],
+      }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "github-pr-auto-merge-ux",
+    });
+
+    expect(runner.calls.map((call) => call.args[0])).toEqual(["pr", "api"]);
+    expect(status).toMatchObject({
+      number: 993,
+      mergeable: "MERGEABLE",
+      checks: [
+        {
+          name: "server tests",
+          status: "pending",
+          url: "https://github.com/getpaseo/paseo/actions/runs/993",
+          workflow: "CI",
+        },
+      ],
+      checksStatus: "pending",
+      github: {
+        mergeStateStatus: "BLOCKED",
+        autoMergeRequest: null,
+        viewerCanEnableAutoMerge: true,
+        viewerCanDisableAutoMerge: false,
+        viewerCanMergeAsAdmin: false,
+        viewerCanUpdateBranch: true,
+        repository: {
+          autoMergeAllowed: true,
+          mergeCommitAllowed: false,
+          squashMergeAllowed: true,
+          rebaseMergeAllowed: false,
+          viewerDefaultMergeMethod: "SQUASH",
+        },
+        isMergeQueueEnabled: false,
+        isInMergeQueue: false,
+      },
     });
   });
 
@@ -1140,13 +1547,8 @@ describe("GitHubService", () => {
       title: "Real fork PR",
       headRefName: "feature/fork",
     });
-    expect(runner.calls.map((call) => call.args)).toEqual([
-      [
-        "pr",
-        "view",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
-      ],
+    expect(runner.calls.slice(0, 3).map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
       [
         "pr",
@@ -1157,10 +1559,107 @@ describe("GitHubService", () => {
         "all",
         "--head",
         "forkOwner:feature/fork",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
         "--limit",
         "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
+    ]);
+  });
+
+  it("retries scoped PR list without statusCheckRollup when token permissions are insufficient", async () => {
+    const runner = createScriptedRunner([
+      currentPullRequestJson({
+        number: 7,
+        url: "https://github.com/parentOwner/parentRepo/pull/7",
+        title: "Stale tracking PR",
+        headRefName: "old-branch",
+      }),
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "parentRepo",
+        parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+      }),
+      {
+        error: statusCheckRollupPermissionError([
+          "pr",
+          "list",
+          "--repo",
+          "parentOwner/parentRepo",
+          "--state",
+          "all",
+          "--head",
+          "forkOwner:feature/fork",
+          "--json",
+          CURRENT_PR_STATUS_FIELDS,
+          "--limit",
+          "10",
+        ]),
+      },
+      JSON.stringify([
+        {
+          number: 42,
+          url: "https://github.com/parentOwner/parentRepo/pull/42",
+          title: "Real fork PR",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "main",
+          headRefName: "feature/fork",
+          mergedAt: null,
+          reviewDecision: "REVIEW_REQUIRED",
+          headRepositoryOwner: { login: "forkOwner" },
+        },
+      ]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+    });
+
+    expect(status).toMatchObject({
+      number: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+      headRefName: "feature/fork",
+      checks: [],
+      checksStatus: "none",
+    });
+    expect(runner.calls.slice(0, 4).map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
+      ["repo", "view", "--json", "owner,name,parent"],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "parentOwner/parentRepo",
+        "--state",
+        "all",
+        "--head",
+        "forkOwner:feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "parentOwner/parentRepo",
+        "--state",
+        "all",
+        "--head",
+        "forkOwner:feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_BASE_FIELDS,
       ],
     ]);
   });
@@ -1214,12 +1713,7 @@ describe("GitHubService", () => {
       }),
     ).resolves.toBeNull();
     expect(calls.map((call) => call.args)).toEqual([
-      [
-        "pr",
-        "view",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
-      ],
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
     ]);
   });
@@ -1274,13 +1768,8 @@ describe("GitHubService", () => {
       repoName: "repo",
       headRefName: "main",
     });
-    expect(runner.calls.map((call) => call.args)).toEqual([
-      [
-        "pr",
-        "view",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
-      ],
+    expect(runner.calls.slice(0, 2).map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       [
         "pr",
         "list",
@@ -1288,10 +1777,10 @@ describe("GitHubService", () => {
         "all",
         "--head",
         "main",
-        "--json",
-        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
         "--limit",
         "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
       ],
     ]);
   });
@@ -1452,6 +1941,7 @@ describe("GitHubService", () => {
       headRefName: "feature",
       isMerged: false,
       isDraft: true,
+      mergeable: "UNKNOWN",
       checks: [
         {
           name: "server-tests",
@@ -1698,6 +2188,44 @@ describe("GitHubService", () => {
     ]);
   });
 
+  it("treats a GitHub issue or PR URL as a search for that number", async () => {
+    const runner = createRunner([issueJson("Issue title"), searchPullRequestJson("PR title")]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "https://github.com/getpaseo/paseo/pull/793",
+      limit: 5,
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [
+        "issue",
+        "list",
+        "--search",
+        "793",
+        "--json",
+        "number,title,url,state,body,labels,updatedAt",
+        "--limit",
+        "5",
+      ],
+      [
+        "pr",
+        "list",
+        "--search",
+        "793",
+        "--json",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "--limit",
+        "5",
+      ],
+    ]);
+  });
+
   it("searches only GitHub PRs when the search kinds request excludes issues", async () => {
     const runner = createRunner([searchPullRequestJson("PR title")]);
     const service = createGitHubService({
@@ -1766,13 +2294,15 @@ describe("GitHubService", () => {
       service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" }),
     ).resolves.toMatchObject({ number: 42 });
 
-    expect(runner.calls).toHaveLength(1);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
   });
 
   it("bypasses the warm PR status cache for forced reads", async () => {
     const runner = createRunner([
       currentPullRequestJson({ number: 41, title: "First" }),
+      currentPullRequestGithubFactsJson(),
       currentPullRequestJson({ number: 42, title: "Forced" }),
+      currentPullRequestGithubFactsJson(),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -1792,7 +2322,7 @@ describe("GitHubService", () => {
       }),
     ).resolves.toMatchObject({ number: 42 });
 
-    expect(runner.calls).toHaveLength(2);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(2);
   });
 
   it("coalesces concurrent PR status callers", async () => {
@@ -1807,8 +2337,13 @@ describe("GitHubService", () => {
     const second = service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" });
     await Promise.resolve();
 
-    expect(runner.calls).toHaveLength(1);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
     runner.resolveNext(currentPullRequestJson());
+    for (let i = 0; i < 10 && runner.calls.length < 2; i += 1) {
+      await Promise.resolve();
+    }
+    expect(runner.calls[1]?.args[0]).toBe("api");
+    runner.resolveNext(currentPullRequestGithubFactsJson());
 
     await expect(Promise.all([first, second])).resolves.toEqual([
       expect.objectContaining({ number: 42 }),

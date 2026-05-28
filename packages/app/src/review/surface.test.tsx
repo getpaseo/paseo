@@ -3,6 +3,7 @@ import "@/test/window-local-storage";
 import { act, fireEvent, render, renderHook, cleanup } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 import {
@@ -275,7 +276,7 @@ describe("git diff inline review helpers", () => {
         viewportWidth: 320,
         pinToViewport: true,
       }),
-    ).toEqual([{ position: "sticky", left: 0 }, { width: 320 }]);
+    ).toEqual([{ position: "sticky", left: 0 }, inlineUnistylesStyle({ width: 320 })]);
   });
 
   it("keeps the gutter add-comment target accessible and clicking opens the editor", () => {

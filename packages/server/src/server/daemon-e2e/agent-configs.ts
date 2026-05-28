@@ -44,13 +44,13 @@ export const agentConfigs = {
     provider: "copilot",
     model: "claude-haiku-4.5",
     modes: {
-      full: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+      full: "allow-all",
       ask: "https://agentclientprotocol.com/protocol/session-modes#agent",
     },
   },
   opencode: {
     provider: "opencode",
-    model: "opencode/glm-5-free",
+    model: "opencode/big-pickle",
     modes: {
       full: "default",
       ask: "default",
@@ -110,10 +110,9 @@ export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
   const availability = (async (): Promise<boolean> => {
     switch (provider) {
       case "claude":
-        return (
-          (await isCommandAvailable("claude")) &&
-          (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
-        );
+        const hasClaudeEnvCredentials =
+          Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY);
+        return (await isCommandAvailable("claude")) && (!process.env.CI || hasClaudeEnvCredentials);
       case "codex":
         return (
           (await isCommandAvailable("codex")) &&

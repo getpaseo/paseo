@@ -21,12 +21,13 @@ export async function expectWorkspaceListed(page: Page, name: string): Promise<v
 }
 
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
-  await page.getByTestId("menu-button").click();
+  await page.getByRole("button", { name: "Open menu" }).click();
 }
 
-// force=true: the overlay covers the button when the mobile sidebar is open.
 export async function closeMobileAgentSidebar(page: Page): Promise<void> {
-  await page.getByTestId("menu-button").click({ force: true });
+  const closeButton = page.getByTestId("sidebar-close");
+  await expect(closeButton).toBeInViewport({ timeout: 5_000 });
+  await closeButton.click({ force: true });
 }
 
 // The mobile sidebar panel animates via translateX; toBeInViewport reflects the rendered position.

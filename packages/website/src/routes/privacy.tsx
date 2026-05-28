@@ -3,12 +3,12 @@ import { SiteShell } from "~/components/site-shell";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/privacy")({
-  head: () => ({
-    meta: pageMeta(
+  head: () =>
+    pageMeta(
       "Privacy Policy - Paseo",
-      "Privacy policy for Paseo - a self-hosted agent manager with no tracking or analytics.",
+      "Privacy policy for Paseo, the self-hosted coding agent manager. No tracking, no analytics, no data collection. Your code stays on your machine.",
+      "/privacy",
     ),
-  }),
   component: Privacy,
 });
 
@@ -40,8 +40,9 @@ function Privacy() {
             <li>Session IDs</li>
           </ul>
           <p>
-            All messages between your phone and daemon are end-to-end encrypted with AES-256-GCM.
-            The relay cannot read your messages, see your code, or decrypt your traffic.
+            All messages between your phone and daemon are end-to-end encrypted with
+            XSalsa20-Poly1305. The relay cannot read your messages, see your code, or decrypt your
+            traffic.
           </p>
         </section>
 

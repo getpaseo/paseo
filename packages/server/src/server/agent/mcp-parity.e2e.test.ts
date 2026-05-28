@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { AGENT_WAIT_TIMEOUT_MS } from "./mcp-shared.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 interface StructuredContent {
   [key: string]: unknown;
@@ -31,6 +32,17 @@ function str(val: unknown): string {
 
 function recordArr(val: unknown): StructuredContent[] {
   return z.array(z.record(z.unknown())).parse(val);
+}
+
+function expectAgentFeatureValue(snapshot: StructuredContent, featureId: string, value: unknown) {
+  expect(recordArr(snapshot.features)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: featureId,
+        value,
+      }),
+    ]),
+  );
 }
 
 function strArrOptional(val: unknown): string[] | undefined {
@@ -142,7 +154,7 @@ async function createTopLevelAgent(args?: Partial<StructuredContent>): Promise<s
     title: "Parity agent",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
-    mode: "bypassPermissions",
+    settings: { modeId: "bypassPermissions" },
     background: true,
     ...args,
   });
@@ -228,7 +240,7 @@ beforeAll(async () => {
     title: "MCP parity parent",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
-    mode: "bypassPermissions",
+    settings: { modeId: "bypassPermissions" },
     background: true,
   });
   parentAgentId = str(parentPayload.agentId);
@@ -261,13 +273,13 @@ describe("Suite A: Core Fixes", () => {
     expect(AGENT_WAIT_TIMEOUT_MS).toBe(30_000);
   });
 
-  test("create_agent with callerAgentId sets paseo.parent-agent-id label", async () => {
+  test("create_agent with callerAgentId sets the parent agent label", async () => {
     let agentId: string | null = null;
     try {
       agentId = await createChildAgent();
       const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(snapshot?.labels).toMatchObject({
-        "paseo.parent-agent-id": parentAgentId,
+        [PARENT_AGENT_ID_LABEL]: parentAgentId,
       });
     } finally {
       await archiveAgentIfPresent(agentId);
@@ -322,6 +334,82 @@ describe("Suite A: Core Fixes", () => {
     } finally {
       await archiveAgentIfPresent(agentId);
     }
+  });
+
+  test("create_agent accepts provider features over MCP", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createTopLevelAgent({ settings: { features: { test_feature: true } } });
+      const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
+
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      expectAgentFeatureValue(snapshot, "test_feature", true);
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  test("agent-scoped create_agent accepts provider features over MCP", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createChildAgent({
+        provider: "claude/claude-test-model",
+        settings: { features: { test_feature: true } },
+      });
+      const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
+
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      expectAgentFeatureValue(snapshot, "test_feature", true);
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  test("update_agent updates provider features over MCP", async () => {
+    let agentId: string | null = null;
+    try {
+      agentId = await createTopLevelAgent({ settings: { features: { test_feature: false } } });
+      const updated = await callToolStructured(topLevelClient, "update_agent", {
+        agentId,
+        settings: { features: { test_feature: true } },
+      });
+      expect(updated.success).toBe(true);
+      const internalSnapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
+      expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
+
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      expectAgentFeatureValue(snapshot, "test_feature", true);
+    } finally {
+      await archiveAgentIfPresent(agentId);
+    }
+  });
+
+  test("inspect_provider returns draft provider features over MCP", async () => {
+    const payload = await callToolStructured(topLevelClient, "inspect_provider", {
+      provider: "claude",
+      cwd: parentAgentCwd,
+      settings: {
+        model: "claude-test-model",
+        features: { test_feature: true },
+      },
+    });
+
+    expect(payload.provider).toBe("claude");
+    expect(payload.selectedModel).toBe("claude-test-model");
+    expect(recordArr(payload.features)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "toggle",
+          id: "test_feature",
+          value: true,
+        }),
+      ]),
+    );
   });
 
   test("create_agent accepts labels param", async () => {
@@ -479,6 +567,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity schedule list",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -526,6 +615,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity inspect schedule",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -550,6 +640,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity pause schedule",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -576,6 +667,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         every: "5m",
         name: "Parity delete schedule",
+        provider: "claude",
       });
       scheduleId = str(created.id);
 
@@ -682,8 +774,11 @@ describe("Suite E: Worktree Tools", () => {
     try {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
-        branchName,
-        baseBranch: "main",
+        target: {
+          mode: "branch-off",
+          newBranch: branchName,
+          base: "main",
+        },
       });
       worktreePath = str(created.worktreePath);
 
@@ -710,8 +805,11 @@ describe("Suite E: Worktree Tools", () => {
     try {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
-        branchName,
-        baseBranch: "main",
+        target: {
+          mode: "branch-off",
+          newBranch: branchName,
+          base: "main",
+        },
       });
       worktreePath = str(created.worktreePath);
 
@@ -727,6 +825,51 @@ describe("Suite E: Worktree Tools", () => {
       const worktrees = recordArr(listed.worktrees);
       expect(worktrees.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
     } finally {
+      await archiveWorktreeIfPresent({ cwd: worktreeRepoCwd, worktreePath });
+    }
+  });
+
+  test("archive_worktree succeeds when caller cwd is inside the archived worktree", async () => {
+    let worktreePath: string | null = null;
+    let worktreeAgentId: string | null = null;
+    let worktreeScopedClient: McpClient | null = null;
+    const branchName = `parity-archive-self-cwd-${Date.now()}`;
+
+    try {
+      const created = await callToolStructured(topLevelClient, "create_worktree", {
+        cwd: worktreeRepoCwd,
+        target: {
+          mode: "branch-off",
+          newBranch: branchName,
+          base: "main",
+        },
+      });
+      worktreePath = str(created.worktreePath);
+      worktreeAgentId = await createTopLevelAgent({
+        cwd: worktreePath,
+        title: "Worktree scoped parity agent",
+      });
+      worktreeScopedClient = await createMcpClient(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${encodeURIComponent(
+          worktreeAgentId,
+        )}`,
+      );
+
+      const archived = await callToolStructured(worktreeScopedClient, "archive_worktree", {
+        worktreePath,
+      });
+      expect(archived).toEqual({ success: true });
+      worktreePath = null;
+      worktreeAgentId = null;
+
+      const listed = await callToolStructured(topLevelClient, "list_worktrees", {
+        cwd: worktreeRepoCwd,
+      });
+      const worktrees = recordArr(listed.worktrees);
+      expect(worktrees.map((worktree) => worktree.path)).not.toContain(created.worktreePath);
+    } finally {
+      await worktreeScopedClient?.close();
+      await archiveAgentIfPresent(worktreeAgentId);
       await archiveWorktreeIfPresent({ cwd: worktreeRepoCwd, worktreePath });
     }
   });

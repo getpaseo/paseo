@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
-} from "@server/server/agent/agent-sdk-types";
+} from "@getpaseo/protocol/agent-types";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import {
+  buildSelectableProviderSelectorProviders,
+  type ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
@@ -28,9 +32,9 @@ import {
   SELECTABLE_PROVIDER_STATUSES,
   type FormInitialValues,
   type FormState,
-} from "./resolve-agent-form";
+} from "@/provider-selection/resolve-agent-form";
 
-export type { FormInitialValues } from "./resolve-agent-form";
+export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
 
 export interface UseAgentFormStateOptions {
   initialServerId?: string | null;
@@ -63,6 +67,7 @@ export interface UseAgentFormStateResult {
   modeOptions: AgentMode[];
   availableModels: AgentModelDefinition[];
   allProviderModels: Map<string, AgentModelDefinition[]>;
+  modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
   availableThinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   isModelLoading: boolean;
@@ -206,7 +211,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     error: snapshotError,
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
-  } = useProvidersSnapshot(formState.serverId);
+  } = useProvidersSnapshot(formState.serverId, { cwd: formState.workingDir });
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(
@@ -237,6 +242,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     () => buildAllProviderModels(snapshotEntries),
     [snapshotEntries],
   );
+  const snapshotModelSelectorProviders = useMemo(
+    () => buildSelectableProviderSelectorProviders(snapshotEntries),
+    [snapshotEntries],
+  );
   const snapshotSelectedEntry = useMemo(
     () =>
       formState.provider
@@ -255,6 +264,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const providerDefinitionMap = snapshotProviderDefinitionMap;
   const selectableProviderDefinitionMap = snapshotSelectableProviderDefinitionMap;
   const allProviderModels = snapshotAllProviderModels;
+  const modelSelectorProviders = snapshotModelSelectorProviders;
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
   const isAllModelsLoading = snapshotIsLoading || selectedProviderIsLoading;
@@ -362,6 +372,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       }
       const providerDef = selectableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
+      const providerPrefs = preferences?.providerPreferences?.[provider];
       const normalizedModelId = normalizeSelectedModelId(modelId);
       const nextModelId = normalizedModelId || resolveDefaultModelId(providerModels);
 
@@ -371,6 +382,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         modelId,
         providerDef,
         providerModels,
+        providerPrefs,
       });
       void updatePreferences((current) =>
         mergeSelectedComposerPreferences({
@@ -382,7 +394,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updatePreferences],
+    [
+      allProviderModels,
+      preferences?.providerPreferences,
+      selectableProviderDefinitionMap,
+      updatePreferences,
+    ],
   );
 
   const setModeFromUser = useCallback(
@@ -516,6 +533,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       modeOptions,
       availableModels: availableModels ?? [],
       allProviderModels,
+      modelSelectorProviders,
       isAllModelsLoading,
       availableThinkingOptions,
       isModelLoading,
@@ -548,6 +566,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       modeOptions,
       availableModels,
       allProviderModels,
+      modelSelectorProviders,
       isAllModelsLoading,
       availableThinkingOptions,
       isModelLoading,

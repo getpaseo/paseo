@@ -1,4 +1,4 @@
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { PairDeviceSection } from "@/desktop/components/pair-device-section";
 
 export interface PairDeviceModalProps {
@@ -8,11 +8,12 @@ export interface PairDeviceModalProps {
 }
 
 const SNAP_POINTS: string[] = ["82%", "94%"];
+const PAIR_DEVICE_HEADER: SheetHeader = { title: "Pair a device" };
 
 export function PairDeviceModal({ visible, onClose, testID }: PairDeviceModalProps) {
   return (
     <AdaptiveModalSheet
-      title="Pair a device"
+      header={PAIR_DEVICE_HEADER}
       visible={visible}
       onClose={onClose}
       snapPoints={SNAP_POINTS}

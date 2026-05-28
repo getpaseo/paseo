@@ -1,7 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { loadDaemonClientConstructor } from "./daemon-client-loader";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
@@ -29,7 +30,20 @@ export interface TerminalPerfDaemonClient {
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
   }): Promise<{ id: string; status: string }>;
+  fetchAgents(options?: { scope?: "active" }): Promise<{
+    entries: Array<{ agent: { id: string; cwd: string; title?: string | null } }>;
+  }>;
+  updateAgent(agentId: string, updates: { name?: string }): Promise<void>;
+  waitForAgentUpsert(
+    agentId: string,
+    predicate: (snapshot: { status: string }) => boolean,
+    timeout?: number,
+  ): Promise<{ status: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
+  waitForFinish(
+    agentId: string,
+    timeout?: number,
+  ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   subscribeTerminal(
     terminalId: string,
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;
@@ -63,33 +77,34 @@ interface TerminalPerfDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
+  appVersion?: string;
   webSocketFactory?: NodeWebSocketFactory;
 }
 
-async function loadDaemonClientConstructor(): Promise<
-  new (config: TerminalPerfDaemonClientConfig) => TerminalPerfDaemonClient
-> {
-  const repoRoot = path.resolve(__dirname, "../../../../");
-  const moduleUrl = pathToFileURL(
-    path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
-  ).href;
-  const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: TerminalPerfDaemonClientConfig) => TerminalPerfDaemonClient;
-  };
-  return mod.DaemonClient;
-}
-
 export async function connectTerminalClient(): Promise<TerminalPerfDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor();
+  const DaemonClient = await loadDaemonClientConstructor<
+    TerminalPerfDaemonClientConfig,
+    TerminalPerfDaemonClient
+  >();
   const webSocketFactory = createNodeWebSocketFactory();
   const client = new DaemonClient({
     url: getDaemonWsUrl(),
     clientId: `terminal-perf-${randomUUID()}`,
     clientType: "cli",
+    appVersion: loadAppVersion(),
     webSocketFactory,
   });
   await client.connect();
   return client;
+}
+
+function loadAppVersion(): string {
+  const packageJsonPath = path.resolve(__dirname, "../../package.json");
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error(`Missing app version in ${packageJsonPath}`);
+  }
+  return packageJson.version;
 }
 
 export function buildTerminalWorkspaceUrl(workspaceId: string, terminalId: string): string {

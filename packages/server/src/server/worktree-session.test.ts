@@ -1,5 +1,6 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
+  mkdirSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -41,6 +42,7 @@ import {
 } from "./paseo-worktree-service.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -147,6 +149,7 @@ function createGitHubServiceStub(): GitHubService {
       number: 1,
       url: "https://github.com/acme/repo/pull/1",
     }),
+    mergePullRequest: async () => ({ success: true }),
     isAuthenticated: async () => true,
     invalidate: () => {},
   };
@@ -484,49 +487,49 @@ function createWorkspaceArchivingDeps() {
 }
 
 function createGitRepo(options?: { paseoConfig?: Record<string, unknown> }) {
-  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "worktree-session-test-")));
+  const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-session-test-")));
   const repoDir = path.join(tempDir, "repo");
-  execSync(`mkdir -p ${JSON.stringify(repoDir)}`);
-  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
   if (options?.paseoConfig) {
     writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify(options.paseoConfig, null, 2));
   }
-  execSync("git add .", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
   return { tempDir, repoDir };
 }
 
 function createGitHubPrRemoteRepo() {
   const { tempDir, repoDir } = createGitRepo();
   const featureBranch = "feature/review-pr";
-  execSync(`git checkout -b ${JSON.stringify(featureBranch)}`, { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", featureBranch], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "review branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'review branch'", {
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "review branch"], {
     cwd: repoDir,
     stdio: "pipe",
   });
-  const featureSha = execSync("git rev-parse HEAD", { cwd: repoDir, stdio: "pipe" })
+  const featureSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
     .toString()
     .trim();
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
-  execSync(`git branch -D ${JSON.stringify(featureBranch)}`, { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-D", featureBranch], { cwd: repoDir, stdio: "pipe" });
 
   const remoteDir = path.join(tempDir, "remote.git");
-  execSync(`git clone --bare ${JSON.stringify(repoDir)} ${JSON.stringify(remoteDir)}`, {
+  execFileSync("git", ["clone", "--bare", repoDir, remoteDir], {
     stdio: "pipe",
   });
-  execSync(
-    `git --git-dir=${JSON.stringify(remoteDir)} update-ref refs/pull/123/head ${featureSha}`,
-    {
-      stdio: "pipe",
-    },
-  );
-  execSync(`git remote add origin ${JSON.stringify(remoteDir)}`, { cwd: repoDir, stdio: "pipe" });
-  execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/123/head", featureSha], {
+    stdio: "pipe",
+  });
+  execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
 
   return { tempDir, repoDir };
 }
@@ -645,8 +648,8 @@ describe("runWorktreeSetupInBackground", () => {
     cleanupPaths.push(tempDir);
 
     writeFileSync(path.join(repoDir, "paseo.json"), "{ invalid json\n");
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'broken config'", {
+    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "broken config"], {
       cwd: repoDir,
       stdio: "pipe",
     });
@@ -713,118 +716,126 @@ describe("runWorktreeSetupInBackground", () => {
     expect(emitWorkspaceUpdateForCwd).toHaveBeenCalledWith(worktreePath);
   });
 
-  test("emits running setup snapshots before completed for real setup commands", async () => {
-    const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
-        worktree: {
-          setup: ["sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\""],
+  // POSIX-only: setup command is hardcoded to sh, printf, and sleep.
+  test.skipIf(isPlatform("win32"))(
+    "emits running setup snapshots before completed for real setup commands",
+    async () => {
+      const { tempDir, repoDir } = createGitRepo({
+        paseoConfig: {
+          worktree: {
+            setup: ["sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\""],
+          },
         },
-      },
-    });
-    cleanupPaths.push(tempDir);
+      });
+      cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
-    const createdWorktree = await createLegacyWorktreeForTest({
-      branchName: "feature-running-setup",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "feature-running-setup",
-      runSetup: false,
-      paseoHome,
-    });
-    const worktreePath = createdWorktree.worktreePath;
-    const emitted: SessionOutboundMessage[] = [];
-    const snapshots = new Map<string, unknown>();
-    const logger = createLogger();
-    const emitWorkspaceUpdateForCwd = vi.fn(async () => {});
-    const archiveWorkspaceRecord = vi.fn(async () => {});
-
-    await runWorktreeSetupInBackground(
-      {
+      const paseoHome = path.join(tempDir, ".paseo");
+      const createdWorktree = await createLegacyWorktreeForTest({
+        branchName: "feature-running-setup",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "feature-running-setup",
+        runSetup: false,
         paseoHome,
-        emitWorkspaceUpdateForCwd,
-        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
-          snapshots.set(workspaceId, snapshot),
-        emit: (message) => emitted.push(message),
-        sessionLogger: logger,
-        terminalManager: null,
-        archiveWorkspaceRecord,
-      },
-      {
-        requestCwd: repoDir,
-        repoRoot: repoDir,
-        workspaceId: "43",
-        worktree: {
-          branchName: "feature-running-setup",
+      });
+      const worktreePath = createdWorktree.worktreePath;
+      const emitted: SessionOutboundMessage[] = [];
+      const snapshots = new Map<string, unknown>();
+      const logger = createLogger();
+      const emitWorkspaceUpdateForCwd = vi.fn(async () => {});
+      const archiveWorkspaceRecord = vi.fn(async () => {});
+
+      await runWorktreeSetupInBackground(
+        {
+          paseoHome,
+          emitWorkspaceUpdateForCwd,
+          cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
+            snapshots.set(workspaceId, snapshot),
+          emit: (message) => emitted.push(message),
+          sessionLogger: logger,
+          terminalManager: null,
+          archiveWorkspaceRecord,
+        },
+        {
+          requestCwd: repoDir,
+          repoRoot: repoDir,
+          workspaceId: "43",
+          worktree: {
+            branchName: "feature-running-setup",
+            worktreePath,
+          },
+          shouldBootstrap: true,
+          slug: "feature-running-setup",
           worktreePath,
         },
-        shouldBootstrap: true,
-        slug: "feature-running-setup",
-        worktreePath,
-      },
-    );
+      );
 
-    const progressMessages = emitted.filter(
-      (message): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
-        message.type === "workspace_setup_progress",
-    );
-    expect(progressMessages.length).toBeGreaterThan(1);
-    expect(progressMessages[0]?.payload).toMatchObject({
-      workspaceId: "43",
-      status: "running",
-      error: null,
-      detail: {
-        type: "worktree_setup",
-        worktreePath,
-        branchName: "feature-running-setup",
-        log: "",
-        commands: [],
-      },
-    });
-    expect(progressMessages.at(-1)?.payload.status).toBe("completed");
+      const progressMessages = emitted.filter(
+        (
+          message,
+        ): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
+          message.type === "workspace_setup_progress",
+      );
+      expect(progressMessages.length).toBeGreaterThan(1);
+      expect(progressMessages[0]?.payload).toMatchObject({
+        workspaceId: "43",
+        status: "running",
+        error: null,
+        detail: {
+          type: "worktree_setup",
+          worktreePath,
+          branchName: "feature-running-setup",
+          log: "",
+          commands: [],
+        },
+      });
+      expect(progressMessages.at(-1)?.payload.status).toBe("completed");
 
-    const runningMessages = progressMessages.filter(
-      (message) => message.payload.status === "running",
-    );
-    expect(runningMessages.length).toBeGreaterThan(0);
-    expect(
-      progressMessages.findIndex((message) => message.payload.status === "running"),
-    ).toBeLessThan(progressMessages.findIndex((message) => message.payload.status === "completed"));
+      const runningMessages = progressMessages.filter(
+        (message) => message.payload.status === "running",
+      );
+      expect(runningMessages.length).toBeGreaterThan(0);
+      expect(
+        progressMessages.findIndex((message) => message.payload.status === "running"),
+      ).toBeLessThan(
+        progressMessages.findIndex((message) => message.payload.status === "completed"),
+      );
 
-    const setupOutputMessage = runningMessages.find((message) =>
-      message.payload.detail.commands[0]?.log.includes("phase-one"),
-    );
-    expect(setupOutputMessage?.payload.detail.log).toContain("phase-one");
-    expect(setupOutputMessage?.payload.detail.commands[0]).toMatchObject({
-      index: 1,
-      command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
-      log: expect.stringContaining("phase-one"),
-      status: "running",
-    });
+      const setupOutputMessage = runningMessages.find((message) =>
+        message.payload.detail.commands[0]?.log.includes("phase-one"),
+      );
+      expect(setupOutputMessage?.payload.detail.log).toContain("phase-one");
+      expect(setupOutputMessage?.payload.detail.commands[0]).toMatchObject({
+        index: 1,
+        command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
+        log: expect.stringContaining("phase-one"),
+        status: "running",
+      });
 
-    expect(progressMessages.at(-1)?.payload).toMatchObject({
-      workspaceId: "43",
-      status: "completed",
-      error: null,
-      detail: {
-        type: "worktree_setup",
-        worktreePath,
-        branchName: "feature-running-setup",
-      },
-    });
-    expect(progressMessages.at(-1)?.payload.detail.log).toContain("phase-two");
-    expect(progressMessages.at(-1)?.payload.detail.commands[0]).toMatchObject({
-      index: 1,
-      command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
-      log: expect.stringContaining("phase-two"),
-      status: "completed",
-      exitCode: 0,
-    });
-    expect(snapshots.get("43")).toMatchObject({
-      status: "completed",
-      error: null,
-    });
-  });
+      expect(progressMessages.at(-1)?.payload).toMatchObject({
+        workspaceId: "43",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "worktree_setup",
+          worktreePath,
+          branchName: "feature-running-setup",
+        },
+      });
+      expect(progressMessages.at(-1)?.payload.detail.log).toContain("phase-two");
+      expect(progressMessages.at(-1)?.payload.detail.commands[0]).toMatchObject({
+        index: 1,
+        command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
+        log: expect.stringContaining("phase-two"),
+        status: "completed",
+        exitCode: 0,
+      });
+      expect(snapshots.get("43")).toMatchObject({
+        status: "completed",
+        error: null,
+      });
+    },
+  );
 
   test("emits completed when reusing an existing worktree without bootstrapping or auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
@@ -1199,7 +1210,10 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       return;
     }
 
-    const branch = execSync("git branch --show-current", { cwd: worktreePath, stdio: "pipe" })
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: worktreePath,
+      stdio: "pipe",
+    })
       .toString()
       .trim();
     expect(branch).toBe("feature/review-pr");
@@ -1248,7 +1262,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     expect(result.sessionConfig.cwd).toContain("agent-review-pr-123");
     expect(events.some((event) => event.startsWith("workspace:"))).toBe(true);
 
-    const branch = execSync("git branch --show-current", {
+    const branch = execFileSync("git", ["branch", "--show-current"], {
       cwd: result.sessionConfig.cwd,
       stdio: "pipe",
     })
@@ -1445,7 +1459,9 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       baseBranch: "main",
       branchName: "resolver-feature",
     });
-    expect(resolveDefaultBranch).toHaveBeenCalledWith(repoDir);
+    const resolvedCwd = resolveDefaultBranch.mock.calls[0]?.[0];
+    expect(resolvedCwd).toBeDefined();
+    expect(realpathSync.native(resolvedCwd ?? "")).toBe(realpathSync.native(repoDir));
   });
 });
 
@@ -1577,16 +1593,19 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           cwd: registeredWorktreePath,
         }),
       );
-      expect(backgroundWork).toHaveBeenCalledWith(
+      const backgroundInput = backgroundWork.mock.calls[0]?.[0];
+      expect(backgroundInput).toEqual(
         expect.objectContaining({
           requestCwd: repoDir,
-          repoRoot: repoDir,
           worktree: {
             branchName: "response-after-create",
             worktreePath: registeredWorktreePath,
           },
           shouldBootstrap: true,
         }),
+      );
+      expect(realpathSync.native(backgroundInput?.repoRoot ?? "")).toBe(
+        realpathSync.native(repoDir),
       );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

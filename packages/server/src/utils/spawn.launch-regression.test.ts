@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { findExecutable } from "./executable.js";
 import { spawnProcess } from "./spawn.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 interface SpawnResult {
   code: number | null;
@@ -18,11 +19,26 @@ interface SpawnResult {
 const tempDirs: string[] = [];
 const JSON_ARG = '{"key":"value with spaces","nested":{"quote":"\\"yes\\""}}';
 
-function makeFixture(options?: { includeCmdShim?: boolean }): {
+const ASSERT_SCRIPT_BODY = `
+if (process.argv.includes("--version")) {
+  console.log("fake-cli 1.0.0");
+  process.exit(0);
+}
+const expected = JSON.parse(process.env.PASEO_EXPECTED_ARGV_JSON);
+const sliceFrom = process.env.PASEO_ARGV_SLICE_FROM ? Number(process.env.PASEO_ARGV_SLICE_FROM) : 2;
+const actual = process.argv.slice(sliceFrom);
+if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  console.error("ARGV_MISMATCH");
+  console.error(JSON.stringify({ expected, actual }));
+  process.exit(42);
+}
+console.log("LAUNCH_OK");
+`;
+
+function makeFixture(): {
   root: string;
   fakeDaemonNode: string;
   shim: string;
-  powerShellShim: string;
   assertScript: string;
   expectedArgs: string[];
 } {
@@ -54,25 +70,12 @@ console.log("ARGV_OK");
   );
 
   const shim = path.join(root, "claude.cmd");
-  if (options?.includeCmdShim !== false) {
-    writeFileSync(
-      shim,
-      ["@echo off", "setlocal", `"${fakeDaemonNode}" "${assertScript}" %*`, ""].join("\r\n"),
-    );
-  }
-
-  const powerShellShim = path.join(root, "claude.ps1");
   writeFileSync(
-    powerShellShim,
-    [
-      "$ErrorActionPreference = 'Stop'",
-      `& '${fakeDaemonNode.replace(/'/g, "''")}' '${assertScript.replace(/'/g, "''")}' @args`,
-      "exit $LASTEXITCODE",
-      "",
-    ].join("\r\n"),
+    shim,
+    ["@echo off", "setlocal", `"${fakeDaemonNode}" "${assertScript}" %*`, ""].join("\r\n"),
   );
 
-  return { root, fakeDaemonNode, shim, powerShellShim, assertScript, expectedArgs };
+  return { root, fakeDaemonNode, shim, assertScript, expectedArgs };
 }
 
 function collectChild(child: ChildProcess, timeoutMs = 10_000): Promise<SpawnResult> {
@@ -135,41 +138,108 @@ async function runFixture(params: {
   return collectChild(child);
 }
 
-function withWindowsPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
-  const pathKey =
-    process.platform === "win32"
-      ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
-      : "PATH";
+interface LaunchFixture {
+  root: string;
+  command: string;
+  binaryPath: string;
+  args: string[];
+  expectedArgvJson: string;
+  sliceFrom: number;
+}
+
+function makeLaunchFixture(ext: "exe" | "cmd" | "bat"): LaunchFixture {
+  const root = mkdtempSync(path.join(tmpdir(), `paseo-launch-${ext}-`));
+  tempDirs.push(root);
+
+  // Unique base name so a globally installed binary cannot satisfy findExecutable.
+  const command = `paseo-launch-fake-${path.basename(root)}`;
+  const userArgs = ["--config", JSON_ARG];
+  const expectedArgvJson = JSON.stringify(userArgs);
+
+  if (ext === "exe") {
+    // Copy node.exe to <command>.exe and run our assert body via -e.
+    // The `--` separator stops Node from parsing userArgs as Node options
+    // (e.g. `--config` would otherwise trigger "bad option" → exit 9).
+    // With -e there is no script slot, so process.argv = [node, ...userArgs] → slice(1).
+    const binaryPath = path.join(root, `${command}.exe`);
+    copyFileSync(process.execPath, binaryPath);
+    return {
+      root,
+      command,
+      binaryPath,
+      args: ["-e", ASSERT_SCRIPT_BODY, "--", ...userArgs],
+      expectedArgvJson,
+      sliceFrom: 1,
+    };
+  }
+
+  // .cmd / .bat: a shim that invokes node with our assert script.
+  // process.argv = [node, scriptPath, ...userArgs] → slice(2).
+  const fakeNode = path.join(root, "Fake Node.exe");
+  copyFileSync(process.execPath, fakeNode);
+  const assertScript = path.join(root, "assert-argv.js");
+  writeFileSync(assertScript, ASSERT_SCRIPT_BODY);
+
+  const binaryPath = path.join(root, `${command}.${ext}`);
+  writeFileSync(
+    binaryPath,
+    ["@echo off", "setlocal", `"${fakeNode}" "${assertScript}" %*`, ""].join("\r\n"),
+  );
+  return { root, command, binaryPath, args: userArgs, expectedArgvJson, sliceFrom: 2 };
+}
+
+function withPathPrepended<T>(dir: string, run: () => Promise<T>): Promise<T> {
+  const pathKey = isPlatform("win32")
+    ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
+    : "PATH";
   const previousPath = process.env[pathKey];
-  const previousPathExt = process.env.PATHEXT;
-
   process.env[pathKey] = previousPath ? `${dir}${path.delimiter}${previousPath}` : dir;
-  process.env.PATHEXT = previousPathExt?.toLowerCase().includes(".ps1")
-    ? previousPathExt
-    : `${previousPathExt ?? ""};.PS1`;
-
   return run().finally(() => {
     if (previousPath === undefined) {
       delete process.env[pathKey];
     } else {
       process.env[pathKey] = previousPath;
     }
-
-    if (previousPathExt === undefined) {
-      delete process.env.PATHEXT;
-    } else {
-      process.env.PATHEXT = previousPathExt;
-    }
   });
+}
+
+async function findAndLaunch(fixture: LaunchFixture): Promise<{
+  found: string | null;
+  result: SpawnResult | null;
+}> {
+  return withPathPrepended(fixture.root, async () => {
+    const found = await findExecutable(fixture.command);
+    if (found === null) {
+      return { found: null, result: null };
+    }
+
+    const child = spawnProcess(found, fixture.args, {
+      env: {
+        ...process.env,
+        PASEO_EXPECTED_ARGV_JSON: fixture.expectedArgvJson,
+        PASEO_ARGV_SLICE_FROM: String(fixture.sliceFrom),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { found, result: await collectChild(child) };
+  });
+}
+
+function expectWindowsPathsEqual(actual: string, expected: string): void {
+  if (isPlatform("win32")) {
+    expect(actual.toLowerCase()).toBe(expected.toLowerCase());
+  } else {
+    expect(actual).toBe(expected);
+  }
 }
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
-describe.runIf(process.platform === "win32")("Windows spawn launch regression", () => {
+describe.runIf(isPlatform("win32"))("Windows spawn launch regression", () => {
   test("launches a cmd shim from a path with spaces without corrupting JSON args", async () => {
     const fixture = makeFixture();
 
@@ -217,17 +287,50 @@ describe.runIf(process.platform === "win32")("Windows spawn launch regression", 
     expect(result.stdout.trim()).toBe("ARGV_OK");
   });
 
-  test("does not detect a PowerShell shim from PATH", async () => {
-    const fixture = makeFixture({ includeCmdShim: false });
+  test("finds a .exe on PATH and launches it via spawnProcess", async () => {
+    const fixture = makeLaunchFixture("exe");
+    const { found, result } = await findAndLaunch(fixture);
 
-    await withWindowsPathEntry(fixture.root, async () => {
-      const detected = await findExecutable("claude");
-      expect(detected).toBeNull();
-    });
+    expect(found).not.toBeNull();
+    expectWindowsPathsEqual(found!, fixture.binaryPath);
+    expect(result).not.toBeNull();
+    expect(result!.error).toBeNull();
+    expect(result!.code).toBe(0);
+    expect(result!.signal).toBeNull();
+    expect(result!.stderr).toBe("");
+    expect(result!.stdout.trim()).toBe("LAUNCH_OK");
+  });
+
+  test("finds a .cmd on PATH and launches it via spawnProcess", async () => {
+    const fixture = makeLaunchFixture("cmd");
+    const { found, result } = await findAndLaunch(fixture);
+
+    expect(found).not.toBeNull();
+    expectWindowsPathsEqual(found!, fixture.binaryPath);
+    expect(result).not.toBeNull();
+    expect(result!.error).toBeNull();
+    expect(result!.code).toBe(0);
+    expect(result!.signal).toBeNull();
+    expect(result!.stderr).toBe("");
+    expect(result!.stdout.trim()).toBe("LAUNCH_OK");
+  });
+
+  test("finds a .bat on PATH and launches it via spawnProcess", async () => {
+    const fixture = makeLaunchFixture("bat");
+    const { found, result } = await findAndLaunch(fixture);
+
+    expect(found).not.toBeNull();
+    expectWindowsPathsEqual(found!, fixture.binaryPath);
+    expect(result).not.toBeNull();
+    expect(result!.error).toBeNull();
+    expect(result!.code).toBe(0);
+    expect(result!.signal).toBeNull();
+    expect(result!.stderr).toBe("");
+    expect(result!.stdout.trim()).toBe("LAUNCH_OK");
   });
 });
 
-describe.skipIf(process.platform === "win32")("spawn launch regression smoke", () => {
+describe.skipIf(isPlatform("win32"))("spawn launch regression smoke", () => {
   test("direct launch with a space-containing executable works on this platform", async () => {
     const fixture = makeFixture();
 

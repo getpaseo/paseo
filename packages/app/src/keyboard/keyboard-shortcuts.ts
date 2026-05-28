@@ -52,6 +52,8 @@ interface ShortcutWhen {
   mac?: boolean;
   /** true = desktop only, false = web only */
   desktop?: boolean;
+  /** false = disabled when a text-editing surface is focused */
+  editable?: false;
   /** false = disabled when terminal is focused */
   terminal?: false;
   /** false = disabled when command center is open */
@@ -291,10 +293,23 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 
   // --- Tab index jump ---
   {
+    id: "workspace-tab-navigate-index-cmd-alt-digit-mac-desktop",
+    action: "workspace.tab.navigate.index",
+    combo: "Cmd+Alt+Digit",
+    when: { mac: true, desktop: true, commandCenter: false },
+    payload: { type: "index" },
+    help: {
+      id: "workspace-tab-jump-index",
+      section: "navigation",
+      label: "Jump to tab",
+      keys: ["mod", "alt", "1-9"],
+    },
+  },
+  {
     id: "workspace-tab-navigate-index-alt-digit-desktop",
     action: "workspace.tab.navigate.index",
     combo: "Alt+Digit",
-    when: { desktop: true, commandCenter: false },
+    when: { mac: false, desktop: true, commandCenter: false },
     payload: { type: "index" },
     help: {
       id: "workspace-tab-jump-index",
@@ -454,7 +469,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-left-cmd-shift-left",
     action: "workspace.pane.focus.left",
     combo: "Cmd+Shift+ArrowLeft",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-left",
       section: "tabs-panes",
@@ -466,7 +481,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-right-cmd-shift-right",
     action: "workspace.pane.focus.right",
     combo: "Cmd+Shift+ArrowRight",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-right",
       section: "tabs-panes",
@@ -478,7 +493,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-up-cmd-shift-up",
     action: "workspace.pane.focus.up",
     combo: "Cmd+Shift+ArrowUp",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-up",
       section: "tabs-panes",
@@ -490,7 +505,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-pane-focus-down-cmd-shift-down",
     action: "workspace.pane.focus.down",
     combo: "Cmd+Shift+ArrowDown",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false },
     help: {
       id: "workspace-pane-focus-down",
       section: "tabs-panes",
@@ -1005,6 +1020,24 @@ function parseDigit(event: KeyboardEvent): number | null {
   return null;
 }
 
+function matchesKeyOrCode(combo: KeyCombo, event: KeyboardEvent): boolean {
+  if (combo.key === undefined) {
+    return event.code === combo.code;
+  }
+  const eventKey = event.key.toLowerCase();
+  if (eventKey === combo.key) return true;
+  if (combo.shift === true && combo.shiftedKey !== undefined && eventKey === combo.shiftedKey) {
+    return true;
+  }
+  // macOS rewrites event.key when Option is held (Option+T -> "†",
+  // Option+[ -> "“"), so Alt-bound letter / bracket bindings can only
+  // match by event.code. Stay key-first for non-Alt bindings so Dvorak
+  // keeps its logical-character matching (e.g. Cmd+V on physical Period
+  // must paste, not trigger Cmd+.).
+  if (combo.alt === true && event.code === combo.code) return true;
+  return combo.codeFallback === true && event.code === combo.code;
+}
+
 function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): boolean {
   if (combo.mod) {
     if (isMac) {
@@ -1025,16 +1058,19 @@ function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): bo
   if (combo.code === "Digit") {
     return parseDigit(event) !== null;
   }
-
-  const codeMatch = event.code === combo.code;
-  const keyMatch = combo.key !== undefined && event.key.toLowerCase() === combo.key.toLowerCase();
-  return codeMatch || keyMatch;
+  return matchesKeyOrCode(combo, event);
 }
 
 function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutContext): boolean {
   if (!when) return true;
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktop !== undefined && when.desktop !== context.isDesktop) return false;
+  if (
+    when.editable === false &&
+    (context.focusScope === "message-input" || context.focusScope === "editable")
+  ) {
+    return false;
+  }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
   if (when.focusScope !== undefined && context.focusScope !== when.focusScope) return false;

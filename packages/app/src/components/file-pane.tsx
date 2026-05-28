@@ -1,6 +1,6 @@
-import React, { useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { FileReadResult } from "@server/client/daemon-client";
+import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
@@ -15,13 +15,9 @@ import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
-import {
-  highlightCode,
-  darkHighlightColors,
-  lightHighlightColors,
-  type HighlightToken,
-  type HighlightStyle,
-} from "@getpaseo/highlight";
+import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
@@ -31,13 +27,13 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
   lineNumber: number;
   gutterWidth: number;
-  colorMap: Record<HighlightStyle, string>;
-  baseColor: string;
+  highlighted: boolean;
 }
 
 interface FilePreviewBodyProps {
@@ -45,7 +41,7 @@ interface FilePreviewBodyProps {
   isLoading: boolean;
   showDesktopWebScrollbar: boolean;
   isMobile: boolean;
-  filePath: string;
+  location: WorkspaceFileLocation;
   imagePreviewUri: string | null;
 }
 
@@ -55,6 +51,11 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+interface FileLineSelection {
+  lineStart: number;
+  lineEnd: number;
 }
 
 function formatFileSize({ size }: { size: number }): string {
@@ -99,36 +100,49 @@ async function createFilePanePreview(file: FileReadResult | null): Promise<{
   };
 }
 
+function clampLineSelection(input: {
+  lineStart?: number;
+  lineEnd?: number;
+  lineCount: number;
+}): FileLineSelection | null {
+  if (!input.lineStart || input.lineStart <= 0 || input.lineCount <= 0) {
+    return null;
+  }
+  const lineStart = Math.min(Math.floor(input.lineStart), input.lineCount);
+  const rawLineEnd =
+    input.lineEnd && input.lineEnd >= input.lineStart ? input.lineEnd : input.lineStart;
+  const lineEnd = Math.min(Math.floor(rawLineEnd), input.lineCount);
+  return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
+}
+
 const CodeLine = React.memo(function CodeLine({
   tokens,
   lineNumber,
   gutterWidth,
-  colorMap,
-  baseColor,
+  highlighted,
 }: CodeLineProps) {
-  const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
-  const gutterTextStyle = useMemo(
-    () => [codeLineStyles.gutterText, { color: baseColor }],
-    [baseColor],
+  const gutterStyle = useMemo(
+    () => [codeLineStyles.gutter, inlineUnistylesStyle({ width: gutterWidth })],
+    [gutterWidth],
+  );
+  const lineStyle = useMemo(
+    () => [codeLineStyles.line, highlighted && codeLineStyles.highlightedLine],
+    [highlighted],
   );
   const keyedTokens = useMemo(
     () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
     [tokens],
   );
   return (
-    <View style={codeLineStyles.line}>
+    <View style={lineStyle}>
       <View style={gutterStyle}>
-        <Text numberOfLines={1} style={gutterTextStyle}>
+        <Text numberOfLines={1} style={codeLineStyles.gutterText}>
           {String(lineNumber)}
         </Text>
       </View>
       <Text selectable style={codeLineStyles.lineText}>
         {keyedTokens.map(({ key, token }) => (
-          <CodeLineToken
-            key={key}
-            color={token.style ? (colorMap[token.style] ?? baseColor) : baseColor}
-            text={token.text}
-          />
+          <CodeLineToken key={key} token={token} />
         ))}
       </Text>
     </View>
@@ -136,18 +150,19 @@ const CodeLine = React.memo(function CodeLine({
 });
 
 interface CodeLineTokenProps {
-  color: string;
-  text: string;
+  token: HighlightToken;
 }
 
-function CodeLineToken({ color, text }: CodeLineTokenProps) {
-  const style = useMemo(() => ({ color }), [color]);
-  return <Text style={style}>{text}</Text>;
+function CodeLineToken({ token }: CodeLineTokenProps) {
+  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
 }
 
 const codeLineStyles = StyleSheet.create((theme) => ({
   line: {
     flexDirection: "row",
+  },
+  highlightedLine: {
+    backgroundColor: theme.colors.accentBorder,
   },
   gutter: {
     alignItems: "flex-end",
@@ -155,16 +170,17 @@ const codeLineStyles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   gutterText: {
+    color: theme.colors.foreground,
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.fontSize.code * 1.45,
     opacity: 0.4,
     userSelect: "none",
   },
   lineText: {
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.fontSize.code * 1.45,
     flex: 1,
   },
 }));
@@ -174,16 +190,15 @@ function FilePreviewBody({
   isLoading,
   showDesktopWebScrollbar,
   isMobile,
-  filePath,
+  location,
   imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
-  const isDark = theme.colorScheme === "dark";
-  const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
-  const baseColor = isDark ? "#c9d1d9" : "#24292f";
+  const filePath = location.path;
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
   const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
-  const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
+  const isMarkdownFile =
+    preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
 
   const previewScrollRef = useRef<RNScrollView>(null);
   const webScrollbarStyle = useWebScrollbarStyle();
@@ -201,13 +216,37 @@ function FilePreviewBody({
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
-    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.sm);
-  }, [highlightedLines, theme.fontSize.sm]);
+    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.code);
+  }, [highlightedLines, theme.fontSize.code]);
+  const lineHeight = theme.fontSize.code * 1.45;
+  const lineSelection = useMemo(() => {
+    if (!highlightedLines) {
+      return null;
+    }
+    return clampLineSelection({
+      lineStart: location.lineStart,
+      lineEnd: location.lineEnd,
+      lineCount: highlightedLines.length,
+    });
+  }, [highlightedLines, location.lineEnd, location.lineStart]);
 
   const imageSource = useMemo(
     () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
     [imagePreviewUri],
   );
+
+  useEffect(() => {
+    if (!lineSelection) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      previewScrollRef.current?.scrollTo({
+        y: Math.max(0, (lineSelection.lineStart - 1) * lineHeight),
+        animated: false,
+      });
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [lineHeight, lineSelection]);
 
   if (isLoading && !preview) {
     return (
@@ -263,8 +302,11 @@ function FilePreviewBody({
             tokens={tokens}
             lineNumber={lineNumber}
             gutterWidth={gutterWidth}
-            colorMap={colorMap}
-            baseColor={baseColor}
+            highlighted={
+              Boolean(lineSelection) &&
+              lineNumber >= (lineSelection?.lineStart ?? 0) &&
+              lineNumber <= (lineSelection?.lineEnd ?? 0)
+            }
           />
         ))}
       </View>
@@ -344,18 +386,18 @@ function FilePreviewBody({
 export function FilePane({
   serverId,
   workspaceRoot,
-  filePath,
+  location,
 }: {
   serverId: string;
   workspaceRoot: string;
-  filePath: string;
+  location: WorkspaceFileLocation;
 }) {
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
-  const normalizedFilePath = useMemo(() => trimNonEmpty(filePath), [filePath]);
+  const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
 
   const query = useQuery({
     queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
@@ -398,7 +440,7 @@ export function FilePane({
         isLoading={query.isFetching}
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         isMobile={isMobile}
-        filePath={filePath}
+        location={location}
         imagePreviewUri={imagePreviewUri}
       />
     </View>

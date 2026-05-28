@@ -17,6 +17,7 @@
 /* Inline code styling - scoped to prose content */
 .prose :not(pre) > code {
   background-color: var(--color-muted);
+  color: var(--color-foreground);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
@@ -110,7 +111,7 @@
   line-height: 1.25;
   font-weight: 500;
   margin-top: 0;
-  margin-bottom: 1rem;
+  margin-bottom: 2rem;
 }
 
 .docs-prose h2 {
@@ -171,8 +172,11 @@
 
 .docs-prose a {
   color: var(--color-foreground);
+  font-weight: 500;
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-primary);
+  text-underline-offset: 3px;
 }
 
 .docs-prose a:hover {
@@ -222,8 +226,36 @@
   margin-bottom: 0;
 }
 
+.docs-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.docs-prose th,
+.docs-prose td {
+  border: 1px solid var(--color-border);
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.docs-prose th {
+  background-color: var(--color-muted);
+  color: var(--color-foreground);
+  font-weight: 600;
+}
+
+.docs-prose tbody tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
 .docs-prose pre {
-  background-color: var(--color-card);
+  background-color: var(--color-card) !important;
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   padding: 1rem;
@@ -235,6 +267,11 @@
   color: var(--color-foreground);
 }
 
+.docs-prose pre [data-line] {
+  display: inline-block;
+  min-width: 100%;
+}
+
 .docs-prose pre code {
   background: transparent;
   padding: 0;
@@ -244,6 +281,7 @@
 
 .docs-prose :not(pre) > code {
   background-color: var(--color-muted);
+  color: var(--color-foreground);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
@@ -253,6 +291,23 @@
   border-color: var(--color-border);
   margin-top: 2rem;
   margin-bottom: 2rem;
+}
+
+.docs-source-footer {
+  border-top: 1px solid var(--color-border);
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  font-size: 0.875rem;
+}
+
+.docs-source-footer a {
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.docs-source-footer a:hover {
+  color: var(--color-foreground);
 }
 
 /* Blog post prose styles — adapted from moboudra.com */
@@ -364,11 +419,11 @@
 @theme {
   --color-background: #101615;
   --color-foreground: #fafafa;
-  --color-muted: #252b2a;
+  --color-muted: #1a1f1e;
   --color-muted-foreground: #a8adac;
   --color-card: #171d1c;
   --color-border: #252b2a;
-  --color-primary: #3b82f6;
+  --color-primary: #239956;
   --color-primary-foreground: #ffffff;
   --color-secondary: #252b2a;
   --color-secondary-foreground: #fafafa;
@@ -386,10 +441,10 @@
   --color-mock-accent: #20744a;
   --color-mock-green: #22c55e;
   --color-mock-green-400: #4ade80;
-  --color-mock-red: #ef4444;
+  --color-mock-red: #f87171;
   --color-mock-amber: #f59e0b;
   --color-mock-blue: #3b82f6;
-  --color-mock-zinc500: #71717a;
+  --color-mock-zinc500: #a1a5a4;
   --color-mock-zinc600: #52525b;
   --color-mock-diff-add: rgba(46, 160, 67, 0.15);
   --color-mock-diff-remove: rgba(248, 81, 73, 0.1);

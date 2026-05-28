@@ -7,11 +7,12 @@ import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
-import { ConnectionOfferSchema } from "@server/shared/connection-offer";
-import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
+import { ConnectionOfferSchema } from "@getpaseo/protocol/connection-offer";
+import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
+const PAIR_LINK_HEADER: SheetHeader = { title: "Paste pairing link" };
 
 const styles = StyleSheet.create((theme) => ({
   helper: {
@@ -137,6 +138,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           id: "probe",
           type: "relay",
           relayEndpoint: normalizeHostPort(parsedOffer.relay.endpoint),
+          useTls: parsedOffer.relay.useTls,
           daemonPublicKeyB64: parsedOffer.daemonPublicKeyB64,
         },
         { serverId: parsedOffer.serverId },
@@ -168,7 +170,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
 
   return (
     <AdaptiveModalSheet
-      title="Paste pairing link"
+      header={PAIR_LINK_HEADER}
       visible={visible}
       onClose={handleClose}
       testID="pair-link-modal"

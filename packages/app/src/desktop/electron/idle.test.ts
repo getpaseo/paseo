@@ -1,79 +1,54 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { readDesktopSystemIdleTimeMs, type DesktopIpcInvoker } from "./idle";
 
-const { invokeDesktopCommandMock } = vi.hoisted(() => ({
-  invokeDesktopCommandMock: vi.fn<() => Promise<unknown>>(async () => 12_000),
-}));
+function fakeInvoker(result: () => Promise<unknown>): DesktopIpcInvoker {
+  return <T>() => result() as Promise<T>;
+}
 
-vi.mock("@/desktop/electron/invoke", () => ({
-  invokeDesktopCommand: invokeDesktopCommandMock,
-}));
+describe("readDesktopSystemIdleTimeMs", () => {
+  it("returns the millisecond value reported by the desktop idle command", async () => {
+    const invokedCommands: string[] = [];
+    const invoke: DesktopIpcInvoker = async <T>(command: string) => {
+      invokedCommands.push(command);
+      return 4_200 as T;
+    };
 
-import { getDesktopSystemIdleTimeMs } from "./idle";
+    const idleTimeMs = await readDesktopSystemIdleTimeMs(invoke);
 
-describe("getDesktopSystemIdleTimeMs", () => {
-  afterEach(() => {
-    invokeDesktopCommandMock.mockReset();
-    vi.restoreAllMocks();
-  });
-
-  it("invokes the desktop idle command and returns the millisecond value", async () => {
-    invokeDesktopCommandMock.mockResolvedValueOnce(4_200);
-
-    const idleTimeMs = await getDesktopSystemIdleTimeMs();
-
-    expect(invokeDesktopCommandMock).toHaveBeenCalledWith("desktop_get_system_idle_time");
     expect(idleTimeMs).toBe(4_200);
+    expect(invokedCommands).toEqual(["desktop_get_system_idle_time"]);
   });
 
-  it("returns null and logs once when IPC rejects", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const error = new Error("ipc failed");
-    invokeDesktopCommandMock.mockRejectedValueOnce(error);
-
-    const idleTimeMs = await getDesktopSystemIdleTimeMs();
+  it("returns null when the desktop IPC rejects", async () => {
+    const idleTimeMs = await readDesktopSystemIdleTimeMs(
+      fakeInvoker(async () => {
+        throw new Error("ipc failed");
+      }),
+    );
 
     expect(idleTimeMs).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith("[DesktopIdle] Failed to read system idle time", error);
   });
 
-  it("returns null and logs once when IPC returns null", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    invokeDesktopCommandMock.mockResolvedValueOnce(null);
-
-    const idleTimeMs = await getDesktopSystemIdleTimeMs();
+  it("returns null when the desktop IPC returns null", async () => {
+    const idleTimeMs = await readDesktopSystemIdleTimeMs(fakeInvoker(async () => null));
 
     expect(idleTimeMs).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith("[DesktopIdle] Invalid system idle time", null);
   });
 
-  it("returns null and logs once when IPC returns NaN", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    invokeDesktopCommandMock.mockResolvedValueOnce(Number.NaN);
-
-    const idleTimeMs = await getDesktopSystemIdleTimeMs();
+  it("returns null when the desktop IPC returns NaN", async () => {
+    const idleTimeMs = await readDesktopSystemIdleTimeMs(fakeInvoker(async () => Number.NaN));
 
     expect(idleTimeMs).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith("[DesktopIdle] Invalid system idle time", Number.NaN);
   });
 
-  it("returns null and logs once when IPC returns a negative value", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    invokeDesktopCommandMock.mockResolvedValueOnce(-1);
-
-    const idleTimeMs = await getDesktopSystemIdleTimeMs();
+  it("returns null when the desktop IPC returns a negative value", async () => {
+    const idleTimeMs = await readDesktopSystemIdleTimeMs(fakeInvoker(async () => -1));
 
     expect(idleTimeMs).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith("[DesktopIdle] Invalid system idle time", -1);
   });
 
-  it("returns 0 when IPC returns zero", async () => {
-    invokeDesktopCommandMock.mockResolvedValueOnce(0);
-
-    const idleTimeMs = await getDesktopSystemIdleTimeMs();
+  it("returns zero when the desktop IPC returns zero", async () => {
+    const idleTimeMs = await readDesktopSystemIdleTimeMs(fakeInvoker(async () => 0));
 
     expect(idleTimeMs).toBe(0);
   });

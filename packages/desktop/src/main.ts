@@ -1,31 +1,30 @@
+process.emitWarning = (() => {}) as typeof process.emitWarning;
+
 import log from "electron-log/main";
 log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
-inheritLoginShellEnv();
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { app, BrowserWindow, ipcMain, nativeImage, net, protocol, session } from "electron";
+import { app, BrowserWindow, Menu, ipcMain, nativeImage, net, protocol, session } from "electron";
 import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon/daemon-manager.js";
-import {
-  parseCliPassthroughArgsFromArgv,
-  runCliPassthroughCommand,
-} from "./daemon/runtime-paths.js";
+import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
 import { closeAllTransportSessions } from "./daemon/local-transport.js";
 import {
   registerWindowManager,
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
-  setupDarwinPaintRefresh,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
+  buildStandardContextMenuItems,
 } from "./window/window-manager.js";
+import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
@@ -35,8 +34,10 @@ import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
   getPaseoBrowserIdForWebContents,
+  getPaseoBrowserWebContents,
+  listRegisteredPaseoBrowserIds,
   registerPaseoBrowserWebContents,
-  setActivePaseoBrowserPaneId,
+  setWorkspaceActivePaseoBrowserId,
 } from "./features/browser-webviews.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
@@ -48,10 +49,13 @@ import {
   createBeforeQuitHandler,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
-import { autoUpdateSkillsIfInstalled } from "./integrations/integrations-manager.js";
+import { runDesktopStartup } from "./desktop-startup.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
+const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
+const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
+const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 
 function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
   if (!value) {
@@ -106,7 +110,7 @@ const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
 ]);
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
-app.setName("Paseo");
+app.setName(APP_NAME);
 
 function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
   const prefix = "persist:paseo-browser-";
@@ -143,6 +147,40 @@ function isForwardablePaseoShortcutInput(input: Electron.Input): boolean {
   return FORWARDED_PASEO_SHORTCUT_KEYS.has(input.key.toLowerCase());
 }
 
+function showBrowserWebviewContextMenu(
+  win: BrowserWindow,
+  contents: Electron.WebContents,
+  params: Electron.ContextMenuParams,
+): void {
+  const menu = Menu.buildFromTemplate([
+    ...buildStandardContextMenuItems(contents, params),
+    ...(app.isPackaged
+      ? []
+      : [
+          { type: "separator" as const },
+          {
+            label: "Inspect Element",
+            click: () => {
+              log.info("[browser-devtools] inspect-element.request", {
+                webContentsId: contents.id,
+                browserId: getPaseoBrowserIdForWebContents(contents),
+                x: params.x,
+                y: params.y,
+                isDevToolsOpened: contents.isDevToolsOpened(),
+              });
+              contents.openDevTools({ mode: "detach" });
+              contents.inspectElement(params.x, params.y);
+              log.info("[browser-devtools] inspect-element.done", {
+                webContentsId: contents.id,
+                isDevToolsOpened: contents.isDevToolsOpened(),
+              });
+            },
+          },
+        ]),
+  ]);
+  menu.popup({ window: win });
+}
+
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
@@ -155,6 +193,7 @@ if (forcedUserDataDir) {
     const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
       timeout: 3000,
+      windowsHide: true,
     }).trim();
     devWorktreeName = path.basename(topLevel);
     // Main checkout (e.g. "paseo") gets default userData — only worktrees diverge.
@@ -164,6 +203,7 @@ if (forcedUserDataDir) {
         cwd: topLevel,
         encoding: "utf-8",
         timeout: 3000,
+        windowsHide: true,
       }).trim(),
     );
     const isWorktree = path.resolve(topLevel, ".git") !== commonDir;
@@ -202,9 +242,11 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   isDefaultApp: process.defaultApp,
 });
 
-log.info("[open-project] argv:", process.argv);
-log.info("[open-project] isDefaultApp:", process.defaultApp);
-log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
+if (PASEO_DEBUG) {
+  log.info("[open-project] argv:", process.argv);
+  log.info("[open-project] isDefaultApp:", process.defaultApp);
+  log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
+}
 
 // The renderer pulls the pending path on mount via IPC — this avoids
 // a race where the push event arrives before React registers its listener.
@@ -215,8 +257,49 @@ ipcMain.handle("paseo:get-pending-open-project", () => {
   return result;
 });
 
-ipcMain.handle("paseo:browser:set-active-pane", (_event, browserId: unknown) => {
-  setActivePaseoBrowserPaneId(typeof browserId === "string" ? browserId : null);
+ipcMain.handle("paseo:browser:set-workspace-active-browser", (_event, browserId: unknown) => {
+  setWorkspaceActivePaseoBrowserId(typeof browserId === "string" ? browserId : null);
+});
+
+ipcMain.handle("paseo:browser:open-devtools", (_event, browserId: unknown) => {
+  if (typeof browserId !== "string" || browserId.trim().length === 0) {
+    const result = {
+      ok: false,
+      reason: "invalid-browser-id",
+      browserId,
+      registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+    };
+    log.warn("[browser-devtools] open-devtools.invalid", result);
+    return result;
+  }
+  const contents = getPaseoBrowserWebContents(browserId);
+  if (!contents) {
+    const result = {
+      ok: false,
+      reason: "browser-webcontents-not-found",
+      browserId,
+      registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+    };
+    log.warn("[browser-devtools] open-devtools.not-found", result);
+    return result;
+  }
+  log.info("[browser-devtools] open-devtools.request", {
+    browserId,
+    webContentsId: contents.id,
+    isDestroyed: contents.isDestroyed(),
+    isDevToolsOpened: contents.isDevToolsOpened(),
+    registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+  });
+  contents.openDevTools({ mode: "detach" });
+  const result = {
+    ok: true,
+    reason: "opened",
+    browserId,
+    webContentsId: contents.id,
+    isDevToolsOpened: contents.isDevToolsOpened(),
+  };
+  log.info("[browser-devtools] open-devtools.done", result);
+  return result;
 });
 
 ipcMain.handle("paseo:browser:clear-partition", async (_event, browserId: unknown) => {
@@ -293,7 +376,7 @@ async function createMainWindow(): Promise<void> {
   const iconPath = getWindowIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
-  const title = devWorktreeName ? `Paseo (${devWorktreeName})` : "Paseo";
+  const title = devWorktreeName ? `${APP_NAME} (${devWorktreeName})` : APP_NAME;
   const mainWindow = new BrowserWindow({
     title,
     width: 1200,
@@ -317,7 +400,7 @@ async function createMainWindow(): Promise<void> {
     app.dock?.setBadge(devWorktreeName);
   }
 
-  setupDarwinPaintRefresh(mainWindow);
+  setupDarwinCompositorWatchdog(mainWindow);
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
@@ -349,6 +432,11 @@ async function createMainWindow(): Promise<void> {
     const browserId = pendingBrowserWebviewIds.shift() ?? null;
     if (browserId) {
       registerPaseoBrowserWebContents(contents, browserId);
+      log.info("[browser-webview] registered", {
+        browserId,
+        webContentsId: contents.id,
+        registeredBrowserIds: listRegisteredPaseoBrowserIds(),
+      });
     }
     contents.on("before-input-event", (event, input) => {
       if (isBrowserRefreshInput(input)) {
@@ -387,6 +475,9 @@ async function createMainWindow(): Promise<void> {
       }
       contents.loadURL(url).catch(() => undefined);
       return { action: "deny" };
+    });
+    contents.on("context-menu", (_contextMenuEvent, params) => {
+      showBrowserWebviewContextMenu(mainWindow, contents, params);
     });
     contents.on("will-navigate", (event) => {
       preventUnsafeBrowserWebviewNavigation(event, event.url);
@@ -433,6 +524,11 @@ function sendOpenProjectEvent(win: BrowserWindow, projectPath: string): void {
 // ---------------------------------------------------------------------------
 
 function setupSingleInstanceLock(): boolean {
+  if (DISABLE_SINGLE_INSTANCE_LOCK) {
+    log.info("[single-instance] disabled by PASEO_DISABLE_SINGLE_INSTANCE_LOCK");
+    return true;
+  }
+
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();
@@ -461,18 +557,18 @@ function setupSingleInstanceLock(): boolean {
 }
 
 async function runCliPassthroughIfRequested(): Promise<boolean> {
-  const cliArgs = parseCliPassthroughArgsFromArgv(process.argv);
+  const cliArgs = parsePassthroughCliArgsFromArgv(process.argv);
   if (!cliArgs) {
     return false;
   }
 
   try {
-    const exitCode = runCliPassthroughCommand(cliArgs);
-    process.exit(exitCode);
+    const exitCode = await runPassthroughCli(cliArgs);
+    app.exit(exitCode);
   } catch (error) {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     process.stderr.write(`${message}\n`);
-    process.exit(1);
+    app.exit(1);
   }
 
   return true;
@@ -526,10 +622,6 @@ function waitForDesktopSmokeStopRequest(): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
-  if (!pendingOpenProjectPath && (await runCliPassthroughIfRequested())) {
-    return;
-  }
-
   if (!setupSingleInstanceLock()) {
     return;
   }
@@ -575,10 +667,6 @@ async function bootstrap(): Promise<void> {
   registerNotificationHandlers();
   registerOpenerHandlers();
 
-  void autoUpdateSkillsIfInstalled().catch((error) => {
-    log.warn("[integrations] auto-update skills failed", error);
-  });
-
   await createMainWindow();
 
   app.on("activate", async () => {
@@ -588,7 +676,12 @@ async function bootstrap(): Promise<void> {
   });
 }
 
-void bootstrap().catch((error) => {
+void runDesktopStartup({
+  hasPendingOpenProjectPath: Boolean(pendingOpenProjectPath),
+  runCliPassthroughIfRequested,
+  inheritLoginShellEnv,
+  bootstrapGui: bootstrap,
+}).catch((error) => {
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   process.stderr.write(`${message}\n`);
   process.exit(1);

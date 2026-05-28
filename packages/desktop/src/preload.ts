@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 type EventHandler = (payload: unknown) => void;
 
@@ -55,13 +55,18 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
   },
+  webUtils: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  },
   menu: {
     showContextMenu: (input?: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:menu:showContextMenu", input),
   },
   browser: {
-    setActivePane: (browserId: string | null) =>
-      ipcRenderer.invoke("paseo:browser:set-active-pane", browserId),
+    setWorkspaceActiveBrowser: (browserId: string | null) =>
+      ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", browserId),
+    openDevTools: (browserId: string) =>
+      ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
     clearPartition: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:clear-partition", browserId),
   },

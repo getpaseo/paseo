@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "CHANGELOG.md"
+      - "public-docs/**"
       - "packages/website/**"
       - "package.json"
       - "package-lock.json"
@@ -28,7 +29,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install --workspace=@getpaseo/website --include-workspace-root
+        run: npm ci --workspace=@getpaseo/website --include-workspace-root
 
       - name: Typecheck
         run: npm run typecheck --workspace=@getpaseo/website

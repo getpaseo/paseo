@@ -3,14 +3,14 @@ import { Image, Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronDown, MoreVertical, Plus } from "lucide-react-native";
+import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
 import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
   ProjectConfigRpcError,
-} from "@server/shared/messages";
-import type { DaemonClient } from "@server/client/daemon-client";
+} from "@getpaseo/protocol/messages";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,9 +19,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Alert } from "@/components/ui/alert";
+import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { SettingsTextAreaCard } from "@/components/settings-textarea";
+import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
@@ -31,7 +34,9 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
   configToDraft,
+  METADATA_PROMPT_KEYS,
   type LifecycleOriginalKind,
+  type MetadataPromptKey,
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
@@ -41,6 +46,50 @@ import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
 const SCRIPT_SERVICE_TYPE = "service";
 
 const ICON_SIZE = 14;
+
+interface MetadataPromptField {
+  title: string;
+  placeholder: string;
+  sectionTestID: string;
+  inputTestID: string;
+}
+
+const METADATA_PROMPT_FIELDS: Record<MetadataPromptKey, MetadataPromptField> = {
+  agentTitle: {
+    title: "Agent titles",
+    placeholder: "Keep titles imperative and under 40 characters",
+    sectionTestID: "metadata-prompt-agent-title-section",
+    inputTestID: "metadata-prompt-agent-title-input",
+  },
+  branchName: {
+    title: "Branch names",
+    placeholder: "Prefix branches with feat/ or fix/, mb/ for personal branches",
+    sectionTestID: "metadata-prompt-branch-name-section",
+    inputTestID: "metadata-prompt-branch-name-input",
+  },
+  commitMessage: {
+    title: "Commit messages",
+    placeholder: "Use Conventional Commits with a scope",
+    sectionTestID: "metadata-prompt-commit-message-section",
+    inputTestID: "metadata-prompt-commit-message-input",
+  },
+  pullRequest: {
+    title: "Pull requests",
+    placeholder: "Lead with a one-paragraph summary, include a Test plan section",
+    sectionTestID: "metadata-prompt-pull-request-section",
+    inputTestID: "metadata-prompt-pull-request-input",
+  },
+};
+
+const WORKTREE_GROUP_INFO =
+  "Commands that run when a worktree is created or torn down for this project";
+const WORKTREE_DOCS_URL = "https://paseo.sh/docs/worktrees";
+const WORKTREE_DOCS_TOOLTIP =
+  "See docs for more details and the environment variables available to these commands";
+const SCRIPTS_GROUP_INFO =
+  "Long-running services and one-off commands you can launch from any agent in this project";
+const METADATA_GROUP_INFO =
+  "Project-specific instructions injected into the AI prompts Paseo uses to generate metadata — use them to enforce your team's conventions like branch naming, commit style, or PR format";
 
 const NO_TARGET_MESSAGE = "We don't have an editable copy of this project on any connected host.";
 
@@ -186,7 +235,7 @@ function ProjectSettingsBody({
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
           <ProjectTitleIcon host={selectedHost} projectName={project.projectName} />
-          <Text style={styles.projectTitle}>{project.projectName}</Text>
+          <ProjectNameEditor project={project} client={client} />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
@@ -432,6 +481,15 @@ function ProjectConfigForm({
     [updateDraft],
   );
 
+  const handleMetadataPromptChange = useCallback(
+    (key: MetadataPromptKey, text: string) =>
+      updateDraft((d) => ({
+        ...d,
+        metadataPrompts: { ...d.metadataPrompts, [key]: text },
+      })),
+    [updateDraft],
+  );
+
   const handleRemoveScript = useCallback(
     async (script: ProjectScriptDraft) => {
       const ok = await confirmDialog({
@@ -529,43 +587,72 @@ function ProjectConfigForm({
     [handleAddScript],
   );
 
+  const setupDocsLink = useMemo(
+    () => (
+      <ExternalLink
+        href={WORKTREE_DOCS_URL}
+        label="Docs"
+        tooltip={WORKTREE_DOCS_TOOLTIP}
+        testID="worktree-setup-docs-link"
+      />
+    ),
+    [],
+  );
+  const teardownDocsLink = useMemo(
+    () => (
+      <ExternalLink
+        href={WORKTREE_DOCS_URL}
+        label="Docs"
+        tooltip={WORKTREE_DOCS_TOOLTIP}
+        testID="worktree-teardown-docs-link"
+      />
+    ),
+    [],
+  );
+
   const isStale = writeError?.code === "stale_project_config";
   const isWriteFailed = writeError?.code === "write_failed";
   const saveDisabled = saveMutation.isPending || isStale || hasInvalidScripts;
 
   return (
     <View>
-      <SettingsSection title="Worktree setup" testID="worktree-setup-section">
-        <View style={settingsStyles.card}>
-          <TextInput
+      <SettingsGroup
+        title="Worktree lifecycle hooks"
+        info={WORKTREE_GROUP_INFO}
+        testID="worktree-group"
+      >
+        <SettingsSection title="Setup" testID="worktree-setup-section" trailing={setupDocsLink}>
+          <SettingsTextAreaCard
             testID="worktree-setup-input"
             accessibilityLabel="Worktree setup commands"
-            multiline
             value={draft.setupText}
             onChangeText={handleSetupChange}
             placeholder="npm install"
-            placeholderTextColor={styles.placeholderColor.color}
-            style={styles.lifecycleInput}
           />
-        </View>
-      </SettingsSection>
+        </SettingsSection>
 
-      <SettingsSection title="Worktree teardown" testID="worktree-teardown-section">
-        <View style={settingsStyles.card}>
-          <TextInput
+        <SettingsSection
+          title="Teardown"
+          testID="worktree-teardown-section"
+          trailing={teardownDocsLink}
+          flush
+        >
+          <SettingsTextAreaCard
             testID="worktree-teardown-input"
             accessibilityLabel="Worktree teardown commands"
-            multiline
             value={draft.teardownText}
             onChangeText={handleTeardownChange}
             placeholder="docker compose down"
-            placeholderTextColor={styles.placeholderColor.color}
-            style={styles.lifecycleInput}
           />
-        </View>
-      </SettingsSection>
+        </SettingsSection>
+      </SettingsGroup>
 
-      <SettingsSection title="Scripts" testID="scripts-section" trailing={scriptsTrailing}>
+      <SettingsGroup
+        title="Scripts"
+        info={SCRIPTS_GROUP_INFO}
+        trailing={scriptsTrailing}
+        testID="scripts-group"
+      >
         <View style={settingsStyles.card} testID="scripts-list">
           {draft.scripts.length === 0 ? (
             <View style={settingsStyles.row}>
@@ -583,7 +670,19 @@ function ProjectConfigForm({
             ))
           )}
         </View>
-      </SettingsSection>
+      </SettingsGroup>
+
+      <SettingsGroup title="Metadata generation" info={METADATA_GROUP_INFO} testID="metadata-group">
+        {METADATA_PROMPT_KEYS.map((key, index) => (
+          <MetadataPromptSection
+            key={key}
+            promptKey={key}
+            value={draft.metadataPrompts[key]}
+            onChange={handleMetadataPromptChange}
+            flush={index === METADATA_PROMPT_KEYS.length - 1}
+          />
+        ))}
+      </SettingsGroup>
 
       {isStale ? (
         <View style={styles.calloutWrap}>
@@ -661,6 +760,124 @@ function ProjectConfigForm({
 
 function ResolveSpinnerColor(): string {
   return styles.spinnerColor.color;
+}
+
+interface ProjectNameEditorProps {
+  project: ProjectSummary;
+  client: DaemonClient;
+}
+
+function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [isEditing, setIsEditing] = useState(false);
+  const [value, setValue] = useState(project.projectCustomName ?? "");
+
+  const renameMutation = useMutation({
+    mutationFn: (customName: string | null) => client.renameProject(project.projectKey, customName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setIsEditing(false);
+      toast.show("Project renamed", { variant: "success" });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Couldn't rename project";
+      toast.show(message, { variant: "error" });
+    },
+  });
+
+  const handleStartEdit = useCallback(() => {
+    setValue(project.projectCustomName ?? "");
+    setIsEditing(true);
+  }, [project.projectCustomName]);
+
+  const handleCancel = useCallback(() => {
+    setIsEditing(false);
+    setValue(project.projectCustomName ?? "");
+  }, [project.projectCustomName]);
+
+  const handleSave = useCallback(() => {
+    const trimmed = value.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    if (next === (project.projectCustomName ?? null)) {
+      setIsEditing(false);
+      return;
+    }
+    renameMutation.mutate(next);
+  }, [value, project.projectCustomName, renameMutation]);
+
+  const handleReset = useCallback(() => {
+    renameMutation.mutate(null);
+  }, [renameMutation]);
+
+  if (!isEditing) {
+    return (
+      <View style={styles.nameEditorRow}>
+        <Text style={styles.projectTitle} numberOfLines={1}>
+          {project.projectName}
+        </Text>
+        <Pressable
+          testID="project-name-edit-button"
+          accessibilityLabel="Rename project"
+          onPress={handleStartEdit}
+          hitSlop={8}
+          style={styles.nameEditorIconButton}
+        >
+          <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
+        </Pressable>
+        {project.projectCustomName ? (
+          <Pressable
+            testID="project-name-reset-button"
+            accessibilityLabel="Reset project name to default"
+            onPress={handleReset}
+            disabled={renameMutation.isPending}
+            hitSlop={8}
+            style={styles.nameEditorResetButton}
+          >
+            <Text style={styles.nameEditorResetText}>Reset</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.nameEditorRow}>
+      <TextInput
+        testID="project-name-input"
+        accessibilityLabel="Project name"
+        value={value}
+        onChangeText={setValue}
+        placeholder={project.projectName}
+        placeholderTextColor={styles.placeholderColor.color}
+        autoFocus
+        style={styles.nameEditorInput}
+        editable={!renameMutation.isPending}
+        onSubmitEditing={handleSave}
+        returnKeyType="done"
+      />
+      <Pressable
+        testID="project-name-save-button"
+        accessibilityLabel="Save project name"
+        onPress={handleSave}
+        disabled={renameMutation.isPending}
+        hitSlop={8}
+        style={styles.nameEditorIconButton}
+      >
+        <Check size={ICON_SIZE} color={styles.iconColor.color} />
+      </Pressable>
+      <Pressable
+        testID="project-name-cancel-button"
+        accessibilityLabel="Cancel renaming"
+        onPress={handleCancel}
+        disabled={renameMutation.isPending}
+        hitSlop={8}
+        style={styles.nameEditorIconButton}
+      >
+        <X size={ICON_SIZE} color={styles.iconColor.color} />
+      </Pressable>
+    </View>
+  );
 }
 
 function ProjectTitleIcon({ host, projectName }: { host: ProjectHostEntry; projectName: string }) {
@@ -764,6 +981,32 @@ function HostPickerItem({ host, isSelected, onSelectHost }: HostPickerItemProps)
     >
       {host.serverName}
     </DropdownMenuItem>
+  );
+}
+
+interface MetadataPromptSectionProps {
+  promptKey: MetadataPromptKey;
+  value: string;
+  onChange: (key: MetadataPromptKey, text: string) => void;
+  flush?: boolean;
+}
+
+function MetadataPromptSection({ promptKey, value, onChange, flush }: MetadataPromptSectionProps) {
+  const meta = METADATA_PROMPT_FIELDS[promptKey];
+  const handleChange = useCallback(
+    (text: string) => onChange(promptKey, text),
+    [onChange, promptKey],
+  );
+  return (
+    <SettingsSection title={meta.title} testID={meta.sectionTestID} flush={flush}>
+      <SettingsTextAreaCard
+        testID={meta.inputTestID}
+        accessibilityLabel={meta.title}
+        value={value}
+        onChangeText={handleChange}
+        placeholder={meta.placeholder}
+      />
+    </SettingsSection>
   );
 }
 
@@ -893,11 +1136,15 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
   const showNameError = touched.name && validation.nameError;
   const showCommandError = touched.command && validation.commandError;
   const isService = script.type === SCRIPT_SERVICE_TYPE;
+  const sheetHeader = useMemo<SheetHeader>(
+    () => ({ title: script.name ? `Edit ${script.name}` : "New script" }),
+    [script.name],
+  );
 
   return (
     <AdaptiveModalSheet
       visible
-      title={script.name ? `Edit ${script.name}` : "New script"}
+      header={sheetHeader}
       onClose={onCancel}
       testID="script-edit-modal"
       desktopMaxWidth={560}
@@ -1001,6 +1248,37 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
+  nameEditorRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
+  nameEditorIconButton: {
+    padding: theme.spacing[1],
+  },
+  nameEditorInput: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    minWidth: 0,
+  },
+  nameEditorResetButton: {
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+  },
+  nameEditorResetText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
   titleIcon: {
     width: 28,
     height: 28,
@@ -1051,14 +1329,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorBlock: {
     marginTop: theme.spacing[2],
-  },
-  lifecycleInput: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    minHeight: 96,
-    textAlignVertical: "top",
   },
   emptyScripts: {
     color: theme.colors.foregroundMuted,

@@ -15,6 +15,7 @@ interface StopResult {
   action: "stopped" | "not_running";
   home: string;
   pid: string;
+  forced: boolean;
   message: string;
 }
 
@@ -73,6 +74,7 @@ export async function runStopCommand(
         action: result.action,
         home: result.home,
         pid: result.pid === null ? "-" : String(result.pid),
+        forced: result.forced,
         message: result.message,
       },
       schema: stopResultSchema,

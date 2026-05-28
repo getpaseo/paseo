@@ -5,7 +5,7 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentClient } from "../agent/agent-sdk-types.js";
-import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
+import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";

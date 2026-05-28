@@ -27,6 +27,12 @@ export default defineConfig({
   projects: [
     {
       name: "Desktop Chrome",
+      testIgnore: ["**/*.real.spec.ts"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "real-provider",
+      testMatch: ["**/*.real.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],

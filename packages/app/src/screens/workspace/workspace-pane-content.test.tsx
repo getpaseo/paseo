@@ -48,14 +48,14 @@ function ProbePanel() {
   return null;
 }
 
-const tab: WorkspaceTabDescriptor = {
+const agentTab: WorkspaceTabDescriptor = {
   key: "agent_agent-a",
   tabId: "agent_agent-a",
   kind: "agent",
   target: { kind: "agent", agentId: "agent-a" },
 };
 
-function buildContent() {
+function buildContent(tab: WorkspaceTabDescriptor = agentTab) {
   return buildWorkspacePaneContentModel({
     tab,
     normalizedServerId: "server-a",
@@ -64,6 +64,7 @@ function buildContent() {
     onCloseCurrentTab: vi.fn(),
     onRetargetCurrentTab: vi.fn(),
     onOpenWorkspaceFile: vi.fn(),
+    onOpenImportSheet: vi.fn(),
   });
 }
 
@@ -117,6 +118,45 @@ describe("WorkspacePaneContent", () => {
       isPaneFocused: true,
       isInteractive: true,
       focusPane: expect.any(Function),
+    });
+  });
+
+  it("keeps pane content mounted when a draft tab is retargeted in place", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    const draftContent = buildContent({
+      key: "draft-a",
+      tabId: "draft-a",
+      kind: "draft",
+      target: { kind: "draft", draftId: "draft-a" },
+    });
+    const agentContent = buildContent({
+      key: "draft-a",
+      tabId: "draft-a",
+      kind: "agent",
+      target: { kind: "agent", agentId: "agent-a" },
+    });
+
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent content={draftContent} isPaneFocused isWorkspaceFocused={true} />,
+      );
+    });
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent content={agentContent} isPaneFocused isWorkspaceFocused={true} />,
+      );
+    });
+
+    expect(mountCount).toHaveBeenCalledTimes(1);
+    expect(unmountCount).not.toHaveBeenCalled();
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[1]?.paneContextValue.tabId).toBe("draft-a");
+    expect(snapshots[1]?.paneContextValue.target).toEqual({
+      kind: "agent",
+      agentId: "agent-a",
     });
   });
 });

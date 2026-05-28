@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
 import {
   type FlatList,
   type LayoutChangeEvent,
@@ -21,8 +21,25 @@ function ensureHideScrollbarStyle(): void {
   if (document.getElementById(HIDE_SCROLLBAR_STYLE_ID)) return;
   const style = document.createElement("style");
   style.id = HIDE_SCROLLBAR_STYLE_ID;
-  style.textContent =
-    "[data-hide-scrollbar]::-webkit-scrollbar { display: none; width: 0; height: 0; }";
+  style.textContent = `
+    [data-hide-scrollbar] {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      scrollbar-gutter: auto;
+    }
+
+    [data-hide-scrollbar]::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    [data-hide-scrollbar]::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+  `;
   document.head.appendChild(style);
 }
 
@@ -54,18 +71,25 @@ export function useWebElementScrollbar(
     contentSize: 0,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled) return;
     const element = elementRef.current;
     if (!element) return;
 
+    type ScrollbarStyle = CSSStyleDeclaration & {
+      scrollbarWidth: string;
+      msOverflowStyle: string;
+      scrollbarGutter: string;
+    };
+    const style = element.style as ScrollbarStyle;
+    const previousScrollbarWidth = style.scrollbarWidth;
+    const previousMsOverflowStyle = style.msOverflowStyle;
+    const previousScrollbarGutter = style.scrollbarGutter;
+
     element.setAttribute("data-hide-scrollbar", "");
-    (
-      element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
-    ).scrollbarWidth = "none";
-    (
-      element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
-    ).msOverflowStyle = "none";
+    style.scrollbarWidth = "none";
+    style.msOverflowStyle = "none";
+    style.scrollbarGutter = "auto";
     ensureHideScrollbarStyle();
 
     function update() {
@@ -94,12 +118,9 @@ export function useWebElementScrollbar(
       element.removeEventListener("scroll", update);
       resizeObserver.disconnect();
       element.removeAttribute("data-hide-scrollbar");
-      (
-        element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
-      ).scrollbarWidth = "";
-      (
-        element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
-      ).msOverflowStyle = "";
+      style.scrollbarWidth = previousScrollbarWidth;
+      style.msOverflowStyle = previousMsOverflowStyle;
+      style.scrollbarGutter = previousScrollbarGutter;
     };
   }, [contentRef, elementRef, enabled]);
 

@@ -148,9 +148,16 @@ describe("keyboard-shortcuts", () => {
       payload: { index: 2 },
     },
     {
-      name: "matches tab index jump on desktop via Alt+digit",
+      name: "matches tab index jump on mac desktop via Cmd+Alt+digit",
+      event: { key: "@", code: "Digit2", metaKey: true, altKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.tab.navigate.index",
+      payload: { index: 2 },
+    },
+    {
+      name: "matches tab index jump on non-mac desktop via Alt+digit",
       event: { key: "2", code: "Digit2", altKey: true },
-      context: { isDesktop: true },
+      context: { isMac: false, isDesktop: true },
       action: "workspace.tab.navigate.index",
       payload: { index: 2 },
     },
@@ -266,6 +273,12 @@ describe("keyboard-shortcuts", () => {
       action: "sidebar.toggle.both",
     },
     {
+      name: "matches Dvorak logical Cmd+. to toggle both sidebars on macOS",
+      event: { key: ".", code: "KeyE", metaKey: true },
+      context: { isMac: true },
+      action: "sidebar.toggle.both",
+    },
+    {
       name: "routes Mod+D to message-input action outside terminal",
       event: { key: "d", code: "KeyD", metaKey: true },
       context: { isMac: true, focusScope: "message-input" },
@@ -286,6 +299,49 @@ describe("keyboard-shortcuts", () => {
       action: "agent.interrupt",
       preventDefault: false,
       stopPropagation: false,
+    },
+    // macOS rewrites event.key when Option is held (Option+T -> "†",
+    // Option+[ -> "“", Option+Shift+W -> "„", etc.). Every Alt-bound
+    // letter / bracket shortcut must still resolve.
+    {
+      name: "matches Cmd+Alt+T to cycle theme on macOS when Option substitutes event.key",
+      event: { key: "\u2020", code: "KeyT", metaKey: true, altKey: true },
+      context: { isMac: true },
+      action: "theme.cycle",
+    },
+    {
+      name: "matches Alt+Shift+[ to previous tab on macOS when Option substitutes event.key",
+      event: { key: "\u201D", code: "BracketLeft", altKey: true, shiftKey: true },
+      context: { isMac: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches Alt+Shift+] to next tab on macOS when Option substitutes event.key",
+      event: { key: "\u2019", code: "BracketRight", altKey: true, shiftKey: true },
+      context: { isMac: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
+      name: "matches Alt+[ to previous workspace on macOS web when Option substitutes event.key",
+      event: { key: "\u201C", code: "BracketLeft", altKey: true },
+      context: { isMac: true, isDesktop: false },
+      action: "workspace.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches Alt+] to next workspace on macOS web when Option substitutes event.key",
+      event: { key: "\u2018", code: "BracketRight", altKey: true },
+      context: { isMac: true, isDesktop: false },
+      action: "workspace.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
+      name: "matches Alt+Shift+W to close current tab on macOS web when Option substitutes event.key",
+      event: { key: "\u201E", code: "KeyW", altKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: false },
+      action: "workspace.tab.close.current",
     },
   ];
 
@@ -334,6 +390,11 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true },
     },
     {
+      name: "keeps mac Option+digit available for international text input",
+      event: { key: "@", code: "Digit2", altKey: true },
+      context: { isMac: true, isDesktop: true, focusScope: "message-input" },
+    },
+    {
       name: "does not match Ctrl+K for command center on non-mac in terminal",
       event: { key: "k", code: "KeyK", ctrlKey: true },
       context: { isMac: false, focusScope: "terminal" },
@@ -364,9 +425,32 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false },
     },
     {
+      name: "keeps Cmd+Shift+ArrowRight available for message input selection",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+    },
+    {
+      name: "keeps Cmd+Shift+ArrowLeft available for generic editable selection",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "editable" },
+    },
+    {
       name: "keeps space typing available in message input",
       event: { key: " ", code: "Space" },
       context: { focusScope: "message-input" },
+    },
+    {
+      name: "keeps Dvorak Cmd+V available for paste in message input",
+      event: { key: "v", code: "Period", metaKey: true },
+      context: { isMac: true, isDesktop: true, focusScope: "message-input" },
+    },
+    // Sanity: the macOS Option-substitution fallback must still respect
+    // modifier checks — pressing Option+T alone (no Cmd) must not trigger
+    // the Cmd+Alt+T theme-cycle binding.
+    {
+      name: "does not cycle theme on macOS when Cmd is missing (Alt+T alone)",
+      event: { key: "\u2020", code: "KeyT", altKey: true },
+      context: { isMac: true },
     },
   ];
 
@@ -467,16 +551,17 @@ describe("keyboard-shortcut help sections", () => {
         "new-agent": ["mod", "shift", "O"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
-        "workspace-tab-jump-index": ["alt", "1-9"],
+        "workspace-tab-jump-index": ["mod", "alt", "1-9"],
         "workspace-tab-close-current": ["meta", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
       },
     },
     {
-      name: "shows Ctrl+W close tab for non-mac desktop",
+      name: "uses non-mac desktop defaults for tab jump and close tab",
       context: { isMac: false, isDesktop: true },
       expectedKeys: {
+        "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
       },
     },

@@ -15,7 +15,7 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
-import { AgentProviderSchema } from "./agent/provider-manifest.js";
+import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
@@ -51,6 +51,7 @@ function normalizeLogEnv(value: string | undefined): string | undefined {
 export type CliConfigOverrides = Partial<{
   listen: string;
   relayEnabled: boolean;
+  relayUseTls: boolean;
   mcpEnabled: boolean;
   mcpInjectIntoAgents: boolean;
   hostnames: HostnamesConfig;
@@ -139,12 +140,26 @@ interface ResolveRelayInput {
   env: NodeJS.ProcessEnv;
   persisted: ReturnType<typeof loadPersistedConfig>;
   cliRelayEnabled: boolean | undefined;
+  cliRelayUseTls: boolean | undefined;
 }
 
 interface ResolvedRelay {
   enabled: boolean;
   endpoint: string;
   publicEndpoint: string;
+  useTls: boolean;
+  publicUseTls: boolean;
+}
+
+function resolveTlsFromEnv(
+  envValue: string | undefined,
+  persistedValue: boolean | undefined,
+  fallback: boolean,
+): boolean {
+  if (envValue !== undefined) {
+    return parseBooleanEnv(envValue) ?? false;
+  }
+  return persistedValue ?? fallback;
 }
 
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
@@ -161,7 +176,19 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     input.env.PASEO_RELAY_PUBLIC_ENDPOINT ??
     input.persisted.daemon?.relay?.publicEndpoint ??
     endpoint;
-  return { enabled, endpoint, publicEndpoint };
+  const useTls =
+    input.cliRelayUseTls ??
+    resolveTlsFromEnv(
+      input.env.PASEO_RELAY_USE_TLS,
+      input.persisted.daemon?.relay?.useTls,
+      endpoint === DEFAULT_RELAY_ENDPOINT,
+    );
+  const publicUseTls = resolveTlsFromEnv(
+    input.env.PASEO_RELAY_PUBLIC_USE_TLS,
+    input.persisted.daemon?.relay?.publicUseTls,
+    useTls,
+  );
+  return { enabled, endpoint, publicEndpoint, useTls, publicUseTls };
 }
 
 interface ResolvedVoiceLlm {
@@ -229,6 +256,10 @@ function resolveAuthConfig(
     : undefined;
 }
 
+function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
+  return persisted.daemon?.appendSystemPrompt ?? "";
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -238,6 +269,8 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
+    appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
@@ -258,13 +291,20 @@ export function loadConfig(
   const persisted = loadPersistedConfig(paseoHome);
 
   const listen = resolveListenAddress(env, options?.cli, persisted);
-  const { mcpEnabled, mcpInjectIntoAgents, hostnames, appBaseUrl } =
-    resolveStaticLoadConfigSettings(env, options?.cli, persisted);
+  const {
+    mcpEnabled,
+    mcpInjectIntoAgents,
+    autoArchiveAfterMerge,
+    appendSystemPrompt,
+    hostnames,
+    appBaseUrl,
+  } = resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
   const relay = resolveRelayConfig({
     env,
     persisted,
     cliRelayEnabled: options?.cli?.relayEnabled,
+    cliRelayUseTls: options?.cli?.relayUseTls,
   });
 
   const { openai, speech } = resolveSpeechConfig({
@@ -285,6 +325,8 @@ export function loadConfig(
     hostnames,
     mcpEnabled,
     mcpInjectIntoAgents,
+    autoArchiveAfterMerge,
+    appendSystemPrompt,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),
@@ -293,6 +335,8 @@ export function loadConfig(
     relayEnabled: relay.enabled,
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
+    relayUseTls: relay.useTls,
+    relayPublicUseTls: relay.publicUseTls,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

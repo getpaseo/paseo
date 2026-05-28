@@ -1,5 +1,5 @@
 import stripAnsi from "strip-ansi";
-import type { TerminalCell } from "../shared/messages.js";
+import type { TerminalCell } from "@getpaseo/protocol/messages";
 import type { TerminalSession } from "./terminal.js";
 
 export interface CaptureTerminalLinesOptions {

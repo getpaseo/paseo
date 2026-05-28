@@ -1,8 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -11,6 +12,7 @@ export interface DaemonStartOptions {
   home?: string;
   foreground?: boolean;
   relay?: boolean;
+  relayUseTls?: boolean;
   mcp?: boolean;
   injectMcp?: boolean;
   hostnames?: string;
@@ -28,6 +30,10 @@ export interface LocalDaemonPidInfo {
 export interface LocalDaemonState {
   home: string;
   listen: string;
+  relayEnabled: boolean;
+  relayEndpoint: string;
+  relayUseTls: boolean;
+  relayPublicUseTls: boolean;
   logPath: string;
   pidPath: string;
   pidInfo: LocalDaemonPidInfo | null;
@@ -63,6 +69,28 @@ interface ProcessExitDetails {
 
 type DetachedStartupResult = { exitedEarly: false } | ({ exitedEarly: true } & ProcessExitDetails);
 
+export interface DetachedDaemonProcess extends Pick<ChildProcess, "once" | "pid" | "unref"> {}
+
+export interface ForegroundDaemonProcessResult {
+  status: number | null;
+  error?: Error;
+}
+
+export interface DaemonLaunchRuntime {
+  resolveRunnerEntry(): string;
+  resolveHome(env: NodeJS.ProcessEnv): string;
+  spawnDetached(
+    command: string,
+    args: string[],
+    options: Parameters<typeof spawnProcess>[2],
+  ): DetachedDaemonProcess;
+  spawnForeground(
+    command: string,
+    args: string[],
+    options: Parameters<typeof spawnSync>[2],
+  ): ForegroundDaemonProcessResult;
+}
+
 const DETACHED_STARTUP_GRACE_MS = 1200;
 const PID_POLL_INTERVAL_MS = 100;
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -72,6 +100,13 @@ export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
 export const DEFAULT_KILL_TIMEOUT_MS = 3_000;
 
 const require = createRequire(import.meta.url);
+
+const defaultDaemonLaunchRuntime: DaemonLaunchRuntime = {
+  resolveRunnerEntry: resolveDaemonRunnerEntry,
+  resolveHome: resolvePaseoHome,
+  spawnDetached: spawnProcess,
+  spawnForeground: spawnSync,
+};
 
 const startupReady = (): DetachedStartupResult => ({ exitedEarly: false });
 
@@ -92,6 +127,9 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   const args: string[] = [];
   if (options.relay === false) {
     args.push("--no-relay");
+  }
+  if (options.relayUseTls === true) {
+    args.push("--relay-use-tls");
   }
 
   if (options.mcp === false) {
@@ -116,6 +154,9 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   }
   if (options.hostnames) {
     childEnv.PASEO_HOSTNAMES = options.hostnames;
+  }
+  if (options.relayUseTls === true) {
+    childEnv.PASEO_RELAY_USE_TLS = "true";
   }
   return childEnv;
 }
@@ -262,27 +303,40 @@ function signalProcessSafely(pid: number, signal: NodeJS.Signals): boolean {
   }
 }
 
-function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean {
+async function signalProcessTreeSafely(pid: number, signal: NodeJS.Signals): Promise<boolean> {
   if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
     return false;
   }
 
-  if (process.platform === "win32") {
-    return signalProcessSafely(pid, signal);
-  }
+  return new Promise((resolve, reject) => {
+    treeKill(pid, signal, (err) => {
+      if (!err) {
+        resolve(true);
+        return;
+      }
 
+      const code = readNodeErrnoCode(err);
+      if (code === "ESRCH") {
+        resolve(false);
+        return;
+      }
+      if (code === "EPERM") {
+        resolve(true);
+        return;
+      }
+      reject(err);
+    });
+  });
+}
+
+async function signalProcessTreeOrOwnerSafely(
+  pid: number,
+  signal: NodeJS.Signals,
+): Promise<boolean> {
   try {
-    process.kill(-pid, signal);
-    return true;
-  } catch (err) {
-    const code = readNodeErrnoCode(err);
-    if (code === "ESRCH") {
-      return signalProcessSafely(pid, signal);
-    }
-    if (code === "EPERM") {
-      return true;
-    }
-    throw err;
+    return await signalProcessTreeSafely(pid, signal);
+  } catch {
+    return signalProcessSafely(pid, signal);
   }
 }
 
@@ -338,9 +392,15 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
   const env: NodeJS.ProcessEnv = {
     ...envWithHome(options.home),
     // Status should reflect local persisted config + pid file, not inherited daemon env overrides.
+    // This is CLI-side defensive scrubbing; the daemon RPC is authoritative when available.
     PASEO_LISTEN: undefined,
     PASEO_HOSTNAMES: undefined,
     PASEO_ALLOWED_HOSTS: undefined,
+    PASEO_RELAY_ENABLED: undefined,
+    PASEO_RELAY_ENDPOINT: undefined,
+    PASEO_RELAY_PUBLIC_ENDPOINT: undefined,
+    PASEO_RELAY_USE_TLS: undefined,
+    PASEO_RELAY_PUBLIC_USE_TLS: undefined,
   };
   const home = resolvePaseoHome(env);
   const config = loadConfig(home, { env });
@@ -353,6 +413,10 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
   return {
     home,
     listen,
+    relayEnabled: config.relayEnabled ?? true,
+    relayEndpoint: config.relayPublicEndpoint ?? config.relayEndpoint ?? "relay.paseo.sh:443",
+    relayUseTls: config.relayUseTls ?? false,
+    relayPublicUseTls: config.relayPublicUseTls ?? config.relayUseTls ?? false,
     logPath,
     pidPath,
     pidInfo,
@@ -368,17 +432,18 @@ export function tailDaemonLog(home?: string, lines = 30): string | null {
 
 export async function startLocalDaemonDetached(
   options: DaemonStartOptions,
+  runtime: DaemonLaunchRuntime = defaultDaemonLaunchRuntime,
 ): Promise<DetachedStartResult> {
   if (options.listen && options.port) {
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const daemonRunnerEntry = runtime.resolveRunnerEntry();
   const childEnv = buildChildEnv(options);
 
-  const paseoHome = resolvePaseoHome(childEnv);
+  const paseoHome = runtime.resolveHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
-  const child = spawnProcess(
+  const child = runtime.spawnDetached(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
@@ -434,14 +499,17 @@ export async function startLocalDaemonDetached(
   };
 }
 
-export function startLocalDaemonForeground(options: DaemonStartOptions): number {
+export function startLocalDaemonForeground(
+  options: DaemonStartOptions,
+  runtime: DaemonLaunchRuntime = defaultDaemonLaunchRuntime,
+): number {
   if (options.listen && options.port) {
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const daemonRunnerEntry = runtime.resolveRunnerEntry();
   const childEnv = buildChildEnv(options);
-  const result = spawnSync(
+  const result = runtime.spawnForeground(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
@@ -517,7 +585,7 @@ export async function stopLocalDaemon(
   const fallbackMessage = shutdownAttempt.requested ? null : shutdownAttempt.reason;
   let forced = false;
   if (!lifecycleRequested) {
-    const signaled = signalProcessSafely(pid, "SIGTERM");
+    const signaled = await signalProcessTreeOrOwnerSafely(pid, "SIGTERM");
     if (!signaled) {
       return {
         action: "not_running",
@@ -532,7 +600,7 @@ export async function stopLocalDaemon(
   let stopped = await waitForPidExit(pid, timeoutMs);
   if (!stopped && options.force) {
     forced = true;
-    signalProcessGroupSafely(pid, "SIGKILL");
+    await signalProcessTreeOrOwnerSafely(pid, "SIGKILL");
     stopped = await waitForPidExit(pid, killTimeoutMs);
   }
 

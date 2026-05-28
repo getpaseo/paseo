@@ -1,13 +1,12 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
-
-vi.mock("@opencode-ai/sdk/v2/client", () => ({
-  createOpencodeClient: vi.fn(),
-}));
-
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { OpenCodeAgentClient, OpenCodeServerManager } from "./opencode-agent.js";
+import { OpenCodeAgentClient } from "./opencode-agent.js";
+import {
+  idleEvent,
+  TestOpenCodeClient,
+  TestOpenCodeRuntime,
+} from "./opencode/test-utils/test-opencode-runtime.js";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -24,39 +23,12 @@ function createDeferred<T>(): {
 }
 
 describe("OpenCodeAgentSession slash command timeout handling", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   test("lists only OpenCode built-in slash commands Paseo can execute", async () => {
-    vi.mocked(createOpencodeClient).mockReturnValue({
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "session-1" } }),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({
-          data: {
-            connected: ["openai"],
-            all: [{ id: "openai", name: "OpenAI", models: {} }],
-          },
-        }),
-      },
-      command: {
-        list: vi.fn().mockResolvedValue({ data: [] }),
-      },
-      app: {
-        agents: vi.fn().mockResolvedValue({ data: [] }),
-      },
-    } as never);
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = createOpenCodeClientWithConnectedProvider();
+    runtime.enqueueClient(openCodeClient);
 
-    vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({
-      acquire: vi.fn().mockResolvedValue({
-        server: { port: 1234, url: "http://127.0.0.1:1234" },
-        release: vi.fn(),
-      }),
-    } as never);
-
-    const client = new OpenCodeAgentClient(createTestLogger());
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     await expect(session.listCommands?.()).resolves.toEqual(
@@ -72,49 +44,11 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
   });
 
   test("executes compact through the OpenCode summarize endpoint", async () => {
-    const command = vi.fn();
-    const summarize = vi.fn().mockResolvedValue({ data: {} });
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = createOpenCodeClientWithConnectedProvider();
+    runtime.enqueueClient(openCodeClient);
 
-    vi.mocked(createOpencodeClient).mockReturnValue({
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "session-1" } }),
-        command,
-        summarize,
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({
-          data: {
-            connected: ["openai"],
-            all: [{ id: "openai", name: "OpenAI", models: {} }],
-          },
-        }),
-      },
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: (async function* () {
-            yield {
-              type: "session.idle",
-              properties: { sessionID: "session-1" },
-            };
-          })(),
-        }),
-      },
-      command: {
-        list: vi.fn().mockResolvedValue({ data: [] }),
-      },
-      app: {
-        agents: vi.fn().mockResolvedValue({ data: [] }),
-      },
-    } as never);
-
-    vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({
-      acquire: vi.fn().mockResolvedValue({
-        server: { port: 1234, url: "http://127.0.0.1:1234" },
-        release: vi.fn(),
-      }),
-    } as never);
-
-    const client = new OpenCodeAgentClient(createTestLogger());
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     await expect(session.run("/compact")).resolves.toMatchObject({
@@ -123,55 +57,30 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
       timeline: [],
       usage: undefined,
     });
-    expect(summarize).toHaveBeenCalledWith({ sessionID: "session-1", directory: "/tmp" });
-    expect(command).not.toHaveBeenCalled();
+    expect(openCodeClient.calls.sessionSummarize).toEqual([
+      { sessionID: "session-1", directory: "/tmp" },
+    ]);
+    expect(openCodeClient.calls.sessionCommand).toEqual([]);
   });
 
   test("waits for SSE completion when slash commands hit a header timeout", async () => {
     const idleEventGate = createDeferred<void>();
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = createOpenCodeClientWithConnectedProvider();
+    openCodeClient.sessionCommandError = new Error("fetch failed: Headers Timeout Error");
+    openCodeClient.commandListResponse = {
+      data: [{ name: "help", description: "Show help", hints: [] }],
+    };
+    openCodeClient.eventStream = (async function* () {
+      await idleEventGate.promise;
+      yield {
+        type: "session.idle",
+        properties: { sessionID: "session-1" },
+      };
+    })();
+    runtime.enqueueClient(openCodeClient);
 
-    vi.mocked(createOpencodeClient).mockReturnValue({
-      session: {
-        create: vi.fn().mockResolvedValue({ data: { id: "session-1" } }),
-        command: vi.fn().mockRejectedValue(new Error("fetch failed: Headers Timeout Error")),
-      },
-      provider: {
-        list: vi.fn().mockResolvedValue({
-          data: {
-            connected: ["openai"],
-            all: [{ id: "openai", name: "OpenAI", models: {} }],
-          },
-        }),
-      },
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
-          stream: (async function* () {
-            await idleEventGate.promise;
-            yield {
-              type: "session.idle",
-              properties: { sessionID: "session-1" },
-            };
-          })(),
-        }),
-      },
-      command: {
-        list: vi.fn().mockResolvedValue({
-          data: [{ name: "help", description: "Show help", hints: [] }],
-        }),
-      },
-      app: {
-        agents: vi.fn().mockResolvedValue({ data: [] }),
-      },
-    } as never);
-
-    vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({
-      acquire: vi.fn().mockResolvedValue({
-        server: { port: 1234, url: "http://127.0.0.1:1234" },
-        release: vi.fn(),
-      }),
-    } as never);
-
-    const client = new OpenCodeAgentClient(createTestLogger());
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     const runPromise = session.run("/help");
@@ -185,4 +94,54 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
       usage: undefined,
     });
   });
+
+  test("leaves successful slash command turns open until OpenCode emits idle", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = createOpenCodeClientWithConnectedProvider();
+    openCodeClient.sessionCommandEvents = [];
+    openCodeClient.commandListResponse = {
+      data: [{ name: "help", description: "Show help", hints: [] }],
+    };
+    runtime.enqueueClient(openCodeClient);
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
+
+    const runPromise = session.run("/help");
+    await nextTick();
+    await nextTick();
+
+    expect(openCodeClient.calls.sessionCommand).toHaveLength(1);
+    let settled = false;
+    void runPromise.then(() => {
+      settled = true;
+      return undefined;
+    });
+    await nextTick();
+    expect(settled).toBe(false);
+
+    openCodeClient.emitEvent(idleEvent());
+
+    await expect(runPromise).resolves.toMatchObject({
+      sessionId: "session-1",
+      finalText: "",
+      timeline: [],
+      usage: undefined,
+    });
+  });
 });
+
+function createOpenCodeClientWithConnectedProvider(): TestOpenCodeClient {
+  const openCodeClient = new TestOpenCodeClient();
+  openCodeClient.providerListResponse = {
+    data: {
+      connected: ["openai"],
+      all: [{ id: "openai", name: "OpenAI", models: {} }],
+    },
+  };
+  return openCodeClient;
+}
+
+function nextTick(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}

@@ -1,8 +1,9 @@
-import type {
-  AgentPromptInput,
-  AgentRunOptions,
-  AgentSession,
-  AgentStreamEvent,
+import {
+  getAgentStreamEventTurnId,
+  type AgentPromptInput,
+  type AgentRunOptions,
+  type AgentSession,
+  type AgentStreamEvent,
 } from "../../agent-sdk-types.js";
 
 function isTerminalEvent(event: AgentStreamEvent): boolean {
@@ -29,7 +30,7 @@ export async function* streamSession(
   };
 
   const matchesTurn = (event: AgentStreamEvent): boolean => {
-    const eventTurnId = (event as { turnId?: string }).turnId;
+    const eventTurnId = getAgentStreamEventTurnId(event);
     return turnId == null || eventTurnId == null || eventTurnId === turnId;
   };
 

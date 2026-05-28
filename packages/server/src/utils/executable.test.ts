@@ -9,6 +9,7 @@ import {
   quoteWindowsArgument,
   quoteWindowsCommand,
 } from "./executable.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 const originalEnv = {
   PATH: process.env.PATH,
@@ -28,24 +29,16 @@ function prependPath(...dirs: string[]): void {
 
 function writeExecutable(filePath: string, content: string): string {
   writeFileSync(filePath, content);
-  if (process.platform !== "win32") {
+  if (!isPlatform("win32")) {
     chmodSync(filePath, 0o755);
   }
   return filePath;
 }
 
-function writeInvokableFixture(dir: string, name: string): string {
-  if (process.platform === "win32") {
-    return writeExecutable(path.join(dir, `${name}.cmd`), "@echo off\r\necho 0.1\r\n");
-  }
-  return writeExecutable(path.join(dir, name), "#!/bin/sh\necho 0.1\n");
-}
-
 function writeBrokenAbsoluteFixture(dir: string): string {
-  const filePath =
-    process.platform === "win32" ? path.join(dir, "broken.exe") : path.join(dir, "broken");
+  const filePath = isPlatform("win32") ? path.join(dir, "broken.exe") : path.join(dir, "broken");
   writeFileSync(filePath, "not executable");
-  if (process.platform !== "win32") {
+  if (!isPlatform("win32")) {
     chmodSync(filePath, 0o644);
   }
   return filePath;
@@ -64,7 +57,7 @@ afterEach(() => {
 });
 
 describe("findExecutable", () => {
-  describe.skipIf(process.platform === "win32")("POSIX", () => {
+  describe.skipIf(isPlatform("win32"))("POSIX", () => {
     test("finds an extensionless executable and skips an earlier non-executable candidate", async () => {
       const executableDir = makeTempDir();
       const nonExecutableDir = makeTempDir();
@@ -78,7 +71,7 @@ describe("findExecutable", () => {
     });
   });
 
-  describe.runIf(process.platform === "win32")("Windows", () => {
+  describe.runIf(isPlatform("win32"))("Windows", () => {
     test("returns a working .cmd when an invalid .exe candidate appears first", async () => {
       const dir = makeTempDir();
       process.env.PATHEXT = [".EXE", ".CMD"].join(path.delimiter);
@@ -110,10 +103,7 @@ describe("findExecutable", () => {
   });
 
   test("returns an invokable absolute path", async () => {
-    const dir = makeTempDir();
-    const fixture = writeInvokableFixture(dir, "absolute-ok");
-
-    await expect(findExecutable(fixture)).resolves.toBe(fixture);
+    await expect(findExecutable(process.execPath)).resolves.toBe(process.execPath);
   });
 
   test("returns null for an absolute path that cannot spawn", async () => {

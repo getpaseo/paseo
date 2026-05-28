@@ -41,7 +41,7 @@ jobs:
 
   submit_ios_for_review:
     name: Submit iOS for App Store review
-    needs: [submit_ios]
+    needs: [build_ios, submit_ios]
     environment: production
     runs_on: macos-medium
     steps:
@@ -49,4 +49,7 @@ jobs:
       - name: Install fastlane
         run: bundle install
       - name: Submit for review
-        run: bundle exec fastlane ios submit_review
+        run: |
+          export APP_VERSION="${{ needs.build_ios.outputs.app_version }}"
+          export APP_BUILD_VERSION="${{ needs.build_ios.outputs.app_build_version }}"
+          bundle exec fastlane ios submit_review

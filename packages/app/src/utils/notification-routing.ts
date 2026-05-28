@@ -1,9 +1,5 @@
 import type { Href } from "expo-router";
-import {
-  buildHostAgentDetailRoute,
-  buildHostRootRoute,
-  buildHostWorkspaceRoute,
-} from "@/utils/host-routes";
+import { buildHostAgentDetailRoute, buildHostRootRoute } from "@/utils/host-routes";
 
 type NotificationData = Record<string, unknown> | null | undefined;
 type NotificationRoute = Extract<Href, string>;
@@ -30,12 +26,8 @@ export function resolveNotificationTarget(data: NotificationData): {
 }
 
 export function buildNotificationRoute(data: NotificationData): NotificationRoute {
-  const { serverId, agentId, workspaceId } = resolveNotificationTarget(data);
+  const { serverId, agentId } = resolveNotificationTarget(data);
   if (serverId && agentId) {
-    if (workspaceId) {
-      const base = buildHostWorkspaceRoute(serverId, workspaceId);
-      return `${base}?open=${encodeURIComponent(`agent:${agentId}`)}` as const;
-    }
     return buildHostAgentDetailRoute(serverId, agentId);
   }
   if (serverId) {

@@ -82,7 +82,7 @@ test.describe("Composer attachments", () => {
     }
 
     const ghRepo = await createTempGithubRepo({
-      prefix: "paseo-e2e-attach-issue-",
+      category: "attach-issue",
       issues: [{ title: "fix: attach-issue-unique-alpha" }],
       prs: [{ title: "feat: attach-issue-dummy-pr", state: "open" }],
     });
@@ -114,7 +114,7 @@ test.describe("Composer attachments", () => {
     }
 
     const ghRepo = await createTempGithubRepo({
-      prefix: "paseo-e2e-attach-pr-",
+      category: "attach-pr",
       prs: [{ title: "feat: attach-pr-unique-beta", state: "open" }],
     });
     const handle = await openGithubWorkspace(page, ghRepo.prs[0].localPath);

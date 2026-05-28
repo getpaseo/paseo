@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   resolveStartupRedirectRoute,
+  resolveStartupWorkspaceSelection,
   startHostRuntimeBootstrap,
   WELCOME_ROUTE,
 } from "./host-runtime-bootstrap";
@@ -150,24 +151,44 @@ describe("resolveStartupRedirectRoute", () => {
   });
 
   describe("scenario: saved-host-online", () => {
-    it("redirects to the workspace route when the online host matches the persisted workspace", () => {
+    it("leaves matching persisted workspace navigation to the workspace navigator", () => {
       const route = resolveStartupRedirectRoute({
         ...baseInput,
         anyOnlineHostServerId: "server-1",
         workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
       });
 
-      expect(route).toBe("/h/server-1/workspace/workspace-a");
+      expect(route).toBeNull();
     });
 
-    it("redirects to the host root when the persisted workspace targets a different server", () => {
+    it("resolves the persisted workspace when the online host matches it", () => {
+      const selection = resolveStartupWorkspaceSelection({
+        ...baseInput,
+        anyOnlineHostServerId: "server-1",
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+      });
+
+      expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
+    });
+
+    it("leaves persisted workspace navigation to the workspace navigator when another host is first online", () => {
       const route = resolveStartupRedirectRoute({
         ...baseInput,
         anyOnlineHostServerId: "server-2",
         workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
       });
 
-      expect(route).toBe("/h/server-2");
+      expect(route).toBeNull();
+    });
+
+    it("resolves the persisted workspace when another host is first online", () => {
+      const selection = resolveStartupWorkspaceSelection({
+        ...baseInput,
+        anyOnlineHostServerId: "server-2",
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+      });
+
+      expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
     });
 
     it("redirects to the host root when no persisted workspace exists", () => {
@@ -192,14 +213,14 @@ describe("resolveStartupRedirectRoute", () => {
   });
 
   describe("scenario: both-succeed", () => {
-    it("redirects to the host that the host runtime selects as earliest online", () => {
+    it("leaves matching persisted workspace navigation to the workspace navigator", () => {
       const route = resolveStartupRedirectRoute({
         ...baseInput,
         anyOnlineHostServerId: "server-saved",
         workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
       });
 
-      expect(route).toBe("/h/server-saved/workspace/workspace-a");
+      expect(route).toBeNull();
     });
   });
 

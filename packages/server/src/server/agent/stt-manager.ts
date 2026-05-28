@@ -111,6 +111,10 @@ export interface SessionTranscriptionResult extends TranscriptionResult {
   format: string;
 }
 
+export interface STTManagerOptions {
+  language?: string;
+}
+
 /**
  * Per-session STT manager
  * Handles speech-to-text transcription
@@ -119,15 +123,18 @@ export class STTManager {
   private readonly sessionId: string;
   private readonly logger: pino.Logger;
   private readonly resolveStt: () => SpeechToTextProvider | null;
+  private readonly language: string;
 
   constructor(
     sessionId: string,
     logger: pino.Logger,
     stt: Resolvable<SpeechToTextProvider | null>,
+    options?: STTManagerOptions,
   ) {
     this.sessionId = sessionId;
     this.logger = logger.child({ module: "agent", component: "stt-manager", sessionId });
     this.resolveStt = toResolver(stt);
+    this.language = options?.language ?? "en";
   }
 
   public getProvider(): SpeechToTextProvider | null {
@@ -171,7 +178,7 @@ export class STTManager {
 
     const session = stt.createSession({
       logger: this.logger.child({ component: "stt-session" }),
-      language: "en",
+      language: this.language,
     });
 
     const pcmForModel = preparePcmForModel(audio, format, session.requiredSampleRate);

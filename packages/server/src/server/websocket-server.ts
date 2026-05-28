@@ -13,10 +13,8 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
-import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
-  type SessionOutboundMessage,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
@@ -26,21 +24,16 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import { asUint8Array, decodeTerminalStreamFrame } from "../shared/binary-frames/index.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
-} from "./agent/provider-launch-config.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import { buildProviderRegistry, createClientsFromRegistry } from "./agent/provider-registry.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
-import { PushService } from "./push/push-service.js";
+import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ScriptRouteStore } from "./script-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -50,7 +43,7 @@ import { computeNotificationPlan, type ClientPresenceState } from "./agent-atten
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
-} from "../shared/agent-attention-notification.js";
+} from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import {
   extractWsBearerProtocol,
@@ -58,6 +51,10 @@ import {
   isBearerTokenValid,
   type DaemonAuthConfig,
 } from "./auth.js";
+import {
+  WebSocketRuntimeMetricsWindow,
+  type WebSocketRuntimeCounters,
+} from "./websocket/runtime-metrics.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -108,6 +105,9 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
 function createFallbackWorkspaceGitService(): WorkspaceGitService {
   return {
     registerWorkspace: () => ({
+      unsubscribe: () => {},
+    }),
+    onSnapshotUpdated: () => ({
       unsubscribe: () => {},
     }),
     peekSnapshot: () => null,
@@ -271,24 +271,6 @@ interface SessionConnection {
   externalDisconnectCleanupTimeout: ReturnType<typeof setTimeout> | null;
 }
 
-interface WebSocketRuntimeCounters {
-  connectedAwaitingHello: number;
-  helloResumed: number;
-  helloNew: number;
-  pendingDisconnected: number;
-  sessionDisconnectedWaitingReconnect: number;
-  sessionSocketDisconnectedAttached: number;
-  sessionCleanup: number;
-  validationFailed: number;
-  binaryBeforeHelloRejected: number;
-  pendingMessageRejectedBeforeHello: number;
-  missingConnectionForMessage: number;
-  unexpectedHelloOnActiveConnection: number;
-  relayExternalSocketAttached: number;
-  originRejected: number;
-  hostRejected: number;
-}
-
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -345,6 +327,18 @@ export class VoiceAssistantWebSocketServer {
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
   private readonly serverId: string;
   private readonly daemonVersion: string;
+  private readonly daemonRuntimeConfig:
+    | {
+        listen: string | null;
+        relay: {
+          enabled: boolean;
+          endpoint: string;
+          publicEndpoint: string;
+          useTls: boolean;
+          publicUseTls: boolean;
+        };
+      }
+    | undefined;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
@@ -359,7 +353,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly paseoHome: string;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
-  private readonly pushService: PushService;
+  private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -374,42 +368,13 @@ export class VoiceAssistantWebSocketServer {
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
-  private agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
-  private providerOverrides: Record<string, ProviderOverride> | undefined;
-  private isDev!: boolean;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
     | null;
   private serverCapabilities: ServerCapabilities | undefined;
-  private runtimeWindowStartedAt = Date.now();
-  private readonly runtimeCounters: WebSocketRuntimeCounters = {
-    connectedAwaitingHello: 0,
-    helloResumed: 0,
-    helloNew: 0,
-    pendingDisconnected: 0,
-    sessionDisconnectedWaitingReconnect: 0,
-    sessionSocketDisconnectedAttached: 0,
-    sessionCleanup: 0,
-    validationFailed: 0,
-    binaryBeforeHelloRejected: 0,
-    pendingMessageRejectedBeforeHello: 0,
-    missingConnectionForMessage: 0,
-    unexpectedHelloOnActiveConnection: 0,
-    relayExternalSocketAttached: 0,
-    originRejected: 0,
-    hostRejected: 0,
-  };
-  private readonly inboundMessageCounts = new Map<string, number>();
-  private readonly inboundSessionRequestCounts = new Map<string, number>();
-  private readonly outboundMessageCounts = new Map<string, number>();
-  private readonly outboundSessionMessageCounts = new Map<string, number>();
-  private readonly outboundAgentStreamCounts = new Map<string, number>();
-  private readonly outboundAgentStreamByAgentCounts = new Map<string, number>();
-  private readonly outboundBinaryFrameCounts = new Map<string, number>();
-  private readonly bufferedAmountSamples: number[] = [];
-  private readonly requestLatencies = new Map<string, number[]>();
+  private readonly runtimeMetrics = new WebSocketRuntimeMetricsWindow();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
@@ -431,9 +396,6 @@ export class VoiceAssistantWebSocketServer {
     dictation?: {
       finalTimeoutMs?: number;
     },
-    agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
-    providerOverrides?: Record<string, ProviderOverride>,
-    isDev?: boolean,
     daemonVersion?: string,
     onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
     projectRegistry?: ProjectRegistry,
@@ -454,6 +416,18 @@ export class VoiceAssistantWebSocketServer {
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
     workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
+    pushNotificationSender?: PushNotificationSender,
+    providerSnapshotManager?: ProviderSnapshotManager,
+    daemonRuntimeConfig?: {
+      listen: string | null;
+      relay: {
+        enabled: boolean;
+        endpoint: string;
+        publicEndpoint: string;
+        useTls: boolean;
+        publicUseTls: boolean;
+      };
+    },
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -461,6 +435,7 @@ export class VoiceAssistantWebSocketServer {
       throw new MissingDaemonVersionError();
     }
     this.daemonVersion = daemonVersion.trim();
+    this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -485,9 +460,6 @@ export class VoiceAssistantWebSocketServer {
       speech,
       terminalManager,
       dictation,
-      agentProviderRuntimeSettings,
-      providerOverrides,
-      isDev,
       onLifecycleIntent,
       scriptRouteStore,
       scriptRuntimeStore,
@@ -496,15 +468,10 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost,
       resolveScriptHealth,
     });
-    const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
-    this.providerSnapshotManager = new ProviderSnapshotManager(
-      buildProviderRegistry(providerSnapshotLogger, {
-        runtimeSettings: this.agentProviderRuntimeSettings,
-        providerOverrides: this.providerOverrides,
-        isDev: this.isDev,
-      }),
-      providerSnapshotLogger,
-    );
+    if (!providerSnapshotManager) {
+      throw new Error("providerSnapshotManager is required");
+    }
+    this.providerSnapshotManager = providerSnapshotManager;
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
@@ -513,24 +480,17 @@ export class VoiceAssistantWebSocketServer {
         this.publishSpeechReadiness(snapshot);
       }) ?? null;
     this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config) => {
-      this.providerOverrides = applyMutableProviderConfigToOverrides(
-        this.providerOverrides,
+      const nextAgentManagerState = this.providerSnapshotManager.applyMutableProviderConfig(
         config.providers,
       );
-      const registry = buildProviderRegistry(providerSnapshotLogger, {
-        runtimeSettings: this.agentProviderRuntimeSettings,
-        providerOverrides: this.providerOverrides,
-        isDev: this.isDev,
-      });
-      const clients = createClientsFromRegistry(registry, providerSnapshotLogger);
-      this.providerSnapshotManager.replaceRegistry(registry);
-      this.agentManager.updateProviderRegistry({ providerDefinitions: registry, clients });
+      this.agentManager.updateProviderRegistry(nextAgentManagerState);
       this.broadcastDaemonConfigChanged(config);
     });
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
-    this.pushService = new PushService(pushLogger, this.pushTokenStore);
+    this.pushNotificationSender =
+      pushNotificationSender ?? createPushNotificationSender(pushLogger, this.pushTokenStore);
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -548,9 +508,6 @@ export class VoiceAssistantWebSocketServer {
     speech: SpeechService | null | undefined;
     terminalManager: TerminalManager | null | undefined;
     dictation: { finalTimeoutMs?: number } | undefined;
-    agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
-    providerOverrides: Record<string, ProviderOverride> | undefined;
-    isDev: boolean | undefined;
     onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | undefined;
     scriptRouteStore: ScriptRouteStore | null | undefined;
     scriptRuntimeStore: WorkspaceScriptRuntimeStore | null | undefined;
@@ -564,9 +521,6 @@ export class VoiceAssistantWebSocketServer {
     this.speech = params.speech ?? null;
     this.terminalManager = params.terminalManager ?? null;
     this.dictation = params.dictation ?? null;
-    this.agentProviderRuntimeSettings = params.agentProviderRuntimeSettings;
-    this.providerOverrides = params.providerOverrides;
-    this.isDev = params.isDev === true;
     this.onLifecycleIntent = params.onLifecycleIntent ?? null;
     this.scriptRouteStore = params.scriptRouteStore ?? null;
     this.scriptRuntimeStore = params.scriptRuntimeStore ?? null;
@@ -668,7 +622,7 @@ export class VoiceAssistantWebSocketServer {
       // WebSocket.OPEN = 1
       if (ws.readyState === 1) {
         ws.send(payload);
-        this.recordOutboundMessage(message, ws);
+        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
       }
     }
   }
@@ -785,7 +739,7 @@ export class VoiceAssistantWebSocketServer {
     }
     try {
       ws.send(JSON.stringify(message));
-      this.recordOutboundMessage(message, ws);
+      this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
     }
@@ -797,7 +751,7 @@ export class VoiceAssistantWebSocketServer {
     }
     try {
       ws.send(frame);
-      this.recordOutboundBinaryFrame(ws);
+      this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_binary_failed");
     }
@@ -924,6 +878,7 @@ export class VoiceAssistantWebSocketServer {
       mcpBaseUrl: this.mcpBaseUrl,
       daemonAuthToken,
       stt: () => this.speech?.resolveStt() ?? null,
+      sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
@@ -956,12 +911,13 @@ export class VoiceAssistantWebSocketServer {
           ? {
               finalTimeoutMs: this.dictation?.finalTimeoutMs,
               stt: () => this.speech?.resolveDictationStt() ?? null,
+              sttLanguage: this.speech?.resolveDictationSttLanguage() ?? "en",
               getSpeechReadiness: () => this.speech!.getReadiness(),
             }
           : undefined,
-      agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
-      providerOverrides: this.providerOverrides,
-      isDev: this.isDev,
+      serverId: this.serverId,
+      daemonVersion: this.daemonVersion,
+      daemonRuntimeConfig: this.daemonRuntimeConfig,
     });
 
     connection = {
@@ -1093,6 +1049,14 @@ export class VoiceAssistantWebSocketServer {
       features: {
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
+        // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75, remove gate after 2026-11-13.
+        checkoutGithubSetAutoMerge: true,
+        // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
+        daemonStatusRpc: true,
+        // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
+        "terminal-restore-modes": true,
+        // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        rewind: true,
       },
     };
   }
@@ -1307,7 +1271,9 @@ export class VoiceAssistantWebSocketServer {
           payload: {
             requestId: requestInfo.requestId,
             requestType: requestInfo.requestType,
-            error: isUnknownSchema ? "Unknown request schema" : "Invalid message",
+            error: isUnknownSchema
+              ? `Unknown request, try upgrading the daemon (currently v${this.daemonVersion})`
+              : "Invalid message",
             code: isUnknownSchema ? "unknown_schema" : "invalid_message",
           },
         }),
@@ -1575,116 +1541,19 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private incrementRuntimeCounter(counter: keyof WebSocketRuntimeCounters): void {
-    this.runtimeCounters[counter] += 1;
-  }
-
-  private incrementCount(map: Map<string, number>, key: string): void {
-    map.set(key, (map.get(key) ?? 0) + 1);
+    this.runtimeMetrics.incrementCounter(counter);
   }
 
   private recordInboundMessageType(type: string): void {
-    this.incrementCount(this.inboundMessageCounts, type);
+    this.runtimeMetrics.recordInboundMessage(type);
   }
 
   private recordInboundSessionRequestType(type: string): void {
-    this.incrementCount(this.inboundSessionRequestCounts, type);
-  }
-
-  private recordOutboundMessage(message: WSOutboundMessage, ws: WebSocketLike): void {
-    if (message.type !== "session") {
-      this.incrementCount(this.outboundMessageCounts, message.type);
-      this.recordBufferedAmount(ws);
-      return;
-    }
-
-    this.incrementCount(this.outboundMessageCounts, "session_message");
-    this.incrementCount(this.outboundSessionMessageCounts, message.message.type);
-
-    if (message.message.type === "agent_stream") {
-      this.recordOutboundAgentStreamMessage(message.message.payload);
-    }
-
-    this.recordBufferedAmount(ws);
-  }
-
-  private recordOutboundAgentStreamMessage(
-    payload: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"],
-  ): void {
-    const { agentId, event } = payload;
-    const eventType = event.type === "timeline" ? `timeline:${event.item.type}` : event.type;
-    this.incrementCount(this.outboundAgentStreamCounts, eventType);
-    this.incrementCount(this.outboundAgentStreamByAgentCounts, agentId);
-  }
-
-  private recordOutboundBinaryFrame(ws: WebSocketLike): void {
-    this.incrementCount(this.outboundBinaryFrameCounts, "binary");
-    this.recordBufferedAmount(ws);
-  }
-
-  private recordBufferedAmount(ws: WebSocketLike): void {
-    if (typeof ws.bufferedAmount !== "number") {
-      return;
-    }
-    this.bufferedAmountSamples.push(ws.bufferedAmount);
+    this.runtimeMetrics.recordInboundSessionRequest(type);
   }
 
   private recordRequestLatency(type: string, durationMs: number): void {
-    let latencies = this.requestLatencies.get(type);
-    if (!latencies) {
-      latencies = [];
-      this.requestLatencies.set(type, latencies);
-    }
-    latencies.push(durationMs);
-  }
-
-  private getTopCounts(map: Map<string, number>, limit: number): Array<[string, number]> {
-    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
-  }
-
-  private computeLatencyStats(): Array<{
-    type: string;
-    count: number;
-    minMs: number;
-    maxMs: number;
-    p50Ms: number;
-    totalMs: number;
-  }> {
-    const stats: Array<{
-      type: string;
-      count: number;
-      minMs: number;
-      maxMs: number;
-      p50Ms: number;
-      totalMs: number;
-    }> = [];
-    for (const [type, latencies] of this.requestLatencies) {
-      if (latencies.length === 0) continue;
-      latencies.sort((a, b) => a - b);
-      const count = latencies.length;
-      const minMs = Math.round(latencies[0]);
-      const maxMs = Math.round(latencies[count - 1]);
-      const p50Ms = Math.round(latencies[Math.floor(count / 2)]);
-      const totalMs = Math.round(latencies.reduce((sum, v) => sum + v, 0));
-      stats.push({ type, count, minMs, maxMs, p50Ms, totalMs });
-    }
-    stats.sort((a, b) => b.totalMs - a.totalMs);
-    return stats.slice(0, 15);
-  }
-
-  private computeBufferedAmountStats(): {
-    p95: number;
-    max: number;
-  } {
-    if (this.bufferedAmountSamples.length === 0) {
-      return { p95: 0, max: 0 };
-    }
-
-    const samples = [...this.bufferedAmountSamples].sort((a, b) => a - b);
-    const p95Index = Math.ceil(samples.length * 0.95) - 1;
-    return {
-      p95: samples[p95Index] ?? 0,
-      max: samples[samples.length - 1] ?? 0,
-    };
+    this.runtimeMetrics.recordRequestLatency(type, durationMs);
   }
 
   private collectSessionRuntimeMetrics(): WebSocketRuntimeMetrics {
@@ -1713,8 +1582,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private flushRuntimeMetrics(options?: { final?: boolean }): void {
-    const now = Date.now();
-    const windowMs = Math.max(0, now - this.runtimeWindowStartedAt);
+    const runtimeMetrics = this.runtimeMetrics.snapshotAndReset();
     const activeConnections = new Set<SessionConnection>(this.sessions.values()).size;
     const activeSockets = this.sessions.size;
     const pendingConnections = this.pendingConnections.size;
@@ -1723,13 +1591,11 @@ export class VoiceAssistantWebSocketServer {
         connection.sockets.size === 0 && connection.externalDisconnectCleanupTimeout !== null,
     ).length;
     const sessionMetrics = this.collectSessionRuntimeMetrics();
-    const latencyStats = this.computeLatencyStats();
-    const bufferedAmountStats = this.computeBufferedAmountStats();
     const agentSnapshot = this.agentManager.getMetricsSnapshot();
 
     this.logger.info(
       {
-        windowMs,
+        windowMs: runtimeMetrics.windowMs,
         final: Boolean(options?.final),
         sessions: {
           activeConnections,
@@ -1740,37 +1606,21 @@ export class VoiceAssistantWebSocketServer {
           activeSockets,
           pendingConnections,
         },
-        counters: { ...this.runtimeCounters },
-        inboundMessageTypesTop: this.getTopCounts(this.inboundMessageCounts, 12),
-        inboundSessionRequestTypesTop: this.getTopCounts(this.inboundSessionRequestCounts, 20),
-        outboundMessageTypesTop: this.getTopCounts(this.outboundMessageCounts, 12),
-        outboundSessionMessageTypesTop: this.getTopCounts(this.outboundSessionMessageCounts, 20),
-        outboundAgentStreamTypesTop: this.getTopCounts(this.outboundAgentStreamCounts, 20),
-        outboundAgentStreamAgentsTop: this.getTopCounts(this.outboundAgentStreamByAgentCounts, 20),
-        outboundBinaryFrameTypesTop: this.getTopCounts(this.outboundBinaryFrameCounts, 12),
-        bufferedAmount: bufferedAmountStats,
+        counters: runtimeMetrics.counters,
+        inboundMessageTypesTop: runtimeMetrics.inboundMessageTypesTop,
+        inboundSessionRequestTypesTop: runtimeMetrics.inboundSessionRequestTypesTop,
+        outboundMessageTypesTop: runtimeMetrics.outboundMessageTypesTop,
+        outboundSessionMessageTypesTop: runtimeMetrics.outboundSessionMessageTypesTop,
+        outboundAgentStreamTypesTop: runtimeMetrics.outboundAgentStreamTypesTop,
+        outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
+        outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
+        bufferedAmount: runtimeMetrics.bufferedAmount,
         runtime: sessionMetrics,
-        latency: latencyStats,
+        latency: runtimeMetrics.latency,
         agents: agentSnapshot,
       },
       "ws_runtime_metrics",
     );
-
-    for (const counter of Object.keys(this.runtimeCounters) as Array<
-      keyof WebSocketRuntimeCounters
-    >) {
-      this.runtimeCounters[counter] = 0;
-    }
-    this.inboundMessageCounts.clear();
-    this.inboundSessionRequestCounts.clear();
-    this.outboundMessageCounts.clear();
-    this.outboundSessionMessageCounts.clear();
-    this.outboundAgentStreamCounts.clear();
-    this.outboundAgentStreamByAgentCounts.clear();
-    this.outboundBinaryFrameCounts.clear();
-    this.bufferedAmountSamples.length = 0;
-    this.requestLatencies.clear();
-    this.runtimeWindowStartedAt = now;
   }
 
   private getClientActivityState(session: Session): ClientPresenceState {
@@ -1827,11 +1677,9 @@ export class VoiceAssistantWebSocketServer {
     });
 
     if (plan.shouldPush) {
-      const tokens = this.pushTokenStore.getAllTokens();
-      this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
-      if (tokens.length > 0) {
-        void this.pushService.sendPush(tokens, notification);
-      }
+      void this.pushNotificationSender.send(notification).catch((err) => {
+        this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
+      });
     }
 
     for (const [clientIndex, { ws }] of clientEntries.entries()) {

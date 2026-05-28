@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { router } from "expo-router";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
-import { useNavigationActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
 import { buildHostNewWorkspaceRoute } from "@/utils/host-routes";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
@@ -10,7 +10,7 @@ import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 const WORKTREE_NEW_ACTIONS: readonly KeyboardActionId[] = ["worktree.new"];
 
 export function useActiveWorktreeNewAction() {
-  const selection = useNavigationActiveWorkspaceSelection();
+  const selection = useActiveWorkspaceSelection();
   const serverId = selection?.serverId ?? null;
   const workspaceId = selection?.workspaceId ?? null;
 

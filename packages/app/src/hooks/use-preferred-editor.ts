@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { EditorTargetIdSchema, type EditorTargetId } from "@server/shared/messages";
+import { EditorTargetIdSchema, type EditorTargetId } from "@getpaseo/protocol/messages";
 
 const PREFERRED_EDITOR_STORAGE_KEY = "@paseo:preferred-editor";
 const PREFERRED_EDITOR_QUERY_KEY = ["preferred-editor"];
@@ -19,6 +19,9 @@ export function resolvePreferredEditorId(
   availableEditorIds: readonly EditorTargetId[],
   storedEditorId: EditorTargetId | null | undefined,
 ): EditorTargetId | null {
+  if (storedEditorId === undefined) {
+    return null;
+  }
   if (
     storedEditorId &&
     availableEditorIds.some((availableEditorId) => availableEditorId === storedEditorId)
@@ -50,7 +53,7 @@ export function usePreferredEditor() {
   );
 
   return {
-    preferredEditorId: data ?? null,
+    preferredEditorId: isPending ? undefined : (data ?? null),
     isLoading: isPending,
     updatePreferredEditor,
   };

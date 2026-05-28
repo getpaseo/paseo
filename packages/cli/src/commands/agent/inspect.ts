@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import type { AgentSnapshotPayload } from "@getpaseo/server";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
@@ -149,7 +150,7 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
       tool: p.name ?? "unknown",
     })),
     Worktree: snapshot.labels?.["paseo.worktree"] ?? null,
-    ParentAgentId: snapshot.labels?.["paseo.parent-agent-id"] ?? null,
+    ParentAgentId: snapshot.labels?.[PARENT_AGENT_ID_LABEL] ?? null,
   };
 }
 

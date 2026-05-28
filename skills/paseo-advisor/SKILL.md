@@ -39,6 +39,22 @@ End with the no-edits suffix:
 This is analysis only. Do NOT edit, create, or delete any files. Do NOT write code.
 ```
 
+## Forwarded skills
+
+If `$ARGUMENTS` contains another skill reference — `/unslop`, `/unslop-risk`, `$unslop`, etc. — the user is asking the advisor to run that skill against the current task. Examples:
+
+- `/paseo-advisor /unslop` → advisor runs `/unslop` on the current diff.
+- `/paseo-advisor /unslop-risk` → advisor does an unslop-risk review.
+- `/paseo-advisor $diagnose this build failure` → advisor invokes `/diagnose`.
+
+Parse the forwarded skill name out of `$ARGUMENTS` (`/<name>` or `$<name>`). In the briefing, tell the advisor explicitly:
+
+```
+Invoke the `<name>` skill against this task. Load it via the Skill tool before doing anything else.
+```
+
+Pass through any remaining arguments after the skill name as the skill's own input. The advisor — not you — runs the skill; you're still just the orchestrator handing it the work.
+
 ## Launch and synthesize
 
 Create the advisor agent via Paseo with a `[Advisor] <topic>` title and the briefing as the initial prompt. Wait for it to finish. Read its response. Synthesize for the user — the advisor's verdict + your recommendation.

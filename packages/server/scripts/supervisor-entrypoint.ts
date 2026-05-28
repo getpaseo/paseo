@@ -10,11 +10,8 @@ import {
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
 import { runSupervisor } from "./supervisor.js";
+import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
-
-const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
-const DEFAULT_LOG_ROTATE_SIZE = "10m";
-const DEFAULT_LOG_ROTATE_MAX_FILES = 2;
 
 interface DaemonRunnerConfig {
   devMode: boolean;
@@ -61,8 +58,22 @@ function resolveDevWorkerEntry(): string {
   return candidate;
 }
 
-function resolveWorkerExecArgv(workerEntry: string): string[] {
-  return workerEntry.endsWith(".ts") ? ["--import", "tsx"] : [];
+function resolveWorkerExecArgv(workerEntry: string, devMode: boolean): string[] {
+  const execArgv = workerEntry.endsWith(".ts") ? ["--import", "tsx"] : [];
+  if (!devMode) {
+    return execArgv;
+  }
+  const devArgs = [
+    "--heapsnapshot-near-heap-limit=3",
+    "--max-old-space-size=3072",
+    "--report-on-fatalerror",
+    "--report-directory=/tmp/paseo-reports",
+  ];
+  const inspectArg = process.env.PASEO_NODE_INSPECT ?? "--inspect";
+  if (inspectArg !== "0" && inspectArg !== "false" && inspectArg !== "off") {
+    devArgs.push(inspectArg);
+  }
+  return [...devArgs, ...execArgv];
 }
 
 function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): string | null {
@@ -77,32 +88,10 @@ function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): str
   return existsSync(runnerPath) ? runnerPath : null;
 }
 
-function resolveSupervisorLogFile(
-  paseoHome: string,
-  persistedConfig: ReturnType<typeof loadPersistedConfig>,
-) {
-  const configuredFile = persistedConfig.log?.file;
-  const configuredPath = configuredFile?.path;
-  let logPath = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
-  if (configuredPath) {
-    logPath = path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.resolve(paseoHome, configuredPath);
-  }
-
-  return {
-    path: logPath,
-    rotate: {
-      maxSize: configuredFile?.rotate?.maxSize ?? DEFAULT_LOG_ROTATE_SIZE,
-      maxFiles: configuredFile?.rotate?.maxFiles ?? DEFAULT_LOG_ROTATE_MAX_FILES,
-    },
-  };
-}
-
 async function main(): Promise<void> {
   const config = parseConfig(process.argv.slice(2));
   const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
-  const workerExecArgv = resolveWorkerExecArgv(workerEntry);
+  const workerExecArgv = resolveWorkerExecArgv(workerEntry, config.devMode);
   const workerEnv: NodeJS.ProcessEnv = { ...process.env };
   const packagedNodeEntrypointRunner =
     process.env.ELECTRON_RUN_AS_NODE === "1"
@@ -113,7 +102,7 @@ async function main(): Promise<void> {
 
   const paseoHome = resolvePaseoHome(workerEnv);
   const persistedConfig = loadPersistedConfig(paseoHome);
-  const supervisorLogFile = resolveSupervisorLogFile(paseoHome, persistedConfig);
+  const supervisorLogFile = resolveSupervisorLogFile(paseoHome, persistedConfig, workerEnv);
 
   try {
     await acquirePidLock(paseoHome, null, {

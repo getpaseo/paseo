@@ -22,6 +22,7 @@ export interface ProjectHostEntry {
 export interface ProjectSummary {
   projectKey: string;
   projectName: string;
+  projectCustomName?: string | null;
   hosts: ProjectHostEntry[];
   totalWorkspaceCount: number;
   hostCount: number;
@@ -56,6 +57,7 @@ interface HostGroup {
 interface ProjectGroup {
   projectKey: string;
   projectName: string;
+  projectCustomName: string | null;
   hostsByServerId: Map<string, HostGroup>;
 }
 
@@ -119,6 +121,7 @@ function toProjectSummary(draft: ProjectGroup): ProjectSummary {
   return {
     projectKey: draft.projectKey,
     projectName: draft.projectName,
+    projectCustomName: draft.projectCustomName,
     hosts,
     totalWorkspaceCount,
     hostCount: hosts.length,
@@ -139,9 +142,13 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
         group = {
           projectKey,
           projectName: workspace.projectDisplayName,
+          projectCustomName: workspace.projectCustomName ?? null,
           hostsByServerId: new Map(),
         };
         groups.set(projectKey, group);
+      } else if (workspace.projectCustomName && !group.projectCustomName) {
+        group.projectCustomName = workspace.projectCustomName;
+        group.projectName = workspace.projectDisplayName;
       }
 
       let hostGroup = group.hostsByServerId.get(host.serverId);

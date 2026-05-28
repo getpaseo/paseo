@@ -3,19 +3,19 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { WebSocket } from "ws";
-import { DaemonClient } from "../../client/daemon-client.js";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   WSOutboundMessageSchema,
   type TerminalState,
   type WSOutboundMessage,
-} from "../../shared/messages.js";
+} from "@getpaseo/protocol/messages";
 import {
   decodeTerminalSnapshotPayload,
   decodeTerminalStreamFrame,
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
   type TerminalStreamFrame,
-} from "../../shared/terminal-stream-protocol.js";
+} from "@getpaseo/protocol/terminal-stream-protocol";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
 
 type RawSessionEnvelope = Extract<WSOutboundMessage, { type: "session" }>;
@@ -46,13 +46,13 @@ function extractStateText(state: Pick<TerminalState, "grid" | "scrollback">): st
 }
 
 async function waitForCondition(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
   intervalMs = 25,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -377,6 +377,9 @@ function getFrameText(frame: TerminalStreamFrame): string {
     }
     return extractStateText(state);
   }
+  if (frame.opcode === TerminalStreamOpcode.Restore) {
+    return new TextDecoder().decode(frame.payload);
+  }
   return "";
 }
 
@@ -455,6 +458,29 @@ function sendRawTerminalInput(ws: WebSocket, slot: number, data: string): void {
       payload: data,
     }),
   );
+}
+
+function createInputModeProbeOptions(): { command: string; args: string[] } {
+  return {
+    command: process.execPath,
+    args: [
+      "-e",
+      `
+process.stdin.setRawMode?.(true);
+process.stdin.resume();
+process.stdin.on("data", (chunk) => {
+  const text = chunk.toString("utf8");
+  if (text.includes("e")) {
+    process.stdout.write("\\x1b[>7uKITTY\\n");
+  }
+  if (text.includes("w")) {
+    process.stdout.write("\\x1b[?9001hWIN32\\n");
+  }
+});
+setInterval(() => {}, 1000);
+`,
+    ],
+  };
 }
 
 async function repeatRawTerminalInput(input: {
@@ -649,6 +675,11 @@ async function subscribeRawTerminal(
   ws: WebSocket,
   terminalId: string,
   requestId: string,
+  restore?: {
+    mode: "live" | "visible-snapshot" | "full-snapshot";
+    scrollbackLines?: number;
+    size?: { rows: number; cols: number };
+  },
 ): Promise<number> {
   const ready = waitForRawSessionMessage(
     ws,
@@ -665,6 +696,7 @@ async function subscribeRawTerminal(
         type: "subscribe_terminal_request",
         terminalId,
         requestId,
+        ...(restore ? { restore } : {}),
       },
     }),
   );
@@ -726,6 +758,95 @@ test("client connects and receives a snapshot of the current terminal state", as
   const snapshot = await snapshotPromise;
 
   expect(extractStateText(snapshot)).toContain("hello");
+
+  rmSync(cwd, { recursive: true, force: true });
+}, 30000);
+
+test("live terminal restore skips the initial snapshot", async () => {
+  const cwd = tmpCwd();
+  const created = await ctx.client.createTerminal(cwd);
+  const terminalId = created.terminal!.id;
+  const ws = await connectRawWebSocket(ctx.daemon.port);
+
+  try {
+    ctx.client.sendTerminalInput(terminalId, {
+      type: "input",
+      data: "printf 'before-live\\n'\r",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const slot = await subscribeRawTerminal(ws, terminalId, "subscribe-live", { mode: "live" });
+    const outputFramesPromise = collectRawBinaryFrames(
+      ws,
+      (frames) => frames.some((frame) => getFrameText(frame).includes("after-live")),
+      10000,
+    );
+    ws.send(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Input,
+        slot,
+        payload: "printf 'after-live\\n'\r",
+      }),
+    );
+    const outputFrames = await outputFramesPromise;
+    const outputText = outputFrames.map((frame) => getFrameText(frame)).join("");
+
+    expect(outputText).toContain("after-live");
+    expect(outputText).not.toContain("before-live");
+    expect(
+      outputFrames.some(
+        (frame) =>
+          frame.opcode === TerminalStreamOpcode.Snapshot ||
+          frame.opcode === TerminalStreamOpcode.Restore,
+      ),
+    ).toBe(false);
+  } finally {
+    await closeWebSocket(ws);
+  }
+
+  rmSync(cwd, { recursive: true, force: true });
+}, 30000);
+
+test("visible terminal restore sends bounded ANSI history", async () => {
+  const cwd = tmpCwd();
+  const created = await ctx.client.createTerminal(cwd, undefined, undefined, {
+    command: "/bin/sh",
+    args: [
+      "-lc",
+      "i=1; while [ $i -le 1200 ]; do printf 'restore-line-%04d\\n' $i; i=$((i+1)); done; sleep 30",
+    ],
+  });
+  const terminalId = created.terminal!.id;
+  const ws = await connectRawWebSocket(ctx.daemon.port);
+
+  try {
+    await waitForCondition(async () => {
+      const capture = await ctx.client.captureTerminal(terminalId);
+      return capture.lines.join("\n").includes("restore-line-1200");
+    }, 10000);
+
+    const restoreFramePromise = waitForRawBinaryFrame(
+      ws,
+      (frame) => frame.opcode === TerminalStreamOpcode.Restore,
+      10000,
+    );
+    await subscribeRawTerminal(ws, terminalId, "subscribe-visible", {
+      mode: "visible-snapshot",
+      scrollbackLines: 5,
+      size: { rows: 10, cols: 80 },
+    });
+    const restoreFrame = await restoreFramePromise;
+    const restoreText = getFrameText(restoreFrame);
+    const restoredLines = restoreText.match(/restore-line-\d{4}/g) ?? [];
+
+    expect(restoredLines[0]).toBe("restore-line-1187");
+    expect(restoredLines.at(-1)).toBe("restore-line-1200");
+    expect(restoreText).not.toContain("restore-line-1186");
+    expect(restoreText).not.toContain("restore-line-0001");
+    expect(restoredLines.length).toBeLessThanOrEqual(15);
+  } finally {
+    await closeWebSocket(ws);
+  }
 
   rmSync(cwd, { recursive: true, force: true });
 }, 30000);
@@ -945,6 +1066,84 @@ test("disconnect and reconnect both receive the current snapshot", async () => {
   rmSync(cwd, { recursive: true, force: true });
 }, 30000);
 
+test("reconnected terminal streams replay active input modes after the snapshot", async () => {
+  const cwd = tmpCwd();
+  const created = await ctx.client.createTerminal(cwd, "input-mode-probe", undefined, {
+    ...createInputModeProbeOptions(),
+  });
+  const terminalId = created.terminal!.id;
+  const firstWs = await connectRawWebSocket(ctx.daemon.port);
+
+  try {
+    const firstSlot = await subscribeRawTerminal(firstWs, terminalId, "sub-input-mode-first");
+    await waitForRawBinaryFrame(
+      firstWs,
+      (frame) => frame.slot === firstSlot && frame.opcode === TerminalStreamOpcode.Snapshot,
+    );
+    sendRawTerminalInput(firstWs, firstSlot, "e");
+    await waitForRawBinaryFrame(
+      firstWs,
+      (frame) =>
+        frame.slot === firstSlot &&
+        frame.opcode === TerminalStreamOpcode.Output &&
+        getFrameText(frame).includes("KITTY"),
+    );
+    sendRawTerminalInput(firstWs, firstSlot, "w");
+    await waitForRawBinaryFrame(
+      firstWs,
+      (frame) =>
+        frame.slot === firstSlot &&
+        frame.opcode === TerminalStreamOpcode.Output &&
+        getFrameText(frame).includes("WIN32"),
+    );
+  } finally {
+    await closeWebSocket(firstWs);
+  }
+
+  const secondWs = await connectRawWebSocket(ctx.daemon.port);
+  try {
+    const secondSlot = await subscribeRawTerminal(secondWs, terminalId, "sub-input-mode-second");
+    await waitForRawBinaryFrame(
+      secondWs,
+      (frame) => frame.slot === secondSlot && frame.opcode === TerminalStreamOpcode.Snapshot,
+    );
+    const replay = await waitForRawBinaryFrame(
+      secondWs,
+      (frame) =>
+        frame.slot === secondSlot &&
+        frame.opcode === TerminalStreamOpcode.Output &&
+        getFrameText(frame).includes("\x1b[=7;1u"),
+    );
+
+    expect(getFrameText(replay)).toContain("\x1b[=7;1u");
+    expect(getFrameText(replay)).toContain("\x1b[?9001h");
+  } finally {
+    await closeWebSocket(secondWs);
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("reconnected terminal streams do not replay input modes before they are enabled", async () => {
+  const cwd = tmpCwd();
+  const created = await ctx.client.createTerminal(cwd, "input-mode-inactive-probe", undefined, {
+    ...createInputModeProbeOptions(),
+  });
+  const terminalId = created.terminal!.id;
+  const ws = await connectRawWebSocket(ctx.daemon.port);
+
+  try {
+    const slot = await subscribeRawTerminal(ws, terminalId, "sub-input-mode-inactive");
+    await waitForRawBinaryFrame(
+      ws,
+      (frame) => frame.slot === slot && frame.opcode === TerminalStreamOpcode.Snapshot,
+    );
+    await waitForNoRawBinaryFrame(ws, 300);
+  } finally {
+    await closeWebSocket(ws);
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("fast output to a slow websocket client falls back to a snapshot", async () => {
   const cwd = tmpCwd();
   const created = await ctx.client.createTerminal(cwd);
@@ -965,13 +1164,13 @@ test("fast output to a slow websocket client falls back to a snapshot", async ()
   });
 
   await new Promise((resolve) => setTimeout(resolve, 750));
-  rawSocket!.resume();
-
-  const catchUpFrame = await waitForRawBinaryFrame(
+  const catchUpFramePromise = waitForRawBinaryFrame(
     ws,
     (frame) => frame.opcode === TerminalStreamOpcode.Snapshot,
     15000,
   );
+  rawSocket!.resume();
+  const catchUpFrame = await catchUpFramePromise;
   expect(catchUpFrame.opcode).toBe(TerminalStreamOpcode.Snapshot);
 
   await closeWebSocket(ws);

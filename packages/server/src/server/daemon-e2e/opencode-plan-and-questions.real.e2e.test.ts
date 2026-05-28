@@ -13,16 +13,6 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-opencode-"));
 }
 
-function pickOpenCodeModel(
-  models: Array<{ id: string }>,
-  preferences: string[] = ["gpt-5-nano", "gpt-4.1-nano", "mini", "free"],
-): string {
-  const preferred = models.find((model) =>
-    preferences.some((fragment) => model.id.includes(fragment)),
-  );
-  return preferred?.id ?? models[0].id;
-}
-
 async function createHarness(): Promise<{
   client: DaemonClient;
   daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>>;
@@ -63,7 +53,7 @@ describe("daemon E2E (real opencode) - plan mode and clarifying questions", () =
         provider: "opencode",
         cwd,
         title: "OpenCode question regression",
-        model: pickOpenCodeModel(modelList.models, ["minimax-m2.5-free", "minimax", "free"]),
+        model: "opencode/big-pickle",
         modeId: "plan",
       });
 
@@ -111,7 +101,7 @@ describe("daemon E2E (real opencode) - plan mode and clarifying questions", () =
         provider: "opencode",
         cwd,
         title: "OpenCode plan mode regression",
-        model: pickOpenCodeModel(modelList.models),
+        model: "opencode/big-pickle",
         modeId: "plan",
       });
 

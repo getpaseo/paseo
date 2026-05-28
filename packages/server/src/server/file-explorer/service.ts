@@ -1,4 +1,5 @@
-import { promises as fs } from "fs";
+import { constants, promises as fs } from "fs";
+import type { FileHandle } from "fs/promises";
 import path from "path";
 import { resolvePathFromBase } from "../path-utils.js";
 
@@ -54,6 +55,10 @@ const TEXT_MIME_TYPES: Record<string, string> = {
 };
 
 const DEFAULT_TEXT_MIME_TYPE = "text/plain";
+const FILE_TYPE_SAMPLE_BYTES = 8192;
+const READ_FILE_OPEN_FLAGS =
+  process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
+const ACCESS_OUTSIDE_WORKSPACE_MESSAGE = "Access outside of workspace is not allowed";
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -69,6 +74,11 @@ interface ScopedPathParams {
   relativePath?: string;
 }
 
+interface ScopedPath {
+  requestedPath: string;
+  resolvedPath: string;
+}
+
 interface EntryPayloadParams {
   root: string;
   targetPath: string;
@@ -81,17 +91,17 @@ export async function listDirectoryEntries({
   relativePath = ".",
 }: ListDirectoryParams): Promise<FileExplorerDirectory> {
   const directoryPath = await resolveScopedPath({ root, relativePath });
-  const stats = await fs.stat(directoryPath);
+  const stats = await fs.stat(directoryPath.resolvedPath);
 
   if (!stats.isDirectory()) {
     throw new Error("Requested path is not a directory");
   }
 
-  const dirents = await fs.readdir(directoryPath, { withFileTypes: true });
+  const dirents = await fs.readdir(directoryPath.resolvedPath, { withFileTypes: true });
 
   const entriesWithNulls = await Promise.all(
     dirents.map(async (dirent) => {
-      const targetPath = path.join(directoryPath, dirent.name);
+      const targetPath = path.join(directoryPath.requestedPath, dirent.name);
       const kind: ExplorerEntryKind = dirent.isDirectory() ? "directory" : "file";
       try {
         return await buildEntryPayload({
@@ -103,7 +113,7 @@ export async function listDirectoryEntries({
       } catch (error) {
         // Directories can contain dangling links (e.g. AGENTS.md -> CLAUDE.md).
         // Skip entries whose targets disappeared instead of failing the whole listing.
-        if (isMissingEntryError(error)) {
+        if (isMissingEntryError(error) || isOutsideWorkspaceError(error)) {
           return null;
         }
         throw error;
@@ -121,7 +131,7 @@ export async function listDirectoryEntries({
   });
 
   return {
-    path: normalizeRelativePath({ root, targetPath: directoryPath }),
+    path: normalizeRelativePath({ root, targetPath: directoryPath.requestedPath }),
     entries,
   };
 }
@@ -171,48 +181,53 @@ export async function readExplorerFileBytes({
   relativePath,
 }: ReadFileParams): Promise<FileExplorerFileBytes> {
   const filePath = await resolveScopedPath({ root, relativePath });
-  const stats = await fs.stat(filePath);
+  const handle = await openFileForRead(filePath.resolvedPath);
 
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
+  try {
+    const stats = await handle.stat();
 
-  const ext = path.extname(filePath).toLowerCase();
-  const basePayload = {
-    path: normalizeRelativePath({ root, targetPath: filePath }),
-    size: stats.size,
-    modifiedAt: stats.mtime.toISOString(),
-  };
+    if (!stats.isFile()) {
+      throw new Error("Requested path is not a file");
+    }
 
-  if (ext in IMAGE_MIME_TYPES) {
-    const buffer = await fs.readFile(filePath);
+    const ext = path.extname(filePath.resolvedPath).toLowerCase();
+    const basePayload = {
+      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+      size: stats.size,
+      modifiedAt: stats.mtime.toISOString(),
+    };
+
+    const buffer = await handle.readFile();
+    if (ext in IMAGE_MIME_TYPES) {
+      return {
+        ...basePayload,
+        kind: "image",
+        encoding: "binary",
+        bytes: buffer,
+        mimeType: IMAGE_MIME_TYPES[ext],
+      };
+    }
+
+    if (isLikelyBinary(buffer)) {
+      return {
+        ...basePayload,
+        kind: "binary",
+        encoding: "binary",
+        bytes: buffer,
+        mimeType: "application/octet-stream",
+      };
+    }
+
     return {
       ...basePayload,
-      kind: "image",
-      encoding: "binary",
+      kind: "text",
+      encoding: "utf-8",
       bytes: buffer,
-      mimeType: IMAGE_MIME_TYPES[ext],
+      mimeType: textMimeTypeForExtension(ext),
     };
+  } finally {
+    await handle.close();
   }
-
-  const buffer = await fs.readFile(filePath);
-  if (isLikelyBinary(buffer)) {
-    return {
-      ...basePayload,
-      kind: "binary",
-      encoding: "binary",
-      bytes: buffer,
-      mimeType: "application/octet-stream",
-    };
-  }
-
-  return {
-    ...basePayload,
-    kind: "text",
-    encoding: "utf-8",
-    bytes: buffer,
-    mimeType: textMimeTypeForExtension(ext),
-  };
 }
 
 export async function getDownloadableFileInfo({ root, relativePath }: ReadFileParams): Promise<{
@@ -223,47 +238,50 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   size: number;
 }> {
   const filePath = await resolveScopedPath({ root, relativePath });
-  const stats = await fs.stat(filePath);
+  const handle = await openFileForRead(filePath.resolvedPath);
 
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
+  try {
+    const stats = await handle.stat();
 
-  const ext = path.extname(filePath).toLowerCase();
-  let mimeType = "application/octet-stream";
-  if (ext in IMAGE_MIME_TYPES) {
-    mimeType = IMAGE_MIME_TYPES[ext];
-  } else {
-    // Read only a small prefix to classify likely text vs binary.
-    const handle = await fs.open(filePath, "r");
-    const sample = Buffer.alloc(8192);
-    try {
+    if (!stats.isFile()) {
+      throw new Error("Requested path is not a file");
+    }
+
+    const ext = path.extname(filePath.resolvedPath).toLowerCase();
+    let mimeType = "application/octet-stream";
+    if (ext in IMAGE_MIME_TYPES) {
+      mimeType = IMAGE_MIME_TYPES[ext];
+    } else {
+      const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
       const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
       const chunk = bytesRead < sample.length ? sample.subarray(0, bytesRead) : sample;
       if (!isLikelyBinary(chunk)) {
         mimeType = textMimeTypeForExtension(ext);
       }
-    } finally {
-      await handle.close();
     }
-  }
 
-  return {
-    path: normalizeRelativePath({ root, targetPath: filePath }),
-    absolutePath: filePath,
-    fileName: path.basename(filePath),
-    mimeType,
-    size: stats.size,
-  };
+    return {
+      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+      absolutePath: filePath.resolvedPath,
+      fileName: path.basename(filePath.requestedPath),
+      mimeType,
+      size: stats.size,
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
-async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams): Promise<string> {
+async function resolveScopedPath({
+  root,
+  relativePath = ".",
+}: ScopedPathParams): Promise<ScopedPath> {
   const normalizedRoot = path.resolve(root);
   const requestedPath = resolvePathFromBase(normalizedRoot, relativePath);
   const relative = path.relative(normalizedRoot, requestedPath);
 
   if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {
-    throw new Error("Access outside of workspace is not allowed");
+    throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
   }
 
   const realRoot = await fs.realpath(normalizedRoot);
@@ -272,15 +290,19 @@ async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams)
     const realPath = await fs.realpath(requestedPath);
     const realRelative = path.relative(realRoot, realPath);
     if (realRelative !== "" && (realRelative.startsWith("..") || path.isAbsolute(realRelative))) {
-      throw new Error("Access outside of workspace is not allowed");
+      throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
     }
-    return requestedPath;
+    return { requestedPath, resolvedPath: realPath };
   } catch (error) {
     if (isMissingEntryError(error)) {
-      return requestedPath;
+      return { requestedPath, resolvedPath: requestedPath };
     }
     throw error;
   }
+}
+
+async function openFileForRead(filePath: string): Promise<FileHandle> {
+  return fs.open(filePath, READ_FILE_OPEN_FLAGS);
 }
 
 async function buildEntryPayload({
@@ -289,7 +311,11 @@ async function buildEntryPayload({
   name,
   kind,
 }: EntryPayloadParams): Promise<FileExplorerEntry> {
-  const stats = await fs.stat(targetPath);
+  const entryPath = await resolveScopedPath({
+    root,
+    relativePath: normalizeRelativePath({ root, targetPath }),
+  });
+  const stats = await fs.stat(entryPath.resolvedPath);
   return {
     name,
     path: normalizeRelativePath({ root, targetPath }),
@@ -302,6 +328,10 @@ async function buildEntryPayload({
 function isMissingEntryError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code;
   return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
+}
+
+function isOutsideWorkspaceError(error: unknown): boolean {
+  return error instanceof Error && error.message === ACCESS_OUTSIDE_WORKSPACE_MESSAGE;
 }
 
 function normalizeRelativePath({ root, targetPath }: { root: string; targetPath: string }): string {

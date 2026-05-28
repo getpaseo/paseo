@@ -1,9 +1,10 @@
 {
   "name": "@getpaseo/relay",
-  "version": "0.1.69",
+  "version": "0.1.84",
   "description": "Paseo relay for bridging daemon and client connections",
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "type": "module",
   "types": "./dist/index.d.ts",
@@ -46,6 +47,6 @@
     "@types/node": "^20.9.0",
     "@types/ws": "^8.5.8",
     "typescript": "^5.2.2",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.6"
   }
 }

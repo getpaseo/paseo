@@ -6,12 +6,12 @@ import { SiteShell } from "~/components/site-shell";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/cloud")({
-  head: () => ({
-    meta: pageMeta(
+  head: () =>
+    pageMeta(
       "Paseo Cloud - Design Partners",
-      "Paseo across machines, with a team, or inside a company. Looking for design partners.",
+      "Run Paseo across machines, with a team, or inside a company. We're onboarding design partners for the hosted, multi-machine, multi-user version of Paseo.",
+      "/cloud",
     ),
-  }),
   component: Cloud,
 });
 

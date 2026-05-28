@@ -81,7 +81,59 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Whether to enable the relay connection for remote access via app.paseo.sh.";
+        description = ''
+          Whether to enable relay-based remote access. When false, the daemon
+          runs with `--no-relay` and only accepts direct (LAN/loopback)
+          connections.
+        '';
+      };
+
+      mode = lib.mkOption {
+        type = lib.types.enum [ "hosted" "remote" ];
+        default = "hosted";
+        description = ''
+          How the daemon reaches the relay when `relay.enable = true`:
+
+          - `"hosted"` (default): use the upstream `app.paseo.sh` relay.
+            Preserves the current behavior; no extra options needed.
+          - `"remote"`: connect to a self-hosted relay at
+            `relay.host:relay.port`. Sets `PASEO_RELAY_ENDPOINT` and
+            `PASEO_RELAY_USE_TLS` for the daemon.
+
+          A `"local"` mode (running a relay on the same host as a systemd
+          unit) is not yet implemented — the relay package currently only
+          ships a Cloudflare Workers adapter. Tracked separately.
+        '';
+      };
+
+      host = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "relay.example.com";
+        description = "Relay hostname. Required when `relay.mode = \"remote\"`.";
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 443;
+        description = "Relay port. Used when `relay.mode = \"remote\"`.";
+      };
+
+      useTls = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Whether to use TLS when connecting to the relay. Used when `relay.mode = \"remote\"`.";
+      };
+
+      publicUseTls = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = ''
+          Whether the public (client-facing) relay endpoint uses TLS.
+          When `null` (default), the daemon falls back to `relay.useTls`.
+          Override when the internal path is plain `ws://` behind a
+          TLS-terminating reverse proxy.
+        '';
       };
     };
 
@@ -94,8 +146,9 @@ in
 
         When Paseo runs as a real user (not the default system user), AI agents
         need access to the user's tools (git, ssh, etc.). This adds the user's
-        NixOS profile and system paths so agents can use them without manually
-        setting PATH.
+        NixOS profile, home-manager profile (`~/.nix-profile/bin` and
+        `~/.local/state/nix/profile/bin`), and system paths so agents can use
+        them without manually setting PATH.
 
         Enabled by default when `user` is set to a non-default value.
       '';
@@ -111,9 +164,50 @@ in
       '';
       description = "Extra environment variables for the Paseo daemon.";
     };
+
+    settings = lib.mkOption {
+      type = (pkgs.formats.json { }).type;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          daemon.mcp = { enabled = true; injectIntoAgents = false; };
+          agents.providers.myAcp = {
+            extends = "acp";
+            label = "My Agent";
+            command = { path = "/run/current-system/sw/bin/my-acp"; };
+          };
+          log.file = { level = "info"; path = "/var/lib/paseo/daemon.log"; };
+        }
+      '';
+      description = ''
+        Declarative content for `$PASEO_HOME/config.json`. Rendered to JSON
+        and installed on every service start.
+
+        Runtime mutations to `config.json` (e.g. via `paseo daemon set-password`
+        or the mobile app toggling MCP injection / provider overrides) are
+        overwritten on the next restart. Pick one: manage via this option, or
+        manage via the CLI — not both.
+
+        The full schema is defined by `PersistedConfigSchema` in
+        `packages/server/src/server/persisted-config.ts`.
+      '';
+    };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (
+    let
+      settingsFile = (pkgs.formats.json { }).generate "paseo-config.json" cfg.settings;
+    in
+    {
+    assertions = [
+      {
+        assertion = !(cfg.relay.enable && cfg.relay.mode == "remote" && cfg.relay.host == "");
+        message = ''
+          services.paseo.relay.host must be set when relay.mode = "remote".
+        '';
+      }
+    ];
+
     users.users.${cfg.user} = lib.mkIf (cfg.user == "paseo") {
       isSystemUser = true;
       group = cfg.group;
@@ -131,24 +225,47 @@ in
       after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
 
+      preStart = lib.mkIf (cfg.settings != { }) ''
+        install -m 0600 ${settingsFile} ${cfg.dataDir}/config.json
+      '';
+
       environment = {
         NODE_ENV = "production";
         PASEO_HOME = cfg.dataDir;
         PASEO_LISTEN = "${cfg.listenAddress}:${toString cfg.port}";
-      } // lib.optionalAttrs cfg.inheritUserEnvironment {
-        # mkForce overrides the default PATH from NixOS's systemd module (which
-        # only includes store paths for coreutils/grep/sed/systemd). Our PATH
-        # includes /run/current-system/sw/bin which is a superset of those.
-        PATH = lib.mkForce (lib.concatStringsSep ":" [
-          "/etc/profiles/per-user/${cfg.user}/bin"
-          "/run/current-system/sw/bin"
-          "/run/wrappers/bin"
-          "/nix/var/nix/profiles/default/bin"
-        ]);
-      } // lib.optionalAttrs (cfg.hostnames == true) {
+      } // lib.optionalAttrs cfg.inheritUserEnvironment (
+        let
+          # Match dataDir's convention. We can't read users.users.<name>.home
+          # because the user may be managed outside NixOS.
+          userHome = "/home/${cfg.user}";
+        in {
+          # mkForce overrides the default PATH from NixOS's systemd module (which
+          # only includes store paths for coreutils/grep/sed/systemd). When the
+          # daemon runs as a real user, also include home-manager profile paths
+          # so user-installed CLIs (claude, opencode, codex, ...) are reachable
+          # by agent processes the daemon spawns.
+          PATH = lib.mkForce (lib.concatStringsSep ":" (
+            lib.optionals (cfg.user != "paseo") [
+              "${userHome}/.nix-profile/bin"
+              "${userHome}/.local/state/nix/profile/bin"
+            ]
+            ++ [
+              "/etc/profiles/per-user/${cfg.user}/bin"
+              "/run/current-system/sw/bin"
+              "/run/wrappers/bin"
+              "/nix/var/nix/profiles/default/bin"
+            ]
+          ));
+        }
+      ) // lib.optionalAttrs (cfg.hostnames == true) {
         PASEO_HOSTNAMES = "true";
       } // lib.optionalAttrs (lib.isList cfg.hostnames && cfg.hostnames != [ ]) {
         PASEO_HOSTNAMES = lib.concatStringsSep "," cfg.hostnames;
+      } // lib.optionalAttrs (cfg.relay.enable && cfg.relay.mode == "remote") {
+        PASEO_RELAY_ENDPOINT = "${cfg.relay.host}:${toString cfg.relay.port}";
+        PASEO_RELAY_USE_TLS = if cfg.relay.useTls then "true" else "false";
+      } // lib.optionalAttrs (cfg.relay.enable && cfg.relay.mode == "remote" && cfg.relay.publicUseTls != null) {
+        PASEO_RELAY_PUBLIC_USE_TLS = if cfg.relay.publicUseTls then "true" else "false";
       } // cfg.environment;
 
       serviceConfig = {
@@ -172,5 +289,6 @@ in
     environment.systemPackages = [ cfg.package ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
-  };
+    }
+  );
 }

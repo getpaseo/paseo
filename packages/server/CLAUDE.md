@@ -4,7 +4,7 @@ For AI coding agents working in `packages/server`. Supplements [CLAUDE.md](../CL
 
 ## Project Overview
 
-Paseo is a mobile + CLI app for monitoring and controlling local AI coding agents (Claude Code, Codex, OpenCode). The daemon runs on your machine, manages agent processes, and streams their output over WebSocket to clients.
+Paseo is a mobile + CLI app for monitoring and controlling local AI coding agents (Claude Code, Codex, GitHub Copilot, OpenCode, Pi). The daemon runs on your machine, manages agent processes, and streams their output over WebSocket to clients.
 
 ---
 
@@ -14,7 +14,7 @@ Paseo is a mobile + CLI app for monitoring and controlling local AI coding agent
 
 ```bash
 npm run dev                          # Start daemon + Expo in Tmux
-npm run build:daemon                 # Build: highlight + relay + server + cli
+npm run build:server                 # Build: highlight + relay + protocol + client + server + cli
 npm run typecheck                    # Typecheck all packages
 npm run test                         # Test all packages
 npm run format                       # Format with Biome (in-place)
@@ -49,8 +49,7 @@ npm run test:ui                     # Vitest UI at localhost:51204
 ### Other useful commands
 
 ```bash
-npm run build --workspace=@getpaseo/relay    # Rebuild relay before daemon
-npm run build --workspace=@getpaseo/server   # Rebuild server
+npm run build:server                         # Rebuild server stack
 npm run db:query -- "SELECT ..."             # Run arbitrary SQL
 npm run cli -- ls -a -g                      # List agents
 npm run cli -- daemon status                 # Check daemon status
@@ -166,9 +165,8 @@ packages/server/src/
 │   └── agent/
 │       ├── agent-manager.ts  # Agent lifecycle state machine
 │       └── agent-storage.ts  # File-backed JSON persistence
-├── providers/                 # Claude, Codex, OpenCode adapters
+├── providers/                 # Claude, Codex, Copilot, OpenCode, Pi adapters
 ├── relay-transport.ts        # Outbound relay connection
-└── client/daemon-client.ts   # Client library for daemon connection
 ```
 
 Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`  

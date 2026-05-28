@@ -23,14 +23,17 @@ export interface SearchWorkspaceEntriesOptions {
   limit?: number;
   includeFiles?: boolean;
   includeDirectories?: boolean;
+  matchMode?: WorkspaceMatchMode;
   maxDepth?: number;
   maxEntriesScanned?: number;
 }
 
+export type WorkspaceMatchMode = "fuzzy" | "suffix";
+
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
-const DEFAULT_MAX_DEPTH = 6;
-const DEFAULT_MAX_DIRECTORIES_SCANNED = 5000;
+const DEFAULT_MAX_DEPTH = 12;
+const DEFAULT_MAX_DIRECTORIES_SCANNED = 20000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
 
@@ -73,6 +76,8 @@ const directoryListCache = new Map<string, DirectoryListCacheEntry>();
 const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>();
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
+const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
+const NO_WORKSPACE_MATCH_TIER = 5;
 const WORKSPACE_IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
   "dist",
@@ -127,6 +132,7 @@ interface RankedWorkspaceEntry {
   matchTier: number;
   segmentIndex: number;
   matchOffset: number;
+  fuzzyScore: number;
   depth: number;
 }
 
@@ -150,7 +156,8 @@ export async function searchWorkspaceEntries(
     return [];
   }
 
-  if (queryParts.isPathQuery) {
+  const matchMode = options.matchMode ?? "fuzzy";
+  if (queryParts.isPathQuery && matchMode !== "suffix") {
     return searchWorkspaceWithinParentDirectory({
       workspaceRoot,
       parentPart: queryParts.parentPart,
@@ -161,12 +168,17 @@ export async function searchWorkspaceEntries(
     });
   }
 
+  const searchTerm =
+    matchMode === "suffix"
+      ? [queryParts.parentPart, queryParts.searchTerm].filter(Boolean).join("/")
+      : queryParts.searchTerm;
   return searchWorkspaceAcrossTree({
     workspaceRoot,
-    searchTerm: queryParts.searchTerm,
+    searchTerm,
     limit,
     includeDirectories,
     includeFiles,
+    matchMode,
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_DIRECTORIES_SCANNED,
   });
@@ -303,18 +315,17 @@ async function searchWorkspaceWithinParentDirectory(input: {
     if (entry.kind === "file" && !input.includeFiles) {
       continue;
     }
-    if (searchLower && !entry.name.toLowerCase().includes(searchLower)) {
+    const rankedEntry = rankWorkspaceEntry({
+      absolutePath: entry.absolutePath,
+      kind: entry.kind,
+      workspaceRoot: input.workspaceRoot,
+      searchLower,
+    });
+    if (searchLower && rankedEntry.matchTier === NO_WORKSPACE_MATCH_TIER) {
       continue;
     }
 
-    ranked.push(
-      rankWorkspaceEntry({
-        absolutePath: entry.absolutePath,
-        kind: entry.kind,
-        workspaceRoot: input.workspaceRoot,
-        searchLower,
-      }),
-    );
+    ranked.push(rankedEntry);
   }
 
   return dedupeAndSortWorkspaceEntries(ranked).slice(0, input.limit);
@@ -326,6 +337,7 @@ async function searchWorkspaceAcrossTree(input: {
   limit: number;
   includeDirectories: boolean;
   includeFiles: boolean;
+  matchMode: WorkspaceMatchMode;
   maxDepth: number;
   maxEntriesScanned: number;
 }): Promise<WorkspaceSuggestionEntry[]> {
@@ -373,28 +385,64 @@ async function searchWorkspaceAcrossTree(input: {
       if (entry.kind === "file" && !input.includeFiles) {
         continue;
       }
-
-      const relativePath = normalizeRelativePath(input.workspaceRoot, entry.absolutePath);
       if (
-        searchLower &&
-        !relativePath.toLowerCase().includes(searchLower) &&
-        !entry.name.toLowerCase().includes(searchLower)
+        input.matchMode === "suffix" &&
+        !workspaceEntryMatchesSuffixQuery({
+          absolutePath: entry.absolutePath,
+          workspaceRoot: input.workspaceRoot,
+          query: input.searchTerm,
+        })
       ) {
         continue;
       }
 
-      ranked.push(
-        rankWorkspaceEntry({
-          absolutePath: entry.absolutePath,
-          kind: entry.kind,
-          workspaceRoot: input.workspaceRoot,
-          searchLower,
-        }),
-      );
+      const rankedEntry = rankWorkspaceEntry({
+        absolutePath: entry.absolutePath,
+        kind: entry.kind,
+        workspaceRoot: input.workspaceRoot,
+        searchLower,
+      });
+      if (
+        input.matchMode !== "suffix" &&
+        searchLower &&
+        rankedEntry.matchTier === NO_WORKSPACE_MATCH_TIER
+      ) {
+        continue;
+      }
+
+      ranked.push(rankedEntry);
     }
   }
 
   return dedupeAndSortWorkspaceEntries(ranked).slice(0, input.limit);
+}
+
+function workspaceEntryMatchesSuffixQuery(input: {
+  absolutePath: string;
+  workspaceRoot: string;
+  query: string;
+}): boolean {
+  const querySegments = input.query
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => segment.toLowerCase());
+  if (querySegments.length === 0) {
+    return false;
+  }
+
+  const pathSegments = normalizeRelativePath(input.workspaceRoot, input.absolutePath)
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => segment.toLowerCase());
+  if (querySegments.length > pathSegments.length) {
+    return false;
+  }
+
+  const offset = pathSegments.length - querySegments.length;
+  return querySegments.every((segment, index) => pathSegments[offset + index] === segment);
 }
 
 function dedupeAndSortWorkspaceEntries(
@@ -429,6 +477,9 @@ function compareRankedWorkspaceEntries(
   }
   if (left.matchOffset !== right.matchOffset) {
     return left.matchOffset - right.matchOffset;
+  }
+  if (left.fuzzyScore !== right.fuzzyScore) {
+    return left.fuzzyScore - right.fuzzyScore;
   }
   if (left.depth !== right.depth) {
     return left.depth - right.depth;
@@ -538,6 +589,7 @@ function rankWorkspaceEntry(input: {
       matchTier: 3,
       segmentIndex: NO_SEGMENT_INDEX,
       matchOffset: 0,
+      fuzzyScore: NO_FUZZY_SCORE,
       depth,
     };
   }
@@ -551,7 +603,9 @@ function rankWorkspaceEntry(input: {
     segment.includes(searchLower),
   );
   const matchOffset = relativeLower.indexOf(searchLower);
-  let matchTier = 4;
+  const basename = segments.at(-1) ?? "";
+  const fuzzyScore = scoreFuzzySubsequence(searchLower, basename);
+  let matchTier = NO_WORKSPACE_MATCH_TIER;
   let segmentIndex = NO_SEGMENT_INDEX;
 
   if (exactSegmentIndex >= 0) {
@@ -565,6 +619,8 @@ function rankWorkspaceEntry(input: {
     segmentIndex = partialSegmentIndex;
   } else if (relativeLower.startsWith(searchLower)) {
     matchTier = 3;
+  } else if (fuzzyScore !== null) {
+    matchTier = 4;
   }
 
   return {
@@ -573,8 +629,45 @@ function rankWorkspaceEntry(input: {
     matchTier,
     segmentIndex,
     matchOffset: matchOffset >= 0 ? matchOffset : NO_MATCH_OFFSET,
+    fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
     depth,
   };
+}
+
+function scoreFuzzySubsequence(query: string, candidate: string): number | null {
+  if (!query) {
+    return 0;
+  }
+
+  let queryIndex = 0;
+  let firstMatchIndex = -1;
+  let previousMatchIndex = -1;
+  let gapScore = 0;
+
+  for (
+    let candidateIndex = 0;
+    candidateIndex < candidate.length && queryIndex < query.length;
+    candidateIndex += 1
+  ) {
+    if (candidate[candidateIndex] !== query[queryIndex]) {
+      continue;
+    }
+
+    if (firstMatchIndex === -1) {
+      firstMatchIndex = candidateIndex;
+    }
+    if (previousMatchIndex >= 0) {
+      gapScore += candidateIndex - previousMatchIndex - 1;
+    }
+    previousMatchIndex = candidateIndex;
+    queryIndex += 1;
+  }
+
+  if (queryIndex !== query.length || firstMatchIndex === -1) {
+    return null;
+  }
+
+  return firstMatchIndex + gapScore;
 }
 
 function findSegmentMatchIndex(

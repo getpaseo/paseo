@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { View, Text } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import { FolderOpen, Smartphone } from "lucide-react-native";
+import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { View, Text, Pressable } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useRouter } from "expo-router";
+import { FolderOpen, Inbox, Plug, Smartphone } from "lucide-react-native";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
-import { Button } from "@/components/ui/button";
+import { CommunityLinks } from "@/components/community-links";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { usePanelStore } from "@/stores/panel-store";
-import { useSessionStore } from "@/stores/session-store";
-import { useHasWorkspaces } from "@/stores/session-store-hooks";
 import {
   useIsCompactFormFactor,
   HEADER_INNER_HEIGHT,
@@ -18,14 +17,21 @@ import {
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
+import { buildHostAgentDetailRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useOpenProject } from "@/hooks/use-open-project";
+import type { Href } from "expo-router";
 
 export function OpenProjectScreen({ serverId }: { serverId: string }) {
+  const router = useRouter();
   const openDesktopAgentList = usePanelStore((s) => s.openDesktopAgentList);
   const openProjectPicker = useOpenProjectPicker(serverId);
-  const hasHydrated = useSessionStore((s) => s.sessions[serverId]?.hasHydratedWorkspaces ?? false);
-  const hasProjects = useHasWorkspaces(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
+  const client = useHostRuntimeClient(serverId);
+  const openProject = useOpenProject(serverId);
   const [isPairDeviceOpen, setIsPairDeviceOpen] = useState(false);
+  const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
 
   const isCompactLayout = useIsCompactFormFactor();
 
@@ -42,49 +48,125 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
   const handleOpenPairDevice = useCallback(() => setIsPairDeviceOpen(true), []);
   const handleClosePairDevice = useCallback(() => setIsPairDeviceOpen(false), []);
 
+  const handleOpenImportSession = useCallback(() => setIsImportSheetOpen(true), []);
+  const handleCloseImportSession = useCallback(() => setIsImportSheetOpen(false), []);
+
+  const handleImported = useCallback(
+    (agent: { id: string; cwd: string }) => {
+      void (async () => {
+        await openProject(agent.cwd);
+        router.push(buildHostAgentDetailRoute(serverId, agent.id) as Href);
+      })();
+    },
+    [openProject, router, serverId],
+  );
+
+  const handleOpenProviders = useCallback(() => {
+    router.push(buildSettingsHostRoute(serverId));
+  }, [router, serverId]);
+
   return (
     <View style={styles.container}>
       <MenuHeader borderless />
       <View style={styles.content}>
         <TitlebarDragRegion />
         <View style={styles.logo}>
-          <PaseoLogo size={56} />
+          <PaseoLogo size={52} />
         </View>
-        <View style={styles.headingGroup}>
-          <Text style={styles.heading}>What shall we build today?</Text>
-          {hasHydrated && !hasProjects ? (
-            <Text style={styles.subtitle}>
-              Add a project folder to start running agents on your codebase
-            </Text>
-          ) : null}
-        </View>
-        <View style={styles.cta}>
-          <Button
-            variant="default"
-            leftIcon={FolderOpen}
+        <View style={styles.tiles}>
+          <HomeTile
+            icon={FolderOpen}
+            title="Add a project"
+            description="Open a folder on your machine"
             onPress={handleOpenPicker}
             testID="open-project-submit"
-          >
-            Add a project
-          </Button>
+            accent
+          />
+          <HomeTile
+            icon={Inbox}
+            title="Import session"
+            description="Bring in recent external CLI sessions"
+            onPress={handleOpenImportSession}
+            testID="open-project-import-session"
+          />
+          <HomeTile
+            icon={Plug}
+            title="Setup providers"
+            description="Configure Claude Code, Codex, and more"
+            onPress={handleOpenProviders}
+            testID="open-project-setup-providers"
+          />
           {isLocalDaemon ? (
-            <Button
-              variant="outline"
-              leftIcon={Smartphone}
+            <HomeTile
+              icon={Smartphone}
+              title="Pair device"
+              description="Connect your phone to this daemon"
               onPress={handleOpenPairDevice}
               testID="open-project-pair-device"
-            >
-              Pair device
-            </Button>
+            />
           ) : null}
         </View>
+      </View>
+      <View style={styles.communityRow}>
+        <CommunityLinks />
       </View>
       <PairDeviceModal
         visible={isPairDeviceOpen}
         onClose={handleClosePairDevice}
         testID="open-project-pair-device-modal"
       />
+      <ImportSessionSheet
+        visible={isImportSheetOpen}
+        client={client}
+        serverId={serverId}
+        onClose={handleCloseImportSession}
+        onImported={handleImported}
+      />
     </View>
+  );
+}
+
+interface HomeTileProps {
+  icon: ComponentType<{ size: number; color: string }>;
+  title: string;
+  description: string;
+  onPress: () => void;
+  testID?: string;
+  accent?: boolean;
+}
+
+function HomeTile({ icon: Icon, title, description, onPress, testID, accent }: HomeTileProps) {
+  // useUnistyles is acceptable here: leaf component, off the hot path (home screen renders once).
+  const { theme } = useUnistyles();
+  const [hovered, setHovered] = useState(false);
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+
+  const iconColor = accent ? theme.colors.accent : theme.colors.foregroundMuted;
+
+  const pressableStyle = useCallback(
+    ({ pressed }: { pressed: boolean }) => [
+      styles.tile,
+      hovered && styles.tileHovered,
+      pressed && styles.tilePressed,
+    ],
+    [hovered],
+  );
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      testID={testID}
+      style={pressableStyle}
+    >
+      <Icon size={20} color={iconColor} />
+      <View style={styles.tileText}>
+        <Text style={styles.tileTitle}>{title}</Text>
+        <Text style={styles.tileDescription}>{description}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -97,10 +179,11 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     position: "relative",
     flex: 1,
-    justifyContent: "center",
+    justifyContent: { xs: "flex-start", md: "center" },
     alignItems: "center",
     gap: 0,
     padding: theme.spacing[6],
+    paddingTop: { xs: theme.spacing[12], md: theme.spacing[6] },
     paddingBottom: {
       xs: HEADER_INNER_HEIGHT_MOBILE + HEADER_TOP_PADDING_MOBILE + theme.spacing[6],
       md: HEADER_INNER_HEIGHT + theme.spacing[6],
@@ -109,25 +192,56 @@ const styles = StyleSheet.create((theme) => ({
   logo: {
     marginBottom: theme.spacing[8],
   },
-  headingGroup: {
-    alignItems: "center",
+  tiles: {
+    marginTop: { xs: theme.spacing[6], md: theme.spacing[12] },
+    width: "100%",
+    maxWidth: 452,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-start",
     gap: theme.spacing[3],
   },
-  cta: {
-    marginTop: theme.spacing[12],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
+  tile: {
+    width: { xs: "100%", md: 220 },
+    minHeight: { xs: 0, md: 132 },
+    padding: theme.spacing[4],
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.xl,
+    gap: theme.spacing[3],
   },
-  heading: {
+  tileHovered: {
+    backgroundColor: theme.colors.surface2,
+    borderColor: theme.colors.borderAccent,
+  },
+  tilePressed: {
+    opacity: 0.85,
+  },
+  tileText: {
+    gap: theme.spacing[1],
+  },
+  tileTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize["2xl"],
-    fontWeight: theme.fontWeight.normal,
-    textAlign: "center",
-  },
-  subtitle: {
-    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-    textAlign: "center",
+    fontWeight: theme.fontWeight.normal,
+  },
+  tileDescription: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 18,
+  },
+  communityRow: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: {
+      xs: HEADER_INNER_HEIGHT_MOBILE + HEADER_TOP_PADDING_MOBILE + theme.spacing[2],
+      md: HEADER_INNER_HEIGHT + theme.spacing[2],
+    },
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 0,
   },
 }));

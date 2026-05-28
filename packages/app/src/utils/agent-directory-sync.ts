@@ -1,4 +1,4 @@
-import type { FetchAgentsEntry } from "@server/client/daemon-client";
+import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { type Agent, useSessionStore } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";

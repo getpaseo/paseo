@@ -8,7 +8,7 @@ import {
   createElement,
 } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
-import { ArrowLeft, ArrowRight, MousePointer2, RotateCw } from "lucide-react-native";
+import { ArrowLeft, ArrowRight, MousePointer2, PencilRuler, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   buildWorkspaceAttachmentScopeKey,
@@ -34,7 +34,6 @@ type ElectronWebview = HTMLElement & {
   stop?: () => void;
   loadURL?: (url: string) => Promise<void>;
   getURL?: () => string;
-  openDevTools?: () => void;
   executeJavaScript?: (code: string) => Promise<unknown>;
   focus?: () => void;
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
@@ -343,15 +342,9 @@ export function BrowserPane({
     }, 0);
   }, []);
 
-  const markActivePane = useCallback(() => {
-    if (!isElectronRuntime()) return;
-    void getDesktopHost()?.browser?.setActivePane?.(browserIdRef.current);
-  }, []);
-
   const handleUrlBarFocus = useCallback(() => {
-    markActivePane();
     selectUrlBar();
-  }, [markActivePane, selectUrlBar]);
+  }, [selectUrlBar]);
 
   const focusUrlBar = useCallback(() => {
     urlInputRef.current?.focus();
@@ -481,7 +474,6 @@ export function BrowserPane({
     };
     const handleWebviewFocus = () => {
       onFocusPane?.();
-      markActivePane();
     };
 
     webview.addEventListener("did-start-loading", handleStartLoading);
@@ -870,6 +862,26 @@ export function BrowserPane({
     startElementSelector();
   }, [cancelElementSelector, selectorActive, startElementSelector]);
 
+  const handleOpenDevTools = useCallback(() => {
+    const currentBrowserId = browserIdRef.current;
+    const openDevTools = getDesktopHost()?.browser?.openDevTools;
+    if (typeof openDevTools !== "function") {
+      console.warn("[browser-pane] openDevTools bridge missing", { browserId: currentBrowserId });
+      return;
+    }
+    void openDevTools(currentBrowserId)
+      .then((result) => {
+        console.info("[browser-pane] openDevTools result", {
+          browserId: currentBrowserId,
+          result,
+        });
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        console.warn("[browser-pane] openDevTools failed", { browserId: currentBrowserId, error });
+      });
+  }, []);
+
   const baseIconButtonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
       styles.iconButton,
@@ -973,17 +985,27 @@ export function BrowserPane({
         </View>
         <View style={styles.chromeRight}>
           {isDev ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={selectorActive ? "Cancel element selector" : "Select element"}
-              onPress={handleToggleElementSelector}
-              style={selectorIconButtonStyle}
-            >
-              <MousePointer2
-                size={16}
-                color={selectorActive ? theme.colors.accent : theme.colors.foregroundMuted}
-              />
-            </Pressable>
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open browser dev tools"
+                onPress={handleOpenDevTools}
+                style={baseIconButtonStyle}
+              >
+                <PencilRuler size={16} color={theme.colors.foregroundMuted} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={selectorActive ? "Cancel element selector" : "Select element"}
+                onPress={handleToggleElementSelector}
+                style={selectorIconButtonStyle}
+              >
+                <MousePointer2
+                  size={16}
+                  color={selectorActive ? theme.colors.accent : theme.colors.foregroundMuted}
+                />
+              </Pressable>
+            </>
           ) : null}
         </View>
       </View>

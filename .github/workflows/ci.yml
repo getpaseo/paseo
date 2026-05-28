@@ -5,7 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # CI does not use the CUDA execution provider, and the onnxruntime-node
+  # postinstall download from NuGet is large enough to make npm ci flaky.
+  ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
   format:
@@ -19,7 +29,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Check formatting
         run: npx oxfmt --check .
@@ -35,7 +45,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Lint lockfile
+        run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
+
+      - name: Verify dependency signatures
+        run: npm audit signatures
 
       - name: Lint
         run: npm run lint
@@ -51,22 +67,27 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Build server dependency
-        run: npm run build --workspace=@getpaseo/server
+      - name: Build server stack
+        run: npm run build:server
 
       - name: Typecheck all packages
         run: npm run typecheck
 
+      - name: Verify public package contents
+        run: |
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
+
   server-tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: server-tests (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,62 +102,20 @@ jobs:
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @anthropic-ai/claude-code opencode-ai
 
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
+      - name: Build server dependencies
+        run: npm run build:server-deps
 
       - name: Run server tests
         run: npm run test --workspace=@getpaseo/server
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-  server-tests-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Run Windows-critical server tests
-        working-directory: packages/server
-        run: >
-          npx vitest run
-          src/utils/executable.test.ts
-          src/utils/spawn.launch-regression.test.ts
-          src/utils/spawn.percent-escape.test.ts
-          src/utils/spawn.test.ts
-          src/utils/process-tree.test.ts
-          src/utils/run-git-command.test.ts
-          src/utils/checkout-git-rev-parse.test.ts
-          src/terminal/worker-terminal-manager.test.ts
-          src/server/agent/provider-registry.test.ts
-          src/server/agent/provider-launch-config.test.ts
-          src/server/agent/provider-snapshot-manager.test.ts
-          src/server/agent/providers/claude-agent.spawn.test.ts
-          src/server/agent/providers/provider-windows-launch.test.ts
-          src/server/agent/providers/provider-availability.test.ts
-          src/server/workspace-registry-model.test.ts
-          src/server/persisted-config.test.ts
-          src/server/bootstrap-provider-availability.test.ts
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   desktop-tests:
     strategy:
@@ -153,16 +132,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
-
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Build server dependency
-        run: npm run build --workspace=@getpaseo/server
+      - name: Build server stack
+        run: npm run build:server
 
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
@@ -178,16 +151,41 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
+      - name: Build app dependencies
+        run: npm run build:app-deps
 
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
+
+  sdk-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client dependencies
+        run: npm run build:client
+
+      - name: Run protocol tests
+        run: npm run test --workspace=@getpaseo/protocol
+
+      - name: Run client tests
+        run: npm run test --workspace=@getpaseo/client
+
+      - name: Typecheck client examples
+        run: npm run typecheck:examples --workspace=@getpaseo/client
 
   playwright:
     runs-on: ubuntu-latest
@@ -200,22 +198,19 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
+      - name: Build app dependencies
+        run: npm run build:app-deps
 
-      - name: Build relay dependency
-        run: npm run build --workspace=@getpaseo/relay
-
-      - name: Build server dependency
-        run: npm run build --workspace=@getpaseo/server
+      - name: Build server stack
+        run: npm run build:server
 
       - name: Install agent CLIs for provider tests
-        run: npm install -g @openai/codex@0.105.0 opencode-ai
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
         run: npm run test:e2e --workspace=@getpaseo/app
@@ -243,10 +238,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build relay
-        run: npm run build --workspace=@getpaseo/relay
+        run: npm run build:relay
 
       - name: Run relay tests
         run: npm run test --workspace=@getpaseo/relay
@@ -267,13 +262,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install agent CLIs for provider tests
-        run: npm install -g @openai/codex@0.105.0 opencode-ai
-
-      - name: Build highlight dependency
-        run: npm run build --workspace=@getpaseo/highlight
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run CLI tests
         run: npm run test --workspace=@getpaseo/cli

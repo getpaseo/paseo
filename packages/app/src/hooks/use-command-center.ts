@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { useSessionStore } from "@/stores/session-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
@@ -11,15 +10,14 @@ import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
-import { buildHostAgentDetailRoute, buildSettingsRoute } from "@/utils/host-routes";
+import { buildHostOpenProjectRoute, buildSettingsRoute } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { focusWithRetries } from "@/utils/web-focus";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
 
@@ -54,10 +52,10 @@ function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
 interface CommandCenterActionDefinition {
   id: string;
   title: string;
-  icon?: "plus" | "settings";
+  icon?: "plus" | "settings" | "home";
   actionId?: string;
   keywords: string[];
-  routeKind: "settings" | "none";
+  routeKind: "settings" | "home" | "none";
 }
 
 const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
@@ -68,6 +66,13 @@ const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
     actionId: "new-agent",
     keywords: ["open", "project", "folder", "workspace", "repo"],
     routeKind: "none",
+  },
+  {
+    id: "home",
+    title: "Home",
+    icon: "home",
+    keywords: ["home", "start", "import", "session", "pair", "device", "providers"],
+    routeKind: "home",
   },
   {
     id: "settings",
@@ -91,7 +96,7 @@ export interface CommandCenterActionItem {
   kind: "action";
   id: string;
   title: string;
-  icon?: "plus" | "settings";
+  icon?: "plus" | "settings" | "home";
   route?: Href;
   shortcutKeys?: ShortcutKey[][];
 }
@@ -157,21 +162,32 @@ export function useCommandCenter() {
     return buildSettingsRoute();
   }, []);
 
+  const homeRoute = useMemo<Href | undefined>(() => {
+    if (!routeActiveServerId) return undefined;
+    return buildHostOpenProjectRoute(routeActiveServerId) as Href;
+  }, [routeActiveServerId]);
+
   const actionItems = useMemo(() => {
     if (!open) {
       return EMPTY_ACTION_ITEMS;
     }
-    return COMMAND_CENTER_ACTIONS.filter((action) =>
-      matchesActionQuery(query, action),
-    ).map<CommandCenterActionItem>((action) => ({
-      kind: "action",
-      id: action.id,
-      title: action.title,
-      icon: action.icon,
-      route: action.routeKind === "settings" ? settingsRoute : undefined,
-      shortcutKeys: resolveActionShortcutKeys(action.actionId, overrides),
-    }));
-  }, [open, query, settingsRoute, overrides]);
+    return COMMAND_CENTER_ACTIONS.filter((action) => {
+      if (action.routeKind === "home" && !homeRoute) return false;
+      return matchesActionQuery(query, action);
+    }).map<CommandCenterActionItem>((action) => {
+      let route: Href | undefined;
+      if (action.routeKind === "settings") route = settingsRoute;
+      else if (action.routeKind === "home") route = homeRoute;
+      return {
+        kind: "action",
+        id: action.id,
+        title: action.title,
+        icon: action.icon,
+        route,
+        shortcutKeys: resolveActionShortcutKeys(action.actionId, overrides),
+      };
+    });
+  }, [open, query, settingsRoute, homeRoute, overrides]);
 
   const items = useMemo(() => {
     if (!open) {
@@ -204,18 +220,9 @@ export function useCommandCenter() {
       // Don't restore focus back to the prior element after we navigate.
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
-      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-        workspaces: useSessionStore.getState().sessions[agent.serverId]?.workspaces?.values(),
-        workspaceDirectory: agent.cwd,
-      });
-      if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as Href);
-        return;
-      }
-      navigateToPreparedWorkspaceTab({
+      navigateToAgent({
         serverId: agent.serverId,
-        workspaceId,
-        target: { kind: "agent", agentId: agent.id },
+        agentId: agent.id,
         currentPathname: pathname,
       });
     },

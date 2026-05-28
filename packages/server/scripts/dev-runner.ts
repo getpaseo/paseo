@@ -8,21 +8,8 @@ dotenv.config({
 });
 
 const daemonRunnerEntry = fileURLToPath(new URL("./supervisor-entrypoint.ts", import.meta.url));
-const inspectArg = process.env.PASEO_NODE_INSPECT ?? "--inspect";
-const inspectArgs =
-  inspectArg === "0" || inspectArg === "false" || inspectArg === "off" ? [] : [inspectArg];
 
-const supervisorArgs = [
-  ...inspectArgs,
-  "--heapsnapshot-near-heap-limit=3",
-  "--max-old-space-size=3072",
-  "--report-on-fatalerror",
-  "--report-directory=/tmp/paseo-reports",
-  ...process.execArgv,
-  daemonRunnerEntry,
-  "--dev",
-  ...process.argv.slice(2),
-];
+const supervisorArgs = [...process.execArgv, daemonRunnerEntry, "--dev", ...process.argv.slice(2)];
 
 const supervisor = spawn(process.execPath, supervisorArgs, {
   stdio: "inherit",

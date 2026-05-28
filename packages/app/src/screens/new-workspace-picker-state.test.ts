@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
-import type { GitHubSearchItem } from "@server/shared/messages";
-import { syncPickerPrAttachment } from "./new-workspace-picker-state";
+import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
+import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
 
 function makePrItem(number: number, title: string, headRefName = "feature/x"): GitHubSearchItem {
   return {
@@ -17,7 +17,9 @@ function makePrItem(number: number, title: string, headRefName = "feature/x"): G
   };
 }
 
-function prAttachment(item: GitHubSearchItem): UserComposerAttachment {
+function prAttachment(
+  item: GitHubSearchItem,
+): Extract<UserComposerAttachment, { kind: "github_pr" }> {
   return { kind: "github_pr", item };
 }
 
@@ -92,5 +94,56 @@ describe("syncPickerPrAttachment", () => {
     });
     expect(result.attachedPrNumber).toBeNull();
     expect(result.attachments).toHaveLength(1);
+  });
+});
+
+describe("findCheckoutHintPrAttachment", () => {
+  it("returns the first attached PR that is not selected or dismissed", () => {
+    const first = prAttachment(makePrItem(101, "A"));
+    const second = prAttachment(makePrItem(202, "B"));
+
+    expect(
+      findCheckoutHintPrAttachment({
+        attachments: [issueAttachment(44), first, second],
+        selectedItem: null,
+        dismissedPrNumbers: new Set(),
+      }),
+    ).toBe(first);
+  });
+
+  it("skips the selected PR and offers the next attached PR", () => {
+    const selected = prAttachment(makePrItem(101, "A"));
+    const next = prAttachment(makePrItem(202, "B"));
+
+    expect(
+      findCheckoutHintPrAttachment({
+        attachments: [selected, next],
+        selectedItem: { kind: "github-pr", item: selected.item },
+        dismissedPrNumbers: new Set(),
+      }),
+    ).toBe(next);
+  });
+
+  it("skips dismissed PRs and ignores issues", () => {
+    const dismissed = prAttachment(makePrItem(101, "A"));
+    const next = prAttachment(makePrItem(202, "B"));
+
+    expect(
+      findCheckoutHintPrAttachment({
+        attachments: [issueAttachment(44), dismissed, next],
+        selectedItem: null,
+        dismissedPrNumbers: new Set([101]),
+      }),
+    ).toBe(next);
+  });
+
+  it("returns null when only issues qualify", () => {
+    expect(
+      findCheckoutHintPrAttachment({
+        attachments: [issueAttachment(44)],
+        selectedItem: null,
+        dismissedPrNumbers: new Set(),
+      }),
+    ).toBeNull();
   });
 });

@@ -1,8 +1,9 @@
 {
   "name": "@getpaseo/highlight",
-  "version": "0.1.69",
+  "version": "0.1.84",
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -43,6 +44,6 @@
   },
   "devDependencies": {
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.6"
   }
 }

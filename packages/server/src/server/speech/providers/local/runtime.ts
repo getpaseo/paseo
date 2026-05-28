@@ -4,7 +4,6 @@ import type { PaseoSpeechConfig } from "../../../bootstrap.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
-import { PocketTtsOnnxTTS } from "./pocket/pocket-tts-onnx.js";
 import {
   getLocalSpeechModelDir,
   DEFAULT_LOCAL_STT_MODEL,
@@ -16,20 +15,15 @@ import {
   type LocalTtsModelId,
 } from "./models.js";
 import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
-import { SherpaOnlineRecognizerEngine } from "./sherpa/sherpa-online-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
 import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
-import { SherpaRealtimeTranscriptionSession } from "./sherpa/sherpa-realtime-session.js";
-import { SherpaOnnxSTT } from "./sherpa/sherpa-stt.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
 import {
   ensureSileroVadModel,
   SherpaSileroTurnDetectionProvider,
 } from "./sherpa/silero-vad-provider.js";
 
-type LocalSttEngine =
-  | { kind: "offline"; engine: SherpaOfflineRecognizerEngine }
-  | { kind: "online"; engine: SherpaOnlineRecognizerEngine };
+type LocalSttEngine = SherpaOfflineRecognizerEngine;
 
 interface ResolvedLocalModels {
   dictationLocalSttModel: LocalSttModelId;
@@ -117,70 +111,21 @@ async function createLocalSttEngine(params: {
 }): Promise<LocalSttEngine> {
   const { modelId, modelsDir, logger } = params;
 
-  if (modelId === "parakeet-tdt-0.6b-v3-int8" || modelId === "parakeet-tdt-0.6b-v2-int8") {
-    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-    return {
-      kind: "offline",
-      engine: new SherpaOfflineRecognizerEngine(
-        {
-          model: {
-            kind: "nemo_transducer",
-            encoder: `${modelDir}/encoder.int8.onnx`,
-            decoder: `${modelDir}/decoder.int8.onnx`,
-            joiner: `${modelDir}/joiner.int8.onnx`,
-            tokens: `${modelDir}/tokens.txt`,
-          },
-          numThreads: 2,
-          debug: 0,
-        },
-        logger,
-      ),
-    };
-  }
-
-  if (modelId === "paraformer-bilingual-zh-en") {
-    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-    return {
-      kind: "online",
-      engine: new SherpaOnlineRecognizerEngine(
-        {
-          model: {
-            kind: "paraformer",
-            encoder: `${modelDir}/encoder.int8.onnx`,
-            decoder: `${modelDir}/decoder.int8.onnx`,
-            tokens: `${modelDir}/tokens.txt`,
-          },
-          numThreads: 1,
-          debug: 0,
-        },
-        logger,
-      ),
-    };
-  }
-
-  if (modelId === "zipformer-bilingual-zh-en-2023-02-20") {
-    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-    return {
-      kind: "online",
-      engine: new SherpaOnlineRecognizerEngine(
-        {
-          model: {
-            kind: "transducer",
-            encoder: `${modelDir}/encoder-epoch-99-avg-1.onnx`,
-            decoder: `${modelDir}/decoder-epoch-99-avg-1.onnx`,
-            joiner: `${modelDir}/joiner-epoch-99-avg-1.onnx`,
-            tokens: `${modelDir}/tokens.txt`,
-            modelType: "zipformer",
-          },
-          numThreads: 1,
-          debug: 0,
-        },
-        logger,
-      ),
-    };
-  }
-
-  throw new Error(`Unsupported local STT model '${modelId}'`);
+  const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
+  return new SherpaOfflineRecognizerEngine(
+    {
+      model: {
+        kind: "nemo_transducer",
+        encoder: `${modelDir}/encoder.int8.onnx`,
+        decoder: `${modelDir}/decoder.int8.onnx`,
+        joiner: `${modelDir}/joiner.int8.onnx`,
+        tokens: `${modelDir}/tokens.txt`,
+      },
+      numThreads: 2,
+      debug: 0,
+    },
+    logger,
+  );
 }
 
 type LocalConfig = NonNullable<PaseoSpeechConfig["local"]>;
@@ -219,13 +164,7 @@ async function initializeLocalVoiceStt(params: {
     return null;
   }
   const voiceEngine = await getLocalSttEngine(modelId);
-  if (voiceEngine?.kind === "offline") {
-    return new SherpaOnnxParakeetSTT({ engine: voiceEngine.engine }, logger);
-  }
-  if (voiceEngine?.kind === "online") {
-    return new SherpaOnnxSTT({ engine: voiceEngine.engine }, logger);
-  }
-  return null;
+  return voiceEngine ? new SherpaOnnxParakeetSTT({ engine: voiceEngine }, logger) : null;
 }
 
 async function initializeLocalDictationStt(params: {
@@ -243,18 +182,11 @@ async function initializeLocalDictationStt(params: {
     return null;
   }
   const dictationEngine = await getLocalSttEngine(modelId);
-  if (dictationEngine?.kind === "offline") {
+  if (dictationEngine) {
     return {
       id: "local",
       createSession: () =>
-        new SherpaParakeetRealtimeTranscriptionSession({ engine: dictationEngine.engine }),
-    };
-  }
-  if (dictationEngine?.kind === "online") {
-    return {
-      id: "local",
-      createSession: () =>
-        new SherpaRealtimeTranscriptionSession({ engine: dictationEngine.engine }),
+        new SherpaParakeetRealtimeTranscriptionSession({ engine: dictationEngine }),
     };
   }
   return null;
@@ -276,16 +208,6 @@ async function initializeLocalVoiceTts(params: {
   }
   try {
     const modelDir = getLocalSpeechModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
-    if (localModels.voiceLocalTtsModel === "pocket-tts-onnx-int8") {
-      return await PocketTtsOnnxTTS.create(
-        {
-          modelDir,
-          precision: "int8",
-          targetChunkMs: 50,
-        },
-        logger,
-      );
-    }
     return new SherpaOnnxTTS(
       {
         preset: localModels.voiceLocalTtsModel,
@@ -401,7 +323,7 @@ export async function initializeLocalSpeechServices(params: {
       maybeFreeable.free();
     }
     for (const engine of localSttEngines.values()) {
-      engine.engine.free();
+      engine.free();
     }
   };
 

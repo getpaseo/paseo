@@ -4,42 +4,44 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
-import type { MutableDaemonConfig } from "@server/shared/messages";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
-const { theme, snapshotState, configState, patchConfigMock, refreshMock } = vi.hoisted(() => ({
-  theme: {
-    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-    iconSize: { sm: 14, md: 20 },
-    fontSize: { xs: 11, sm: 13, base: 15 },
-    fontWeight: { normal: "400" },
-    borderRadius: { lg: 8 },
-    opacity: { 50: 0.5 },
-    colors: {
-      surface1: "#111",
-      surface2: "#222",
-      surface3: "#333",
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      border: "#555",
-      accent: "#0a84ff",
-      statusSuccess: "#00ff00",
-      statusWarning: "#ff9500",
-      statusDanger: "#ff0000",
-      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
+const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
+  () => ({
+    theme: {
+      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+      iconSize: { sm: 14, md: 20 },
+      fontSize: { xs: 11, sm: 13, base: 15 },
+      fontWeight: { normal: "400" },
+      borderRadius: { lg: 8 },
+      opacity: { 50: 0.5 },
+      colors: {
+        surface1: "#111",
+        surface2: "#222",
+        surface3: "#333",
+        foreground: "#fff",
+        foregroundMuted: "#aaa",
+        border: "#555",
+        accent: "#0a84ff",
+        statusSuccess: "#00ff00",
+        statusWarning: "#ff9500",
+        statusDanger: "#ff0000",
+        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
+      },
     },
-  },
-  snapshotState: {
-    entries: undefined as ProviderSnapshotEntry[] | undefined,
-    isLoading: false,
-    isRefreshing: false,
-  },
-  configState: {
-    config: null as MutableDaemonConfig | null,
-  },
-  patchConfigMock: vi.fn(async () => undefined),
-  refreshMock: vi.fn(async () => {}),
-}));
+    snapshotState: {
+      entries: undefined as ProviderSnapshotEntry[] | undefined,
+      isLoading: false,
+      isRefreshing: false,
+    },
+    configState: {
+      config: null as MutableDaemonConfig | null,
+    },
+    patchConfigMock: vi.fn(async () => undefined),
+    openProviderSettingsMock: vi.fn(),
+  }),
+);
 
 vi.mock("react-native", () => ({
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
@@ -95,7 +97,7 @@ vi.mock("lucide-react-native", () => {
   const icon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     ChevronRight: icon("ChevronRight"),
-    RotateCw: icon("RotateCw"),
+    Plus: icon("Plus"),
   };
 });
 
@@ -136,12 +138,13 @@ vi.mock("@/components/provider-icons", () => ({
     React.createElement("span", { "data-icon": `provider-${provider}` }),
 }));
 
-vi.mock("@/components/provider-diagnostic-sheet", () => ({
-  ProviderDiagnosticSheet: ({ provider }: { provider: string }) =>
-    React.createElement("div", {
-      "data-testid": "provider-diagnostic-sheet",
-      "data-provider": provider,
-    }),
+vi.mock("@/stores/provider-settings-store", () => ({
+  useProviderSettingsStore: (selector: (state: unknown) => unknown) =>
+    selector({ open: openProviderSettingsMock }),
+}));
+
+vi.mock("@/components/add-provider-modal", () => ({
+  AddProviderModal: () => null,
 }));
 
 vi.mock("@/hooks/use-providers-snapshot", () => ({
@@ -152,7 +155,7 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
     isRefreshing: snapshotState.isRefreshing,
     error: null,
     supportsSnapshot: true,
-    refresh: refreshMock,
+    refresh: vi.fn(async () => {}),
     refetchIfStale: vi.fn(),
   }),
 }));
@@ -197,7 +200,12 @@ const disabledCodexEntry: ProviderSnapshotEntry = {
 };
 
 function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDaemonConfig {
-  return { mcp: { injectIntoAgents: false }, providers };
+  return {
+    mcp: { injectIntoAgents: false },
+    providers,
+    autoArchiveAfterMerge: false,
+    appendSystemPrompt: "",
+  };
 }
 
 function descendants(el: HTMLElement): HTMLElement[] {
@@ -230,8 +238,7 @@ describe("ProvidersSection", () => {
     configState.config = null;
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
-    refreshMock.mockReset();
-    refreshMock.mockResolvedValue(undefined);
+    openProviderSettingsMock.mockReset();
   });
 
   afterEach(() => {
@@ -311,19 +318,21 @@ describe("ProvidersSection", () => {
 
     render();
 
-    expect(container?.querySelector('[data-testid="provider-diagnostic-sheet"]')).toBeNull();
+    expect(openProviderSettingsMock).not.toHaveBeenCalled();
 
     const row = findRow("Codex provider details");
     act(() => {
       row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     });
 
-    const sheet = container?.querySelector('[data-testid="provider-diagnostic-sheet"]');
-    expect(sheet).not.toBeNull();
-    expect(sheet?.getAttribute("data-provider")).toBe("codex");
+    expect(openProviderSettingsMock).toHaveBeenCalledTimes(1);
+    expect(openProviderSettingsMock).toHaveBeenCalledWith({
+      serverId: "server-1",
+      provider: "codex",
+    });
   });
 
-  it("toggles the provider enabled flag through patchConfig when the switch is pressed", () => {
+  it("toggles the provider enabled flag through patchConfig when the switch is pressed", async () => {
     snapshotState.entries = [claudeEntry];
     configState.config = makeConfig();
 
@@ -334,7 +343,7 @@ describe("ProvidersSection", () => {
     expect(switchEl).not.toBeNull();
     expect(switchEl?.getAttribute("aria-checked")).toBe("true");
 
-    act(() => {
+    await act(async () => {
       switchEl?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     });
 
@@ -342,6 +351,5 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
-    expect(container?.querySelector('[data-testid="provider-diagnostic-sheet"]')).toBeNull();
   });
 });

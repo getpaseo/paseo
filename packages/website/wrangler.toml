@@ -2,7 +2,7 @@ name = "paseo-website"
 account_id = "10ed39a1dbf316e30abd0c409bed40d6"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
-main = "@tanstack/react-start/server-entry"
+main = "./src/server-entry.ts"
 
 routes = [
   { pattern = "paseo.sh", custom_domain = true },
@@ -11,3 +11,7 @@ routes = [
 
 [observability]
 enabled = true
+
+[[kv_namespaces]]
+binding = "WEBSITE_CACHE"
+id = "cb4d8779806544e9b673142a80c1eb5f"

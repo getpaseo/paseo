@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildSelfNodeCommand,
   createExternalCommandProcessEnv,
   createExternalProcessEnv,
   createPaseoInternalEnv,
@@ -69,13 +70,13 @@ describe("paseo env contract", () => {
     expect(env.PATH).toBe("/custom/bin");
   });
 
-  test("builds process.execPath external command env with Electron node mode", () => {
+  test("builds external command env without process.execPath special-casing", () => {
     const env = createExternalCommandProcessEnv(process.execPath, baseEnv, {
       ELECTRON_RUN_AS_NODE: "0",
       PASEO_NODE_ENV: "test",
     });
 
-    expect(env[ELECTRON_RUN_AS_NODE]).toBe("1");
+    expect(env[ELECTRON_RUN_AS_NODE]).toBeUndefined();
     expect(env.NODE_ENV).toBe("development");
     expect(env.PASEO_AGENT_ID).toBe("agent-123");
     expect(env.PATH).toBe("/usr/bin");
@@ -85,16 +86,19 @@ describe("paseo env contract", () => {
     expect(env.PASEO_SUPERVISED).toBeUndefined();
   });
 
-  test("always re-adds Electron node mode after scrubbing process.execPath overlays", () => {
-    const env = createExternalCommandProcessEnv(process.execPath, baseEnv, {
-      ELECTRON_RUN_AS_NODE: undefined,
+  test("builds self node command with Electron node mode", () => {
+    const command = buildSelfNodeCommand(["script.js"], {
+      CUSTOM: "value",
     });
 
-    for (const key of runtimeControlEnvKeys) {
-      if (key === ELECTRON_RUN_AS_NODE) continue;
-      expect(env[key]).toBeUndefined();
-    }
-    expect(env[ELECTRON_RUN_AS_NODE]).toBe("1");
+    expect(command.command).toBe(process.execPath);
+    expect(command.args).toEqual(["script.js"]);
+    expect(command.env[ELECTRON_RUN_AS_NODE]).toBe("1");
+    expect(command.env.CUSTOM).toBe("value");
+    expect(command.env.ELECTRON_NO_ATTACH_CONSOLE).toBeUndefined();
+    expect(command.env.PASEO_DESKTOP_MANAGED).toBeUndefined();
+    expect(command.env[PASEO_NODE_ENV]).toBeUndefined();
+    expect(command.env.PASEO_SUPERVISED).toBeUndefined();
   });
 
   test("does not add Electron node mode for non-execPath commands", () => {

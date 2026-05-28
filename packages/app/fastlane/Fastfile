@@ -11,11 +11,6 @@ platform :ios do
       key_filepath: ENV.fetch("ASC_KEY_P8"),
     )
 
-    build_number = latest_testflight_build_number(
-      api_key: api_key,
-      app_identifier: APP_IDENTIFIER,
-    )
-
     require "spaceship"
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
       key_id: ENV.fetch("ASC_KEY_ID"),
@@ -25,29 +20,81 @@ platform :ios do
     app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
     UI.user_error!("Could not find app #{APP_IDENTIFIER} on App Store Connect") if app.nil?
 
+    # The release workflow forwards the marketing version and CFBundleVersion of
+    # the binary it just built. Use them to identify the exact build, since
+    # CFBundleVersion is not unique across marketing versions in this project
+    # (the production profile resets it per app_version). The resubmit workflow
+    # leaves these unset and falls back to "most recently uploaded iOS build".
+    target_version = ENV["APP_VERSION"].to_s.strip
+    target_build = ENV["APP_BUILD_VERSION"].to_s.strip
+    target_version = nil if target_version.empty?
+    target_build = nil if target_build.empty?
+
+    if target_version
+      UI.message("Targeting App Store version #{target_version}#{target_build ? " build #{target_build}" : ""} from workflow input")
+    else
+      UI.message("No APP_VERSION provided; selecting the most recently uploaded iOS build")
+    end
+
+    valid_build = nil
     deadline = Time.now + (30 * 60)
     loop do
       builds = Spaceship::ConnectAPI::Build.all(
         app_id: app.id,
-        filter: { "version" => build_number.to_s },
-        includes: "preReleaseVersion",
-      )
-      build = builds.find { |b| b.pre_release_version&.platform == "IOS" }
-      state = build&.processing_state
-      UI.message("Build #{build_number} processing state: #{state || 'unknown'}")
-      break if state == "VALID"
+        sort: "-uploadedDate",
+        limit: 100,
+      ).select { |b| b.pre_release_version&.platform == "IOS" }
+      builds = builds.select { |b| b.pre_release_version&.version == target_version } if target_version
+      builds = builds.select { |b| b.version == target_build } if target_build
+
+      build = builds.first
+      if build.nil?
+        UI.user_error!("Timed out waiting for build to appear on App Store Connect.") if Time.now > deadline
+        UI.message("No matching iOS build visible on App Store Connect yet; waiting...")
+        sleep(30)
+        next
+      end
+
+      state = build.processing_state
+      UI.message("Build #{build.pre_release_version.version} (#{build.version}) processing state: #{state || 'unknown'}")
+      if state == "VALID"
+        valid_build = build
+        break
+      end
       if state == "INVALID" || state == "FAILED"
-        UI.user_error!("Build #{build_number} failed App Store processing (state: #{state}).")
+        UI.user_error!("Build #{build.version} failed App Store processing (state: #{state}).")
       end
       if Time.now > deadline
-        UI.user_error!("Timed out waiting for build #{build_number} to finish processing on App Store Connect.")
+        UI.user_error!("Timed out waiting for build #{build.version} to finish processing on App Store Connect.")
       end
       sleep(30)
+    end
+
+    app_version = valid_build.pre_release_version.version
+    build_number = valid_build.version
+    UI.message("Submitting build #{build_number} as App Store version #{app_version} for review")
+
+    # Ensure an editable App Store version exists for this marketing version.
+    # deliver requires a "Prepare for Submission" version on App Store Connect
+    # and won't auto-create one when skip_metadata + skip_screenshots are set.
+    app.ensure_version!(app_version, platform: Spaceship::ConnectAPI::Platform::IOS)
+
+    # Apple requires a non-empty "What's New" on every new App Store version
+    # before it can be submitted for review. With skip_metadata: true, deliver
+    # never sets this, so we populate it directly per-locale.
+    edit_version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    release_notes = "Bug fixes and improvements."
+    edit_version.get_app_store_version_localizations.each do |localization|
+      if localization.whats_new.to_s.strip.empty?
+        UI.message("Setting whatsNew on #{localization.locale}")
+        localization.update(attributes: { whatsNew: release_notes })
+      end
     end
 
     deliver(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,
+      app_version: app_version,
       build_number: build_number.to_s,
       submit_for_review: true,
       automatic_release: true,

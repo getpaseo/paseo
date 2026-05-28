@@ -1,30 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, Text, TextInput, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
-import type { HostConnection, HostProfile } from "@/types/host-connection";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { SettingsTextAreaCard } from "@/components/settings-textarea";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
+  useHostMutations,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
   useHostRuntimeSnapshot,
-  useHostMutations,
   useHosts,
 } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
-import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
-import { confirmDialog } from "@/utils/confirm-dialog";
-import { settingsStyles } from "@/styles/settings";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { SettingsSection } from "@/screens/settings/settings-section";
 import { ProvidersSection } from "@/screens/settings/providers-section";
-import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
-import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { SettingsSection } from "@/screens/settings/settings-section";
+import { useSessionStore } from "@/stores/session-store";
+import { settingsStyles } from "@/styles/settings";
+import type { HostConnection, HostProfile } from "@/types/host-connection";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
+import { formatLatency } from "@/utils/latency";
 
 const RESTART_CONFIRMATION_MESSAGE =
   "This will restart the daemon. Agents running on it will keep going; the app will reconnect automatically.";
@@ -67,6 +70,9 @@ function formatDaemonVersionBadge(version: string | null): string | null {
   if (!trimmed) return null;
   return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
 }
+
+const REMOVE_CONNECTION_HEADER: SheetHeader = { title: "Remove connection" };
+const REMOVE_HOST_HEADER: SheetHeader = { title: "Remove host" };
 
 export interface HostPageProps {
   serverId: string;
@@ -174,64 +180,23 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
   const { theme } = useUnistyles();
   const { renameHost } = useHostMutations();
   const [isEditing, setIsEditing] = useState(false);
-  const [draftLabel, setDraftLabel] = useState(host.label ?? "");
-  const [isSaving, setIsSaving] = useState(false);
-  const inputRef = useRef<TextInput>(null);
 
-  useEffect(() => {
-    setDraftLabel(host.label ?? "");
-  }, [host.serverId, host.label]);
-
-  useEffect(() => {
-    if (isEditing) {
-      const timeout = setTimeout(() => inputRef.current?.focus(), 50);
-      return () => clearTimeout(timeout);
-    }
-    return undefined;
-  }, [isEditing]);
-
-  const handleSave = useCallback(async () => {
-    const nextLabel = draftLabel.trim();
-    if (!nextLabel) {
-      Alert.alert("Label required", "Enter a label for this host.");
-      return;
-    }
-    if (isSaving) return;
-    if (nextLabel === host.label.trim()) {
-      setIsEditing(false);
-      return;
-    }
-    try {
-      setIsSaving(true);
+  const handleSubmit = useCallback(
+    async (value: string) => {
+      const nextLabel = value.trim();
+      if (nextLabel === host.label.trim()) return;
       await renameHost(host.serverId, nextLabel);
-      setIsEditing(false);
-    } catch (error) {
-      console.error("[HostPage] Failed to rename host", error);
-      Alert.alert("Error", "Unable to save host");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [draftLabel, host.label, host.serverId, isSaving, renameHost]);
+    },
+    [host.label, host.serverId, renameHost],
+  );
 
-  const handleCancel = useCallback(() => {
-    if (isSaving) return;
-    setDraftLabel(host.label ?? "");
-    setIsEditing(false);
-  }, [host.label, isSaving]);
-
-  const handleStartEdit = useCallback(() => {
-    setDraftLabel(host.label ?? "");
-    setIsEditing(true);
-  }, [host.label]);
-
-  const handleSavePress = useCallback(() => {
-    void handleSave();
-  }, [handleSave]);
+  const openEditor = useCallback(() => setIsEditing(true), []);
+  const closeEditor = useCallback(() => setIsEditing(false), []);
 
   return (
     <>
       <Pressable
-        onPress={handleStartEdit}
+        onPress={openEditor}
         hitSlop={8}
         style={styles.identityEditButton}
         accessibilityRole="button"
@@ -241,48 +206,16 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
         <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </Pressable>
 
-      <AdaptiveModalSheet
+      <AdaptiveRenameModal
         visible={isEditing}
-        onClose={handleCancel}
         title="Rename host"
+        initialValue={host.label}
+        placeholder="My Host"
+        submitLabel="Save"
+        onClose={closeEditor}
+        onSubmit={handleSubmit}
         testID="host-page-rename-modal"
-      >
-        <View style={styles.renameBody}>
-          <TextInput
-            ref={inputRef}
-            value={draftLabel}
-            onChangeText={setDraftLabel}
-            placeholder="My Host"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!isSaving}
-            onSubmitEditing={handleSavePress}
-            style={styles.renameInput}
-            testID="host-page-label-input"
-          />
-          <View style={styles.renameActions}>
-            <Button
-              variant="secondary"
-              size="sm"
-              style={FLEX_1_STYLE}
-              onPress={handleCancel}
-              disabled={isSaving}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              style={FLEX_1_STYLE}
-              onPress={handleSavePress}
-              disabled={isSaving}
-              testID="host-page-label-save"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </Button>
-          </View>
-        </View>
-      </AdaptiveModalSheet>
+      />
     </>
   );
 }
@@ -347,7 +280,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
 
       {pendingRemoveConnection ? (
         <AdaptiveModalSheet
-          title="Remove connection"
+          header={REMOVE_CONNECTION_HEADER}
           visible
           onClose={handleCloseConfirm}
           testID="remove-connection-confirm-modal"
@@ -403,7 +336,7 @@ function ConnectionRow({
   const latencyText = (() => {
     if (latencyLoading) return "...";
     if (latencyError) return "Timeout";
-    if (latencyMs != null) return `${latencyMs}ms`;
+    if (latencyMs != null) return formatLatency(latencyMs);
     return "\u2014";
   })();
   const latencyColor = latencyError ? theme.colors.palette.red[300] : theme.colors.foregroundMuted;
@@ -448,9 +381,9 @@ function ConnectionRow({
 function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaemon: boolean }) {
   return (
     <>
-      <SettingsSection title="Operations">
-        <RestartDaemonCard host={host} />
+      <SettingsSection title="Daemon settings">
         <InjectPaseoToolsCard serverId={host.serverId} />
+        <AppendSystemPromptCard serverId={host.serverId} />
       </SettingsSection>
       {isLocalDaemon ? (
         <SettingsSection title="Pair devices">
@@ -613,9 +546,9 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
     <View style={settingsStyles.card} testID="host-page-inject-mcp-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Inject Paseo tools</Text>
+          <Text style={settingsStyles.rowTitle}>Enable Paseo tools</Text>
           <Text style={settingsStyles.rowHint}>
-            Automatically inject Paseo MCP tools into new agents
+            Agents will be able to manage worktrees, agents and schedules
           </Text>
         </View>
         <Switch
@@ -625,6 +558,111 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
         />
       </View>
     </View>
+  );
+}
+
+function AppendSystemPromptCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const persistedPrompt = config?.appendSystemPrompt ?? "";
+  const [draft, setDraft] = useState(persistedPrompt);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const header = useMemo<SheetHeader>(() => ({ title: "Append system prompt" }), []);
+
+  useEffect(() => {
+    setDraft(persistedPrompt);
+  }, [persistedPrompt]);
+
+  const hasChanges = draft !== persistedPrompt;
+
+  const handleOpen = useCallback(() => {
+    setDraft(persistedPrompt);
+    setIsEditing(true);
+  }, [persistedPrompt]);
+
+  const handleClose = useCallback(() => {
+    if (isSaving) return;
+    setDraft(persistedPrompt);
+    setIsEditing(false);
+  }, [isSaving, persistedPrompt]);
+
+  const handleSave = useCallback(() => {
+    setIsSaving(true);
+    void patchConfig({ appendSystemPrompt: draft })
+      .then(() => {
+        setIsEditing(false);
+        return;
+      })
+      .catch((error) => {
+        console.error("[HostPage] Failed to save append system prompt", error);
+      })
+      .finally(() => setIsSaving(false));
+  }, [draft, patchConfig]);
+
+  const handleReset = useCallback(() => {
+    setDraft(persistedPrompt);
+  }, [persistedPrompt]);
+
+  if (!isConnected) return null;
+
+  return (
+    <>
+      <View style={settingsStyles.card} testID="host-page-append-system-prompt-card">
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>System prompt</Text>
+            <Text style={settingsStyles.rowHint}>Added a system prompt to all agents</Text>
+          </View>
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleOpen}
+            testID="host-page-append-system-prompt-edit"
+          >
+            Edit
+          </Button>
+        </View>
+      </View>
+
+      {isEditing ? (
+        <AdaptiveModalSheet
+          header={header}
+          visible
+          onClose={handleClose}
+          testID="host-page-append-system-prompt-sheet"
+          desktopMaxWidth={560}
+        >
+          <SettingsTextAreaCard
+            testID="host-page-append-system-prompt-input"
+            accessibilityLabel="Append system prompt"
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Always keep replies concise."
+          />
+          <View style={styles.appendPromptActions}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={handleReset}
+              disabled={!hasChanges || isSaving}
+              testID="host-page-append-system-prompt-reset"
+            >
+              Reset
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onPress={handleSave}
+              disabled={!hasChanges || isSaving}
+              testID="host-page-append-system-prompt-save"
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
+          </View>
+        </AdaptiveModalSheet>
+      ) : null}
+    </>
   );
 }
 
@@ -700,6 +738,8 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
 
   return (
     <SettingsSection title="Danger zone" testID="host-page-remove-host-card">
+      <RestartDaemonCard host={host} />
+
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
@@ -723,7 +763,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
 
       {isConfirming ? (
         <AdaptiveModalSheet
-          title="Remove host"
+          header={REMOVE_HOST_HEADER}
           visible
           onClose={handleCloseConfirm}
           testID="remove-host-confirm-modal"
@@ -824,6 +864,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     marginTop: theme.spacing[4],
   },
+  appendPromptActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
   emptyCard: {
     padding: theme.spacing[4],
     alignItems: "center",
@@ -831,25 +876,6 @@ const styles = StyleSheet.create((theme) => ({
   emptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  renameBody: {
-    gap: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-  },
-  renameInput: {
-    backgroundColor: theme.colors.surface0,
-    color: theme.colors.foreground,
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.fontSize.base,
-  },
-  renameActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
   },
 }));
 

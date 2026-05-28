@@ -25,9 +25,10 @@ import {
 } from "react-native";
 import { Portal } from "@gorhom/portal";
 import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -494,19 +495,18 @@ export function TooltipContent({
     [],
   );
 
-  const contentStyle = useMemo(
+  const frameStyle = useMemo(
     () => [
-      styles.content,
-      { maxWidth },
-      style,
       {
         position: "absolute" as const,
         top: position?.y ?? -9999,
         left: position?.x ?? -9999,
+        maxWidth,
       },
     ],
-    [maxWidth, style, position?.x, position?.y],
+    [maxWidth, position?.x, position?.y],
   );
+  const contentStyle = useMemo(() => [styles.content, style], [style]);
 
   const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
 
@@ -519,7 +519,7 @@ export function TooltipContent({
     return (
       <Portal hostName={bottomSheetInternal?.hostName}>
         <View pointerEvents="none" style={styles.portalOverlay}>
-          <Animated.View
+          <FloatingSurface
             pointerEvents="none"
             entering={FadeIn.duration(80)}
             exiting={FadeOut.duration(80)}
@@ -527,9 +527,10 @@ export function TooltipContent({
             testID={testID}
             onLayout={handleLayout}
             style={contentStyle}
+            frameStyle={frameStyle}
           >
             {children}
-          </Animated.View>
+          </FloatingSurface>
         </View>
       </Portal>
     );
@@ -544,7 +545,7 @@ export function TooltipContent({
       onRequestClose={handleDismiss}
     >
       <Pressable style={styles.overlay} onPress={handleDismiss}>
-        <Animated.View
+        <FloatingSurface
           pointerEvents="none"
           entering={FadeIn.duration(80)}
           exiting={FadeOut.duration(80)}
@@ -552,9 +553,10 @@ export function TooltipContent({
           testID={testID}
           onLayout={handleLayout}
           style={contentStyle}
+          frameStyle={frameStyle}
         >
           {children}
-        </Animated.View>
+        </FloatingSurface>
       </Pressable>
     </Modal>
   );

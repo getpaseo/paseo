@@ -23,8 +23,10 @@ export type SpawnProcessOptions = Omit<SpawnOptions, "env"> & ExternalEnvOptions
 interface ExecCommandOptions extends ExternalEnvOptions {
   cwd?: string;
   encoding?: BufferEncoding;
+  killSignal?: NodeJS.Signals;
   timeout?: number;
   maxBuffer?: number;
+  shell?: boolean | string;
 }
 
 interface ExecCommandResult {
@@ -87,7 +89,7 @@ export async function execCommand(
   const { baseEnv, env, envOverlay } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command);
+  const shell = shouldUseWindowsShell(command, options?.shell);
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
   const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
@@ -104,6 +106,7 @@ export async function execCommand(
     cwd: options?.cwd,
     env: childEnv,
     encoding: options?.encoding ?? "utf8",
+    killSignal: options?.killSignal,
     timeout: options?.timeout,
     maxBuffer: options?.maxBuffer,
     shell,

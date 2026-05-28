@@ -4,7 +4,7 @@ import Animated, { useAnimatedStyle, withTiming, useSharedValue } from "react-na
 import { useEffect, useMemo } from "react";
 import { Upload } from "lucide-react-native";
 import { useFileDropZone } from "@/hooks/use-file-drop-zone";
-import type { ImageAttachment } from "./message-input";
+import type { ImageAttachment } from "@/composer/types";
 import { isWeb } from "@/constants/platform";
 
 interface FileDropZoneProps {

@@ -2,9 +2,10 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "./directory-suggestions.js";
 
-const isWindows = process.platform === "win32";
+const isWindows = isPlatform("win32");
 
 describe("searchHomeDirectories", () => {
   let tempRoot: string;
@@ -18,6 +19,8 @@ describe("searchHomeDirectories", () => {
 
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(outsideDir, { recursive: true });
+    homeDir = realpathSync(homeDir);
+    outsideDir = realpathSync(outsideDir);
 
     mkdirSync(path.join(homeDir, "projects", "paseo"), { recursive: true });
     mkdirSync(path.join(homeDir, "projects", "playground"), { recursive: true });
@@ -26,7 +29,9 @@ describe("searchHomeDirectories", () => {
     writeFileSync(path.join(homeDir, "projects", "README.md"), "not a directory\n");
 
     mkdirSync(path.join(outsideDir, "outside-match"), { recursive: true });
-    symlinkSync(path.join(outsideDir, "outside-match"), path.join(homeDir, "outside-link"));
+    if (!isWindows) {
+      symlinkSync(path.join(outsideDir, "outside-match"), path.join(homeDir, "outside-link"));
+    }
   });
 
   afterEach(() => {
@@ -50,8 +55,9 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    expect(results).toContain(path.join(homeDir, "projects"));
-    expect(results).toContain(path.join(homeDir, "projects", "paseo"));
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    expect(resolvedResults).toContain(realpathSync.native(path.join(homeDir, "projects")));
+    expect(resolvedResults).toContain(realpathSync.native(path.join(homeDir, "projects", "paseo")));
     expect(results).not.toContain(path.join(homeDir, "projects", "README.md"));
   });
 
@@ -62,7 +68,9 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    expect(results).toEqual([path.join(homeDir, "projects", "paseo")]);
+    expect(results.map((result) => realpathSync.native(result))).toEqual([
+      realpathSync.native(path.join(homeDir, "projects", "paseo")),
+    ]);
   });
 
   it("prioritizes exact segment matches before segment-prefix matches", async () => {
@@ -77,8 +85,9 @@ describe("searchHomeDirectories", () => {
       limit: 30,
     });
 
-    const exactIndex = results.indexOf(exactSegmentPath);
-    const prefixIndex = results.indexOf(prefixSegmentPath);
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    const exactIndex = resolvedResults.indexOf(realpathSync.native(exactSegmentPath));
+    const prefixIndex = resolvedResults.indexOf(realpathSync.native(prefixSegmentPath));
     expect(exactIndex).toBeGreaterThanOrEqual(0);
     expect(prefixIndex).toBeGreaterThanOrEqual(0);
     expect(exactIndex).toBeLessThan(prefixIndex);
@@ -96,8 +105,9 @@ describe("searchHomeDirectories", () => {
       limit: 30,
     });
 
-    const earlierIndex = results.indexOf(earlierPath);
-    const laterIndex = results.indexOf(laterPath);
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    const earlierIndex = resolvedResults.indexOf(realpathSync.native(earlierPath));
+    const laterIndex = resolvedResults.indexOf(realpathSync.native(laterPath));
     expect(earlierIndex).toBeGreaterThanOrEqual(0);
     expect(laterIndex).toBeGreaterThanOrEqual(0);
     expect(earlierIndex).toBeLessThan(laterIndex);
@@ -125,7 +135,8 @@ describe("searchHomeDirectories", () => {
     expect(results).not.toContain(path.join(homeDir, ".hidden", "cache"));
   });
 
-  it("does not return paths that escape home through symlinks", async () => {
+  // POSIX-only: creates and follows a symlink escape fixture.
+  it.skipIf(isWindows)("does not return paths that escape home through symlinks", async () => {
     const results = await searchHomeDirectories({
       homeDir,
       query: "outside",
@@ -170,7 +181,9 @@ describe("searchWorkspaceEntries", () => {
     );
     writeFileSync(path.join(workspaceDir, "docs", "notes.md"), "notes\n");
 
-    symlinkSync(path.join(outsideDir, "escaped"), path.join(workspaceDir, "escaped-link"));
+    if (!isWindows) {
+      symlinkSync(path.join(outsideDir, "escaped"), path.join(workspaceDir, "escaped-link"));
+    }
   });
 
   afterEach(() => {
@@ -214,28 +227,106 @@ describe("searchWorkspaceEntries", () => {
     expect(filesOnly).toEqual([{ path: "README.md", kind: "file" }]);
   });
 
-  it("supports path-style queries and does not escape cwd through symlinks", async () => {
-    const pathResults = await searchWorkspaceEntries({
+  it("supports fuzzy basename queries for nested workspace files", async () => {
+    writeFileSync(path.join(workspaceDir, "src", "components", "message-renderer.tsx"), "");
+
+    const results = await searchWorkspaceEntries({
       cwd: workspaceDir,
-      query: "src/co",
+      query: "msgrndr",
       limit: 20,
       includeFiles: true,
-      includeDirectories: true,
-    });
-    expect(pathResults).toContainEqual({
-      path: "src/components",
-      kind: "directory",
+      includeDirectories: false,
     });
 
-    const escapedResults = await searchWorkspaceEntries({
+    expect(results).toEqual([
+      {
+        path: "src/components/message-renderer.tsx",
+        kind: "file",
+      },
+    ]);
+  });
+
+  it("ranks fuzzy basename matches after exact, prefix, and substring matches", async () => {
+    writeFileSync(path.join(workspaceDir, "src", "components", "msgrndr"), "");
+    writeFileSync(path.join(workspaceDir, "src", "components", "msgrndr-panel.tsx"), "");
+    writeFileSync(path.join(workspaceDir, "src", "components", "use-msgrndr.ts"), "");
+    writeFileSync(path.join(workspaceDir, "src", "components", "message-renderer.tsx"), "");
+
+    const results = await searchWorkspaceEntries({
       cwd: workspaceDir,
-      query: "escaped",
+      query: "msgrndr",
       limit: 20,
       includeFiles: true,
-      includeDirectories: true,
+      includeDirectories: false,
     });
-    expect(escapedResults.some((entry) => entry.path.includes("escaped-link"))).toBe(false);
+
+    expect(results.map((entry) => entry.path)).toEqual([
+      "src/components/msgrndr",
+      "src/components/msgrndr-panel.tsx",
+      "src/components/use-msgrndr.ts",
+      "src/components/message-renderer.tsx",
+    ]);
   });
+
+  it("suffix mode matches whole path segment suffixes without fuzzy matches", async () => {
+    mkdirSync(path.join(workspaceDir, "packages", "app", "src"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "src", "file.ts"), "");
+    writeFileSync(path.join(workspaceDir, "packages", "app", "src", "file.ts"), "");
+    writeFileSync(path.join(workspaceDir, "src", "paseo-config-file.ts"), "");
+
+    const basenameResults = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "file.ts",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+    });
+    const suffixResults = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "src/file.ts",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+    });
+
+    expect(basenameResults).toEqual([
+      { path: "src/file.ts", kind: "file" },
+      { path: "packages/app/src/file.ts", kind: "file" },
+    ]);
+    expect(suffixResults).toEqual([
+      { path: "src/file.ts", kind: "file" },
+      { path: "packages/app/src/file.ts", kind: "file" },
+    ]);
+  });
+
+  // POSIX-only: creates and follows a symlink escape fixture.
+  it.skipIf(isWindows)(
+    "supports path-style queries and does not escape cwd through symlinks",
+    async () => {
+      const pathResults = await searchWorkspaceEntries({
+        cwd: workspaceDir,
+        query: "src/co",
+        limit: 20,
+        includeFiles: true,
+        includeDirectories: true,
+      });
+      expect(pathResults).toContainEqual({
+        path: "src/components",
+        kind: "directory",
+      });
+
+      const escapedResults = await searchWorkspaceEntries({
+        cwd: workspaceDir,
+        query: "escaped",
+        limit: 20,
+        includeFiles: true,
+        includeDirectories: true,
+      });
+      expect(escapedResults.some((entry) => entry.path.includes("escaped-link"))).toBe(false);
+    },
+  );
 
   it("ignores node_modules entries so deep workspace files still resolve under scan limits", async () => {
     mkdirSync(path.join(workspaceDir, "packages", "app", "src", "app"), { recursive: true });

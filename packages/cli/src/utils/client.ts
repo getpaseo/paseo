@@ -1,17 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
+import { loadConfig, resolvePaseoHome } from "@getpaseo/server";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
-  loadConfig,
   normalizeHostPort,
   parseConnectionUri,
-  parseConnectionOfferFromUrl,
-  DaemonClient,
-  resolvePaseoHome,
   shouldUseTlsForDefaultHostedRelay,
+} from "@getpaseo/protocol/daemon-endpoints";
+import {
+  parseConnectionOfferFromUrl,
   type ConnectionOffer,
-  type WebSocketLike,
-} from "@getpaseo/server";
+} from "@getpaseo/protocol/connection-offer";
+import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
@@ -218,7 +218,12 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
 
 export function resolveDaemonPassword(host: string): string | undefined {
   const trimmed = host.trim();
-  return trimmed.startsWith("tcp://") ? parseConnectionUri(trimmed).password : undefined;
+  if (trimmed.startsWith("tcp://")) {
+    const fromUri = parseConnectionUri(trimmed).password;
+    if (fromUri) return fromUri;
+  }
+  const fromEnv = process.env.PASEO_PASSWORD;
+  return fromEnv && fromEnv.length > 0 ? fromEnv : undefined;
 }
 
 /**
@@ -286,7 +291,7 @@ async function connectViaRelayOffer(
     endpoint: offer.relay.endpoint,
     serverId: offer.serverId,
     role: "client",
-    useTls: shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
+    useTls: offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
   });
 
   const client = new DaemonClient({

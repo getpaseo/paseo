@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
-import { createReadStream, unlinkSync, existsSync } from "fs";
-import { stat } from "fs/promises";
+import { constants, existsSync, unlinkSync } from "fs";
+import { open } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -99,12 +99,9 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
-import {
-  buildProviderRegistry,
-  createClientsFromRegistry,
-  shutdownProviders,
-} from "./agent/provider-registry.js";
+import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -113,12 +110,14 @@ import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore } from "./daemon-config-store.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
+import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
@@ -144,25 +143,79 @@ import {
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
+const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
+const REDACTED_LOG_VALUE = "[redacted]";
+const DOWNLOAD_OPEN_FLAGS =
+  process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
+
 function formatHostForHttpUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function resolveAgentMcpClientHost(host: string): string {
+  if (host === "0.0.0.0") {
+    return "127.0.0.1";
+  }
+  if (host === "::" || host === "[::]") {
+    return "::1";
+  }
+  return host;
 }
 
 function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null {
   if (!listenTarget || listenTarget.type !== "tcp") {
     return null;
   }
+  const host = resolveAgentMcpClientHost(listenTarget.host);
   return new URL(
     "/mcp/agents",
-    `http://${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
+    `http://${formatHostForHttpUrl(host)}:${listenTarget.port}`,
   ).toString();
+}
+
+function summarizeAgentMcpDebugMessage(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {
+      type: body === null ? "null" : typeof body,
+    };
+  }
+
+  const record = body as Record<string, unknown>;
+  const method = typeof record.method === "string" ? record.method : undefined;
+  return {
+    type: "object",
+    ...(typeof record.jsonrpc === "string" ? { jsonrpc: record.jsonrpc } : {}),
+    ...(method ? { method } : {}),
+    hasId: Object.prototype.hasOwnProperty.call(record, "id"),
+    hasParams: Object.prototype.hasOwnProperty.call(record, "params"),
+  };
+}
+
+function summarizeAgentMcpDebugBody(body: unknown): Record<string, unknown> {
+  if (!Array.isArray(body)) {
+    return summarizeAgentMcpDebugMessage(body);
+  }
+
+  const messages = body.slice(0, MAX_MCP_DEBUG_BATCH_ITEMS).map(summarizeAgentMcpDebugMessage);
+  return {
+    type: "batch",
+    count: body.length,
+    messages,
+    ...(body.length > messages.length ? { omitted: body.length - messages.length } : {}),
+  };
 }
 
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
 export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 
+export interface PaseoSpeechSttLanguages {
+  dictation: string;
+  voice: string;
+}
+
 export interface PaseoSpeechConfig {
   providers: RequestedSpeechProviders;
+  sttLanguages?: PaseoSpeechSttLanguages;
   local?: PaseoLocalSpeechConfig;
 }
 
@@ -187,6 +240,8 @@ export interface PaseoDaemonConfig {
   hostnames?: HostnamesConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  autoArchiveAfterMerge?: boolean;
+  appendSystemPrompt?: string;
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -195,6 +250,8 @@ export interface PaseoDaemonConfig {
   relayEnabled?: boolean;
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
+  relayUseTls?: boolean;
+  relayPublicUseTls?: boolean;
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
@@ -208,6 +265,7 @@ export interface PaseoDaemonConfig {
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
+  pushNotificationSender?: PushNotificationSender;
 }
 
 export interface PaseoDaemon {
@@ -243,6 +301,8 @@ export async function createPaseoDaemon(
           },
         ]),
       ),
+      autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
+      appendSystemPrompt: config.appendSystemPrompt ?? "",
     },
     logger,
   );
@@ -254,7 +314,9 @@ export async function createPaseoDaemon(
   const staticDir = config.staticDir;
   const downloadTokenTtlMs = config.downloadTokenTtlMs ?? 60000;
 
-  const downloadTokenStore = new DownloadTokenStore({ ttlMs: downloadTokenTtlMs });
+  const downloadTokenStore = new DownloadTokenStore({
+    ttlMs: downloadTokenTtlMs,
+  });
 
   const listenTarget = parseListenString(config.listen);
 
@@ -381,8 +443,10 @@ export async function createPaseoDaemon(
       return;
     }
 
+    let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      const fileStats = await stat(entry.absolutePath);
+      fileHandle = await open(entry.absolutePath, DOWNLOAD_OPEN_FLAGS);
+      const fileStats = await fileHandle.stat();
       if (!fileStats.isFile()) {
         res.status(404).json({ error: "File not found" });
         return;
@@ -391,9 +455,10 @@ export async function createPaseoDaemon(
       const safeFileName = entry.fileName.replace(/["\r\n]/g, "_");
       res.setHeader("Content-Type", entry.mimeType);
       res.setHeader("Content-Disposition", `attachment; filename="${safeFileName}"`);
-      res.setHeader("Content-Length", entry.size.toString());
+      res.setHeader("Content-Length", fileStats.size.toString());
 
-      const stream = createReadStream(entry.absolutePath);
+      const stream = fileHandle.createReadStream();
+      fileHandle = null;
       stream.on("error", (err) => {
         logger.error({ err }, "Failed to stream download");
         if (!res.headersSent) {
@@ -408,6 +473,8 @@ export async function createPaseoDaemon(
       if (!res.headersSent) {
         res.status(404).json({ error: "File not found" });
       }
+    } finally {
+      await fileHandle?.close().catch(() => undefined);
     }
   };
 
@@ -449,19 +516,21 @@ export async function createPaseoDaemon(
       github,
     },
   });
-  const providerRegistry = buildProviderRegistry(logger, {
+  const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
+  const providerSnapshotManager = new ProviderSnapshotManager({
+    logger: providerSnapshotLogger,
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,
     isDev: config.isDev === true,
+    extraClients: config.agentClients,
   });
+  const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
-    clients: {
-      ...createClientsFromRegistry(providerRegistry, logger),
-      ...config.agentClients,
-    },
-    providerDefinitions: providerRegistry,
+    clients: initialAgentManagerState.clients,
+    providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    appendSystemPrompt: config.appendSystemPrompt,
     logger,
   });
 
@@ -481,6 +550,26 @@ export async function createPaseoDaemon(
     logger,
   });
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
+  const workspaceReconciliation = new WorkspaceReconciliationService({
+    projectRegistry,
+    workspaceRegistry,
+    logger,
+    workspaceGitService,
+  });
+  void (async () => {
+    try {
+      const result = await workspaceReconciliation.runOnce();
+      logger.info(
+        {
+          elapsed: elapsed(),
+          changeCount: result.changesApplied.length,
+        },
+        "Workspace registries reconciled",
+      );
+    } catch (error) {
+      logger.error({ err: error }, "Background workspace reconciliation failed");
+    }
+  })();
   await chatService.initialize();
   logger.info({ elapsed: elapsed() }, "Chat service initialized");
   const checkoutDiffManager = new CheckoutDiffManager({
@@ -513,52 +602,67 @@ export async function createPaseoDaemon(
     "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
   );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
+
+  const archiveWorkspaceRecordExternal = async (workspaceId: string) => {
+    const sessions = wsServer?.listActiveSessions() ?? [];
+    if (sessions.length > 0) {
+      await Promise.all(
+        sessions.map((session) => session.archiveWorkspaceRecordForExternalMutation(workspaceId)),
+      );
+      return;
+    }
+
+    await archivePersistedWorkspaceRecord({
+      workspaceId,
+      workspaceRegistry,
+      projectRegistry,
+    });
+  };
+  const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
+    const workspaceIdList = Array.from(workspaceIds);
+    for (const session of wsServer?.listActiveSessions() ?? []) {
+      session.markWorkspaceArchivingForExternalMutation(workspaceIdList, archivingAt);
+    }
+  };
+  const clearWorkspaceArchivingExternal = (workspaceIds: Iterable<string>) => {
+    const workspaceIdList = Array.from(workspaceIds);
+    for (const session of wsServer?.listActiveSessions() ?? []) {
+      session.clearWorkspaceArchivingForExternalMutation(workspaceIdList);
+    }
+  };
+  const emitWorkspaceUpdatesExternal = async (workspaceIds: Iterable<string>) => {
+    const workspaceIdList = Array.from(workspaceIds);
+    await Promise.all(
+      (wsServer?.listActiveSessions() ?? []).map((session) =>
+        session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
+      ),
+    );
+  };
+  const emitExternalSessionMessage = (message: SessionOutboundMessage) => {
+    wsServer?.broadcast(wrapSessionMessage(message));
+  };
+
+  setupAutoArchiveOnMerge({
+    paseoHome: config.paseoHome,
+    daemonConfigStore,
+    workspaceGitService,
+    github,
+    agentManager,
+    agentStorage,
+    terminalManager,
+    logger,
+    archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+    markWorkspaceArchiving: markWorkspaceArchivingExternal,
+    clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+    emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+    emitSessionMessage: emitExternalSessionMessage,
+  });
+
   const mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
     const agentMcpTransports: AgentMcpTransportMap = new Map();
-    const archiveWorkspaceRecordForMcp = async (workspaceId: string) => {
-      const sessions = wsServer?.listActiveSessions() ?? [];
-      if (sessions.length > 0) {
-        await Promise.all(
-          sessions.map((session) => session.archiveWorkspaceRecordForExternalMutation(workspaceId)),
-        );
-        return;
-      }
-
-      await archivePersistedWorkspaceRecord({
-        workspaceId,
-        workspaceRegistry,
-        projectRegistry,
-      });
-    };
-    const markWorkspaceArchivingForMcpArchive = (
-      workspaceIds: Iterable<string>,
-      archivingAt: string,
-    ) => {
-      const workspaceIdList = Array.from(workspaceIds);
-      for (const session of wsServer?.listActiveSessions() ?? []) {
-        session.markWorkspaceArchivingForExternalMutation(workspaceIdList, archivingAt);
-      }
-    };
-    const clearWorkspaceArchivingForMcpArchive = (workspaceIds: Iterable<string>) => {
-      const workspaceIdList = Array.from(workspaceIds);
-      for (const session of wsServer?.listActiveSessions() ?? []) {
-        session.clearWorkspaceArchivingForExternalMutation(workspaceIdList);
-      }
-    };
-    const emitWorkspaceUpdatesForMcpArchive = async (workspaceIds: Iterable<string>) => {
-      const workspaceIdList = Array.from(workspaceIds);
-      await Promise.all(
-        (wsServer?.listActiveSessions() ?? []).map((session) =>
-          session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
-        ),
-      );
-    };
-    const emitMcpArchiveSessionMessage = (message: SessionOutboundMessage) => {
-      wsServer?.broadcast(wrapSessionMessage(message));
-    };
 
     const createAgentMcpTransport = async (
       callerAgentId?: string,
@@ -570,14 +674,14 @@ export async function createPaseoDaemon(
         terminalManager,
         getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
         scheduleService,
-        providerRegistry,
+        providerSnapshotManager,
         github,
         workspaceGitService,
-        archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
-        emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesForMcpArchive,
-        markWorkspaceArchiving: markWorkspaceArchivingForMcpArchive,
-        clearWorkspaceArchiving: clearWorkspaceArchivingForMcpArchive,
-        emitSessionMessage: emitMcpArchiveSessionMessage,
+        archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+        emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+        markWorkspaceArchiving: markWorkspaceArchivingExternal,
+        clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+        emitSessionMessage: emitExternalSessionMessage,
         createPaseoWorktree: async (input, serviceOptions) => {
           return createPaseoWorktreeWorkflow(
             {
@@ -611,10 +715,10 @@ export async function createPaseoDaemon(
                 void emitOptions;
               },
               cacheWorkspaceSetupSnapshot: () => {},
-              emit: emitMcpArchiveSessionMessage,
+              emit: emitExternalSessionMessage,
               sessionLogger: logger,
               terminalManager,
-              archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
+              archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
               scriptRouteStore,
               scriptRuntimeStore,
               getDaemonTcpPort: () =>
@@ -676,8 +780,8 @@ export async function createPaseoDaemon(
             method: req.method,
             url: req.originalUrl,
             sessionId: req.header("mcp-session-id"),
-            authorization: req.header("authorization"),
-            body: req.body,
+            authorization: req.header("authorization") ? REDACTED_LOG_VALUE : undefined,
+            body: summarizeAgentMcpDebugBody(req.body),
           },
           "Agent MCP request",
         );
@@ -781,9 +885,14 @@ export async function createPaseoDaemon(
           daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
             agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
           });
+          daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
+            agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");
+          });
           const relayEnabled = config.relayEnabled ?? true;
           const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
           const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
+          const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
+          const relayPublicUseTls = config.relayPublicUseTls ?? relayUseTls;
           const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
 
           if (boundListenTarget.type === "tcp") {
@@ -827,9 +936,6 @@ export async function createPaseoDaemon(
             {
               finalTimeoutMs: config.dictationFinalTimeoutMs,
             },
-            config.agentProviderSettings,
-            config.providerOverrides,
-            config.isDev === true,
             daemonVersion,
             (intent) => {
               try {
@@ -852,13 +958,28 @@ export async function createPaseoDaemon(
             (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
             workspaceGitService,
             github,
+            config.pushNotificationSender,
+            providerSnapshotManager,
+            {
+              listen: formatListenTarget(boundListenTarget ?? listenTarget),
+              relay: {
+                enabled: relayEnabled,
+                endpoint: relayEndpoint,
+                publicEndpoint: relayPublicEndpoint,
+                useTls: relayUseTls,
+                publicUseTls: relayPublicUseTls,
+              },
+            },
           );
 
           if (relayEnabled) {
             const offer = await createConnectionOfferV2({
               serverId,
               daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
-              relay: { endpoint: relayPublicEndpoint },
+              relay: {
+                endpoint: relayPublicEndpoint,
+                useTls: relayPublicUseTls,
+              },
             });
 
             encodeOfferToFragmentUrl({ offer, appBaseUrl });
@@ -873,6 +994,7 @@ export async function createPaseoDaemon(
                 return wsServer.attachExternalSocket(ws, metadata);
               },
               relayEndpoint,
+              relayUseTls,
               serverId,
               daemonKeyPair: daemonKeyPair.keyPair,
             });
@@ -906,10 +1028,7 @@ export async function createPaseoDaemon(
     await agentManager.flush().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
-    await shutdownProviders(logger, {
-      runtimeSettings: config.agentProviderSettings,
-      providerOverrides: config.providerOverrides,
-    });
+    await providerSnapshotManager.shutdown();
     terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);

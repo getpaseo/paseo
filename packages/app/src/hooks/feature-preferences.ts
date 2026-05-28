@@ -1,4 +1,4 @@
-import type { AgentFeature } from "@server/server/agent/agent-sdk-types";
+import type { AgentFeature } from "@getpaseo/protocol/agent-types";
 
 export function pruneFeatureValues(
   featureValues: Record<string, unknown>,

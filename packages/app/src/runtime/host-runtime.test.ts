@@ -4,8 +4,8 @@ import type {
   ConnectionState,
   FetchAgentsEntry,
   FetchAgentsOptions,
-} from "@server/client/daemon-client";
-import type { ConnectionOffer } from "@server/shared/connection-offer";
+} from "@getpaseo/client/internal/daemon-client";
+import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
@@ -74,6 +74,10 @@ class FakeDaemonClient {
 
   async ping(): Promise<{ rttMs: number }> {
     return { rttMs: 0 };
+  }
+
+  async checkLiveness(): Promise<{ rttMs: number }> {
+    return this.ping();
   }
 
   setReconnectEnabled(_enabled: boolean): void {}
@@ -198,8 +202,18 @@ function makeOffer(input?: Partial<ConnectionOffer>): ConnectionOffer {
     daemonPublicKeyB64: input?.daemonPublicKeyB64 ?? "pk_test_offer",
     relay: {
       endpoint: input?.relay?.endpoint ?? "relay.paseo.sh:443",
+      useTls: input?.relay?.useTls ?? false,
     },
   };
+}
+
+function encodeOfferUrl(payload: unknown): string {
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  return `https://app.paseo.sh/#offer=${encoded}`;
 }
 
 function makeDeps(
@@ -292,6 +306,58 @@ function makeProbeMap(
 }
 
 describe("HostRuntimeController", () => {
+  it("replaces the active relay client when re-pairing changes the daemon public key", async () => {
+    const oldRelay: HostConnection = {
+      id: "relay:wss:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_old",
+    };
+    const newRelay: HostConnection = {
+      ...oldRelay,
+      daemonPublicKeyB64: "pk_new",
+    };
+    const createdClients: Array<{ client: FakeDaemonClient; connection: HostConnection }> = [];
+    const controller = new HostRuntimeController({
+      host: makeHost({
+        connections: [oldRelay],
+        preferredConnectionId: oldRelay.id,
+      }),
+      deps: {
+        createClient: ({ connection }) => {
+          const client = new FakeDaemonClient();
+          createdClients.push({ client, connection });
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async ({ host, connection }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await (
+      controller as unknown as {
+        switchToConnection: (input: { connectionId: string }) => Promise<void>;
+      }
+    ).switchToConnection({ connectionId: oldRelay.id });
+    expect(controller.getSnapshot().client).toBe(createdClients[0]?.client);
+
+    await controller.updateHost(
+      makeHost({
+        connections: [newRelay],
+        preferredConnectionId: newRelay.id,
+      }),
+    );
+
+    expect(createdClients.map((entry) => entry.connection)).toEqual([oldRelay, newRelay]);
+    expect(createdClients[0]?.client.closeCalls).toBe(1);
+    expect(controller.getSnapshot().client).toBe(createdClients[1]?.client);
+  });
+
   it("keeps known hosts in connecting when a created client reports idle during connect", async () => {
     const host = makeHost({
       connections: [
@@ -556,6 +622,85 @@ describe("HostRuntimeController", () => {
     expect(snapshot.connectionStatus).toBe("online");
     expect(snapshot.client).not.toBe(initialClient);
     expect((initialClient as unknown as FakeDaemonClient | null)?.closeCalls).toBe(1);
+  });
+
+  it("uses liveness probes instead of session RPC timeouts for active connection health", async () => {
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({
+      connections: [relay],
+      preferredConnectionId: relay.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps({ [relay.id]: 12 }, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.ping = async () => {
+      throw new Error("Timeout waiting for message (5000ms)");
+    };
+    activeClient.checkLiveness = async () => ({ rttMs: 11 });
+    clearProbeBackoff(controller);
+
+    await controller.runProbeCycleNow();
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.probeByConnectionId.get(relay.id)).toEqual({
+      status: "available",
+      latencyMs: 11,
+    });
+    expect(snapshot.connectionStatus).toBe("online");
+  });
+
+  it("backs off inactive connection probes while a host is online", async () => {
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 10,
+      "relay:relay.paseo.sh:443": 50,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    const initialClientCount = clients.length;
+    const initialRelayProbe = controller
+      .getSnapshot()
+      .probeByConnectionId.get("relay:relay.paseo.sh:443");
+
+    latencies["direct:lan:6767"] = 12;
+    latencies["relay:relay.paseo.sh:443"] = 25;
+    const lastProbedAt = (
+      controller as unknown as {
+        connectionLastProbedAt: Map<string, number>;
+      }
+    ).connectionLastProbedAt;
+    const now = performance.now();
+    lastProbedAt.set("direct:lan:6767", now - 60_000);
+    lastProbedAt.set("relay:relay.paseo.sh:443", now - 60_000);
+
+    await controller.runProbeCycleNow();
+
+    const snapshot = controller.getSnapshot();
+    expect(clients.length).toBe(initialClientCount);
+    expect(snapshot.probeByConnectionId.get("direct:lan:6767")).toEqual({
+      status: "available",
+      latencyMs: 12,
+    });
+    expect(snapshot.probeByConnectionId.get("relay:relay.paseo.sh:443")).toEqual(initialRelayProbe);
   });
 
   it("switches only after the faster alternative wins consecutive probes", async () => {
@@ -1465,6 +1610,7 @@ describe("HostRuntimeStore", () => {
         lastActivityAt: new Date(stale.updatedAt),
         archivedAt: stale.archivedAt ? new Date(stale.archivedAt) : null,
         attentionTimestamp: stale.attentionTimestamp ? new Date(stale.attentionTimestamp) : null,
+        parentAgentId: null,
       };
       return new Map([[stale.id, staleAgent]]);
     });
@@ -1595,6 +1741,85 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("probeAndUpsertConnection learns the real server id before storing a direct host", async () => {
+    const connection: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const probeClient = makeConnectedProbeClient(5);
+    const seenProbeHosts: string[] = [];
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host, connection: probedConnection }) => {
+          seenProbeHosts.push(host.serverId);
+          expect(probedConnection).toEqual(connection);
+          return {
+            client: probeClient as unknown as DaemonClient,
+            serverId: "srv_real_direct",
+            hostname: "mbp",
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    const result = await store.probeAndUpsertConnection({ connection });
+
+    expect(result.serverId).toBe("srv_real_direct");
+    expect(result.hostname).toBe("mbp");
+    expect(seenProbeHosts).toEqual([""]);
+    expect(probeClient.closeCalls).toBe(0);
+    expect(store.getHosts()).toMatchObject([
+      {
+        serverId: "srv_real_direct",
+        label: "mbp",
+        connections: [connection],
+      },
+    ]);
+
+    store.syncHosts([]);
+  });
+
+  it("probeAndUpsertConnection replaces a matching placeholder host with the real server id", async () => {
+    const connection: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: "srv_real_direct",
+          hostname: "mbp",
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    (
+      store as unknown as {
+        hosts: HostProfile[];
+      }
+    ).hosts = [
+      makeHost({
+        serverId: "local:lan:6767",
+        label: "local:lan:6767",
+        connections: [connection],
+        preferredConnectionId: connection.id,
+      }),
+    ];
+
+    await store.probeAndUpsertConnection({ connection });
+
+    expect(store.getHosts().map((host) => host.serverId)).toEqual(["srv_real_direct"]);
+    expect(store.getHosts()[0]?.label).toBe("mbp");
+
+    store.syncHosts([]);
+  });
+
   it("uses the advertised hostname when adding a relay host from a pairing offer", async () => {
     const store = new HostRuntimeStore({
       deps: {
@@ -1612,6 +1837,78 @@ describe("HostRuntimeStore", () => {
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
     expect(pairedHost?.label).toBe("mbp");
+
+    store.syncHosts([]);
+  });
+
+  it("stores relay TLS from a pairing offer", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertConnectionFromOffer(
+      makeOffer({
+        relay: {
+          endpoint: "relay.example.com:443",
+          useTls: true,
+        },
+      }),
+      "tls relay",
+    );
+
+    const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    expect(pairedHost?.connections).toEqual([
+      {
+        id: "relay:wss:relay.example.com:443",
+        type: "relay",
+        relayEndpoint: "relay.example.com:443",
+        useTls: true,
+        daemonPublicKeyB64: "pk_test_offer",
+      },
+    ]);
+
+    store.syncHosts([]);
+  });
+
+  it("uses TLS for old pairing URLs that omit relay TLS on port 443", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    const oldPairingUrl = encodeOfferUrl({
+      v: 2,
+      serverId: "srv_offer",
+      daemonPublicKeyB64: "pk_test_offer",
+      relay: { endpoint: "relay.paseo.sh:443" },
+    });
+
+    await store.upsertConnectionFromOfferUrl(oldPairingUrl, "old relay");
+
+    const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    expect(pairedHost?.connections).toEqual([
+      {
+        id: "relay:wss:relay.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay.paseo.sh:443",
+        useTls: true,
+        daemonPublicKeyB64: "pk_test_offer",
+      },
+    ]);
 
     store.syncHosts([]);
   });

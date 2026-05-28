@@ -6,6 +6,7 @@ build/
 dist/
 .next/
 out/
+result
 
 # Environment variables
 .env
@@ -66,6 +67,7 @@ CLAUDE.local.md
 .paseo/
 .wrangler/
 **/.wrangler/
+**/.tanstack/
 
 # Local agent/tooling artifacts (do not commit)
 PLAN.md
@@ -85,3 +87,4 @@ packages/server/src/server/fixtures/dictation/dictation-debug-largest.transcript
 /artifacts
 packages/desktop/.cache/
 packages/desktop/src-tauri/resources/managed-runtime/
+app.json

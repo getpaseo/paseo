@@ -1,92 +1,62 @@
-/**
- * @vitest-environment jsdom
- */
-import React from "react";
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import type { DaemonClient } from "@server/client/daemon-client";
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
-import { useSessionStore } from "@/stores/session-store";
-import { providersSnapshotQueryKey, useProvidersSnapshot } from "./use-providers-snapshot";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import {
+  applyProvidersSnapshotUpdate,
+  fetchProvidersSnapshot,
+  providersSnapshotQueryKey,
+  refreshAndApplyProvidersSnapshot,
+  selectorOpenRefetchDecision,
+  type ProvidersSnapshotClient,
+  type ProvidersSnapshotUpdateMessage,
+} from "./use-providers-snapshot";
 
-interface ProviderSnapshotUpdateMessage {
-  type: "providers_snapshot_update";
-  payload: {
-    cwd: string;
-    entries: ProviderSnapshotEntry[];
-    generatedAt: string;
-  };
+type GetProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["getProvidersSnapshot"]>>;
+type RefreshProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["refreshProvidersSnapshot"]>>;
+type GetProvidersSnapshotOptions = Parameters<DaemonClient["getProvidersSnapshot"]>[0];
+type RefreshProvidersSnapshotOptions = Parameters<DaemonClient["refreshProvidersSnapshot"]>[0];
+
+interface FakeProvidersSnapshotClient extends ProvidersSnapshotClient {
+  getCalls: GetProvidersSnapshotOptions[];
+  refreshCalls: RefreshProvidersSnapshotOptions[];
 }
-type ProviderSnapshotUpdateListener = (message: ProviderSnapshotUpdateMessage) => void;
-interface ProvidersSnapshot {
-  entries: ProviderSnapshotEntry[];
-  generatedAt: string;
-  requestId: string;
-}
-type HookResult = ReturnType<typeof renderProvidersSnapshotHook>["result"];
 
-const { mockClient, mockRuntime, snapshotUpdateListeners } = vi.hoisted(() => {
-  const hoistedListeners: ProviderSnapshotUpdateListener[] = [];
-  const hoistedClient = {
-    getProvidersSnapshot: vi.fn(),
-    refreshProvidersSnapshot: vi.fn(),
-    on: vi.fn((_event: string, listener: ProviderSnapshotUpdateListener) => {
-      hoistedListeners.push(listener);
-      return () => {};
-    }),
+function createClient(
+  input: {
+    snapshots?: GetProvidersSnapshotResult[];
+    refreshResult?: RefreshProvidersSnapshotResult;
+  } = {},
+): FakeProvidersSnapshotClient {
+  const snapshots = [...(input.snapshots ?? [])];
+  const refreshResult: RefreshProvidersSnapshotResult = input.refreshResult ?? {
+    acknowledged: true,
+    requestId: "refresh-1",
   };
+
+  const getCalls: GetProvidersSnapshotOptions[] = [];
+  const refreshCalls: RefreshProvidersSnapshotOptions[] = [];
+
   return {
-    mockClient: hoistedClient,
-    mockRuntime: {
-      client: hoistedClient,
-      isConnected: true,
+    getCalls,
+    refreshCalls,
+    async getProvidersSnapshot(options) {
+      getCalls.push(options ?? {});
+      const next = snapshots.shift();
+      if (!next) {
+        throw new Error("No snapshot configured for getProvidersSnapshot call");
+      }
+      return next;
     },
-    snapshotUpdateListeners: hoistedListeners,
+    async refreshProvidersSnapshot(options) {
+      refreshCalls.push(options ?? {});
+      return refreshResult;
+    },
   };
-});
-
-vi.mock("@/runtime/host-runtime", () => ({
-  useHostRuntimeClient: () => mockRuntime.client,
-  useHostRuntimeIsConnected: () => mockRuntime.isConnected,
-}));
-
-const serverId = "server-1";
-
-function createQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
 }
 
-function enableProvidersSnapshot(): void {
-  act(() => {
-    useSessionStore.getState().initializeSession(serverId, mockClient as unknown as DaemonClient);
-    useSessionStore.getState().updateSessionServerInfo(serverId, {
-      serverId,
-      hostname: "localhost",
-      version: "test",
-      features: { providersSnapshot: true },
-    } as never);
-  });
-}
-
-function renderProvidersSnapshotHook() {
-  const queryClient = createQueryClient();
-  const wrapper = ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
-
-  return renderHook(() => useProvidersSnapshot(serverId), { wrapper });
-}
-
-const readyCodexModel = { provider: "codex", id: "gpt-5.4", label: "GPT-5.4" } as const;
-
-function providersSnapshot(entries: ProviderSnapshotEntry[]): ProvidersSnapshot {
+function providersSnapshot(entries: ProviderSnapshotEntry[]): GetProvidersSnapshotResult {
   return {
     entries,
     generatedAt: "2026-01-01T00:00:00.000Z",
@@ -106,167 +76,222 @@ function codexEntry(
   };
 }
 
-async function waitForSnapshotReads(count: number): Promise<void> {
-  await waitFor(() => {
-    expect(mockClient.getProvidersSnapshot).toHaveBeenCalledTimes(count);
+const readyCodexModel = { provider: "codex", id: "gpt-5.4", label: "GPT-5.4" } as const;
+const serverId = "server-1";
+
+describe("providersSnapshotQueryKey", () => {
+  it("uses separate keys for home and workspace scopes", () => {
+    expect(providersSnapshotQueryKey(serverId)).toEqual(["providersSnapshot", serverId, "home"]);
+    expect(providersSnapshotQueryKey(serverId, "/repo-a")).toEqual([
+      "providersSnapshot",
+      serverId,
+      "cwd",
+      "/repo-a",
+    ]);
   });
-}
+});
 
-async function waitForSnapshotEntries(
-  result: HookResult,
-  entries: ProviderSnapshotEntry[],
-): Promise<void> {
-  await waitFor(() => {
-    expect(result.current.entries).toEqual(entries);
+describe("fetchProvidersSnapshot", () => {
+  it("sends no cwd for the home scope", async () => {
+    const client = createClient({ snapshots: [providersSnapshot([])] });
+
+    await fetchProvidersSnapshot({ client, cwd: null });
+
+    expect(client.getCalls).toEqual([{}]);
   });
-}
 
-async function emitProvidersSnapshotUpdate(
-  entries: ProviderSnapshotEntry[],
-  cwd = "/repo",
-): Promise<void> {
-  const listener = snapshotUpdateListeners.at(-1);
-  expect(listener).toBeDefined();
+  it("sends the workspace cwd for the workspace scope", async () => {
+    const client = createClient({ snapshots: [providersSnapshot([])] });
 
-  await act(async () => {
-    listener?.({
+    await fetchProvidersSnapshot({ client, cwd: "/repo-a" });
+
+    expect(client.getCalls).toEqual([{ cwd: "/repo-a" }]);
+  });
+});
+
+describe("refreshAndApplyProvidersSnapshot", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient();
+  });
+
+  it("refreshes then re-fetches the home snapshot and writes it into the home query cache", async () => {
+    const client = createClient({
+      snapshots: [providersSnapshot([codexEntry("ready", [readyCodexModel])])],
+    });
+
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      cwd: null,
+      providers: ["codex"],
+    });
+
+    expect(client.refreshCalls).toEqual([{ providers: ["codex"] }]);
+    expect(client.getCalls).toEqual([{}]);
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId))).toEqual(
+      providersSnapshot([codexEntry("ready", [readyCodexModel])]),
+    );
+  });
+
+  it("refreshes then re-fetches the workspace snapshot with the cwd preserved", async () => {
+    const client = createClient({
+      snapshots: [providersSnapshot([codexEntry("ready", [readyCodexModel])])],
+    });
+
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+      providers: ["codex"],
+    });
+
+    expect(client.refreshCalls).toEqual([{ cwd: "/repo-a", providers: ["codex"] }]);
+    expect(client.getCalls).toEqual([{ cwd: "/repo-a" }]);
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId, "/repo-a"))).toEqual(
+      providersSnapshot([codexEntry("ready", [readyCodexModel])]),
+    );
+  });
+
+  it("invalidates every scope under the server when refreshing the home snapshot", async () => {
+    const client = createClient({ snapshots: [providersSnapshot([])] });
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-a"), providersSnapshot([]));
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-b"), providersSnapshot([]));
+
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      cwd: null,
+    });
+
+    expect(
+      queryClient.getQueryState(providersSnapshotQueryKey(serverId, "/repo-a"))?.isInvalidated,
+    ).toBe(true);
+    expect(
+      queryClient.getQueryState(providersSnapshotQueryKey(serverId, "/repo-b"))?.isInvalidated,
+    ).toBe(true);
+  });
+
+  it("does not invalidate sibling scopes when refreshing a workspace snapshot", async () => {
+    const client = createClient({ snapshots: [providersSnapshot([])] });
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId), providersSnapshot([]));
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-b"), providersSnapshot([]));
+
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+    });
+
+    expect(queryClient.getQueryState(providersSnapshotQueryKey(serverId))?.isInvalidated).toBe(
+      false,
+    );
+    expect(
+      queryClient.getQueryState(providersSnapshotQueryKey(serverId, "/repo-b"))?.isInvalidated,
+    ).toBe(false);
+  });
+});
+
+describe("applyProvidersSnapshotUpdate", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient();
+  });
+
+  function updateMessage(
+    entries: ProviderSnapshotEntry[],
+    cwd?: string,
+  ): ProvidersSnapshotUpdateMessage {
+    return {
       type: "providers_snapshot_update",
       payload: {
-        cwd,
+        ...(cwd ? { cwd } : {}),
         entries,
         generatedAt: "2026-01-01T00:00:01.000Z",
       },
+    };
+  }
+
+  it("routes updates to the home query cache when the message carries no cwd", () => {
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("ready", [readyCodexModel])]),
+    });
+
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId))).toEqual({
+      entries: [codexEntry("ready", [readyCodexModel])],
+      generatedAt: "2026-01-01T00:00:01.000Z",
+      requestId: "providers_snapshot_update",
     });
   });
-}
 
-async function openSelectorForSelectedProvider(result: HookResult): Promise<void> {
-  await act(async () => {
-    result.current.refetchIfStale("codex");
-  });
-}
+  it("routes workspace updates to the matching scope without touching siblings", () => {
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-b"), providersSnapshot([]));
 
-afterEach(() => {
-  act(() => {
-    useSessionStore.getState().clearSession(serverId);
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("ready", [readyCodexModel])], "/repo-a"),
+    });
+
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId, "/repo-a"))).toEqual({
+      entries: [codexEntry("ready", [readyCodexModel])],
+      generatedAt: "2026-01-01T00:00:01.000Z",
+      requestId: "providers_snapshot_update",
+    });
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId, "/repo-b"))).toEqual(
+      providersSnapshot([]),
+    );
   });
-  vi.clearAllMocks();
-  snapshotUpdateListeners.length = 0;
 });
 
-describe("providers snapshot hook cache scope", () => {
-  it("uses a global query key without cwd", () => {
-    expect(providersSnapshotQueryKey(serverId)).toEqual(["providersSnapshot", serverId]);
+describe("selectorOpenRefetchDecision", () => {
+  it("refetches stale entries when no provider is selected", () => {
+    expect(
+      selectorOpenRefetchDecision({
+        entries: [codexEntry("ready", [readyCodexModel])],
+        selectedProvider: null,
+      }),
+    ).toBe("refetch-stale");
   });
 
-  it("sends no cwd for settings snapshot loads and refreshes", async () => {
-    enableProvidersSnapshot();
-    mockClient.getProvidersSnapshot.mockResolvedValue(providersSnapshot([]));
-    mockClient.refreshProvidersSnapshot.mockResolvedValue({
-      acknowledged: true,
-      requestId: "settings-refresh",
-    });
-
-    const { result } = renderProvidersSnapshotHook();
-
-    await waitFor(() => {
-      expect(mockClient.getProvidersSnapshot).toHaveBeenCalledWith({});
-    });
-
-    await act(async () => {
-      await result.current.refresh(["codex"]);
-    });
-
-    expect(mockClient.refreshProvidersSnapshot).toHaveBeenCalledWith({ providers: ["codex"] });
-    expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
+  it("forces a refetch when the selected provider has no entry", () => {
+    expect(selectorOpenRefetchDecision({ entries: [], selectedProvider: "codex" })).toBe(
+      "refetch-always",
+    );
   });
 
-  it("does not send cwd for repeated snapshot loads and refreshes", async () => {
-    enableProvidersSnapshot();
-    mockClient.getProvidersSnapshot.mockResolvedValue(providersSnapshot([]));
-    mockClient.refreshProvidersSnapshot.mockResolvedValue({
-      acknowledged: true,
-      requestId: "workspace-refresh",
-    });
-
-    const { result } = renderProvidersSnapshotHook();
-
-    await waitFor(() => {
-      expect(mockClient.getProvidersSnapshot).toHaveBeenCalledWith({});
-    });
-
-    await act(async () => {
-      await result.current.refresh(["codex"]);
-    });
-
-    expect(mockClient.refreshProvidersSnapshot).toHaveBeenCalledWith({ providers: ["codex"] });
-    expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
+  it("forces a refetch when the selected provider is still loading", () => {
+    expect(
+      selectorOpenRefetchDecision({
+        entries: [codexEntry("loading")],
+        selectedProvider: "codex",
+      }),
+    ).toBe("refetch-always");
   });
 
-  it("applies provider snapshot updates from other cwd values to the global cache", async () => {
-    enableProvidersSnapshot();
-    mockClient.getProvidersSnapshot.mockResolvedValue(providersSnapshot([]));
-
-    const { result } = renderProvidersSnapshotHook();
-
-    await waitForSnapshotEntries(result, []);
-    await emitProvidersSnapshotUpdate([codexEntry("ready", [readyCodexModel])], "/repo-b");
-
-    await waitForSnapshotEntries(result, [codexEntry("ready", [readyCodexModel])]);
+  it("keeps a stale-only refetch when the selected provider is ready with no models", () => {
+    expect(
+      selectorOpenRefetchDecision({
+        entries: [codexEntry("ready", [])],
+        selectedProvider: "codex",
+      }),
+    ).toBe("refetch-stale");
   });
 
-  it("refetches loading snapshot updates through the read path but ignores empty updates", async () => {
-    enableProvidersSnapshot();
-    mockClient.getProvidersSnapshot
-      .mockResolvedValueOnce(providersSnapshot([codexEntry("ready", [])]))
-      .mockResolvedValueOnce(providersSnapshot([codexEntry("ready", [readyCodexModel])]));
-
-    renderProvidersSnapshotHook();
-
-    await waitForSnapshotReads(1);
-    await emitProvidersSnapshotUpdate([]);
-
-    expect(mockClient.getProvidersSnapshot).toHaveBeenCalledTimes(1);
-
-    await emitProvidersSnapshotUpdate([codexEntry("loading")]);
-    await waitForSnapshotReads(2);
-
-    expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
-    expect(mockClient.refreshProvidersSnapshot).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { name: "missing", entries: [] },
-    { name: "loading", entries: [codexEntry("loading")] },
-  ])(
-    "ensures a selected provider snapshot on selector open when it is $name",
-    async ({ entries }) => {
-      enableProvidersSnapshot();
-      mockClient.getProvidersSnapshot
-        .mockResolvedValueOnce(providersSnapshot(entries))
-        .mockResolvedValueOnce(providersSnapshot([codexEntry("ready", [readyCodexModel])]));
-
-      const { result } = renderProvidersSnapshotHook();
-
-      await waitForSnapshotEntries(result, entries);
-      await openSelectorForSelectedProvider(result);
-      await waitForSnapshotReads(2);
-
-      expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
-      expect(mockClient.refreshProvidersSnapshot).not.toHaveBeenCalled();
-    },
-  );
-
-  it("does not ensure a selected provider snapshot on selector open when the provider is ready with no models", async () => {
-    enableProvidersSnapshot();
-    mockClient.getProvidersSnapshot.mockResolvedValue(providersSnapshot([codexEntry("ready", [])]));
-
-    const { result } = renderProvidersSnapshotHook();
-
-    await waitForSnapshotEntries(result, [codexEntry("ready", [])]);
-    await openSelectorForSelectedProvider(result);
-
-    expect(mockClient.getProvidersSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockClient.refreshProvidersSnapshot).not.toHaveBeenCalled();
+  it("keeps a stale-only refetch when the selected provider is ready with models", () => {
+    expect(
+      selectorOpenRefetchDecision({
+        entries: [codexEntry("ready", [readyCodexModel])],
+        selectedProvider: "codex",
+      }),
+    ).toBe("refetch-stale");
   });
 });

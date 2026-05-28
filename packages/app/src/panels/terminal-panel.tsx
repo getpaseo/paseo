@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Terminal } from "lucide-react-native";
 import { Text, View } from "react-native";
 import invariant from "tiny-invariant";
-import type { ListTerminalsResponse } from "@server/shared/messages";
+import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
@@ -70,7 +70,7 @@ function useTerminalPanelDescriptor(
 }
 
 function TerminalPanel() {
-  const { serverId, workspaceId, target } = usePaneContext();
+  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceAuthority = useWorkspaceExecutionAuthority(serverId, workspaceId)!;
   const workspaceDirectory = workspaceAuthority.ok
@@ -115,6 +115,7 @@ function TerminalPanel() {
       isWorkspaceFocused={isWorkspaceFocused}
       isPaneFocused={isPaneFocused}
       onOpenFileExplorer={handleOpenFileExplorer}
+      onOpenWorkspaceFile={openFileInWorkspace}
     />
   );
 }

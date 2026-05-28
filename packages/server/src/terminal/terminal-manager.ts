@@ -1,10 +1,10 @@
 import {
-  captureTerminalLines,
   createTerminal,
-  type CaptureTerminalLinesResult,
   type TerminalSession,
   type TerminalStateSnapshot,
+  type TerminalStateSnapshotOptions,
 } from "./terminal.js";
+import { captureTerminalLines, type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { resolve, sep, win32, posix } from "node:path";
 
 export interface TerminalListItem {
@@ -34,7 +34,11 @@ export interface TerminalManager {
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
-  getTerminalState(id: string): Promise<TerminalStateSnapshot | null>;
+  getTerminalState(
+    id: string,
+    options?: TerminalStateSnapshotOptions,
+  ): Promise<TerminalStateSnapshot | null>;
+  setTerminalTitle(id: string, title: string): boolean;
   killTerminal(id: string): void;
   killTerminalAndWait(
     id: string,
@@ -212,8 +216,21 @@ export function createTerminalManager(): TerminalManager {
       return terminalsById.get(id);
     },
 
-    async getTerminalState(id: string): Promise<TerminalStateSnapshot | null> {
-      return terminalsById.get(id)?.getStateSnapshot() ?? null;
+    async getTerminalState(
+      id: string,
+      options?: TerminalStateSnapshotOptions,
+    ): Promise<TerminalStateSnapshot | null> {
+      return terminalsById.get(id)?.getStateSnapshot(options) ?? null;
+    },
+
+    setTerminalTitle(id: string, title: string): boolean {
+      const session = terminalsById.get(id);
+      if (!session) {
+        return false;
+      }
+
+      session.setTitle(title);
+      return true;
     },
 
     killTerminal(id: string): void {

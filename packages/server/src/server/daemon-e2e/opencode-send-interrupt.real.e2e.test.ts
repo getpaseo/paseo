@@ -22,23 +22,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function pickOpenCodeModel(
-  models: Array<{ id: string }>,
-  preferences: string[] = [
-    "minimax-m2.5-free",
-    "kimi-k2.5-free",
-    "glm-5-free",
-    "free",
-    "mini",
-    "gpt-5-nano",
-  ],
-): string {
-  const preferred = models.find((model) =>
-    preferences.some((fragment) => model.id.includes(fragment)),
-  );
-  return preferred?.id ?? models[0].id;
-}
-
 function hasRunningBashToolCall(messages: SessionOutboundMessage[], agentId: string): boolean {
   return messages.some(
     (message) =>
@@ -305,8 +288,8 @@ describe("daemon E2E (real opencode) - send while working and interrupt", () => 
         provider: "opencode",
         cwd,
         title: "OpenCode send while working",
-        model: pickOpenCodeModel(modelList.models),
-        modeId: "default",
+        model: "opencode/big-pickle",
+        modeId: "build",
       });
 
       await client.sendMessage(
@@ -365,8 +348,8 @@ describe("daemon E2E (real opencode) - send while working and interrupt", () => 
         provider: "opencode",
         cwd,
         title: "OpenCode explicit interrupt",
-        model: pickOpenCodeModel(modelList.models),
-        modeId: "default",
+        model: "opencode/big-pickle",
+        modeId: "build",
       });
 
       await client.sendMessage(

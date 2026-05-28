@@ -1,13 +1,12 @@
 import { realpathSync } from "node:fs";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { pathToFileURL } from "node:url";
 import { expect, type Page } from "@playwright/test";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
+import { loadDaemonClientConstructor } from "./daemon-client-loader";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
-import type { SessionOutboundMessage } from "@server/shared/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 interface WorkspaceSetupDaemonClient {
   connect(): Promise<void>;
@@ -70,31 +69,16 @@ function getDaemonWsUrl(): string {
   return `ws://127.0.0.1:${daemonPort}/ws`;
 }
 
-async function loadDaemonClientConstructor(): Promise<
-  new (config: {
-    url: string;
-    clientId: string;
-    clientType: "cli";
-    webSocketFactory?: NodeWebSocketFactory;
-  }) => WorkspaceSetupDaemonClient
-> {
-  const repoRoot = path.resolve(process.cwd(), "../..");
-  const moduleUrl = pathToFileURL(
-    path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
-  ).href;
-  const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: {
+export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemonClient> {
+  const DaemonClient = await loadDaemonClientConstructor<
+    {
       url: string;
       clientId: string;
       clientType: "cli";
       webSocketFactory?: NodeWebSocketFactory;
-    }) => WorkspaceSetupDaemonClient;
-  };
-  return mod.DaemonClient;
-}
-
-export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor();
+    },
+    WorkspaceSetupDaemonClient
+  >();
   const webSocketFactory = createNodeWebSocketFactory();
   const client = new DaemonClient({
     url: getDaemonWsUrl(),

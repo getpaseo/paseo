@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,6 +13,7 @@ import {
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 const cleanupPaths: string[] = [];
 
@@ -65,41 +66,79 @@ test("creates a worktree and registers it in the source workspace project withou
   ]);
 });
 
-test("reuses an existing worktree and still upserts the workspace", async () => {
+test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
-  const paseoHome = path.join(tempDir, ".paseo");
-  const firstDeps = createDeps();
-  const first = await createPaseoWorktree(
-    {
-      cwd: repoDir,
-      worktreeSlug: "reuse-me",
-      runSetup: false,
-      paseoHome,
-    },
-    firstDeps,
-  );
-  const events: string[] = [];
-  const deps = createDeps({
-    events,
-    projects: firstDeps.projects,
-    workspaces: firstDeps.workspaces,
+  const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: "remote:github.com/acme/repo",
+    rootPath: repoDir,
+    displayName: "acme/repo",
   });
+  const existingWorktree = createPersistedWorkspaceRecordForTest({
+    workspaceId: path.join(tempDir, "existing-worktree"),
+    projectId: sourceProject.projectId,
+    cwd: path.join(tempDir, "existing-worktree"),
+    kind: "worktree",
+    displayName: "existing-worktree",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(existingWorktree.workspaceId, existingWorktree);
 
-  const second = await createPaseoWorktree(
+  const result = await createPaseoWorktree(
     {
       cwd: repoDir,
-      worktreeSlug: "reuse-me",
+      projectId: sourceProject.projectId,
+      worktreeSlug: "second-worktree",
       runSetup: false,
-      paseoHome,
+      paseoHome: path.join(tempDir, ".paseo"),
     },
     deps,
   );
 
-  expect(second.created).toBe(false);
-  expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
-  expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
+  expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
+  expect(Array.from(deps.projects.keys()).sort()).toEqual(["remote:github.com/acme/repo"]);
 });
+
+// POSIX-only: Windows git worktree paths need separate canonicalization coverage.
+test.skipIf(isPlatform("win32"))(
+  "reuses an existing worktree and still upserts the workspace",
+  async () => {
+    const { repoDir, tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+    const firstDeps = createDeps();
+    const first = await createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "reuse-me",
+        runSetup: false,
+        paseoHome,
+      },
+      firstDeps,
+    );
+    const events: string[] = [];
+    const deps = createDeps({
+      events,
+      projects: firstDeps.projects,
+      workspaces: firstDeps.workspaces,
+    });
+
+    const second = await createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "reuse-me",
+        runSetup: false,
+        paseoHome,
+      },
+      deps,
+    );
+
+    expect(second.created).toBe(false);
+    expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
+    expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
+  },
+);
 
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();
@@ -131,7 +170,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
     generateBranchNameFromContext: async ({ firstAgentContext }) =>
       firstAgentContext.prompt ? "renamed-from-agent-context" : null,
   });
-  const branchAfterFirst = execSync("git branch --show-current", {
+  const branchAfterFirst = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -157,7 +196,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
     firstAgentContext: { prompt: "Try another name" },
     generateBranchNameFromContext: async () => "second-agent-name",
   });
-  const branchAfterSecond = execSync("git branch --show-current", {
+  const branchAfterSecond = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -166,6 +205,44 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
 
   expect(second).toEqual({ attempted: false, renamed: false, branchName: null });
   expect(branchAfterSecond).toBe("renamed-from-agent-context");
+});
+
+test("falls back to a numeric suffix when the desired branch name already exists", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+
+  execFileSync("git", ["branch", "renamed-from-agent-context"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "renamed-from-agent-context-2"], { cwd: repoDir, stdio: "pipe" });
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  const result = await attemptFirstAgentBranchAutoName({
+    cwd: created.worktree.worktreePath,
+    firstAgentContext: { prompt: "Build the agent context name" },
+    generateBranchNameFromContext: async () => "renamed-from-agent-context",
+  });
+
+  expect(result).toEqual({
+    attempted: true,
+    renamed: true,
+    branchName: "renamed-from-agent-context-3",
+  });
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim(),
+  ).toBe("renamed-from-agent-context-3");
 });
 
 test("renames the branch even when the app supplies a random placeholder slug", async () => {
@@ -196,7 +273,7 @@ test("renames the branch even when the app supplies a random placeholder slug", 
         : null,
   });
 
-  const branchAfter = execSync("git branch --show-current", {
+  const branchAfter = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -253,7 +330,7 @@ test("renames the branch from a github_pr attachment when no prompt is supplied"
         : null,
   });
 
-  const branchAfter = execSync("git branch --show-current", {
+  const branchAfter = execFileSync("git", ["branch", "--show-current"], {
     cwd: created.worktree.worktreePath,
     stdio: "pipe",
   })
@@ -286,7 +363,7 @@ test("leaves the branch alone when generated branch text is invalid", async () =
   ).resolves.toEqual({ attempted: true, renamed: false, branchName: null });
 
   expect(
-    execSync("git branch --show-current", {
+    execFileSync("git", ["branch", "--show-current"], {
       cwd: created.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -305,11 +382,11 @@ test("leaves the branch alone when generated branch text is invalid", async () =
 test("does not mark checkout branch worktrees as eligible for first-agent rename", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
-  execSync("git checkout -b dev", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", "dev"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "dev branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git commit -m dev", { cwd: repoDir, stdio: "pipe" });
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "dev"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
 
   const created = await createPaseoWorktree(
     {
@@ -334,7 +411,7 @@ test("does not mark checkout branch worktrees as eligible for first-agent rename
     }),
   ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
   expect(
-    execSync("git branch --show-current", {
+    execFileSync("git", ["branch", "--show-current"], {
       cwd: created.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -370,7 +447,7 @@ test("does not mark GitHub PR checkout worktrees as eligible for first-agent ren
     }),
   ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
   expect(
-    execSync("git branch --show-current", {
+    execFileSync("git", ["branch", "--show-current"], {
       cwd: created.worktree.worktreePath,
       stdio: "pipe",
     })
@@ -493,6 +570,7 @@ function createGitHubServiceStub(): GitHubService {
       number: 1,
       url: "https://github.com/acme/repo/pull/1",
     }),
+    mergePullRequest: async () => ({ success: true }),
     isAuthenticated: async () => true,
     invalidate: () => {},
   };
@@ -524,17 +602,24 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
 }
 
 function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
-  const repoRoot = execSync("git rev-parse --show-toplevel", { cwd, stdio: "pipe" })
+  const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, stdio: "pipe" })
     .toString()
     .trim();
-  const mainRepoRoot = execSync("git rev-parse --path-format=absolute --git-common-dir", {
-    cwd,
-    stdio: "pipe",
-  })
+  const mainRepoRoot = execFileSync(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    {
+      cwd,
+      stdio: "pipe",
+    },
+  )
     .toString()
     .trim()
     .replace(/\/\.git$/, "");
-  const currentBranch = execSync("git branch --show-current", { cwd, stdio: "pipe" })
+  const currentBranch = execFileSync("git", ["branch", "--show-current"], {
+    cwd,
+    stdio: "pipe",
+  })
     .toString()
     .trim();
 
@@ -566,34 +651,39 @@ function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
 function createGitRepo(): { tempDir: string; repoDir: string } {
   const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-worktree-service-"));
   const repoDir = path.join(tempDir, "repo");
-  execSync(`git init ${JSON.stringify(repoDir)}`, { stdio: "pipe" });
-  execSync("git config user.email test@example.com", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.name Test", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git commit -m init", { cwd: repoDir, stdio: "pipe" });
-  execSync("git branch -M main", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
 }
 
 function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string } {
   const { tempDir, repoDir } = createGitRepo();
-  execSync("git checkout -b pr-123", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["checkout", "-b", "pr-123"], { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "pr branch\n");
-  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
-  execSync("git commit -m pr-branch", { cwd: repoDir, stdio: "pipe" });
-  const prHead = execSync("git rev-parse HEAD", { cwd: repoDir, stdio: "pipe" }).toString().trim();
-  execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git branch -D pr-123", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "pr-branch"], { cwd: repoDir, stdio: "pipe" });
+  const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
+    .toString()
+    .trim();
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-D", "pr-123"], { cwd: repoDir, stdio: "pipe" });
 
   const remoteDir = path.join(tempDir, "remote.git");
-  execSync(`git clone --bare ${JSON.stringify(repoDir)} ${JSON.stringify(remoteDir)}`, {
+  execFileSync("git", ["clone", "--bare", repoDir, remoteDir], {
     stdio: "pipe",
   });
-  execSync(`git --git-dir=${JSON.stringify(remoteDir)} update-ref refs/pull/123/head ${prHead}`, {
+  execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/123/head", prHead], {
     stdio: "pipe",
   });
-  execSync(`git remote add origin ${JSON.stringify(remoteDir)}`, { cwd: repoDir, stdio: "pipe" });
-  execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
 }

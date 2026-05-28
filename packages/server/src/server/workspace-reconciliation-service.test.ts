@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type pino from "pino";
@@ -114,16 +114,25 @@ function createWorkspaceGitServiceStub(
   };
 }
 
+function initGitRepoInDir(dir: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+}
+
 function createTempGitRepo(prefix: string): string {
   const raw = mkdtempSync(path.join(tmpdir(), prefix));
   const dir = realpathSync(raw);
-  execSync("git init -b main", { cwd: dir, stdio: "ignore" });
-  execSync('git config user.email "test@test.com"', { cwd: dir, stdio: "ignore" });
-  execSync('git config user.name "Test"', { cwd: dir, stdio: "ignore" });
-  execSync("git config commit.gpgsign false", { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: dir, stdio: "ignore" });
   writeFileSync(path.join(dir, "README.md"), "# Test\n");
-  execSync("git add .", { cwd: dir, stdio: "ignore" });
-  execSync('git commit -m "init"', { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
   return dir;
 }
 
@@ -252,13 +261,7 @@ describe("WorkspaceReconciliationService", () => {
       }),
     );
 
-    // Initialize as git repo
-    execSync("git init -b main", { cwd: resolved, stdio: "ignore" });
-    execSync('git config user.email "test@test.com"', { cwd: resolved, stdio: "ignore" });
-    execSync('git config user.name "Test"', { cwd: resolved, stdio: "ignore" });
-    execSync("git config commit.gpgsign false", { cwd: resolved, stdio: "ignore" });
-    execSync("git add .", { cwd: resolved, stdio: "ignore" });
-    execSync('git commit -m "init"', { cwd: resolved, stdio: "ignore" });
+    initGitRepoInDir(resolved);
 
     const service = new WorkspaceReconciliationService({
       projectRegistry,
@@ -278,6 +281,170 @@ describe("WorkspaceReconciliationService", () => {
     const projUpdate = result.changesApplied.find((c) => c.kind === "project_updated");
     expect(projUpdate).toBeDefined();
     expect(projects.get("p1")!.kind).toBe("git");
+  });
+
+  test("updates workspace kind when a directory becomes a git repo", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "reconcile-ws-kind-"));
+    const resolved = realpathSync(dir);
+    tempDirs.push(resolved);
+    writeFileSync(path.join(resolved, "README.md"), "# Test\n");
+
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: resolved,
+        kind: "non_git",
+        displayName: path.basename(resolved),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: resolved,
+        kind: "directory",
+        displayName: path.basename(resolved),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    initGitRepoInDir(resolved);
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [resolved]: {
+          projectKind: "git",
+          projectDisplayName: path.basename(resolved),
+          workspaceDisplayName: "main",
+        },
+      }),
+    });
+
+    await service.runOnce();
+
+    expect(projects.get("p1")!.kind).toBe("git");
+    expect(workspaces.get("w1")!.kind).toBe("local_checkout");
+  });
+
+  test("moves workspaces from a path-keyed duplicate project to the existing remote-keyed project", async () => {
+    const repoDir = createTempGitRepo("reconcile-duplicate-project-");
+    tempDirs.push(repoDir);
+    const canonicalWorktreeDir = path.join(repoDir, ".paseo", "worktrees", "focused-bat");
+    const duplicateWorktreeDir = path.join(repoDir, ".paseo", "worktrees", "gigantic-blowfish");
+    mkdirSync(canonicalWorktreeDir, { recursive: true });
+    mkdirSync(duplicateWorktreeDir, { recursive: true });
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "remote:github.com/blank-dot-page/editor",
+      createPersistedProjectRecord({
+        projectId: "remote:github.com/blank-dot-page/editor",
+        rootPath: repoDir,
+        kind: "git",
+        displayName: "blank-dot-page/editor",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    projects.set(
+      repoDir,
+      createPersistedProjectRecord({
+        projectId: repoDir,
+        rootPath: repoDir,
+        kind: "git",
+        displayName: "editor",
+        customName: "Editor",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "focused-bat",
+      createPersistedWorkspaceRecord({
+        workspaceId: "focused-bat",
+        projectId: "remote:github.com/blank-dot-page/editor",
+        cwd: canonicalWorktreeDir,
+        kind: "worktree",
+        displayName: "update-og-image",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "gigantic-blowfish",
+      createPersistedWorkspaceRecord({
+        workspaceId: "gigantic-blowfish",
+        projectId: repoDir,
+        cwd: duplicateWorktreeDir,
+        kind: "worktree",
+        displayName: "markdown-view",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [repoDir]: {
+          projectKind: "git",
+          projectDisplayName: "blank-dot-page/editor",
+          workspaceDisplayName: "main",
+          gitRemote: "git@github.com:blank-dot-page/editor.git",
+        },
+        [canonicalWorktreeDir]: {
+          projectKind: "git",
+          projectDisplayName: "blank-dot-page/editor",
+          workspaceDisplayName: "update-og-image",
+          gitRemote: "git@github.com:blank-dot-page/editor.git",
+        },
+        [duplicateWorktreeDir]: {
+          projectKind: "git",
+          projectDisplayName: "blank-dot-page/editor",
+          workspaceDisplayName: "markdown-view",
+          gitRemote: "git@github.com:blank-dot-page/editor.git",
+        },
+      }),
+    });
+
+    const result = await service.runOnce();
+
+    expect(result.changesApplied).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "workspace_updated",
+          workspaceId: "gigantic-blowfish",
+          fields: { projectId: "remote:github.com/blank-dot-page/editor" },
+        }),
+        expect.objectContaining({
+          kind: "project_updated",
+          projectId: "remote:github.com/blank-dot-page/editor",
+          fields: { customName: "Editor" },
+        }),
+        expect.objectContaining({
+          kind: "project_archived",
+          projectId: repoDir,
+          reason: "no_active_workspaces",
+        }),
+      ]),
+    );
+    expect(workspaces.get("gigantic-blowfish")!.projectId).toBe(
+      "remote:github.com/blank-dot-page/editor",
+    );
+    expect(projects.get("remote:github.com/blank-dot-page/editor")!.customName).toBe("Editor");
+    expect(projects.get(repoDir)!.archivedAt).toBeTruthy();
   });
 
   test("updates project display name when git remote changes", async () => {
@@ -311,7 +478,7 @@ describe("WorkspaceReconciliationService", () => {
     );
 
     // Change the remote
-    execSync("git remote add origin git@github.com:new-owner/new-repo.git", {
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:new-owner/new-repo.git"], {
       cwd: dir,
       stdio: "ignore",
     });
@@ -337,11 +504,67 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")!.displayName).toBe("new-owner/new-repo");
   });
 
+  test("preserves customName even when the derived displayName changes", async () => {
+    const dir = createTempGitRepo("reconcile-customname-");
+    tempDirs.push(dir);
+
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: dir,
+        kind: "git",
+        displayName: "old-owner/old-repo",
+        customName: "My Fork",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: dir,
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:new-owner/new-repo.git"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [dir]: {
+          projectKind: "git",
+          projectDisplayName: "new-owner/new-repo",
+          workspaceDisplayName: "main",
+          gitRemote: "git@github.com:new-owner/new-repo.git",
+        },
+      }),
+    });
+
+    await service.runOnce();
+
+    expect(projects.get("p1")!.displayName).toBe("new-owner/new-repo");
+    expect(projects.get("p1")!.customName).toBe("My Fork");
+  });
+
   test("updates workspace display name when branch changes", async () => {
     const dir = createTempGitRepo("reconcile-branch-");
     tempDirs.push(dir);
 
-    execSync("git checkout -b feature-branch", { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["checkout", "-b", "feature-branch"], { cwd: dir, stdio: "ignore" });
 
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
 

@@ -1,0 +1,33 @@
+name: Resubmit iOS for App Store review
+
+# Standalone re-trigger for the App Store review submission step. The iOS
+# binary is already uploaded to TestFlight via the EAS GitHub app's tag-push
+# build; this workflow just runs the fastlane submit_review lane against the
+# latest TestFlight build, without rebuilding or re-uploading.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        type: string
+        required: false
+        description: "Marketing version to resubmit, e.g. 0.1.76. Leave empty to target the most recently uploaded iOS build."
+      app_build_version:
+        type: string
+        required: false
+        description: "CFBundleVersion to resubmit, e.g. 2. Only used when app_version is set."
+
+jobs:
+  submit_ios_for_review:
+    name: Submit iOS for App Store review
+    environment: production
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        run: bundle install
+      - name: Submit for review
+        run: |
+          export APP_VERSION="${{ inputs.app_version }}"
+          export APP_BUILD_VERSION="${{ inputs.app_build_version }}"
+          bundle exec fastlane ios submit_review

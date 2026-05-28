@@ -1,10 +1,12 @@
 import invariant from "tiny-invariant";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import { defaultWorkspaceLayoutIds } from "@/stores/workspace-layout-ids";
+import type { WorkspaceLayoutNodeIdPrefix } from "@/stores/workspace-layout-ids";
 import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
-} from "@/utils/workspace-tab-identity";
+} from "@/workspace-tabs/identity";
 
 export interface SplitPane {
   id: string;
@@ -24,6 +26,7 @@ export type SplitNode = { kind: "pane"; pane: SplitPane } | { kind: "group"; gro
 export interface WorkspaceLayout {
   root: SplitNode;
   focusedPaneId: string | null;
+  parentTabIdByTabId?: Record<string, string>;
 }
 
 interface SplitPaneInternal extends SplitPane {
@@ -86,7 +89,7 @@ interface InsertSplitInternalInput {
   targetPaneId: string;
   tabId: string;
   position: "left" | "right" | "top" | "bottom";
-  createNodeId: (prefix: "pane" | "group") => string;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
 }
 
 interface InsertSplitInternalResult {
@@ -142,7 +145,7 @@ interface SplitPaneInLayoutInput {
   tabId: string;
   targetPaneId: string;
   position: "left" | "right" | "top" | "bottom";
-  createNodeId: (prefix: "pane" | "group") => string;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
   maxTreeDepth: number;
 }
 
@@ -155,7 +158,7 @@ interface SplitPaneEmptyInLayoutInput {
   layout: WorkspaceLayout;
   targetPaneId: string;
   position: "left" | "right" | "top" | "bottom";
-  createNodeId: (prefix: "pane" | "group") => string;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
   maxTreeDepth: number;
 }
 
@@ -197,6 +200,7 @@ export interface WorkspaceTabSnapshot {
   agentsHydrated: boolean;
   terminalsHydrated: boolean;
   activeAgentIds: Iterable<string>;
+  autoOpenAgentIds: Iterable<string>;
   knownAgentIds: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
@@ -229,14 +233,6 @@ function normalizeTabIds(list: unknown): string[] {
     next.push(tabId);
   }
   return next;
-}
-
-function generateNodeId(prefix: "pane" | "group"): string {
-  const randomValue =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `${prefix}_${randomValue}`;
 }
 
 function createPaneNode(input: {
@@ -908,10 +904,16 @@ export function normalizeLayout(layout: unknown): WorkspaceLayout {
         collectAllPanes(root)[0]?.id ??
         DEFAULT_PANE_ID);
 
-  return {
+  const normalizedLayout = {
     root,
     focusedPaneId: resolvedFocusedPaneId,
   };
+  const parentTabIdByTabId = normalizeParentTabMap({
+    raw: rawLayout.parentTabIdByTabId,
+    openTabIds: new Set(collectAllTabs(root).map((tab) => tab.tabId)),
+  });
+
+  return parentTabIdByTabId ? { ...normalizedLayout, parentTabIdByTabId } : normalizedLayout;
 }
 
 export function findPaneById(root: SplitNode, paneId: string | null | undefined): SplitPane | null {
@@ -969,6 +971,20 @@ export function collectAllPanes(root: SplitNode): SplitPane[] {
   return internalRoot.group.children.flatMap((child) => collectAllPanes(child));
 }
 
+export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined): string | null {
+  if (!layout) {
+    return null;
+  }
+  const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
+  if (!focusedPane?.focusedTabId) {
+    return null;
+  }
+  const focusedTab = collectAllTabs(layout.root).find(
+    (tab) => tab.tabId === focusedPane.focusedTabId,
+  );
+  return focusedTab?.target.kind === "browser" ? focusedTab.target.browserId : null;
+}
+
 export function createDefaultLayout(): WorkspaceLayout {
   return {
     root: createPaneNode({ id: DEFAULT_PANE_ID }),
@@ -981,13 +997,16 @@ export function insertSplit(
   targetPaneId: string,
   tabId: string,
   position: "left" | "right" | "top" | "bottom",
+  createNodeId: (
+    prefix: WorkspaceLayoutNodeIdPrefix,
+  ) => string = defaultWorkspaceLayoutIds.createNodeId,
 ): SplitNode {
   return insertSplitInternal({
     root: asInternalNode(root),
     targetPaneId,
     tabId,
     position,
-    createNodeId: generateNodeId,
+    createNodeId,
   }).root;
 }
 
@@ -1028,30 +1047,57 @@ function insertNewTabIntoFocusedPane(input: {
 
   return {
     tabId,
-    layout: {
+    layout: withNormalizedParentTabMap({
       root: insertTabIntoPane(layout.root, {
         paneId: focusedPane.id,
         tab: nextTab,
         focusTabId: input.focus ? tabId : preservedFocusTabId,
       }),
       focusedPaneId: input.focus ? focusedPane.id : layout.focusedPaneId,
-    },
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
   };
+}
+
+function findExistingTabForTarget(root: SplitNodeInternal, target: WorkspaceTabTarget) {
+  const targetTabId = buildDeterministicWorkspaceTabId(target);
+  return (
+    collectAllTabs(root).find(
+      (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, target),
+    ) ?? null
+  );
+}
+
+function updateExistingTabTarget(
+  layout: WorkspaceLayout,
+  tab: WorkspaceTab,
+  target: WorkspaceTabTarget,
+): WorkspaceLayout {
+  if (workspaceTabTargetsEqual(tab.target, target)) {
+    return layout;
+  }
+  return withNormalizedParentTabMap({
+    ...layout,
+    root: replaceTabInTree(asInternalNode(layout.root), {
+      tabId: tab.tabId,
+      nextTabId: tab.tabId,
+      target,
+    }),
+  });
 }
 
 export function openTabInLayoutFocused(input: OpenTabInLayoutInput): OpenTabInLayoutResult {
   const layout = asInternalLayout(input.layout);
-  const existingTab = collectAllTabs(layout.root).find((tab) =>
-    workspaceTabTargetsEqual(tab.target, input.target),
-  );
+  const existingTab = findExistingTabForTarget(layout.root, input.target);
   if (existingTab) {
+    const nextLayout = updateExistingTabTarget(input.layout, existingTab, input.target);
     return {
       tabId: existingTab.tabId,
       layout:
         focusTabInLayout({
-          layout,
+          layout: nextLayout,
           tabId: existingTab.tabId,
-        }) ?? input.layout,
+        }) ?? nextLayout,
     };
   }
 
@@ -1060,11 +1106,12 @@ export function openTabInLayoutFocused(input: OpenTabInLayoutInput): OpenTabInLa
 
 export function openTabInLayoutBackground(input: OpenTabInLayoutInput): OpenTabInLayoutResult {
   const layout = asInternalLayout(input.layout);
-  const existingTab = collectAllTabs(layout.root).find((tab) =>
-    workspaceTabTargetsEqual(tab.target, input.target),
-  );
+  const existingTab = findExistingTabForTarget(layout.root, input.target);
   if (existingTab) {
-    return { tabId: existingTab.tabId, layout: input.layout };
+    return {
+      tabId: existingTab.tabId,
+      layout: updateExistingTabTarget(input.layout, existingTab, input.target),
+    };
   }
 
   return insertNewTabIntoFocusedPane({ ...input, focus: false });
@@ -1077,20 +1124,42 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
     return null;
   }
 
+  const closeSuccessorTabId = getCloseSuccessorTabId({
+    pane,
+    tabId: input.tabId,
+    openTabIds: new Set(collectAllTabs(internalLayout.root).map((tab) => tab.tabId)),
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
   const fallbackPaneId = findNearestSiblingPaneId(internalLayout.root, pane.id);
   const nextRoot = removeTabFromTree(internalLayout.root, input.tabId) as SplitNodeInternal;
-  const nextFocusedPaneId =
-    internalLayout.focusedPaneId === null
-      ? null
-      : (findPaneById(nextRoot, internalLayout.focusedPaneId)?.id ??
-        (fallbackPaneId && findPaneById(nextRoot, fallbackPaneId)?.id) ??
-        collectAllPanes(nextRoot)[0]?.id ??
-        DEFAULT_PANE_ID);
+  const parentTabIdByTabId = normalizeParentTabMap({
+    raw: input.layout.parentTabIdByTabId,
+    openTabIds: new Set(collectAllTabs(nextRoot).map((tab) => tab.tabId)),
+  });
+  const nextFocusedPaneId = getFocusedPaneIdAfterTabClose({
+    root: nextRoot,
+    focusedPaneId: internalLayout.focusedPaneId,
+    fallbackPaneId,
+  });
 
-  return {
+  const nextLayout = {
     root: nextRoot,
     focusedPaneId: nextFocusedPaneId,
   };
+  const nextLayoutWithParentMap = parentTabIdByTabId
+    ? { ...nextLayout, parentTabIdByTabId }
+    : nextLayout;
+
+  if (closeSuccessorTabId && findPaneContainingTab(nextRoot, closeSuccessorTabId)) {
+    const focusedLayout =
+      focusTabInLayout({
+        layout: nextLayoutWithParentMap,
+        tabId: closeSuccessorTabId,
+      }) ?? nextLayoutWithParentMap;
+    return parentTabIdByTabId ? { ...focusedLayout, parentTabIdByTabId } : focusedLayout;
+  }
+
+  return nextLayoutWithParentMap;
 }
 
 export function focusTabInLayout(input: FocusTabInLayoutInput): WorkspaceLayout | null {
@@ -1104,10 +1173,11 @@ export function focusTabInLayout(input: FocusTabInLayoutInput): WorkspaceLayout 
     return null;
   }
 
-  return {
+  return withNormalizedParentTabMap({
     root: focusTabInPane(layout.root, pane.id, input.tabId),
     focusedPaneId: pane.id,
-  };
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 export function retargetTabInLayout(
@@ -1147,18 +1217,26 @@ export function retargetTabInLayout(
     };
   }
 
+  const nextTabId =
+    currentTab?.target.kind === "draft"
+      ? input.tabId
+      : buildDeterministicWorkspaceTabId(input.target);
+
   return {
-    // Preserve the existing tab id so draft->entity transitions keep the same
-    // React key during the first render. Reconciliation can canonicalize later.
-    tabId: input.tabId,
-    layout: {
+    // Preserve draft-origin tab ids so draft->entity transitions keep the same
+    // React key during the first render. Non-draft retargets must take the new
+    // target identity immediately so local tab state cannot masquerade as the
+    // previous agent/terminal/file.
+    tabId: nextTabId,
+    layout: withNormalizedParentTabMap({
       root: replaceTabInTree(layout.root, {
         tabId: input.tabId,
-        nextTabId: input.tabId,
+        nextTabId,
         target: input.target,
       }),
       focusedPaneId: layout.focusedPaneId,
-    },
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
   };
 }
 
@@ -1197,14 +1275,15 @@ export function convertDraftToAgentInLayout(
 
   return {
     tabId: canonicalTabId,
-    layout: {
+    layout: withNormalizedParentTabMap({
       root: replaceTabInTree(layout.root, {
         tabId: input.tabId,
         nextTabId: canonicalTabId,
         target,
       }),
       focusedPaneId: layout.focusedPaneId,
-    },
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
   };
 }
 
@@ -1216,13 +1295,14 @@ export function reorderFocusedPaneTabsInLayout(
     return null;
   }
 
-  return {
+  return withNormalizedParentTabMap({
     root: updatePaneInTree(layout.root, {
       paneId: layout.focusedPaneId,
       updater: (pane) => reorderTabsForPane({ pane, tabIds: input.tabIds }),
     }),
     focusedPaneId: layout.focusedPaneId,
-  };
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 export function splitPaneInLayout(input: SplitPaneInLayoutInput): SplitPaneInLayoutResult | null {
@@ -1247,10 +1327,11 @@ export function splitPaneInLayout(input: SplitPaneInLayoutInput): SplitPaneInLay
 
   return {
     paneId: result.newPaneId,
-    layout: {
+    layout: withNormalizedParentTabMap({
       root: result.root,
       focusedPaneId: result.newPaneId,
-    },
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
   };
 }
 
@@ -1304,10 +1385,11 @@ export function splitPaneEmptyInLayout(
 
   return {
     paneId: newPaneId,
-    layout: {
+    layout: withNormalizedParentTabMap({
       root: nextRoot,
       focusedPaneId: newPaneId,
-    },
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
   };
 }
 
@@ -1326,14 +1408,15 @@ export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): Worksp
     return null;
   }
 
-  return {
+  return withNormalizedParentTabMap({
     root: insertTabIntoPane(detached.root, {
       paneId: input.toPaneId,
       tab: detached.tab,
       focusTabId: input.tabId,
     }),
     focusedPaneId: input.toPaneId,
-  };
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 export function focusPaneInLayout(input: FocusPaneInLayoutInput): WorkspaceLayout | null {
@@ -1343,21 +1426,23 @@ export function focusPaneInLayout(input: FocusPaneInLayoutInput): WorkspaceLayou
   if (input.layout.focusedPaneId === input.paneId) {
     return null;
   }
-  return {
+  return withNormalizedParentTabMap({
     root: input.layout.root,
     focusedPaneId: input.paneId,
-  };
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 export function resizeSplitInLayout(input: ResizeSplitInLayoutInput): WorkspaceLayout {
   const layout = asInternalLayout(input.layout);
-  return {
+  return withNormalizedParentTabMap({
     root: updateGroupSizesInTree(layout.root, {
       groupId: input.groupId,
       sizes: input.sizes,
     }),
     focusedPaneId: layout.focusedPaneId,
-  };
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 export function reorderPaneTabsInLayout(
@@ -1368,13 +1453,14 @@ export function reorderPaneTabsInLayout(
     return null;
   }
 
-  return {
+  return withNormalizedParentTabMap({
     root: updatePaneInTree(layout.root, {
       paneId: input.paneId,
       updater: (pane) => reorderTabsForPane({ pane, tabIds: input.tabIds }),
     }),
     focusedPaneId: layout.focusedPaneId,
-  };
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 function normalizeStringSet(values: Iterable<string>): Set<string> {
@@ -1386,6 +1472,86 @@ function normalizeStringSet(values: Iterable<string>): Set<string> {
     }
   }
   return next;
+}
+
+function normalizeParentTabMap(input: {
+  raw: unknown;
+  openTabIds: ReadonlySet<string>;
+}): Record<string, string> | undefined {
+  if (!input.raw || typeof input.raw !== "object" || Array.isArray(input.raw)) {
+    return undefined;
+  }
+
+  const next: Record<string, string> = {};
+  for (const [rawChildId, rawParentId] of Object.entries(input.raw)) {
+    const childId = trimNonEmpty(rawChildId);
+    const parentId = trimNonEmpty(typeof rawParentId === "string" ? rawParentId : null);
+    if (
+      !childId ||
+      !parentId ||
+      childId === parentId ||
+      !input.openTabIds.has(childId) ||
+      !input.openTabIds.has(parentId)
+    ) {
+      continue;
+    }
+    next[childId] = parentId;
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function normalizeLayoutParentTabMap(layout: WorkspaceLayout): Record<string, string> | undefined {
+  return normalizeParentTabMap({
+    raw: layout.parentTabIdByTabId,
+    openTabIds: new Set(collectAllTabs(layout.root).map((tab) => tab.tabId)),
+  });
+}
+
+function withNormalizedParentTabMap(layout: WorkspaceLayout): WorkspaceLayout {
+  const parentTabIdByTabId = normalizeLayoutParentTabMap(layout);
+  return parentTabIdByTabId
+    ? { ...layout, parentTabIdByTabId }
+    : { root: layout.root, focusedPaneId: layout.focusedPaneId };
+}
+
+function getCloseSuccessorTabId(input: {
+  pane: SplitPane;
+  tabId: string;
+  openTabIds: ReadonlySet<string>;
+  parentTabIdByTabId?: Record<string, string>;
+}): string | null {
+  if (input.pane.focusedTabId !== input.tabId) {
+    return null;
+  }
+
+  const tabIndex = input.pane.tabIds.indexOf(input.tabId);
+  const parentTabId = input.parentTabIdByTabId?.[input.tabId] ?? null;
+  if (parentTabId && input.openTabIds.has(parentTabId)) {
+    return parentTabId;
+  }
+
+  return (
+    input.pane.tabIds[tabIndex + 1] ??
+    (tabIndex > 0 ? input.pane.tabIds[tabIndex - 1] : null) ??
+    null
+  );
+}
+
+function getFocusedPaneIdAfterTabClose(input: {
+  root: SplitNode;
+  focusedPaneId: string | null;
+  fallbackPaneId: string | null;
+}): string | null {
+  if (input.focusedPaneId === null) {
+    return null;
+  }
+  return (
+    findPaneById(input.root, input.focusedPaneId)?.id ??
+    (input.fallbackPaneId && findPaneById(input.root, input.fallbackPaneId)?.id) ??
+    collectAllPanes(input.root)[0]?.id ??
+    DEFAULT_PANE_ID
+  );
 }
 
 function isEntityTarget(
@@ -1418,7 +1584,7 @@ function openEntityTabWithoutFocusing(
   invariant(focusedPane, "Workspace layout must always have a pane");
 
   const tabId = buildDeterministicWorkspaceTabId(target);
-  return {
+  return withNormalizedParentTabMap({
     root: insertTabIntoPane(internalLayout.root, {
       paneId: focusedPane.id,
       tab: {
@@ -1429,7 +1595,8 @@ function openEntityTabWithoutFocusing(
       focusTabId: focusedPane.focusedTabId ?? tabId,
     }),
     focusedPaneId: internalLayout.focusedPaneId,
-  };
+    parentTabIdByTabId: layout.parentTabIdByTabId,
+  });
 }
 
 interface EntityTabGroup {
@@ -1437,23 +1604,23 @@ interface EntityTabGroup {
   tabs: WorkspaceTab[];
 }
 
-function buildVisibleAgentIds(input: {
-  activeAgentIds: Set<string>;
+function applyPinnedAndHidden(input: {
+  baseAgentIds: Set<string>;
   pinnedAgentIds: Set<string>;
   hiddenAgentIds: Set<string>;
   knownAgentIds: Set<string>;
 }): Set<string> {
-  const { activeAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
-  const visibleAgentIds = new Set(activeAgentIds);
+  const { baseAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
+  const result = new Set(baseAgentIds);
   for (const agentId of pinnedAgentIds) {
     if (knownAgentIds.has(agentId)) {
-      visibleAgentIds.add(agentId);
+      result.add(agentId);
     }
   }
   for (const agentId of hiddenAgentIds) {
-    visibleAgentIds.delete(agentId);
+    result.delete(agentId);
   }
-  return visibleAgentIds;
+  return result;
 }
 
 function buildEntityTabGroups(initialTabs: WorkspaceTab[]): Map<string, EntityTabGroup> {
@@ -1513,13 +1680,13 @@ function collapseStaleEntityTabs(input: {
 
 function addMissingEntityTabs(input: {
   layout: WorkspaceLayout;
-  visibleAgentIds: Set<string>;
+  autoOpenAgentIds: Set<string>;
   representedAgentIds: Set<string>;
   standaloneTerminalIds: Set<string>;
   hasActivePendingDraftCreate: boolean;
 }): WorkspaceLayout {
   const {
-    visibleAgentIds,
+    autoOpenAgentIds,
     representedAgentIds,
     standaloneTerminalIds,
     hasActivePendingDraftCreate,
@@ -1533,8 +1700,8 @@ function addMissingEntityTabs(input: {
     currentEntityTabs.filter(isTerminalTab).map((tab) => tab.target.terminalId),
   );
 
-  const sortedVisibleAgentIds = [...visibleAgentIds].sort();
-  for (const agentId of sortedVisibleAgentIds) {
+  const sortedAutoOpenAgentIds = [...autoOpenAgentIds].sort();
+  for (const agentId of sortedAutoOpenAgentIds) {
     if (currentAgentIds.has(agentId)) {
       continue;
     }
@@ -1573,13 +1740,20 @@ export function reconcileWorkspaceTabs(
   const pinnedAgentIds = new Set(state.pinnedAgentIds ?? []);
   const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
+  const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
   const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
   const knownTerminalIds = snapshot.knownTerminalIds
     ? normalizeStringSet(snapshot.knownTerminalIds)
     : standaloneTerminalIds;
-  const visibleAgentIds = buildVisibleAgentIds({
-    activeAgentIds,
+  const visibleAgentIds = applyPinnedAndHidden({
+    baseAgentIds: activeAgentIds,
+    pinnedAgentIds,
+    hiddenAgentIds,
+    knownAgentIds,
+  });
+  const autoOpenSet = applyPinnedAndHidden({
+    baseAgentIds: autoOpenAgentIds,
     pinnedAgentIds,
     hiddenAgentIds,
     knownAgentIds,
@@ -1598,17 +1772,18 @@ export function reconcileWorkspaceTabs(
       continue;
     }
     if (group.tabs.some((tab) => tab.tabId === originalFocusedTabId)) {
-      reconciledFocusedTabId = canonicalTabId;
+      reconciledFocusedTabId = keeper.tabId;
     }
-    if (keeper.tabId !== canonicalTabId || !workspaceTabTargetsEqual(keeper.target, group.target)) {
-      nextLayout = {
+    if (!workspaceTabTargetsEqual(keeper.target, group.target)) {
+      nextLayout = withNormalizedParentTabMap({
         root: replaceTabInTree(asInternalLayout(nextLayout).root, {
           tabId: keeper.tabId,
-          nextTabId: canonicalTabId,
+          nextTabId: keeper.tabId,
           target: group.target,
         }),
         focusedPaneId: nextLayout.focusedPaneId,
-      };
+        parentTabIdByTabId: nextLayout.parentTabIdByTabId,
+      });
     }
     for (const tab of group.tabs) {
       if (tab.tabId === keeper.tabId) {
@@ -1631,7 +1806,7 @@ export function reconcileWorkspaceTabs(
 
   nextLayout = addMissingEntityTabs({
     layout: nextLayout,
-    visibleAgentIds,
+    autoOpenAgentIds: autoOpenSet,
     representedAgentIds,
     standaloneTerminalIds,
     hasActivePendingDraftCreate: snapshot.hasActivePendingDraftCreate ?? false,

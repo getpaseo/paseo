@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { resolveImportCwd } from "./import.js";
+import { describe, expect, it, vi } from "vitest";
+import { resolveImportCwd, runImportCommand } from "./import.js";
+
+const importAgent = vi.fn();
+const close = vi.fn();
+
+vi.mock("../../utils/client.js", () => ({
+  connectToDaemon: vi.fn(async () => ({
+    importAgent,
+    close,
+  })),
+  getDaemonHost: vi.fn(() => "ws://127.0.0.1:6767"),
+}));
 
 describe("resolveImportCwd", () => {
   it("uses the invoking process cwd when --cwd is omitted", () => {
@@ -18,5 +29,31 @@ describe("resolveImportCwd", () => {
         code: "INVALID_CWD",
       }),
     );
+  });
+
+  it("accepts pi as an import provider", async () => {
+    importAgent.mockResolvedValueOnce({
+      id: "agent-1",
+      status: "idle",
+      provider: "pi",
+      cwd: "/tmp/project",
+      title: "Imported Pi session",
+    });
+
+    const result = await runImportCommand(
+      "pi-session-1",
+      {
+        provider: "pi",
+        cwd: "/tmp/project",
+      },
+      {} as never,
+    );
+
+    expect(importAgent).toHaveBeenCalledWith({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      cwd: "/tmp/project",
+    });
+    expect(result.data.provider).toBe("pi");
   });
 });

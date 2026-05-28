@@ -1,16 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
-import ReactMarkdown from "react-markdown";
+import { DocsMarkdown } from "~/components/docs-markdown";
+import { DocsMarkdownActions } from "~/components/docs-markdown-actions";
+import { DocsSourceFooter } from "~/components/docs-source-footer";
 import { getDoc } from "~/docs";
-import { docsRehypePlugins } from "~/docs-rehype";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/docs/")({
   head: () => {
     const doc = getDoc("");
-    if (!doc) return { meta: pageMeta("Docs - Paseo", "Paseo documentation.") };
-    return {
-      meta: pageMeta(`${doc.frontmatter.title} - Paseo Docs`, doc.frontmatter.description),
-    };
+    if (!doc)
+      return pageMeta(
+        "Docs - Paseo",
+        "Install Paseo and start running coding agents from your phone, desktop, and terminal.",
+        "/docs",
+      );
+    return pageMeta(`${doc.frontmatter.title} - Paseo Docs`, doc.frontmatter.description, "/docs");
   },
   component: DocsIndex,
 });
@@ -18,5 +22,11 @@ export const Route = createFileRoute("/docs/")({
 function DocsIndex() {
   const doc = getDoc("");
   if (!doc) return <p className="text-muted-foreground">Doc not found.</p>;
-  return <ReactMarkdown rehypePlugins={docsRehypePlugins}>{doc.content}</ReactMarkdown>;
+  return (
+    <>
+      <DocsMarkdownActions content={doc.content} markdownHref="/docs.md" />
+      <DocsMarkdown>{doc.content}</DocsMarkdown>
+      <DocsSourceFooter doc={doc} />
+    </>
+  );
 }

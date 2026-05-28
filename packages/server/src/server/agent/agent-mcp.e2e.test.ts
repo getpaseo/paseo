@@ -11,6 +11,14 @@ import pino from "pino";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import type {
+  AgentClient,
+  AgentPersistenceHandle,
+  AgentRunResult,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "./agent-sdk-types.js";
 
 interface StructuredContent {
   [key: string]: unknown;
@@ -19,6 +27,7 @@ interface StructuredContent {
 interface McpToolResult {
   structuredContent?: StructuredContent;
   content?: Array<{ structuredContent?: StructuredContent } | StructuredContent>;
+  isError?: boolean;
 }
 
 interface McpClient {
@@ -268,6 +277,281 @@ describe("agent MCP end-to-end (offline)", () => {
       await rm(disabledPaseoHome, { recursive: true, force: true });
       await rm(disabledStaticDir, { recursive: true, force: true });
       await rm(disabledAgentCwd, { recursive: true, force: true });
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("create_agent injects a loopback MCP URL when the daemon listens on all interfaces", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const port = await getAvailablePort();
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `0.0.0.0:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    let agentId: string | null = null;
+    try {
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "Wildcard MCP",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "reply with done and stop",
+          background: true,
+        },
+      });
+      const payload = getStructuredContent(result);
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
+      expect(agentId).toBeTruthy();
+
+      const injectedAgent = daemon.agentManager.getAgent(agentId!);
+      expect(injectedAgent?.config.mcpServers).toMatchObject({
+        paseo: {
+          type: "http",
+          url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
+        },
+      });
+    } finally {
+      if (agentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("create_agent with background initialPrompt reflects running state once the first turn starts", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const port = await getAvailablePort();
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `127.0.0.1:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    let agentId: string | null = null;
+    try {
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "MCP background create",
+          provider: "codex/gpt-5.4-mini",
+          mode: "full-access",
+          initialPrompt: "Run exactly: sleep 30",
+          background: true,
+        },
+      });
+
+      const payload = getStructuredContent(result);
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
+      expect(agentId).toBeTruthy();
+      expect(payload?.status).toBe("running");
+
+      const statusResult = await client.callTool({
+        name: "get_agent_status",
+        args: { agentId },
+      });
+      const statusPayload = getStructuredContent(statusResult);
+      expect(statusPayload?.status).toBe("running");
+    } finally {
+      if (agentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("create_agent propagates initial-turn start failure instead of returning success", async () => {
+    class StartTurnFailureSession implements AgentSession {
+      readonly provider = "codex" as const;
+      readonly id = "mcp-start-turn-failure-session";
+      readonly capabilities = {
+        supportsStreaming: false,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+        supportsRewindConversation: false,
+        supportsRewindFiles: false,
+        supportsRewindBoth: false,
+      } as const;
+
+      async run(): Promise<AgentRunResult> {
+        return {
+          sessionId: this.id,
+          finalText: "",
+          timeline: [],
+        };
+      }
+
+      async startTurn(): Promise<{ turnId: string }> {
+        throw new Error("Initial turn failed to start");
+      }
+
+      subscribe(_callback: (event: AgentStreamEvent) => void): () => void {
+        return () => undefined;
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield* [];
+      }
+
+      async getRuntimeInfo() {
+        return {
+          provider: "codex" as const,
+          sessionId: this.id,
+          model: "gpt-5.4-mini",
+          modeId: "full-access",
+        };
+      }
+
+      async getAvailableModes(): Promise<
+        Array<{ id: string; label: string; description: string }>
+      > {
+        return [{ id: "full-access", label: "Full access", description: "No prompts" }];
+      }
+
+      async getCurrentMode(): Promise<string | null> {
+        return "full-access";
+      }
+
+      async setMode(): Promise<void> {}
+
+      getPendingPermissions() {
+        return [];
+      }
+
+      async respondToPermission(): Promise<void> {}
+
+      describePersistence(): AgentPersistenceHandle | null {
+        return { provider: "codex", sessionId: this.id };
+      }
+
+      async interrupt(): Promise<void> {}
+
+      async close(): Promise<void> {}
+    }
+
+    class StartTurnFailureClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = {
+        supportsStreaming: false,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+        supportsRewindConversation: false,
+        supportsRewindFiles: false,
+        supportsRewindBoth: false,
+      } as const;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+        return new StartTurnFailureSession();
+      }
+
+      async resumeSession(
+        _handle: AgentPersistenceHandle,
+        _config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new StartTurnFailureSession();
+      }
+    }
+
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const port = await getAvailablePort();
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `127.0.0.1:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: {
+        ...createTestAgentClients(),
+        codex: new StartTurnFailureClient(),
+      },
+      agentStoragePath: path.join(paseoHome, "agents"),
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    try {
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "MCP start failure",
+          provider: "codex/gpt-5.4-mini",
+          mode: "full-access",
+          initialPrompt: "Run exactly: sleep 30",
+          background: true,
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      const contentItem = result.content?.[0];
+      const contentText: string | undefined =
+        contentItem != null && typeof contentItem === "object"
+          ? Reflect.get(contentItem, "text")
+          : undefined;
+      expect(contentText ?? "").toContain("Initial turn failed to start");
+    } finally {
       await client.close();
       await daemon.stop();
       await rm(paseoHome, { recursive: true, force: true });

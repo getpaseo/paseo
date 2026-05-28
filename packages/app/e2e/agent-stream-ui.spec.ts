@@ -6,6 +6,7 @@ import {
   expectTurnCopyButton,
   expectScrollFollowsNewContent,
 } from "./helpers/agent-stream";
+import { clickNewChat } from "./helpers/launcher";
 import { startRunningMockAgent } from "./helpers/composer";
 
 test.describe("Agent stream UI", () => {
@@ -41,5 +42,24 @@ test.describe("Agent stream UI", () => {
       await client.close();
       await repo.cleanup();
     }
+  });
+
+  test("shows elapsed timer on first app-created running turn", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "stream-first-app-turn-timer-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await page.getByText("Model defaults are still loading").waitFor({
+      state: "hidden",
+      timeout: 30_000,
+    });
+    const prompt = "Stream briefly for first app-created turn timer test.";
+    const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
+    await composer.fill(prompt);
+    await page.getByRole("button", { name: "Send message" }).click();
+    await page.getByText(prompt, { exact: true }).first().waitFor({ state: "visible" });
+    await awaitAssistantMessage(page);
+    await expectInlineWorkingIndicator(page);
+    await page.getByTestId("turn-working-elapsed").waitFor({ state: "visible", timeout: 5_000 });
   });
 });

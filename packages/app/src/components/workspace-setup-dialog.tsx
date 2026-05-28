@@ -2,23 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { Composer } from "@/components/composer";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { Composer } from "@/composer";
+import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { useToast } from "@/contexts/toast-context";
-import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
+import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
-import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
-import type { CreateAgentRequestOptions, DaemonClient } from "@server/client/daemon-client";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import type {
+  CreateAgentRequestOptions,
+  DaemonClient,
+} from "@getpaseo/client/internal/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceExecutionAuthority } from "@/utils/workspace-execution";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
-import type { ImageAttachment, MessagePayload } from "./message-input";
+import type { ImageAttachment, MessagePayload } from "@/composer/types";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -62,7 +68,10 @@ function buildChatDraftComposerArgs({
 }) {
   return {
     initialServerId: serverId || null,
-    initialValues: workspaceDirectory ? { workingDir: workspaceDirectory } : undefined,
+    initialValues:
+      workspaceDirectory || sourceDirectory
+        ? { workingDir: workspaceDirectory || sourceDirectory }
+        : undefined,
     isVisible: pendingWorkspaceSetup !== null,
     onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workspaceDirectory || sourceDirectory || undefined,
@@ -151,7 +160,6 @@ export function WorkspaceSetupDialog() {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const chatDraft = useAgentInputDraft({
     draftKey: `workspace-setup:${serverId}:${sourceDirectory}`,
-    initialCwd: sourceDirectory,
     composer: buildChatDraftComposerArgs({
       serverId,
       isConnected,
@@ -191,11 +199,18 @@ export function WorkspaceSetupDialog() {
       }
 
       clearWorkspaceSetup();
+      if (target.kind === "agent") {
+        navigateToAgent({
+          serverId: pendingWorkspaceSetup.serverId,
+          agentId: target.agentId,
+        });
+        return;
+      }
+
       navigateToPreparedWorkspaceTab({
         serverId: pendingWorkspaceSetup.serverId,
         workspaceId,
         target,
-        navigationMethod: pendingWorkspaceSetup.navigationMethod,
       });
     },
     [clearWorkspaceSetup, pendingWorkspaceSetup],
@@ -337,16 +352,25 @@ export function WorkspaceSetupDialog() {
     addImagesRef.current = addImages;
   }, []);
 
+  const isCompact = useIsCompactFormFactor();
   const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
-  const statusControlsWithDisabled = useMemo(
+  const agentControlsWithDisabled = useMemo(
     () =>
       composerState
         ? {
-            ...composerState.statusControls,
+            ...composerState.agentControls,
             disabled: pendingAction !== null,
           }
         : undefined,
     [composerState, pendingAction],
+  );
+
+  const composerFooter = useMemo(
+    () =>
+      isCompact && agentControlsWithDisabled ? (
+        <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
+      ) : undefined,
+    [isCompact, agentControlsWithDisabled],
   );
 
   const subtitleContent = useMemo(
@@ -367,14 +391,18 @@ export function WorkspaceSetupDialog() {
     [iconSource, placeholderInitial, workspaceTitle],
   );
 
+  const sheetHeader = useMemo<SheetHeader>(
+    () => ({ title: "Create workspace", subtitle: subtitleContent }),
+    [subtitleContent],
+  );
+
   if (!pendingWorkspaceSetup || !sourceDirectory) {
     return null;
   }
 
   return (
     <AdaptiveModalSheet
-      title="Create workspace"
-      subtitle={subtitleContent}
+      header={sheetHeader}
       visible={true}
       onClose={handleClose}
       snapPoints={SNAP_POINTS}
@@ -394,13 +422,14 @@ export function WorkspaceSetupDialog() {
           onChangeText={chatDraft.setText}
           attachments={chatDraft.attachments}
           onChangeAttachments={chatDraft.setAttachments}
-          cwd={chatDraft.cwd}
+          cwd={sourceDirectory}
           clearDraft={chatDraft.clear}
           autoFocus
           commandDraftConfig={composerState?.commandDraftConfig}
-          statusControls={statusControlsWithDisabled}
+          agentControls={agentControlsWithDisabled}
           inputWrapperStyle={styles.composerInputWrapper}
           onAddImages={handleAddImagesCallback}
+          footer={composerFooter}
         />
       </View>
 

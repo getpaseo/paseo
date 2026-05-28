@@ -166,16 +166,16 @@ export function DictationOverlay({
     [actionsDisabled, isFailed],
   );
   const overlayTimerTextStyle = useMemo(
-    () => [overlayStyles.timerText, { color: theme.colors.palette.white }],
-    [theme.colors.palette.white],
+    () => [overlayStyles.timerText, { color: theme.colors.accentForeground }],
+    [theme.colors.accentForeground],
   );
   const overlayTranscriptTextStyle = useMemo(
-    () => [overlayStyles.transcriptText, { color: theme.colors.palette.white, opacity: 0.95 }],
-    [theme.colors.palette.white],
+    () => [overlayStyles.transcriptText, { color: theme.colors.accentForeground, opacity: 0.95 }],
+    [theme.colors.accentForeground],
   );
   const overlayRetryButtonStyle = useMemo(
-    () => [overlayStyles.actionButton, { backgroundColor: theme.colors.palette.white }],
-    [theme.colors.palette.white],
+    () => [overlayStyles.actionButton, { backgroundColor: theme.colors.accentForeground }],
+    [theme.colors.accentForeground],
   );
   const overlayConfirmButtonStyle = overlayRetryButtonStyle;
 
@@ -192,7 +192,7 @@ export function DictationOverlay({
         accessibilityLabel="Cancel dictation"
         style={overlayCancelButtonStyle}
       >
-        <X size={theme.iconSize.lg} color={theme.colors.palette.white} strokeWidth={2.5} />
+        <X size={theme.iconSize.lg} color={theme.colors.accentForeground} strokeWidth={2.5} />
       </Pressable>
 
       <View style={overlayStyles.centerContainer}>
@@ -202,7 +202,7 @@ export function DictationOverlay({
             isMuted={false}
             isSpeaking={false}
             orientation="horizontal"
-            color={theme.colors.palette.white}
+            color={theme.colors.accentForeground}
           />
           <Text style={overlayTimerTextStyle}>{formatDuration(duration)}</Text>
         </View>
@@ -216,7 +216,7 @@ export function DictationOverlay({
       <View style={overlayStyles.actionButtonsContainer}>
         {actionsDisabled ? (
           <View style={overlayStyles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.palette.white} />
+            <ActivityIndicator size="small" color={theme.colors.accentForeground} />
           </View>
         ) : null}
         {!actionsDisabled && isFailed ? (
@@ -239,7 +239,7 @@ export function DictationOverlay({
             >
               <Pencil
                 size={theme.iconSize.lg}
-                color={theme.colors.palette.white}
+                color={theme.colors.accentForeground}
                 strokeWidth={2.5}
               />
             </Pressable>

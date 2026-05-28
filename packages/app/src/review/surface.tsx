@@ -15,6 +15,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
@@ -391,7 +392,7 @@ export function InlineReviewThread({
     () => [
       styles.threadContainer,
       getInlineReviewThreadViewportStyle({ viewportWidth, pinToViewport }),
-      { minHeight: height },
+      inlineUnistylesStyle({ minHeight: height }),
     ],
     [viewportWidth, pinToViewport, height],
   );
@@ -478,7 +479,8 @@ export function getInlineReviewThreadViewportStyle({
   viewportWidth?: number;
   pinToViewport: boolean;
 }): StyleProp<ViewStyle> {
-  const widthStyle = viewportWidth && viewportWidth > 0 ? { width: viewportWidth } : null;
+  const widthStyle =
+    viewportWidth && viewportWidth > 0 ? inlineUnistylesStyle({ width: viewportWidth }) : null;
   if (!pinToViewport || !isWeb) {
     return widthStyle;
   }

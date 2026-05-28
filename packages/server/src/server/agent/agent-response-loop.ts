@@ -1,9 +1,14 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
-import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig, AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
-import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+
+export interface StructuredGenerationLogger {
+  info: (obj: object, msg?: string) => void;
+  warn: (obj: object, msg?: string) => void;
+}
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -90,13 +95,15 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
   persistSession?: boolean;
   maxRetries?: number;
   schemaName?: string;
+  logger?: StructuredGenerationLogger;
   runner?: <TResult>(options: StructuredAgentGenerationOptions<TResult>) => Promise<TResult>;
 }
 
 export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerationProvider[] = [
   { provider: "claude", model: "haiku" },
   { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
-  { provider: "opencode", model: "opencode/gpt-5-nano" },
+  { provider: "opencode", model: "opencode/minimax-m2.5-free" },
+  { provider: "opencode", model: "opencode/nemotron-3-super-free" },
 ] as const;
 
 interface SchemaValidator<T> {
@@ -357,7 +364,9 @@ export async function generateStructuredAgentResponse<T>(
         return result.finalText;
       }
       // Fallback for providers that may not populate finalText consistently.
-      const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
+      const lastAssistant = result.timeline.findLast(
+        (item: AgentTimelineItem) => item.type === "assistant_message",
+      );
       return lastAssistant?.text ?? "";
     };
     return await getStructuredAgentResponse({
@@ -396,6 +405,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     persistSession,
     maxRetries,
     schemaName,
+    logger,
     runner,
   } = options;
 
@@ -413,12 +423,17 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   for (const candidate of providers) {
     const availabilityEntry = availabilityByProvider.get(candidate.provider);
     if (availabilityEntry && !availabilityEntry.available) {
+      const reason = availabilityEntry.error ?? "unavailable";
       attempts.push({
         provider: candidate.provider,
         model: candidate.model ?? null,
         available: false,
         error: availabilityEntry.error ?? null,
       });
+      logger?.warn(
+        { provider: candidate.provider, model: candidate.model, schemaName, reason },
+        "Structured generation: skipping unavailable provider",
+      );
       continue;
     }
 
@@ -438,6 +453,17 @@ export async function generateStructuredAgentResponseWithFallback<T>(
           ...(candidate.thinkingOptionId ? { thinkingOptionId: candidate.thinkingOptionId } : {}),
         },
       });
+      if (attempts.length > 0) {
+        logger?.info(
+          {
+            provider: candidate.provider,
+            model: candidate.model,
+            schemaName,
+            priorAttempts: attempts,
+          },
+          "Structured generation: succeeded after fallback",
+        );
+      }
       return result;
     } catch (error) {
       attempts.push({
@@ -446,6 +472,10 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         available: true,
         error: errorMessage(error),
       });
+      logger?.warn(
+        { err: error, provider: candidate.provider, model: candidate.model, schemaName },
+        "Structured generation: provider failed, trying next",
+      );
     }
   }
 

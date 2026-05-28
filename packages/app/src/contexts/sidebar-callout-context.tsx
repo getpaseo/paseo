@@ -8,27 +8,24 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  SidebarCallout,
-  type SidebarCalloutAction,
-  type SidebarCalloutProps,
-  type SidebarCalloutVariant,
-} from "@/components/sidebar-callout";
+import { SidebarCallout, type SidebarCalloutProps } from "@/components/sidebar-callout";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import {
+  clearSidebarCallouts,
+  createSidebarCalloutState,
+  dismissSidebarCallout,
+  loadDismissedCalloutKeys,
+  parseDismissedCalloutKeys,
+  selectActiveSidebarCallout,
+  serializeDismissedCalloutKeys,
+  showSidebarCallout,
+  type SidebarCalloutEntry,
+  type SidebarCalloutOptions,
+  type SidebarCalloutState,
+  unregisterSidebarCallout,
+} from "./sidebar-callout-state";
 
-export interface SidebarCalloutOptions {
-  id: string;
-  dismissalKey?: string;
-  title: string;
-  description?: ReactNode;
-  icon?: ReactNode;
-  variant?: SidebarCalloutVariant;
-  actions?: readonly SidebarCalloutAction[];
-  dismissible?: boolean;
-  priority?: number;
-  onDismiss?: () => void;
-  testID?: string;
-}
+export type { SidebarCalloutOptions } from "./sidebar-callout-state";
 
 export interface SidebarCalloutsApi {
   show: (callout: SidebarCalloutOptions) => () => void;
@@ -36,96 +33,48 @@ export interface SidebarCalloutsApi {
   clear: () => void;
 }
 
-type SidebarCalloutEntry = SidebarCalloutOptions & {
-  order: number;
-  priority: number;
-  token: number;
-};
-
 const DISMISSED_CALLOUTS_STORAGE_KEY = "@paseo:sidebar-callout-dismissals";
 
 const SidebarCalloutApiContext = createContext<SidebarCalloutsApi | null>(null);
 const SidebarCalloutStateContext = createContext<SidebarCalloutEntry | null>(null);
 
-function normalizeDismissalKey(key: string | null | undefined): string | null {
-  const trimmed = key?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function parseDismissedCalloutKeys(value: string | null): Set<string> {
-  if (!value) {
-    return new Set();
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(parsed.filter((entry): entry is string => typeof entry === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
 function persistDismissedCalloutKeys(keys: ReadonlySet<string>): void {
-  void AsyncStorage.setItem(DISMISSED_CALLOUTS_STORAGE_KEY, JSON.stringify([...keys])).catch(
-    (error) => {
-      console.error("[SidebarCallouts] Failed to persist dismissed callouts", error);
-    },
-  );
-}
-
-function selectActiveCallout(input: {
-  callouts: readonly SidebarCalloutEntry[];
-  dismissedKeys: ReadonlySet<string>;
-  dismissalStorageLoaded: boolean;
-}): SidebarCalloutEntry | null {
-  const visibleCallouts = input.callouts.filter((entry) => {
-    const dismissalKey = normalizeDismissalKey(entry.dismissalKey);
-    if (!dismissalKey) {
-      return true;
-    }
-    return input.dismissalStorageLoaded && !input.dismissedKeys.has(dismissalKey);
+  void AsyncStorage.setItem(
+    DISMISSED_CALLOUTS_STORAGE_KEY,
+    serializeDismissedCalloutKeys(keys),
+  ).catch((error) => {
+    console.error("[SidebarCallouts] Failed to persist dismissed callouts", error);
   });
-
-  if (visibleCallouts.length === 0) {
-    return null;
-  }
-  return (
-    [...visibleCallouts].sort((a, b) => b.priority - a.priority || a.order - b.order)[0] ?? null
-  );
 }
 
 export function SidebarCalloutProvider({ children }: { children: ReactNode }) {
-  const [callouts, setCallouts] = useState<SidebarCalloutEntry[]>([]);
-  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
-  const [dismissalStorageLoaded, setDismissalStorageLoaded] = useState(false);
-  const calloutsRef = useRef<SidebarCalloutEntry[]>([]);
-  const dismissedKeysRef = useRef<Set<string>>(new Set());
-  const orderRef = useRef(0);
-  const tokenRef = useRef(0);
+  const [state, setState] = useState<SidebarCalloutState>(createSidebarCalloutState);
+  const stateRef = useRef<SidebarCalloutState>(state);
+
+  function commitState(next: SidebarCalloutState): void {
+    stateRef.current = next;
+    setState(next);
+  }
 
   useEffect(() => {
     let mounted = true;
-    void AsyncStorage.getItem(DISMISSED_CALLOUTS_STORAGE_KEY)
-      .then((value) => {
-        if (!mounted) {
-          return;
-        }
-        const nextKeys = parseDismissedCalloutKeys(value);
-        dismissedKeysRef.current = nextKeys;
-        setDismissedKeys(nextKeys);
-        return;
-      })
-      .catch((error) => {
+
+    async function loadDismissedKeys(): Promise<void> {
+      let dismissedKeys: ReadonlySet<string>;
+      try {
+        const value = await AsyncStorage.getItem(DISMISSED_CALLOUTS_STORAGE_KEY);
+        dismissedKeys = parseDismissedCalloutKeys(value);
+      } catch (error) {
         console.error("[SidebarCallouts] Failed to load dismissed callouts", error);
-      })
-      .finally(() => {
-        if (mounted) {
-          setDismissalStorageLoaded(true);
-        }
-      });
+        dismissedKeys = stateRef.current.dismissedKeys;
+      }
+
+      if (mounted) {
+        commitState(loadDismissedCalloutKeys(stateRef.current, dismissedKeys));
+      }
+    }
+
+    void loadDismissedKeys();
 
     return () => {
       mounted = false;
@@ -133,60 +82,33 @@ export function SidebarCalloutProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const show = useStableEvent((callout: SidebarCalloutOptions) => {
-    tokenRef.current += 1;
-    const token = tokenRef.current;
-    const current = calloutsRef.current;
-    const existing = current.find((entry) => entry.id === callout.id);
-    const nextEntry: SidebarCalloutEntry = {
-      ...callout,
-      priority: callout.priority ?? 0,
-      order: existing?.order ?? ++orderRef.current,
-      token,
-    };
-    const next = existing
-      ? current.map((entry) => (entry.id === callout.id ? nextEntry : entry))
-      : [...current, nextEntry];
-
-    calloutsRef.current = next;
-    setCallouts(next);
+    const result = showSidebarCallout(stateRef.current, callout);
+    commitState(result.state);
 
     return () => {
-      const updated = calloutsRef.current.filter(
-        (entry) => entry.id !== callout.id || entry.token !== token,
+      commitState(
+        unregisterSidebarCallout(stateRef.current, { id: callout.id, token: result.token }),
       );
-      calloutsRef.current = updated;
-      setCallouts(updated);
     };
   });
 
   const dismiss = useStableEvent((id: string) => {
-    const dismissed = calloutsRef.current.find((entry) => entry.id === id) ?? null;
-    const next = calloutsRef.current.filter((entry) => entry.id !== id);
-    calloutsRef.current = next;
-    setCallouts(next);
+    const result = dismissSidebarCallout(stateRef.current, id);
+    commitState(result.state);
 
-    const dismissalKey = normalizeDismissalKey(dismissed?.dismissalKey);
-    if (dismissalKey) {
-      const nextKeys = new Set(dismissedKeysRef.current);
-      nextKeys.add(dismissalKey);
-      dismissedKeysRef.current = nextKeys;
-      setDismissedKeys(nextKeys);
-      persistDismissedCalloutKeys(nextKeys);
+    if (result.dismissalKey) {
+      persistDismissedCalloutKeys(result.state.dismissedKeys);
     }
 
-    dismissed?.onDismiss?.();
+    result.dismissedCallout?.onDismiss?.();
   });
 
   const clear = useStableEvent(() => {
-    calloutsRef.current = [];
-    setCallouts([]);
+    commitState(clearSidebarCallouts(stateRef.current));
   });
 
   const api = useMemo<SidebarCalloutsApi>(() => ({ show, dismiss, clear }), [clear, dismiss, show]);
-  const activeCallout = useMemo(
-    () => selectActiveCallout({ callouts, dismissedKeys, dismissalStorageLoaded }),
-    [callouts, dismissedKeys, dismissalStorageLoaded],
-  );
+  const activeCallout = useMemo(() => selectActiveSidebarCallout(state), [state]);
 
   return (
     <SidebarCalloutApiContext.Provider value={api}>

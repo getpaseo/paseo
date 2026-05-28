@@ -2,12 +2,12 @@
 title: Git worktrees
 description: Run agents in isolated git worktrees with setup hooks, scripts, and long-running services.
 nav: Git worktrees
-order: 4
+order: 7
 ---
 
 # Git worktrees
 
-Each agent runs in its own git worktree — a separate directory on a separate branch — so parallel agents never step on each other. You configure setup, scripts, and long-running services through a `paseo.json` file at your repo root.
+Each agent runs in its own git worktree, a separate directory on a separate branch, so parallel agents never step on each other. You configure setup, scripts, and long-running services through a `paseo.json` file at your repo root.
 
 ## Layout and workflow
 
@@ -20,10 +20,10 @@ Worktrees live under `$PASEO_HOME/worktrees/`, grouped by a hash of the source c
     └── bold-owl/
 ```
 
-1. Create a worktree — Paseo runs your setup hooks
-2. Launch an agent — a branch is created or assigned
+1. Create a worktree, Paseo runs your setup hooks
+2. Launch an agent, a branch is created or assigned
 3. Review the diff against the base branch
-4. Merge or archive — archive runs teardown and removes the directory
+4. Merge or archive, archive runs teardown and removes the directory
 
 ## paseo.json
 
@@ -93,7 +93,7 @@ Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to re
 }
 ```
 
-Omit `port` to let Paseo auto-assign one. Bind your process to `$PASEO_PORT` rather than hard-coding — each worktree gets a distinct port so multiple copies of the same service coexist.
+Omit `port` to let Paseo auto-assign one. Bind your process to `$PASEO_PORT` rather than hard-coding, each worktree gets a distinct port so multiple copies of the same service coexist.
 
 ### Reverse proxy
 
@@ -142,17 +142,17 @@ Open terminals automatically when a worktree is created. Useful for tailing logs
 
 Setup, teardown, scripts, and services all see:
 
-- `$PASEO_SOURCE_CHECKOUT_PATH` — the original repo root
-- `$PASEO_WORKTREE_PATH` — the worktree directory
-- `$PASEO_BRANCH_NAME` — the worktree's branch
-- `$PASEO_WORKTREE_PORT` — legacy per-worktree port (prefer `$PASEO_PORT` inside services)
+- `$PASEO_SOURCE_CHECKOUT_PATH`, the original repo root
+- `$PASEO_WORKTREE_PATH`, the worktree directory
+- `$PASEO_BRANCH_NAME`, the worktree's branch
+- `$PASEO_WORKTREE_PORT`, legacy per-worktree port (prefer `$PASEO_PORT` inside services)
 
 Services additionally get:
 
-- `$PASEO_PORT` — this service's assigned port
-- `$PASEO_URL` — this service's proxy URL
-- `$PASEO_SERVICE_<NAME>_PORT` / `_URL` — peer service ports and URLs
-- `$HOST` — `127.0.0.1` for local-only daemons, `0.0.0.0` when the daemon binds all interfaces
+- `$PASEO_PORT`, this service's assigned port
+- `$PASEO_URL`, this service's proxy URL
+- `$PASEO_SERVICE_<NAME>_PORT` / `_URL`, peer service ports and URLs
+- `$HOST`, `127.0.0.1` for local-only daemons, `0.0.0.0` when the daemon binds all interfaces
 
 ## CLI
 

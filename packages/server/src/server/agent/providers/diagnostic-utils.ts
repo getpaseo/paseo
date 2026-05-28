@@ -1,7 +1,12 @@
-import { createProviderEnvSpec, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  createProviderEnvSpec,
+  type ProviderLaunchAvailability,
+  type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
+} from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
 
-interface DiagnosticEntry {
+export interface DiagnosticEntry {
   label: string;
   value: string;
 }
@@ -136,6 +141,61 @@ export async function resolveBinaryVersion(binaryPath: string): Promise<string> 
   } catch (error) {
     return `error: ${toDiagnosticErrorMessage(error)}`;
   }
+}
+
+export interface BinaryDiagnosticVersionCommand {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+export interface BinaryDiagnosticRowsOptions {
+  binaryLabel?: string;
+  versionCommand?: BinaryDiagnosticVersionCommand;
+}
+
+async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand): Promise<string> {
+  try {
+    const { stdout, stderr } = await execCommand(invocation.command, invocation.args, {
+      ...createProviderEnvSpec({ runtimeSettings: { env: invocation.env } }),
+      timeout: 5_000,
+    });
+    return stdout.trim() || stderr.trim() || "unknown";
+  } catch (error) {
+    return `error: ${toDiagnosticErrorMessage(error)}`;
+  }
+}
+
+export async function buildBinaryDiagnosticRows(
+  launch: ResolvedProviderLaunch,
+  availability: ProviderLaunchAvailability,
+  options: BinaryDiagnosticRowsOptions = {},
+): Promise<DiagnosticEntry[]> {
+  const defaultBinaryLabel = launch.source === "override" ? "Binary (override)" : "Binary";
+  const binaryLabel = options.binaryLabel ?? defaultBinaryLabel;
+  let version = "unknown";
+  if (options.versionCommand && availability.available) {
+    version = await resolveCommandVersion(options.versionCommand);
+  } else if (availability.available) {
+    version = await resolveCommandVersion({
+      command: availability.resolvedPath ?? launch.command,
+      args: [...launch.args, "--version"],
+    });
+  }
+  return [
+    {
+      label: binaryLabel,
+      value: launch.command,
+    },
+    {
+      label: "Resolved path",
+      value: availability.resolvedPath ?? "not found",
+    },
+    {
+      label: "Version",
+      value: version,
+    },
+  ];
 }
 
 export function formatConfiguredCommand(

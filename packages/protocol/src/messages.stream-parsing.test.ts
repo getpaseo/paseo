@@ -1,0 +1,405 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  AgentStreamMessageSchema,
+  FetchAgentTimelineResponseMessageSchema,
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
+  WSOutboundMessageSchema,
+} from "./messages.js";
+
+describe("shared messages stream parsing", () => {
+  it("parses representative fetch_agent_timeline_response payload", () => {
+    const parsed = FetchAgentTimelineResponseMessageSchema.parse({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "req-1",
+        agentId: "agent_live",
+        agent: null,
+        direction: "tail",
+        projection: "projected",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+        startCursor: { epoch: "epoch-1", seq: 1 },
+        endCursor: { epoch: "epoch-1", seq: 2 },
+        hasOlder: false,
+        hasNewer: false,
+        entries: [
+          {
+            provider: "codex",
+            item: { type: "assistant_message", text: "hello" },
+            timestamp: "2026-02-08T20:10:00.000Z",
+            seqStart: 1,
+            seqEnd: 2,
+            sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
+            collapsed: ["assistant_merge"],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    expect(parsed.payload.entries).toHaveLength(1);
+    expect(parsed.payload.entries[0]?.item.type).toBe("assistant_message");
+  });
+
+  it("parses legacy worktree setup timeline entries without per-command log", () => {
+    const parsed = FetchAgentTimelineResponseMessageSchema.parse({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "req-legacy-setup",
+        agentId: "agent_legacy_setup",
+        agent: null,
+        direction: "tail",
+        projection: "canonical",
+        epoch: "epoch-setup",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+        startCursor: { epoch: "epoch-setup", seq: 1 },
+        endCursor: { epoch: "epoch-setup", seq: 1 },
+        hasOlder: false,
+        hasNewer: false,
+        entries: [
+          {
+            provider: "codex",
+            item: {
+              type: "tool_call",
+              callId: "setup-1",
+              name: "paseo_worktree_setup",
+              status: "completed",
+              detail: {
+                type: "worktree_setup",
+                worktreePath: "/repo/.paseo/worktrees/feature",
+                branchName: "feature",
+                log: "setup complete",
+                commands: [
+                  {
+                    index: 1,
+                    command: "npm install",
+                    cwd: "/repo/.paseo/worktrees/feature",
+                    status: "completed",
+                    exitCode: 0,
+                    durationMs: 100,
+                  },
+                ],
+              },
+              error: null,
+            },
+            timestamp: "2026-04-22T00:00:00.000Z",
+            seqStart: 1,
+            seqEnd: 1,
+            sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+            collapsed: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const item = parsed.payload.entries[0]?.item;
+    expect(item?.type).toBe("tool_call");
+    if (item?.type !== "tool_call" || item.detail.type !== "worktree_setup") {
+      throw new Error("Expected worktree setup tool call");
+    }
+    expect(item.detail.commands[0]?.log).toBe("");
+  });
+
+  it("parses explicit shutdown and restart lifecycle request payloads as distinct message types", () => {
+    const shutdownParsed = SessionInboundMessageSchema.safeParse({
+      type: "shutdown_server_request",
+      requestId: "req-shutdown-1",
+    });
+    expect(shutdownParsed.success).toBe(true);
+
+    const restartParsed = SessionInboundMessageSchema.safeParse({
+      type: "restart_server_request",
+      requestId: "req-restart-1",
+      reason: "settings_changed",
+    });
+    expect(restartParsed.success).toBe(true);
+
+    expect(shutdownParsed.success && shutdownParsed.data.type).toBe("shutdown_server_request");
+    expect(restartParsed.success && restartParsed.data.type).toBe("restart_server_request");
+  });
+
+  it("parses representative agent_stream tool_call event", () => {
+    const parsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: {
+            type: "tool_call",
+            callId: "call_live",
+            name: "shell",
+            status: "running",
+            detail: {
+              type: "shell",
+              command: "ls",
+            },
+            error: null,
+          },
+        },
+      },
+    });
+
+    expect(parsed.payload.event.type).toBe("timeline");
+    if (parsed.payload.event.type === "timeline") {
+      expect(parsed.payload.event.item.type).toBe("tool_call");
+      if (parsed.payload.event.item.type === "tool_call") {
+        expect(parsed.payload.event.item.status).toBe("running");
+      }
+    }
+  });
+
+  it("parses representative sub_agent tool_call event", () => {
+    const parsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: {
+            type: "tool_call",
+            callId: "call_sub_agent_live",
+            name: "Task",
+            status: "running",
+            detail: {
+              type: "sub_agent",
+              subAgentType: "Explore",
+              description: "Inspect repository structure",
+              log: "[Read] README.md",
+            },
+            error: null,
+          },
+        },
+      },
+    });
+
+    expect(parsed.payload.event.type).toBe("timeline");
+    if (parsed.payload.event.type === "timeline") {
+      expect(parsed.payload.event.item.type).toBe("tool_call");
+      if (parsed.payload.event.item.type === "tool_call") {
+        expect(parsed.payload.event.item.detail.type).toBe("sub_agent");
+      }
+    }
+  });
+
+  it("parses optional permission actions and selectedActionId compatibly", () => {
+    const requestParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "permission_requested",
+          provider: "codex",
+          request: {
+            id: "perm-1",
+            provider: "codex",
+            name: "CodexPlanApproval",
+            kind: "plan",
+            input: { plan: "- step 1" },
+            actions: [
+              {
+                id: "reject",
+                label: "Reject",
+                behavior: "deny",
+                variant: "danger",
+                intent: "dismiss",
+              },
+              {
+                id: "implement",
+                label: "Implement",
+                behavior: "allow",
+                variant: "primary",
+                intent: "implement",
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(requestParsed.payload.event.type).toBe("permission_requested");
+    if (requestParsed.payload.event.type === "permission_requested") {
+      expect(requestParsed.payload.event.request.actions).toHaveLength(2);
+      expect(requestParsed.payload.event.request.actions?.[1]?.label).toBe("Implement");
+    }
+
+    const resolutionParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:01.000Z",
+        event: {
+          type: "permission_resolved",
+          provider: "claude",
+          requestId: "perm-1",
+          resolution: {
+            behavior: "allow",
+            selectedActionId: "implement_resume",
+          },
+        },
+      },
+    });
+
+    expect(resolutionParsed.payload.event.type).toBe("permission_resolved");
+    if (resolutionParsed.payload.event.type === "permission_resolved") {
+      expect(resolutionParsed.payload.event.resolution).toEqual({
+        behavior: "allow",
+        selectedActionId: "implement_resume",
+      });
+    }
+  });
+
+  it("parses permission request detail compatibly", () => {
+    const parsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "permission_requested",
+          provider: "opencode",
+          request: {
+            id: "perm-shell-1",
+            provider: "opencode",
+            name: "external_directory",
+            kind: "tool",
+            title: "Access external directory",
+            input: {
+              command: "ls /tmp/outside",
+            },
+            detail: {
+              type: "shell",
+              command: "ls /tmp/outside",
+              cwd: "/home/dev/project",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.payload.event.type).toBe("permission_requested");
+    if (parsed.payload.event.type === "permission_requested") {
+      expect(parsed.payload.event.request.detail).toEqual({
+        type: "shell",
+        command: "ls /tmp/outside",
+        cwd: "/home/dev/project",
+      });
+    }
+  });
+
+  it("rejects removed initialize_agent_request inbound payload", () => {
+    const parsed = SessionInboundMessageSchema.safeParse({
+      type: "initialize_agent_request",
+      agentId: "agent-legacy",
+      requestId: "req-legacy-1",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects removed initialize_agent_request outbound payload", () => {
+    const parsed = SessionOutboundMessageSchema.safeParse({
+      type: "initialize_agent_request",
+      payload: {
+        requestId: "req-legacy-1",
+        agentId: "agent-legacy",
+        agentStatus: "running",
+        timelineSize: 12,
+      },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("parses directory suggestions request and response payloads", () => {
+    const requestParsed = SessionInboundMessageSchema.safeParse({
+      type: "directory_suggestions_request",
+      query: "proj",
+      cwd: "/tmp/project",
+      includeFiles: true,
+      includeDirectories: true,
+      matchMode: "suffix",
+      limit: 20,
+      requestId: "req-dir-1",
+    });
+    expect(requestParsed.success).toBe(true);
+
+    const responseParsed = SessionOutboundMessageSchema.safeParse({
+      type: "directory_suggestions_response",
+      payload: {
+        directories: ["/Users/test/projects/paseo"],
+        entries: [{ path: "/Users/test/projects/paseo", kind: "directory" }],
+        error: null,
+        requestId: "req-dir-1",
+      },
+    });
+    expect(responseParsed.success).toBe(true);
+  });
+
+  it("rejects websocket envelope for removed agent_stream_snapshot message type", () => {
+    const fixture = {
+      type: "agent_stream_snapshot",
+      payload: {
+        agentId: "agent-legacy",
+        events: [],
+      },
+    };
+    const wrapped = WSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: fixture,
+    });
+    expect(wrapped.success).toBe(false);
+  });
+
+  it("rejects removed legacy git diff request messages", () => {
+    const gitDiffParsed = SessionInboundMessageSchema.safeParse({
+      type: "git_diff_request",
+      agentId: "agent-1",
+      requestId: "req-1",
+    });
+    expect(gitDiffParsed.success).toBe(false);
+
+    const highlightedParsed = SessionInboundMessageSchema.safeParse({
+      type: "highlighted_diff_request",
+      agentId: "agent-1",
+      requestId: "req-2",
+    });
+    expect(highlightedParsed.success).toBe(false);
+  });
+
+  it("rejects removed legacy git diff response messages", () => {
+    const gitDiffParsed = SessionOutboundMessageSchema.safeParse({
+      type: "git_diff_response",
+      payload: {
+        agentId: "agent-1",
+        diff: "",
+        error: null,
+        requestId: "req-1",
+      },
+    });
+    expect(gitDiffParsed.success).toBe(false);
+
+    const highlightedParsed = SessionOutboundMessageSchema.safeParse({
+      type: "highlighted_diff_response",
+      payload: {
+        agentId: "agent-1",
+        files: [],
+        error: null,
+        requestId: "req-2",
+      },
+    });
+    expect(highlightedParsed.success).toBe(false);
+  });
+});

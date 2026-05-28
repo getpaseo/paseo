@@ -1,129 +1,129 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.hoisted(() => {
-  (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = false;
-});
-
-vi.mock("@react-native-async-storage/async-storage", () => {
-  const storage = new Map<string, string>();
-  return {
-    default: {
-      getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-      setItem: vi.fn(async (key: string, value: string) => {
-        storage.set(key, value);
-      }),
-      removeItem: vi.fn(async (key: string) => {
-        storage.delete(key);
-      }),
-    },
-  };
-});
-
-const { replaceRoute } = vi.hoisted(() => ({
-  replaceRoute: vi.fn(),
-}));
-
-vi.mock("@/hooks/use-workspace-navigation", () => ({
-  navigateToWorkspace: replaceRoute,
-}));
-
-import { openProjectDirectly } from "@/hooks/use-open-project";
-import { useSessionStore } from "@/stores/session-store";
-import {
-  buildWorkspaceTabPersistenceKey,
-  collectAllTabs,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
-import { generateDraftId } from "@/stores/draft-keys";
+import { describe, expect, it, vi } from "vitest";
+import { openProjectDirectly } from "@/hooks/open-project";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 const SERVER_ID = "server-1";
-const WORKSPACE_ID = "/repo/project";
+const PROJECT_PATH = "/repo/project";
 
-function createOpenDraftTab() {
-  return (workspaceKey: string) =>
-    useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, {
-      kind: "draft",
-      draftId: generateDraftId(),
-    });
+function buildWorkspacePayload() {
+  return {
+    id: "1",
+    projectId: "1",
+    projectDisplayName: "project",
+    projectRootPath: PROJECT_PATH,
+    workspaceDirectory: PROJECT_PATH,
+    projectKind: "git" as const,
+    workspaceKind: "checkout" as const,
+    name: "project",
+    archivingAt: null,
+    status: "done" as const,
+    activityAt: null,
+    diffStat: null,
+    scripts: [],
+  };
+}
+
+interface RecordedMerge {
+  serverId: string;
+  workspaces: WorkspaceDescriptor[];
+}
+
+interface RecordedHydrated {
+  serverId: string;
+  hydrated: boolean;
+}
+
+interface RecordedOpenDraftTab {
+  workspaceKey: string;
+}
+
+interface RecordedNavigate {
+  serverId: string;
+  workspaceId: string;
+}
+
+function createFakeSession() {
+  const merges: RecordedMerge[] = [];
+  const hydrated: RecordedHydrated[] = [];
+  return {
+    merges,
+    hydrated,
+    mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => {
+      merges.push({ serverId, workspaces: Array.from(workspaces) });
+    },
+    setHasHydratedWorkspaces: (serverId: string, value: boolean) => {
+      hydrated.push({ serverId, hydrated: value });
+    },
+  };
+}
+
+function createFakeWorkspaceLayout() {
+  const openedTabs: RecordedOpenDraftTab[] = [];
+  return {
+    openedTabs,
+    openDraftTab: (workspaceKey: string) => {
+      openedTabs.push({ workspaceKey });
+      return "tab-1";
+    },
+  };
+}
+
+function createFakeNavigator() {
+  const navigations: RecordedNavigate[] = [];
+  return {
+    navigations,
+    navigateToWorkspace: (serverId: string, workspaceId: string) => {
+      navigations.push({ serverId, workspaceId });
+    },
+  };
 }
 
 describe("openProjectDirectly", () => {
-  beforeEach(() => {
-    replaceRoute.mockReset();
-    useSessionStore.setState({
-      sessions: {},
-    });
-    useSessionStore.getState().initializeSession(SERVER_ID, {} as never);
-    useWorkspaceLayoutStore.setState({
-      layoutByWorkspace: {},
-      splitSizesByWorkspace: {},
-      pinnedAgentIdsByWorkspace: {},
-    });
-    vi.restoreAllMocks();
-  });
+  it("opens the workspace, marks workspaces hydrated, and seeds a draft tab", async () => {
+    const session = createFakeSession();
+    const layout = createFakeWorkspaceLayout();
+    const navigator = createFakeNavigator();
+    const workspacePayload = buildWorkspacePayload();
 
-  it("opens the workspace directly, marks workspaces hydrated, and seeds a draft tab", async () => {
     const result = await openProjectDirectly({
       serverId: SERVER_ID,
-      projectPath: WORKSPACE_ID,
+      projectPath: PROJECT_PATH,
       isConnected: true,
       client: {
         openProject: vi.fn(async () => ({
           requestId: "request-1",
           error: null,
-          workspace: {
-            id: "1",
-            projectId: "1",
-            projectDisplayName: "project",
-            projectRootPath: WORKSPACE_ID,
-            workspaceDirectory: WORKSPACE_ID,
-            projectKind: "git" as const,
-            workspaceKind: "checkout" as const,
-            name: "project",
-            archivingAt: null,
-            status: "done" as const,
-            activityAt: null,
-            diffStat: null,
-            scripts: [],
-          },
+          workspace: workspacePayload,
         })),
       },
-      mergeWorkspaces: useSessionStore.getState().mergeWorkspaces,
-      setHasHydratedWorkspaces: useSessionStore.getState().setHasHydratedWorkspaces,
-      openDraftTab: createOpenDraftTab(),
-      navigateToWorkspace: replaceRoute,
+      mergeWorkspaces: session.mergeWorkspaces,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+      openDraftTab: layout.openDraftTab,
+      navigateToWorkspace: navigator.navigateToWorkspace,
     });
 
     expect(result).toBe(true);
-    expect(useSessionStore.getState().sessions[SERVER_ID]?.hasHydratedWorkspaces).toBe(true);
-    expect(
-      Array.from(useSessionStore.getState().sessions[SERVER_ID]?.workspaces.values() ?? []),
-    ).toEqual([
-      expect.objectContaining({
-        id: "1",
-        projectId: "1",
-        projectRootPath: WORKSPACE_ID,
-        workspaceDirectory: WORKSPACE_ID,
-      }),
-    ]);
-
-    const workspaceKey = buildWorkspaceTabPersistenceKey({
-      serverId: SERVER_ID,
-      workspaceId: "1",
+    expect(session.merges).toHaveLength(1);
+    expect(session.merges[0]?.serverId).toBe(SERVER_ID);
+    expect(session.merges[0]?.workspaces[0]).toMatchObject({
+      id: "1",
+      projectId: "1",
+      projectRootPath: PROJECT_PATH,
+      workspaceDirectory: PROJECT_PATH,
     });
-    expect(workspaceKey).toBeTruthy();
-    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey as string];
-    expect(layout.root.kind).toBe("pane");
-    const tabs = collectAllTabs(layout.root);
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]?.target.kind).toBe("draft");
-    expect(replaceRoute).toHaveBeenCalledWith("server-1", "1");
+    expect(session.hydrated).toEqual([{ serverId: SERVER_ID, hydrated: true }]);
+    expect(layout.openedTabs).toEqual([{ workspaceKey: `${SERVER_ID}:1` }]);
+    expect(navigator.navigations).toEqual([{ serverId: SERVER_ID, workspaceId: "1" }]);
   });
 
   it("does not navigate or seed tabs when openProject fails", async () => {
+    const session = createFakeSession();
+    const layout = createFakeWorkspaceLayout();
+    const navigator = createFakeNavigator();
+
     const result = await openProjectDirectly({
       serverId: SERVER_ID,
-      projectPath: WORKSPACE_ID,
+      projectPath: PROJECT_PATH,
       isConnected: true,
       client: {
         openProject: vi.fn(async () => ({
@@ -132,16 +132,16 @@ describe("openProjectDirectly", () => {
           workspace: null,
         })),
       },
-      mergeWorkspaces: useSessionStore.getState().mergeWorkspaces,
-      setHasHydratedWorkspaces: useSessionStore.getState().setHasHydratedWorkspaces,
-      openDraftTab: createOpenDraftTab(),
-      navigateToWorkspace: replaceRoute,
+      mergeWorkspaces: session.mergeWorkspaces,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+      openDraftTab: layout.openDraftTab,
+      navigateToWorkspace: navigator.navigateToWorkspace,
     });
 
     expect(result).toBe(false);
-    expect(useSessionStore.getState().sessions[SERVER_ID]?.hasHydratedWorkspaces).toBe(false);
-    expect(useSessionStore.getState().sessions[SERVER_ID]?.workspaces.size).toBe(0);
-    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toEqual({});
-    expect(replaceRoute).not.toHaveBeenCalled();
+    expect(session.merges).toEqual([]);
+    expect(session.hydrated).toEqual([]);
+    expect(layout.openedTabs).toEqual([]);
+    expect(navigator.navigations).toEqual([]);
   });
 });

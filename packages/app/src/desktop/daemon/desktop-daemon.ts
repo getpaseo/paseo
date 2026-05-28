@@ -220,10 +220,67 @@ export async function installCli(): Promise<InstallStatus> {
   return parseInstallStatus(await invokeDesktopCommand("install_cli"));
 }
 
-export async function getSkillsInstallStatus(): Promise<InstallStatus> {
-  return parseInstallStatus(await invokeDesktopCommand("get_skills_install_status"));
+export type SkillsState = "not-installed" | "up-to-date" | "drift";
+
+export type SkillOp =
+  | { kind: "add"; name: string }
+  | { kind: "update"; name: string }
+  | { kind: "delete"; name: string };
+
+export interface SkillsStatus {
+  state: SkillsState;
+  ops: SkillOp[];
 }
 
-export async function installSkills(): Promise<InstallStatus> {
-  return parseInstallStatus(await invokeDesktopCommand("install_skills"));
+function parseSkillsState(value: unknown): SkillsState {
+  switch (value) {
+    case "not-installed":
+    case "up-to-date":
+    case "drift":
+      return value;
+    default:
+      throw new Error(`Unexpected skills status state: ${String(value)}`);
+  }
+}
+
+function parseSkillOp(raw: unknown): SkillOp {
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected skill op response.");
+  }
+  const name = toStringOrNull(raw.name);
+  if (!name) throw new Error("Skill op missing name.");
+  switch (raw.kind) {
+    case "add":
+      return { kind: "add", name };
+    case "update":
+      return { kind: "update", name };
+    case "delete":
+      return { kind: "delete", name };
+    default:
+      throw new Error(`Unexpected skill op kind: ${String(raw.kind)}`);
+  }
+}
+
+function parseSkillsStatus(raw: unknown): SkillsStatus {
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected skills status response.");
+  }
+  const ops = Array.isArray(raw.ops) ? raw.ops.map(parseSkillOp) : [];
+  return { state: parseSkillsState(raw.state), ops };
+}
+
+export async function getSkillsStatus(): Promise<SkillsStatus> {
+  return parseSkillsStatus(await invokeDesktopCommand("get_skills_status"));
+}
+
+export async function installSkills(): Promise<SkillsStatus> {
+  return parseSkillsStatus(await invokeDesktopCommand("install_skills"));
+}
+
+export async function updateSkills(): Promise<SkillsStatus> {
+  return parseSkillsStatus(await invokeDesktopCommand("update_skills"));
+}
+
+export async function uninstallSkills(): Promise<SkillsStatus> {
+  return parseSkillsStatus(await invokeDesktopCommand("uninstall_skills"));
 }

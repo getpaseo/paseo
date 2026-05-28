@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useMemo } from "react";
+import { type ReactElement, useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -9,7 +9,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { EditorTargetDescriptorPayload } from "@server/shared/messages";
+import type { EditorTargetDescriptorPayload } from "@getpaseo/protocol/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
@@ -19,14 +19,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
-import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { buildGitHubBranchTreeUrl } from "@/utils/github-repo-url";
+import { buildGitHubBranchTreeUrl } from "@/git/github-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
+import { filterTargetsForDaemonLocation } from "./workspace-open-targets";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -38,6 +40,7 @@ interface OpenTarget {
   id: string;
   label: string;
   icon: ReactElement;
+  requiresLocalDaemon: boolean;
   onOpen: () => Promise<void> | void;
 }
 
@@ -82,14 +85,16 @@ export function WorkspaceOpenInEditorButton({
   const toast = useToast();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const isLocalDaemon = useIsLocalDaemon(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
 
-  const shouldLoadTargets =
+  const shouldQueryWorkspace =
     isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
+  const shouldLoadEditorTargets = shouldQueryWorkspace && isLocalDaemon;
 
   const availableEditorsQuery = useQuery<EditorTargetDescriptorPayload[]>({
     queryKey: ["available-editors", serverId],
-    enabled: shouldLoadTargets,
+    enabled: shouldLoadEditorTargets,
     staleTime: 60_000,
     retry: false,
     queryFn: async () => {
@@ -112,7 +117,7 @@ export function WorkspaceOpenInEditorButton({
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId,
-    cwd: shouldLoadTargets ? cwd : "",
+    cwd: shouldQueryWorkspace ? cwd : "",
   });
 
   const editorTargets = useMemo<OpenTarget[]>(
@@ -121,6 +126,7 @@ export function WorkspaceOpenInEditorButton({
         id: editor.id,
         label: editor.label,
         icon: <ThemedEditorAppIcon editorId={editor.id} size={16} uniProps={mutedColorMapping} />,
+        requiresLocalDaemon: true,
         onOpen: async () => {
           if (!client) {
             throw new Error("Host is not connected");
@@ -149,13 +155,20 @@ export function WorkspaceOpenInEditorButton({
       id: "github",
       label: "GitHub",
       icon: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+      requiresLocalDaemon: false,
       onOpen: () => openExternalUrl(url),
     };
   }, [checkoutStatus]);
 
   const targets = useMemo(
-    () => (githubTarget ? [...editorTargets, githubTarget] : editorTargets),
-    [editorTargets, githubTarget],
+    () =>
+      filterTargetsForDaemonLocation(
+        githubTarget ? [...editorTargets, githubTarget] : editorTargets,
+        {
+          isLocalDaemon,
+        },
+      ),
+    [editorTargets, githubTarget, isLocalDaemon],
   );
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
@@ -164,13 +177,6 @@ export function WorkspaceOpenInEditorButton({
     [targetIds, preferredEditorId],
   );
   const primaryOption = targets.find((target) => target.id === effectivePreferredEditorId) ?? null;
-
-  useEffect(() => {
-    if (!effectivePreferredEditorId || effectivePreferredEditorId === preferredEditorId) {
-      return;
-    }
-    void updatePreferredEditor(effectivePreferredEditorId).catch(() => undefined);
-  }, [effectivePreferredEditorId, preferredEditorId, updatePreferredEditor]);
 
   const openMutation = useMutation({
     mutationFn: (target: OpenTarget) => Promise.resolve(target.onOpen()),
@@ -210,7 +216,7 @@ export function WorkspaceOpenInEditorButton({
     }
   }, [primaryOption, handleOpenTarget]);
 
-  if (!shouldLoadTargets || !primaryOption || targets.length === 0) {
+  if (!shouldQueryWorkspace || !primaryOption || targets.length === 0) {
     return null;
   }
 

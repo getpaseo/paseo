@@ -61,6 +61,11 @@ const EXPECTED_CLAUDE_MODELS = [
     descriptionFragment: "1M context window",
   },
   {
+    id: "claude-sonnet-4-6[1m]",
+    model: "Sonnet 4.6 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
     id: "claude-sonnet-4-6",
     model: "Sonnet 4.6",
     descriptionFragment: "Best for everyday tasks",

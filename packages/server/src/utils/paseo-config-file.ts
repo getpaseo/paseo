@@ -6,13 +6,13 @@ import {
   type PaseoConfigRaw,
   type PaseoConfigRevision,
   type ProjectConfigRpcError,
-} from "./paseo-config-schema.js";
+} from "@getpaseo/protocol/paseo-config-schema";
 export {
   PaseoConfigRevisionSchema,
   ProjectConfigRpcErrorSchema,
   type PaseoConfigRevision,
   type ProjectConfigRpcError,
-} from "./paseo-config-schema.js";
+} from "@getpaseo/protocol/paseo-config-schema";
 
 export const PASEO_CONFIG_FILE_NAME = "paseo.json";
 

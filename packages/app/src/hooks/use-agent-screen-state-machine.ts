@@ -1,10 +1,12 @@
 import { useRef } from "react";
+import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 
 export interface AgentScreenAgent {
   serverId: string;
   id: string;
   status: "initializing" | "idle" | "running" | "error" | "closed";
   cwd: string;
+  capabilities?: AgentCapabilityFlags;
   lastError?: string | null;
   projectPlacement?: {
     checkout?: {
@@ -22,19 +24,26 @@ export type AgentScreenMissingState =
 
 export interface AgentScreenMachineInput {
   agent: AgentScreenAgent | null;
-  placeholderAgent: AgentScreenAgent | null;
   missingAgentState: AgentScreenMissingState;
   isConnected: boolean;
   isArchivingCurrentAgent: boolean;
   isHistorySyncing: boolean;
   needsAuthoritativeSync: boolean;
-  shouldUseOptimisticStream: boolean;
+  continuity: AgentScreenContinuity;
   hasHydratedHistoryBefore: boolean;
+}
+
+export type AgentScreenContinuity =
+  | { kind: "none" }
+  | { kind: "optimistic-create"; agent: AgentScreenAgent };
+
+function hasOptimisticCreateContinuity(input: AgentScreenMachineInput): boolean {
+  return input.continuity.kind === "optimistic-create";
 }
 
 function shouldBlockInitialAuthoritativeReadyState(input: AgentScreenMachineInput): boolean {
   return (
-    !input.shouldUseOptimisticStream &&
+    !hasOptimisticCreateContinuity(input) &&
     !input.hasHydratedHistoryBefore &&
     (input.needsAuthoritativeSync || input.isHistorySyncing)
   );
@@ -91,8 +100,7 @@ function updateInitialSyncFailureMemory(args: {
 
 function shouldUseOptimisticCreateFlowAgent(input: AgentScreenMachineInput): boolean {
   return (
-    input.shouldUseOptimisticStream &&
-    Boolean(input.placeholderAgent) &&
+    input.continuity.kind === "optimistic-create" &&
     (!input.agent || input.agent.status === "initializing" || input.agent.status === "idle")
   );
 }
@@ -102,29 +110,31 @@ function resolveCandidateAgent(args: {
   useOptimisticCreateFlowAgent: boolean;
 }): AgentScreenAgent | null {
   const { input, useOptimisticCreateFlowAgent } = args;
-  if (input.agent && useOptimisticCreateFlowAgent && input.placeholderAgent) {
-    return { ...input.agent, status: input.placeholderAgent.status };
+  const continuityAgent =
+    input.continuity.kind === "optimistic-create" ? input.continuity.agent : null;
+  if (input.agent && useOptimisticCreateFlowAgent && continuityAgent) {
+    return { ...input.agent, status: continuityAgent.status };
   }
-  return input.agent ?? input.placeholderAgent;
+  return input.agent ?? continuityAgent;
 }
 
 function resolveAgentScreenSource(args: {
   useOptimisticCreateFlowAgent: boolean;
   hasAgent: boolean;
-  shouldUseOptimisticStream: boolean;
+  hasOptimisticCreateContinuity: boolean;
 }): "authoritative" | "optimistic" | "stale" {
   if (args.useOptimisticCreateFlowAgent) return "optimistic";
   if (args.hasAgent) return "authoritative";
-  if (args.shouldUseOptimisticStream) return "optimistic";
+  if (args.hasOptimisticCreateContinuity) return "optimistic";
   return "stale";
 }
 
 function resolveCatchingUpUi(args: {
-  shouldUseOptimisticStream: boolean;
+  hasOptimisticCreateContinuity: boolean;
   hasHydratedHistoryBefore: boolean;
   hadInitialSyncFailure: boolean;
 }): "overlay" | "silent" {
-  if (args.shouldUseOptimisticStream) return "silent";
+  if (args.hasOptimisticCreateContinuity) return "silent";
   if (args.hasHydratedHistoryBefore) return "silent";
   if (args.hadInitialSyncFailure) return "silent";
   return "overlay";
@@ -145,7 +155,7 @@ function resolveAgentScreenSync(args: {
     return {
       status: "catching_up",
       ui: resolveCatchingUpUi({
-        shouldUseOptimisticStream: input.shouldUseOptimisticStream,
+        hasOptimisticCreateContinuity: hasOptimisticCreateContinuity(input),
         hasHydratedHistoryBefore: input.hasHydratedHistoryBefore,
         hadInitialSyncFailure,
       }),
@@ -225,7 +235,7 @@ export function deriveAgentScreenViewState({
   const source = resolveAgentScreenSource({
     useOptimisticCreateFlowAgent,
     hasAgent: Boolean(input.agent),
-    shouldUseOptimisticStream: input.shouldUseOptimisticStream,
+    hasOptimisticCreateContinuity: hasOptimisticCreateContinuity(input),
   });
 
   const sync = resolveAgentScreenSync({

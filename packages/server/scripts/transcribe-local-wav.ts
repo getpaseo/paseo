@@ -29,7 +29,7 @@ function usage(): string {
     "  npm run speech:transcribe:local -- ./sample.wav --out ./tmp/sample.transcript.txt",
     "",
     "Env fallbacks:",
-    "  PASEO_LOCAL_MODELS_DIR, PASEO_LOCAL_STT_MODEL",
+    "  PASEO_LOCAL_MODELS_DIR",
   ].join("\n");
 }
 
@@ -49,9 +49,7 @@ function parseArgs(argv: string[]): CliOptions {
 
   const positional: string[] = [];
   let outPath: string | undefined;
-  let model = LocalSttModelIdSchema.parse(
-    process.env.PASEO_LOCAL_STT_MODEL ?? DEFAULT_LOCAL_STT_MODEL,
-  );
+  let model = LocalSttModelIdSchema.parse(DEFAULT_LOCAL_STT_MODEL);
   let modelsDir = defaultModelsDir;
 
   for (let i = 0; i < argv.length; i++) {

@@ -13,19 +13,20 @@ import {
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
+import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
-import type { AgentAttachment, SessionOutboundMessage } from "@server/shared/messages";
-import { parseServerInfoStatusPayload } from "@server/shared/messages";
+import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
-} from "@server/shared/agent-attention-notification";
-import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
-import type { DaemonClient } from "@server/client/daemon-client";
-import type { AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
-import type { GitSetupOptions } from "@server/shared/messages";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+} from "@getpaseo/protocol/agent-attention-notification";
+import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
+import type { GitSetupOptions } from "@getpaseo/protocol/messages";
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
@@ -52,7 +53,7 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
@@ -375,6 +376,7 @@ function finalizeTimelineApplication(input: {
   }
   if (shouldMarkAuthoritativeHistoryApplied) {
     setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
+    useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
   }
   if (result.initResolution === "resolve") {
     resolveInitDeferred(initKey);
@@ -1664,6 +1666,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         id: messageId,
         text: message,
         timestamp: new Date(),
+        optimistic: true,
+        ...(images && images.length > 0 ? { images } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
 
       // Append to head if streaming (keeps the user message with the current

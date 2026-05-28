@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, MessagesSquare, Settings } from "lucide-react-native";
+import { FolderPlus, Home, MessagesSquare, Settings, X } from "lucide-react-native";
 import {
   type Dispatch,
   memo,
@@ -58,6 +58,7 @@ import { resolveActiveHost } from "@/utils/active-host";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import {
+  buildHostOpenProjectRoute,
   buildHostSessionsRoute,
   buildSettingsRoute,
   mapPathnameToServer,
@@ -94,6 +95,7 @@ interface SidebarSharedProps {
   handleRefresh: () => void;
   handleHostSelect: (nextServerId: string) => void;
   handleOpenProject: () => void;
+  handleHome: () => void;
   handleSettings: () => void;
   renderHostOption: (input: {
     option: ComboboxOption;
@@ -223,6 +225,17 @@ export const LeftSidebar = memo(function LeftSidebar({
     router.push(buildSettingsRoute());
   }, []);
 
+  const handleHomeMobile = useCallback(() => {
+    if (!activeServerId) return;
+    showMobileAgent();
+    router.push(buildHostOpenProjectRoute(activeServerId));
+  }, [activeServerId, showMobileAgent]);
+
+  const handleHomeDesktop = useCallback(() => {
+    if (!activeServerId) return;
+    router.push(buildHostOpenProjectRoute(activeServerId));
+  }, [activeServerId]);
+
   const handleViewMoreNavigate = useCallback(() => {
     if (!activeServerId) {
       return;
@@ -272,6 +285,7 @@ export const LeftSidebar = memo(function LeftSidebar({
         isOpen={isOpen}
         closeToAgent={showMobileAgent}
         handleOpenProject={handleOpenProjectMobile}
+        handleHome={handleHomeMobile}
         handleSettings={handleSettingsMobile}
         handleViewMoreNavigate={handleViewMoreNavigate}
       />
@@ -284,6 +298,7 @@ export const LeftSidebar = memo(function LeftSidebar({
       insetsTop={insets.top}
       isOpen={isOpen}
       handleOpenProject={handleOpenProjectDesktop}
+      handleHome={handleHomeDesktop}
       handleSettings={handleSettingsDesktop}
       handleViewMore={handleViewMoreNavigate}
     />
@@ -414,6 +429,7 @@ function SidebarFooter({
   handleHostSelect,
   renderHostOption,
   handleOpenProject,
+  handleHome,
   handleSettings,
 }: {
   theme: SidebarTheme;
@@ -427,6 +443,7 @@ function SidebarFooter({
   handleHostSelect: (nextServerId: string) => void;
   renderHostOption: SidebarSharedProps["renderHostOption"];
   handleOpenProject: () => void;
+  handleHome: () => void;
   handleSettings: () => void;
 }) {
   const newAgentKeys = useShortcutKeys("new-agent");
@@ -457,6 +474,13 @@ function SidebarFooter({
           </TooltipContent>
         </Tooltip>
         <FooterIconButton
+          onPress={handleHome}
+          testID="sidebar-home"
+          accessibilityLabel="Home"
+          icon={Home}
+          theme={theme}
+        />
+        <FooterIconButton
           onPress={handleSettings}
           testID="sidebar-settings"
           accessibilityLabel="Settings"
@@ -472,6 +496,7 @@ function SidebarFooter({
         searchable={false}
         title="Switch host"
         searchPlaceholder="Search hosts..."
+        desktopMinWidth={280}
         open={isHostPickerOpen}
         onOpenChange={setIsHostPickerOpen}
         anchorRef={hostTriggerRef}
@@ -500,6 +525,7 @@ function MobileSidebar({
   handleHostSelect,
   renderHostOption,
   handleOpenProject,
+  handleHome,
   handleSettings,
   insetsTop,
   insetsBottom,
@@ -679,6 +705,25 @@ function MobileSidebar({
               isActive={isSessionsActive}
               testID="sidebar-sessions"
             />
+            <Pressable
+              style={styles.mobileCloseButton}
+              onPress={closeToAgent}
+              testID="sidebar-close"
+              nativeID="sidebar-close"
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Close sidebar"
+              hitSlop={8}
+            >
+              {({ hovered, pressed }) => (
+                <X
+                  size={theme.iconSize.md}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
+            </Pressable>
 
             {isInitialLoad ? (
               <SidebarAgentListSkeleton />
@@ -709,6 +754,7 @@ function MobileSidebar({
               handleHostSelect={handleHostSelect}
               renderHostOption={renderHostOption}
               handleOpenProject={handleOpenProject}
+              handleHome={handleHome}
               handleSettings={handleSettings}
             />
           </View>
@@ -738,6 +784,7 @@ function DesktopSidebar({
   handleHostSelect,
   renderHostOption,
   handleOpenProject,
+  handleHome,
   handleSettings,
   insetsTop,
   isOpen,
@@ -791,10 +838,13 @@ function DesktopSidebar({
 
   const paddingTopSpacerStyle = useMemo(() => ({ height: padding.top }), [padding.top]);
   const desktopSidebarStyle = useMemo(
-    () => [staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }],
-    [resizeAnimatedStyle, insetsTop],
+    () => [staticStyles.desktopSidebar, resizeAnimatedStyle],
+    [resizeAnimatedStyle],
   );
-  const desktopSidebarBorderStyle = useMemo(() => [styles.desktopSidebarBorder, { flex: 1 }], []);
+  const desktopSidebarBorderStyle = useMemo(
+    () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
+    [insetsTop],
+  );
   const resizeHandleStyle = useMemo(
     () => [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as object)],
     [],
@@ -848,6 +898,7 @@ function DesktopSidebar({
           handleHostSelect={handleHostSelect}
           renderHostOption={renderHostOption}
           handleOpenProject={handleOpenProject}
+          handleHome={handleHome}
           handleSettings={handleSettings}
         />
 
@@ -884,6 +935,18 @@ const styles = StyleSheet.create((theme) => ({
   sidebarContent: {
     flex: 1,
     minHeight: 0,
+  },
+  mobileCloseButton: {
+    position: "absolute",
+    top: theme.spacing[3],
+    right: theme.spacing[4],
+    zIndex: 2,
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surfaceSidebar,
   },
   desktopSidebarBorder: {
     borderRightWidth: 1,

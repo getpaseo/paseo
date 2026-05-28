@@ -10,7 +10,7 @@ import { AgentStorage } from "./agent-storage.js";
 import { createAllClients, shutdownProviders } from "./provider-registry.js";
 import { generateAndApplyAgentMetadata } from "./agent-metadata-generator.js";
 import { isProviderAvailable } from "../daemon-e2e/agent-configs.js";
-import { OpenCodeServerManager } from "./providers/opencode-agent.js";
+import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";

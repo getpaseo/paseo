@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import type { ImageAttachment } from "@/components/message-input";
+import type { ImageAttachment } from "@/composer/types";
 import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
 import { isWeb } from "@/constants/platform";

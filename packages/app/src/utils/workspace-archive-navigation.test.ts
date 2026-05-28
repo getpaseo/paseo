@@ -1,23 +1,11 @@
-import type { DaemonClient } from "@server/client/daemon-client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Href } from "expo-router";
+import { describe, expect, it } from "vitest";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { useSessionStore } from "@/stores/session-store";
 import {
-  activateNavigationWorkspaceSelection,
-  syncNavigationActiveWorkspace,
-} from "@/stores/navigation-active-workspace-store";
-import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-
-const { replaceMock } = vi.hoisted(() => ({
-  replaceMock: vi.fn(),
-}));
-
-vi.mock("expo-router", () => ({
-  router: {
-    replace: replaceMock,
-  },
-}));
+  redirectIfArchivingActiveWorkspace,
+  type RedirectIfArchivingActiveWorkspaceDeps,
+} from "@/utils/workspace-archive-redirect";
 
 function workspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -51,7 +39,7 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
         archivedWorkspaceId: "/repo/.paseo/worktrees/feature",
         workspaces,
       }),
-    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project");
+    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project&projectId=project-1");
   });
 
   it("redirects to the new workspace route when no sibling workspace target exists", () => {
@@ -69,7 +57,7 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
         archivedWorkspaceId: "/repo/.paseo/worktrees/feature",
         workspaces,
       }),
-    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project");
+    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project&projectId=project-1");
   });
 
   it("redirects to the new workspace route instead of another workspace", () => {
@@ -89,56 +77,64 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
         archivedWorkspaceId: "/notes",
         workspaces,
       }),
-    ).toBe("/h/server-1/new?dir=%2Fnotes&name=Project");
+    ).toBe("/h/server-1/new?dir=%2Fnotes&name=Project&projectId=notes");
   });
 });
 
-describe("redirectIfArchivingActiveWorkspace", () => {
-  afterEach(() => {
-    replaceMock.mockClear();
-    syncNavigationActiveWorkspace({ current: null });
-    useSessionStore.getState().clearSession("server-1");
-  });
+function createFakeRouter(workspaces: WorkspaceDescriptor[]): {
+  deps: RedirectIfArchivingActiveWorkspaceDeps;
+  routes: Href[];
+} {
+  const routes: Href[] = [];
+  return {
+    routes,
+    deps: {
+      navigateToRoute: (route) => {
+        routes.push(route);
+      },
+      readWorkspaces: () => workspaces,
+    },
+  };
+}
 
+describe("redirectIfArchivingActiveWorkspace", () => {
   it("does not replace the route when archiving an inactive workspace", () => {
-    useSessionStore.getState().initializeSession("server-1", null as unknown as DaemonClient);
-    useSessionStore.getState().setWorkspaces(
-      "server-1",
-      new Map([
-        ["main", workspace({ id: "main", workspaceKind: "local_checkout" })],
-        ["feature", workspace({ id: "feature", name: "feature" })],
-      ]),
-    );
-    activateNavigationWorkspaceSelection({ serverId: "server-1", workspaceId: "main" });
+    const { deps, routes } = createFakeRouter([
+      workspace({ id: "main", workspaceKind: "local_checkout" }),
+      workspace({ id: "feature", name: "feature" }),
+    ]);
 
     expect(
-      redirectIfArchivingActiveWorkspace({
-        serverId: "server-1",
-        workspaceId: "feature",
-      }),
+      redirectIfArchivingActiveWorkspace(
+        {
+          serverId: "server-1",
+          workspaceId: "feature",
+          activeWorkspaceSelection: { serverId: "server-1", workspaceId: "main" },
+        },
+        deps,
+      ),
     ).toBe(false);
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(routes).toEqual([]);
   });
 
   it("replaces the route at action time when archiving the active workspace", () => {
-    useSessionStore.getState().initializeSession("server-1", null as unknown as DaemonClient);
-    useSessionStore.getState().setWorkspaces(
-      "server-1",
-      new Map([
-        ["main", workspace({ id: "main", workspaceKind: "local_checkout" })],
-        ["feature", workspace({ id: "feature", name: "feature" })],
-      ]),
-    );
-    activateNavigationWorkspaceSelection({ serverId: "server-1", workspaceId: "feature" });
+    const { deps, routes } = createFakeRouter([
+      workspace({ id: "main", workspaceKind: "local_checkout" }),
+      workspace({ id: "feature", name: "feature" }),
+    ]);
 
     expect(
-      redirectIfArchivingActiveWorkspace({
-        serverId: "server-1",
-        workspaceId: "feature",
-      }),
+      redirectIfArchivingActiveWorkspace(
+        {
+          serverId: "server-1",
+          workspaceId: "feature",
+          activeWorkspaceSelection: { serverId: "server-1", workspaceId: "feature" },
+        },
+        deps,
+      ),
     ).toBe(true);
 
-    expect(replaceMock).toHaveBeenCalledWith("/h/server-1/new?dir=%2Frepo&name=Project");
+    expect(routes).toEqual(["/h/server-1/new?dir=%2Frepo&name=Project&projectId=project-1"]);
   });
 });

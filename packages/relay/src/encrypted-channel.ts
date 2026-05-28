@@ -92,6 +92,8 @@ function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
 
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
+const REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE = 1008;
+const REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON = "E2EE re-handshake key mismatch";
 
 interface TimeoutWithUnref {
   unref(): void;
@@ -420,16 +422,14 @@ export class EncryptedChannel {
       return;
     }
 
-    // Different key implies a new client connection (common with relays
-    // where the daemon's socket stays open while the client reconnects).
-    // Re-key and re-send "ready". Drop any queued sends to avoid leaking
-    // messages between logical client sessions.
-    this.state = "handshaking";
-    this.sharedKey = nextSharedKey;
-    this.pendingSends = [];
-    this.transport.send(JSON.stringify({ type: "e2ee_ready" } satisfies E2EEReadyMessage));
-    this.state = "open";
-    await this.flushPendingSends();
+    // A different key on an already-open encrypted channel is not an
+    // authenticated reconnect. Close and require a fresh transport instead of
+    // allowing the relay to switch this channel to an attacker-chosen key.
+    this.state = "closed";
+    this.transport.close(
+      REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE,
+      REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON,
+    );
   }
 
   close(code = 1000, reason = "Normal closure"): void {
@@ -452,8 +452,9 @@ export class EncryptedChannel {
 
 function keysEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
+  let difference = 0;
   for (let i = 0; i < a.byteLength; i += 1) {
-    if (a[i] !== b[i]) return false;
+    difference |= a[i] ^ b[i];
   }
-  return true;
+  return difference === 0;
 }

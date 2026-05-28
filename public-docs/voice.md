@@ -2,7 +2,7 @@
 title: Voice
 description: Paseo voice architecture, local-first model execution, and provider configuration.
 nav: Voice
-order: 3
+order: 9
 ---
 
 # Voice
@@ -24,7 +24,7 @@ This keeps credentials and execution in your environment and avoids introducing 
 
 ## Local Speech
 
-Local speech defaults to model IDs `parakeet-tdt-0.6b-v3-int8` (STT) and `kokoro-en-v0_19` (TTS, speaker 0 / voice 00).
+Local speech defaults to model IDs `parakeet-tdt-0.6b-v3-int8` (STT) and `kokoro-en-v0_19` (TTS, speaker 0 / voice 00). STT language defaults to `en`.
 
 Missing models are downloaded at daemon startup into `$PASEO_HOME/models/local-speech`. Downloads happen only for missing files.
 
@@ -32,10 +32,12 @@ Missing models are downloaded at daemon startup into `$PASEO_HOME/models/local-s
 {
   "version": 1,
   "features": {
-    "dictation": { "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v3-int8" } },
+    "dictation": {
+      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v3-int8", "language": "en" }
+    },
     "voiceMode": {
       "llm": { "provider": "claude", "model": "haiku" },
-      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v3-int8" },
+      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v3-int8", "language": "en" },
       "tts": { "provider": "local", "model": "kokoro-en-v0_19", "speakerId": 0 }
     }
   },
@@ -46,6 +48,8 @@ Missing models are downloaded at daemon startup into `$PASEO_HOME/models/local-s
   }
 }
 ```
+
+Set `features.dictation.stt.language` for dictation and `features.voiceMode.stt.language` for realtime voice. If voice language is omitted, Paseo uses the dictation language before falling back to `en`.
 
 ## OpenAI Speech Option
 
@@ -69,12 +73,14 @@ You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider
 
 ## Environment Variables
 
-- `OPENAI_API_KEY` — OpenAI speech credentials
-- `PASEO_VOICE_LLM_PROVIDER` — voice agent provider override
-- `PASEO_LOCAL_MODELS_DIR` — local model storage directory
-- `PASEO_DICTATION_LOCAL_STT_MODEL` — local dictation STT model ID
-- `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL` — local voice STT/TTS model IDs
-- `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED` — optional local voice TTS tuning
+- `OPENAI_API_KEY`, OpenAI speech credentials
+- `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override
+- `PASEO_LOCAL_MODELS_DIR`, local model storage directory
+- `PASEO_DICTATION_LOCAL_STT_MODEL`, local dictation STT model ID
+- `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, local voice STT/TTS model IDs
+- `PASEO_DICTATION_LANGUAGE`, dictation STT language
+- `PASEO_VOICE_LANGUAGE`, realtime voice STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset
+- `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED`, optional local voice TTS tuning
 
 ## Operational Notes
 

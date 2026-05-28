@@ -1,13 +1,15 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
-import { getDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
-import { useStableEvent } from "@/hooks/use-stable-event";
-
-const HEARTBEAT_INTERVAL_MS = 15_000;
-const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
-const DESKTOP_IDLE_POLL_INTERVAL_MS = 5_000;
+import { readDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
+import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import {
+  type ClientActivityTracker,
+  createClientActivityTracker,
+  DESKTOP_IDLE_POLL_INTERVAL_MS,
+  HEARTBEAT_INTERVAL_MS,
+} from "./client-activity-tracker";
 
 interface ClientActivityOptions {
   client: DaemonClient;
@@ -26,93 +28,46 @@ export function useClientActivity({
   focusedAgentId,
   onAppResumed,
 }: ClientActivityOptions): void {
-  const lastActivityAtRef = useRef<Date>(new Date());
-  const appVisibleRef = useRef(AppState.currentState === "active");
-  const appVisibilityChangedAtRef = useRef<Date>(new Date());
-  const backgroundedAtMsRef = useRef<number | null>(
-    AppState.currentState === "active" ? null : Date.now(),
-  );
-  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const prevFocusedAgentIdRef = useRef<string | null>(focusedAgentId);
-  const lastImmediateHeartbeatAtRef = useRef<number>(0);
+  const onAppResumedRef = useRef(onAppResumed);
+  onAppResumedRef.current = onAppResumed;
 
-  const deviceType = isWeb ? "web" : "mobile";
-
-  const recordUserActivity = useCallback(() => {
-    lastActivityAtRef.current = new Date();
-  }, []);
-
-  const sendHeartbeat = useStableEvent(() => {
-    if (!client.isConnected) return;
-    client.sendHeartbeat({
-      deviceType,
-      focusedAgentId,
-      lastActivityAt: lastActivityAtRef.current.toISOString(),
-      appVisible: appVisibleRef.current,
-      appVisibilityChangedAt: appVisibilityChangedAtRef.current.toISOString(),
+  const trackerRef = useRef<ClientActivityTracker | null>(null);
+  if (!trackerRef.current) {
+    trackerRef.current = createClientActivityTracker({
+      client,
+      deviceType: isWeb ? "web" : "mobile",
+      initialFocusedAgentId: focusedAgentId,
+      initialAppVisible: AppState.currentState === "active",
+      now: () => Date.now(),
+      onAppResumed: (awayMs) => onAppResumedRef.current?.(awayMs),
     });
-  });
+  }
+  const tracker = trackerRef.current;
 
-  const setAppVisible = useCallback(
-    (nextVisible: boolean) => {
-      const previousVisible = appVisibleRef.current;
-      if (previousVisible === nextVisible) {
-        return;
-      }
-      appVisibleRef.current = nextVisible;
-      appVisibilityChangedAtRef.current = new Date();
-
-      if (!nextVisible) {
-        backgroundedAtMsRef.current = Date.now();
-        return;
-      }
-
-      const backgroundedAt = backgroundedAtMsRef.current;
-      backgroundedAtMsRef.current = null;
-      if (backgroundedAt !== null) {
-        onAppResumed?.(Math.max(0, Date.now() - backgroundedAt));
-      }
-      recordUserActivity();
-    },
-    [onAppResumed, recordUserActivity],
-  );
-
-  const maybeSendImmediateHeartbeat = useCallback(() => {
-    if (!client.isConnected) return;
-    const now = Date.now();
-    if (now - lastImmediateHeartbeatAtRef.current < ACTIVITY_HEARTBEAT_THROTTLE_MS) {
-      return;
-    }
-    lastImmediateHeartbeatAtRef.current = now;
-    sendHeartbeat();
-  }, [client, sendHeartbeat]);
-
-  // Track app visibility
+  // Track app visibility via AppState (native).
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      setAppVisible(nextState === "active");
-      // Send immediately on visibility changes so the server can adapt streaming behavior.
-      sendHeartbeat();
+      tracker.notifyAppVisibility(nextState === "active");
+      tracker.sendHeartbeat();
     });
-
     return () => subscription.remove();
-  }, [sendHeartbeat, setAppVisible]);
+  }, [tracker]);
 
-  // Track user activity on web for accurate staleness.
+  // Track user activity and visibility on web.
   useEffect(() => {
     if (isNative) return;
     if (typeof document === "undefined") return;
 
     const handleUserActivity = () => {
-      recordUserActivity();
-      maybeSendImmediateHeartbeat();
+      tracker.recordUserActivity();
+      tracker.maybeSendImmediateHeartbeat();
     };
 
     const handleVisibilityChange = () => {
       const visible = document.visibilityState === "visible";
-      setAppVisible(visible);
-      if (visible) {
-        maybeSendImmediateHeartbeat();
+      const { changed } = tracker.notifyAppVisibility(visible);
+      if (changed && visible) {
+        tracker.maybeSendImmediateHeartbeat();
       }
     };
 
@@ -131,7 +86,7 @@ export function useClientActivity({
       window.removeEventListener("wheel", handleUserActivity);
       window.removeEventListener("touchstart", handleUserActivity);
     };
-  }, [maybeSendImmediateHeartbeat, recordUserActivity, setAppVisible]);
+  }, [tracker]);
 
   // Track OS-wide activity in Electron so backgrounded desktop windows still report presence.
   useEffect(() => {
@@ -139,13 +94,9 @@ export function useClientActivity({
 
     let disposed = false;
     const pollSystemIdleTime = async () => {
-      const systemIdleMs = await getDesktopSystemIdleTimeMs();
-      if (disposed || systemIdleMs === null) return;
-
-      const systemLastActivityAtMs = Date.now() - systemIdleMs;
-      if (systemLastActivityAtMs > lastActivityAtRef.current.getTime()) {
-        lastActivityAtRef.current = new Date(systemLastActivityAtMs);
-      }
+      const systemIdleMs = await readDesktopSystemIdleTimeMs(invokeDesktopCommand);
+      if (disposed) return;
+      tracker.notifySystemIdleMs(systemIdleMs);
     };
 
     const interval = setInterval(() => {
@@ -156,45 +107,41 @@ export function useClientActivity({
       disposed = true;
       clearInterval(interval);
     };
-  }, [client]);
+  }, [tracker]);
 
-  // Send heartbeat on focused agent change
+  // Send heartbeat on focused agent change.
   useEffect(() => {
-    if (prevFocusedAgentIdRef.current !== focusedAgentId) {
-      prevFocusedAgentIdRef.current = focusedAgentId;
-      recordUserActivity();
-      sendHeartbeat();
-    }
-  }, [focusedAgentId, recordUserActivity, sendHeartbeat]);
+    tracker.setFocusedAgentId(focusedAgentId);
+  }, [focusedAgentId, tracker]);
 
-  // Periodic heartbeat
+  // Periodic heartbeat gated by connection status.
   useEffect(() => {
-    const startHeartbeat = () => {
-      if (heartbeatIntervalRef.current) {
-        clearInterval(heartbeatIntervalRef.current);
-      }
-      sendHeartbeat();
-      heartbeatIntervalRef.current = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (intervalId) clearInterval(intervalId);
+      tracker.sendHeartbeat();
+      intervalId = setInterval(() => tracker.sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
     };
 
-    const stopHeartbeat = () => {
-      if (heartbeatIntervalRef.current) {
-        clearInterval(heartbeatIntervalRef.current);
-        heartbeatIntervalRef.current = null;
+    const stop = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
       }
     };
 
     const unsubscribe = client.subscribeConnectionStatus((state) => {
       if (state.status === "connected") {
-        startHeartbeat();
+        start();
       } else {
-        stopHeartbeat();
+        stop();
       }
     });
 
     return () => {
       unsubscribe();
-      stopHeartbeat();
+      stop();
     };
-  }, [client, sendHeartbeat]);
+  }, [client, tracker]);
 }

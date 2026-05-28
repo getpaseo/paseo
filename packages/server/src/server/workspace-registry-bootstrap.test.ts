@@ -11,6 +11,9 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 
+const NON_GIT_PROJECT = path.resolve("/tmp/non-git-project");
+const ARCHIVED_PROJECT = path.resolve("/tmp/archived-project");
+
 describe("bootstrapWorkspaceRegistries", () => {
   let tmpDir: string;
   let paseoHome: string;
@@ -44,7 +47,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     await agentStorage.upsert({
       id: "agent-1",
       provider: "codex",
-      cwd: "/tmp/non-git-project",
+      cwd: NON_GIT_PROJECT,
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-02T00:00:00.000Z",
       lastActivityAt: "2026-03-02T00:00:00.000Z",
@@ -61,7 +64,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     await agentStorage.upsert({
       id: "agent-2",
       provider: "codex",
-      cwd: "/tmp/non-git-project",
+      cwd: NON_GIT_PROJECT,
       createdAt: "2026-03-01T01:00:00.000Z",
       updatedAt: "2026-03-03T00:00:00.000Z",
       lastActivityAt: "2026-03-03T00:00:00.000Z",
@@ -78,7 +81,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     await agentStorage.upsert({
       id: "agent-archived",
       provider: "codex",
-      cwd: "/tmp/archived-project",
+      cwd: ARCHIVED_PROJECT,
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
       lastActivityAt: "2026-03-01T00:00:00.000Z",
@@ -104,13 +107,13 @@ describe("bootstrapWorkspaceRegistries", () => {
 
     const workspaces = await workspaceRegistry.list();
     expect(workspaces).toHaveLength(1);
-    expect(workspaces[0]?.workspaceId).toBe("/tmp/non-git-project");
+    expect(workspaces[0]?.workspaceId).toBe(NON_GIT_PROJECT);
     expect(workspaces[0]?.createdAt).toBe("2026-03-01T00:00:00.000Z");
     expect(workspaces[0]?.updatedAt).toBe("2026-03-03T00:00:00.000Z");
 
     const projects = await projectRegistry.list();
     expect(projects).toHaveLength(1);
-    expect(projects[0]?.projectId).toBe("/tmp/non-git-project");
+    expect(projects[0]?.projectId).toBe(NON_GIT_PROJECT);
     expect(projects[0]?.createdAt).toBe("2026-03-01T00:00:00.000Z");
     expect(projects[0]?.updatedAt).toBe("2026-03-03T00:00:00.000Z");
   });

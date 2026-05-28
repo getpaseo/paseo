@@ -31,16 +31,49 @@ function discoverDocsRoutes(): string[] {
   return [...routes].sort();
 }
 
+function discoverAgentRoutes(): string[] {
+  const routesDir = path.join(__dirname, "src/routes");
+  const reserved = new Set([
+    "__root",
+    "agents",
+    "blog",
+    "changelog",
+    "cloud",
+    "docs",
+    "download",
+    "index",
+    "privacy",
+  ]);
+  return fs
+    .readdirSync(routesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".tsx"))
+    .map((entry) => entry.name.replace(/\.tsx$/, ""))
+    .filter((name) => !reserved.has(name))
+    .sort()
+    .map((slug) => `/${slug}`);
+}
+
+function discoverBlogRoutes(): string[] {
+  const postsDir = path.join(__dirname, "posts");
+  if (!fs.existsSync(postsDir)) return ["/blog"];
+  const slugs = fs
+    .readdirSync(postsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name.replace(/\.md$/, ""))
+    .sort();
+  return ["/blog", ...slugs.map((slug) => `/blog/${slug}`)];
+}
+
 const sitemapPages = [
   "/",
+  "/agents",
   "/changelog",
-  "/claude-code",
   "/cloud",
-  "/codex",
   "/download",
-  "/opencode",
   "/privacy",
+  ...discoverAgentRoutes(),
   ...discoverDocsRoutes(),
+  ...discoverBlogRoutes(),
 ].map((routePath) => ({
   path: routePath,
 }));
@@ -53,6 +86,9 @@ export default defineConfig((): UserConfig => {
       strictPort: false,
       fs: {
         allow: [repoRoot],
+      },
+      watch: {
+        ignored: ["**/.tanstack/**"],
       },
     },
     plugins: [

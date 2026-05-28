@@ -121,6 +121,16 @@ describe("filterAndRankComboboxOptions", () => {
     const result = filterAndRankComboboxOptions(items, "202");
     expect(result.map((o) => o.id)).toEqual(["github-pr:202", "github-pr:1202"]);
   });
+
+  it("matches fuzzy character sequences after stronger substring matches", () => {
+    const items = [
+      { id: "gpt-5.4", label: "GPT-5.4" },
+      { id: "gpt-4.1", label: "GPT-4.1" },
+      { id: "gemini", label: "Gemini" },
+    ];
+    const result = filterAndRankComboboxOptions(items, "gpt54");
+    expect(result.map((o) => o.id)).toEqual(["gpt-5.4"]);
+  });
 });
 
 describe("combobox above-search ordering", () => {

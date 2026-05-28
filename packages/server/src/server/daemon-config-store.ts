@@ -3,12 +3,16 @@ import {
   savePersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
-import { MutableDaemonConfigSchema, MutableDaemonConfigPatchSchema } from "../shared/messages.js";
+import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
+import {
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
+} from "@getpaseo/protocol/messages";
 
-export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
+export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
-type MutableDaemonConfig = import("../shared/messages.js").MutableDaemonConfig;
-type MutableDaemonConfigPatch = import("../shared/messages.js").MutableDaemonConfigPatch;
+type MutableDaemonConfig = import("@getpaseo/protocol/messages").MutableDaemonConfig;
+type MutableDaemonConfigPatch = import("@getpaseo/protocol/messages").MutableDaemonConfigPatch;
 type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
 interface LoggerLike {
@@ -70,13 +74,8 @@ export function applyMutableProviderConfigToOverrides(
   for (const [providerId, providerConfig] of Object.entries(mutableProviders ?? {})) {
     nextOverrides[providerId] = {
       ...nextOverrides[providerId],
+      ...ProviderOverrideSchema.strip().parse(providerConfig),
     };
-    if (providerConfig.enabled !== undefined) {
-      nextOverrides[providerId].enabled = providerConfig.enabled;
-    }
-    if (providerConfig.additionalModels !== undefined) {
-      nextOverrides[providerId].additionalModels = providerConfig.additionalModels;
-    }
   }
 
   return nextOverrides;
@@ -189,6 +188,8 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
+      autoArchiveAfterMerge: mutable.autoArchiveAfterMerge,
+      appendSystemPrompt: mutable.appendSystemPrompt,
     },
     agents:
       providerOverrides && Object.keys(providerOverrides).length > 0

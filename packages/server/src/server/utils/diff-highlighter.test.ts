@@ -188,6 +188,58 @@ describe("parseDiff", () => {
     expect(hunk.lines[3].content).toBe("const bar = 3;");
   });
 
+  it("parses no-prefix git diff headers", () => {
+    const files = parseDiff(
+      SIMPLE_DIFF.replace("a/example.ts b/example.ts", "example.ts example.ts")
+        .replace("--- a/example.ts", "--- example.ts")
+        .replace("+++ b/example.ts", "+++ example.ts"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("example.ts");
+    expect(files[0].additions).toBe(1);
+    expect(files[0].deletions).toBe(1);
+    expect(files[0].hunks).toHaveLength(1);
+  });
+
+  it("parses paths with spaces", () => {
+    const files = parseDiff(SIMPLE_DIFF.replaceAll("example.ts", "file with space.ts"));
+
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("file with space.ts");
+    expect(files[0].hunks).toHaveLength(1);
+  });
+
+  it("parses no-prefix paths with spaces", () => {
+    const files = parseDiff(
+      SIMPLE_DIFF.replaceAll("example.ts", "file with space.ts")
+        .replace(
+          "a/file with space.ts b/file with space.ts",
+          "file with space.ts file with space.ts",
+        )
+        .replace("--- a/file with space.ts", "--- file with space.ts")
+        .replace("+++ b/file with space.ts", "+++ file with space.ts"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("file with space.ts");
+    expect(files[0].hunks).toHaveLength(1);
+  });
+
+  it("preserves no-prefix paths that start with a or b", () => {
+    const files = parseDiff(
+      `${SIMPLE_DIFF.replace(
+        "diff --git a/example.ts b/example.ts",
+        "diff --git a/example.ts a/example.ts",
+      ).replace("--- a/example.ts\n+++ b/example.ts", "--- a/example.ts\n+++ a/example.ts")}
+${SIMPLE_DIFF.replaceAll("example.ts", "other.ts")
+  .replace("diff --git a/other.ts b/other.ts", "diff --git b/other.ts b/other.ts")
+  .replace("--- a/other.ts\n+++ b/other.ts", "--- b/other.ts\n+++ b/other.ts")}`,
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["a/example.ts", "b/other.ts"]);
+  });
+
   it("parses a diff with multiple hunks", () => {
     const files = parseDiff(MULTI_HUNK_DIFF);
 

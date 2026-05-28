@@ -4,23 +4,6 @@ import { StyleSheet } from "react-native-unistyles";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
-function colorWithOpacity(color: string, opacity: number): string {
-  const hex = color.trim();
-  if (/^#[0-9a-fA-F]{3}$/.test(hex)) {
-    const r = Number.parseInt(hex[1] + hex[1], 16);
-    const g = Number.parseInt(hex[2] + hex[2], 16);
-    const b = Number.parseInt(hex[3] + hex[3], 16);
-    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-  }
-  if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
-    const r = Number.parseInt(hex.slice(1, 3), 16);
-    const g = Number.parseInt(hex.slice(3, 5), 16);
-    const b = Number.parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-  }
-  return `rgba(255, 255, 255, ${opacity})`;
-}
-
 export function Shortcut({
   keys,
   chord,
@@ -70,7 +53,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[1],
     paddingVertical: 2,
     borderRadius: theme.borderRadius.md,
-    backgroundColor: colorWithOpacity(theme.colors.foreground, 0.05),
+    backgroundColor: theme.colors.surface2,
     borderWidth: 0,
   },
   sequence: {
@@ -82,6 +65,6 @@ const styles = StyleSheet.create((theme) => ({
   text: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: colorWithOpacity(theme.colors.foreground, 0.6),
+    color: theme.colors.foregroundMuted,
   },
 }));

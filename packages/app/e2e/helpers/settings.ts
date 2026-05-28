@@ -168,7 +168,7 @@ export async function expectGeneralContent(page: Page): Promise<void> {
 
 export async function expectHostLabelDisplayed(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-label-edit-button")).toBeVisible();
-  await expect(page.getByTestId("host-page-label-input")).toHaveCount(0);
+  await expect(page.getByTestId("host-page-rename-modal-input")).toHaveCount(0);
 }
 
 export async function clickEditHostLabel(page: Page): Promise<void> {
@@ -176,9 +176,9 @@ export async function clickEditHostLabel(page: Page): Promise<void> {
 }
 
 export async function expectHostLabelEditMode(page: Page, expectedLabel: string): Promise<void> {
-  await expect(page.getByTestId("host-page-label-input")).toBeVisible();
-  await expect(page.getByTestId("host-page-label-input")).toHaveValue(expectedLabel);
-  await expect(page.getByTestId("host-page-label-save")).toBeVisible();
+  await expect(page.getByTestId("host-page-rename-modal-input")).toBeVisible();
+  await expect(page.getByTestId("host-page-rename-modal-input")).toHaveValue(expectedLabel);
+  await expect(page.getByTestId("host-page-rename-modal-submit")).toBeVisible();
 }
 
 export async function expectHostConnectionsCard(page: Page, port: string): Promise<void> {
@@ -202,6 +202,41 @@ export async function expectHostActionCards(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
   await expect(page.getByTestId("host-page-remove-host-card")).toBeVisible();
   await expect(page.getByTestId("host-page-remove-host-button")).toBeVisible();
+}
+
+export async function serveJson(page: Page, url: string, body: unknown): Promise<void> {
+  await page.route(url, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+  });
+}
+
+export async function openAddProviderModal(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Add provider", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
+}
+
+export async function findAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Search providers" }).fill(providerName);
+  await expect(page.getByText(providerName, { exact: true })).toBeVisible();
+}
+
+export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
+  await findAcpCatalogProvider(page, providerName);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0);
+}
+
+export async function expectProviderInstalledInSettings(
+  page: Page,
+  providerName: string,
+): Promise<void> {
+  await expect(
+    page.getByRole("button", { name: `${providerName} provider details`, exact: true }),
+  ).toBeVisible();
 }
 
 export async function expectHostNoLocalOnlyRows(page: Page): Promise<void> {

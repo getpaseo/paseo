@@ -6,15 +6,45 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 
 ### ACP (Agent Client Protocol) -- recommended
 
-Extend `ACPAgentClient`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
+Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-Existing ACP providers: `claude-acp`, `copilot`.
+The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
 
 ### Direct
 
-Implement the `AgentClient` and `AgentSession` interfaces yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
+Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Existing direct providers: `claude`, `codex`, `opencode`.
+Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
+
+Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
+
+Paseo's per-agent and daemon-wide system prompts are passed to Pi with `--append-system-prompt`, so Pi keeps its default coding prompt while receiving Paseo's additional instructions.
+
+Pi MCP support depends on the open-source `pi-mcp-adapter` extension being loaded for the agent cwd. Probe with Pi RPC `get_commands`; the adapter registers an extension command named `mcp` (often with `sourceInfo.source` containing `pi-mcp-adapter`). When Paseo injects MCP servers into Pi, write a per-agent MCP config and pass it with `--mcp-config` instead of modifying user or project MCP files. For local HTTP servers such as Paseo's own `/mcp/agents` endpoint, explicitly disable adapter OAuth (`auth: false`, `oauth: false`) in the generated config.
+
+Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does not expose a recent-session listing command. Resume and full history hydration still go through `pi --mode rpc` using the session file as `nativeHandle`.
+
+Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
+
+OpenCode MCP injection is dynamic and session-scoped. Call OpenCode's `mcp.add` endpoint with the MCP server config and do not follow it with `mcp.connect`; `connect` only toggles MCP servers already present in OpenCode's own config. New OpenCode versions return `McpServerNotFoundError`/404 for `connect` after a dynamic add because the server is not config-backed, while older versions silently swallowed the same missing-config path.
+
+OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prompt APIs; let OpenCode create `msg*` IDs and record the user timeline item from the `message.updated` event.
+
+Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.listModels`, `listModes`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs.
+
+---
+
+## Provider Snapshot Refresh Contract
+
+The daemon keeps provider snapshots per resolved working directory. Missing or blank cwd resolves to the user's home directory. Workspace selectors and old model/mode list requests should pass the cwd that will launch the provider so providers with project-specific models or modes are probed in the right context. Settings/provider management intentionally uses the home-directory snapshot.
+
+Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
+
+Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the home-directory snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
+
+Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.
+
+Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery for that cwd; warm reads and registry replacement must not; explicit workspace refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only home.
 
 ---
 
@@ -151,7 +181,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
 
 ### 3. Add the factory to the provider registry
 
-In `packages/server/src/server/agent/provider-registry.ts`, import your class and add a factory entry:
+In `packages/server/src/server/agent/provider-registry.ts`, import your class and add a factory entry to `PROVIDER_CLIENT_FACTORIES`:
 
 ```ts
 import { MyProviderACPAgentClient } from "./providers/my-provider-agent.js";
@@ -161,10 +191,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   "my-provider": (logger, runtimeSettings) =>
     new MyProviderACPAgentClient({
       logger,
-      runtimeSettings: runtimeSettings?.["my-provider"],
+      runtimeSettings,
     }),
 };
 ```
+
+The factory is invoked with `(logger, runtimeSettings, options)`; `options.workspaceGitService` is also available if you need it (see the `codex` factory for an example). The registry already passes the per-provider runtime settings slice through, so you don't index into the map yourself.
 
 ### 4. Add a provider icon (app)
 
@@ -187,19 +219,18 @@ export function MyProviderIcon({ size = 16, color = "currentColor" }: MyProvider
 }
 ```
 
-Then register it in `packages/app/src/components/provider-icons.ts`:
+Then register it in `packages/app/src/components/provider-icons.ts` by adding an entry to the existing `PROVIDER_ICONS` map (which already covers the built-in providers):
 
 ```ts
 import { MyProviderIcon } from "@/components/icons/my-provider-icon";
 
 const PROVIDER_ICONS: Record<string, typeof Bot> = {
-  claude: ClaudeIcon as unknown as typeof Bot,
-  codex: CodexIcon as unknown as typeof Bot,
+  // ... existing entries ...
   "my-provider": MyProviderIcon as unknown as typeof Bot,
 };
 ```
 
-If no icon is registered, the app falls back to a generic `Bot` icon from lucide.
+If no icon is registered, `getProviderIcon()` falls back to a generic `Bot` icon from lucide.
 
 ### 5. Add E2E test config
 
@@ -219,25 +250,25 @@ export const agentConfigs = {
 } as const satisfies Record<string, AgentTestConfig>;
 ```
 
-Add an availability check in `isProviderAvailable()`:
+Add an availability check in `isProviderAvailable()`. Note `isCommandAvailable` is async, so all branches `await` it:
 
 ```ts
 case "my-provider":
   return (
-    isCommandAvailable("my-agent-binary") &&
+    (await isCommandAvailable("my-agent-binary")) &&
     Boolean(process.env.MY_PROVIDER_API_KEY)
   );
 ```
 
-Add to the `allProviders` array:
+Add to the `allProviders` array (current built-ins are `claude`, `codex`, `copilot`, `opencode`, `pi`):
 
 ```ts
 export const allProviders: AgentProvider[] = [
   "claude",
-  "claude-acp",
   "codex",
   "copilot",
   "opencode",
+  "pi",
   "my-provider",
 ];
 ```
@@ -258,7 +289,9 @@ If your agent does not speak ACP, implement the interfaces from `agent-sdk-types
 
 ### Interfaces to implement
 
-**`AgentClient`** -- factory for sessions and model listing:
+The interfaces below are abridged signatures — read `agent-sdk-types.ts` for the full source of truth (option bag types, generics, etc.).
+
+**`AgentClient`** -- factory for sessions and model/mode listing:
 
 ```ts
 interface AgentClient {
@@ -267,16 +300,19 @@ interface AgentClient {
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession>;
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
-  listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
+  listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   isAvailable(): Promise<boolean>;
   // Optional:
+  listModes?(options: ListModesOptions): Promise<AgentMode[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
+  getDiagnostic?(): Promise<{ diagnostic: string }>;
 }
 ```
 
@@ -287,6 +323,7 @@ interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
+  readonly features?: AgentFeature[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
@@ -296,7 +333,10 @@ interface AgentSession {
   getCurrentMode(): Promise<string | null>;
   setMode(modeId: string): Promise<void>;
   getPendingPermissions(): AgentPermissionRequest[];
-  respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void>;
+  respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   close(): Promise<void>;
@@ -304,6 +344,10 @@ interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
+  setFeature?(featureId: string, value: unknown): Promise<void>;
+  tryHandleOutOfBand?(prompt: AgentPromptInput): {
+    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+  } | null;
 }
 ```
 

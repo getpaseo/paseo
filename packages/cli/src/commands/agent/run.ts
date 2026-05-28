@@ -1,9 +1,6 @@
 import { Command, Option } from "commander";
-import {
-  getStructuredAgentResponse,
-  StructuredAgentResponseError,
-  type AgentSnapshotPayload,
-} from "@getpaseo/server";
+import { getStructuredAgentResponse, StructuredAgentResponseError } from "@getpaseo/server";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -46,6 +43,12 @@ export function addRunOptions(cmd: Command): Command {
       [],
     )
     .option("--cwd <path>", "Working directory (default: current)")
+    .option(
+      "--env <key=value>",
+      "Set environment variable(s) for the agent process (can be used multiple times)",
+      collectMultiple,
+      [],
+    )
     .option(
       "--label <key=value>",
       "Add label(s) to the agent (can be used multiple times)",
@@ -95,6 +98,7 @@ export interface AgentRunOptions extends CommandOptions {
   base?: string;
   image?: string[];
   cwd?: string;
+  env?: string[];
   label?: string[];
   waitTimeout?: string;
   outputSchema?: string;
@@ -320,15 +324,41 @@ function loadRunImages(
 }
 
 function parseRunLabels(labelFlags: string[] | undefined): Record<string, string> {
+  return parseKeyValueFlags(labelFlags, {
+    flagName: "--label",
+    code: "INVALID_LABEL",
+    noun: "label",
+    pluralNoun: "Labels",
+  });
+}
+
+function parseRunEnv(envFlags: string[] | undefined): Record<string, string> {
+  return parseKeyValueFlags(envFlags, {
+    flagName: "--env",
+    code: "INVALID_ENV",
+    noun: "environment variable",
+    pluralNoun: "Environment variables",
+  });
+}
+
+function parseKeyValueFlags(
+  flags: string[] | undefined,
+  options: {
+    flagName: string;
+    code: CommandError["code"];
+    noun: string;
+    pluralNoun: string;
+  },
+): Record<string, string> {
   const labels: Record<string, string> = {};
-  if (!labelFlags) return labels;
-  for (const labelStr of labelFlags) {
+  if (!flags) return labels;
+  for (const labelStr of flags) {
     const eqIndex = labelStr.indexOf("=");
     if (eqIndex === -1) {
       throw {
-        code: "INVALID_LABEL",
-        message: `Invalid label format: ${labelStr}`,
-        details: "Labels must be in key=value format",
+        code: options.code,
+        message: `Invalid ${options.noun} format: ${labelStr}`,
+        details: `${options.pluralNoun} must be in key=value format`,
       } satisfies CommandError;
     }
     const key = labelStr.slice(0, eqIndex);
@@ -394,6 +424,8 @@ export async function runRunCommand(
       : undefined;
 
     const labels = parseRunLabels(options.label);
+    const env = parseRunEnv(options.env);
+    const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
     if (outputSchema) {
       let structuredAgent: AgentSnapshotPayload | null = null;
@@ -410,6 +442,7 @@ export async function runRunCommand(
             initialPrompt: structuredPrompt,
             outputSchema,
             images,
+            env: requestEnv,
             git,
             worktreeName: options.worktree,
             labels: Object.keys(labels).length > 0 ? labels : undefined,
@@ -479,6 +512,7 @@ export async function runRunCommand(
       thinkingOptionId,
       initialPrompt: prompt,
       images,
+      env: requestEnv,
       git,
       worktreeName: options.worktree,
       labels: Object.keys(labels).length > 0 ? labels : undefined,

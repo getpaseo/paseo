@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { GitHubSearchKind } from "../shared/messages.js";
+import type { GitHubSearchKind } from "@getpaseo/protocol/messages";
 import { findExecutable } from "../utils/executable.js";
 import { resolveGitHubRemote } from "../utils/github-remote.js";
 import { runGitCommand } from "../utils/run-git-command.js";
@@ -91,6 +91,54 @@ const HeadRepositoryOwnerSchema = z
   .nullable()
   .optional();
 
+const PullRequestMergeableSchema = z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]).catch("UNKNOWN");
+
+const GitHubAutoMergeRequestSchema = z
+  .object({
+    enabledAt: z.string().nullable().optional().catch(null),
+    mergeMethod: z.string().nullable().optional().catch(null),
+    enabledBy: z
+      .object({
+        login: z.string().nullable().optional().catch(null),
+      })
+      .nullable()
+      .optional()
+      .catch(null),
+  })
+  .nullable()
+  .optional()
+  .catch(null);
+
+const GitHubPullRequestFactsGraphqlSchema = z.object({
+  data: z.object({
+    repository: z
+      .object({
+        autoMergeAllowed: z.boolean().optional().catch(false),
+        mergeCommitAllowed: z.boolean().optional().catch(false),
+        squashMergeAllowed: z.boolean().optional().catch(false),
+        rebaseMergeAllowed: z.boolean().optional().catch(false),
+        viewerDefaultMergeMethod: z.string().nullable().optional().catch(null),
+        pullRequest: z
+          .object({
+            mergeStateStatus: z.string().nullable().optional().catch(null),
+            autoMergeRequest: GitHubAutoMergeRequestSchema,
+            viewerCanEnableAutoMerge: z.boolean().optional().catch(false),
+            viewerCanDisableAutoMerge: z.boolean().optional().catch(false),
+            viewerCanMergeAsAdmin: z.boolean().optional().catch(false),
+            viewerCanUpdateBranch: z.boolean().optional().catch(false),
+            isMergeQueueEnabled: z.boolean().optional().catch(false),
+            isInMergeQueue: z.boolean().optional().catch(false),
+          })
+          .nullable()
+          .optional()
+          .catch(null),
+      })
+      .nullable()
+      .optional()
+      .catch(null),
+  }),
+});
+
 const CurrentPullRequestStatusSchema = z.object({
   number: z.number().optional(),
   url: z.string().catch(""),
@@ -102,6 +150,7 @@ const CurrentPullRequestStatusSchema = z.object({
   mergedAt: z.string().nullable().optional(),
   statusCheckRollup: z.unknown().optional(),
   reviewDecision: z.unknown().optional(),
+  mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
   headRepositoryOwner: HeadRepositoryOwnerSchema,
 });
 
@@ -233,8 +282,36 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
   }
 }`;
 
-const CURRENT_PR_STATUS_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner";
+const CURRENT_PR_STATUS_BASE_FIELDS =
+  "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
+
+const PULL_REQUEST_STATUS_FACTS_QUERY = `
+query PullRequestStatusFacts($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    autoMergeAllowed
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    viewerDefaultMergeMethod
+    pullRequest(number: $number) {
+      mergeStateStatus
+      autoMergeRequest {
+        enabledAt
+        mergeMethod
+        enabledBy {
+          login
+        }
+      }
+      viewerCanEnableAutoMerge
+      viewerCanDisableAutoMerge
+      viewerCanMergeAsAdmin
+      viewerCanUpdateBranch
+      isMergeQueueEnabled
+      isInMergeQueue
+    }
+  }
+}`;
 
 const PULL_REQUEST_TIMELINE_QUERY = `
 query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
@@ -290,6 +367,7 @@ interface GitHubServiceDependencies {
 
 export interface GitHubCommandRunnerOptions {
   cwd: string;
+  envOverlay?: Record<string, string>;
 }
 
 export interface GitHubCommandResult {
@@ -346,6 +424,29 @@ export interface PullRequestCheck {
 
 export type PullRequestChecksStatus = "none" | "pending" | "success" | "failure";
 export type PullRequestReviewDecision = "approved" | "changes_requested" | "pending" | null;
+export type PullRequestMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+
+export interface GitHubPullRequestStatusFacts {
+  mergeStateStatus: string | null;
+  autoMergeRequest: {
+    enabledAt: string | null;
+    mergeMethod: string | null;
+    enabledBy: string | null;
+  } | null;
+  viewerCanEnableAutoMerge: boolean;
+  viewerCanDisableAutoMerge: boolean;
+  viewerCanMergeAsAdmin: boolean;
+  viewerCanUpdateBranch: boolean;
+  repository: {
+    autoMergeAllowed: boolean;
+    mergeCommitAllowed: boolean;
+    squashMergeAllowed: boolean;
+    rebaseMergeAllowed: boolean;
+    viewerDefaultMergeMethod: string | null;
+  };
+  isMergeQueueEnabled: boolean;
+  isInMergeQueue: boolean;
+}
 
 export interface GitHubCurrentPullRequestStatus {
   number?: number;
@@ -358,9 +459,11 @@ export interface GitHubCurrentPullRequestStatus {
   headRefName: string;
   isMerged: boolean;
   isDraft?: boolean;
+  mergeable: PullRequestMergeable;
   checks: PullRequestCheck[];
   checksStatus: PullRequestChecksStatus;
   reviewDecision: PullRequestReviewDecision;
+  github?: GitHubPullRequestStatusFacts;
 }
 
 export type PullRequestTimelineReviewState = "approved" | "changes_requested" | "commented";
@@ -402,6 +505,42 @@ export interface GitHubPullRequestTimeline {
 export interface GitHubPullRequestCreateResult {
   url: string;
   number: number;
+}
+
+export type GitHubPullRequestMergeMethod = "merge" | "squash" | "rebase";
+const DIRECT_PULL_REQUEST_MERGE_STATE_ALLOWLIST = new Set(["CLEAN", "HAS_HOOKS"]);
+
+export interface GitHubPullRequestCommandStatus {
+  mergeable?: PullRequestMergeable;
+  github?: GitHubPullRequestStatusFacts;
+}
+
+export interface MergeGitHubPullRequestOptions {
+  cwd: string;
+  prNumber: number;
+  mergeMethod: GitHubPullRequestMergeMethod;
+  status?: GitHubPullRequestCommandStatus | null;
+}
+
+export interface EnableGitHubPullRequestAutoMergeOptions {
+  cwd: string;
+  prNumber: number;
+  mergeMethod: GitHubPullRequestMergeMethod;
+  status?: GitHubPullRequestCommandStatus | null;
+}
+
+export interface DisableGitHubPullRequestAutoMergeOptions {
+  cwd: string;
+  prNumber: number;
+  status?: GitHubPullRequestCommandStatus | null;
+}
+
+export interface GitHubPullRequestMergeResult {
+  success: true;
+}
+
+export interface GitHubPullRequestAutoMergeResult {
+  success: true;
 }
 
 export type GitHubReadOptions =
@@ -492,6 +631,13 @@ export interface GitHubService {
   createPullRequest(
     options: CreateGitHubPullRequestOptions,
   ): Promise<GitHubPullRequestCreateResult>;
+  mergePullRequest(options: MergeGitHubPullRequestOptions): Promise<GitHubPullRequestMergeResult>;
+  enablePullRequestAutoMerge(
+    options: EnableGitHubPullRequestAutoMergeOptions,
+  ): Promise<GitHubPullRequestAutoMergeResult>;
+  disablePullRequestAutoMerge(
+    options: DisableGitHubPullRequestAutoMergeOptions,
+  ): Promise<GitHubPullRequestAutoMergeResult>;
   isAuthenticated(options: { cwd: string } & GitHubReadOptions): Promise<boolean>;
   retainCurrentPullRequestStatusPoll?(options: {
     cwd: string;
@@ -557,6 +703,13 @@ interface CommandFailureLike {
 type PullRequestCheckRunNode = z.infer<typeof PullRequestCheckRunNodeSchema>;
 type PullRequestStatusContextNode = z.infer<typeof PullRequestStatusContextNodeSchema>;
 type CurrentPullRequestStatusItem = z.infer<typeof CurrentPullRequestStatusSchema>;
+type GitHubPullRequestFactsGraphql = z.infer<typeof GitHubPullRequestFactsGraphqlSchema>;
+type GitHubPullRequestFactsRepository = NonNullable<
+  GitHubPullRequestFactsGraphql["data"]["repository"]
+>;
+type GitHubPullRequestFactsPullRequest = NonNullable<
+  GitHubPullRequestFactsRepository["pullRequest"]
+>;
 
 interface InFlightCacheEntry {
   cwd: string;
@@ -862,12 +1015,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         },
         readOptions: input,
         load: async () => {
-          return resolveCurrentPullRequestView({
+          const status = await resolveCurrentPullRequestView({
             cwd: input.cwd,
             headRef: input.headRef,
             headRepositoryOwner: input.headRepositoryOwner,
             run,
           });
+          return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
         },
       }).then((status) => {
         updatePollTargetAfterSuccess({
@@ -933,11 +1087,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       const readOptions: GitHubReadOptions = input.force
         ? { force: true, reason: input.reason }
         : { force: false, reason: input.reason };
+      const query = normalizeGitHubSearchQuery(input.query);
       const [issuesResult, prsResult] = await Promise.allSettled([
         shouldFetchIssues
           ? this.listIssues({
               cwd: input.cwd,
-              query: input.query,
+              query,
               limit: input.limit,
               ...readOptions,
             })
@@ -945,7 +1100,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         shouldFetchPullRequests
           ? this.listPullRequests({
               cwd: input.cwd,
-              query: input.query,
+              query,
               limit: input.limit,
               ...readOptions,
             })
@@ -1027,6 +1182,33 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         })
         .parse(JSON.parse(stdout || "{}"));
       return parsed;
+    },
+
+    async mergePullRequest(input) {
+      assertDirectPullRequestMergeReady(input);
+      await run(["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`], {
+        cwd: input.cwd,
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      });
+      return { success: true };
+    },
+
+    async enablePullRequestAutoMerge(input) {
+      assertPullRequestAutoMergeEnableReady(input);
+      await run(["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`], {
+        cwd: input.cwd,
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      });
+      return { success: true };
+    },
+
+    async disablePullRequestAutoMerge(input) {
+      assertPullRequestAutoMergeDisableReady(input);
+      await run(["pr", "merge", String(input.prNumber), "--disable-auto"], {
+        cwd: input.cwd,
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      });
+      return { success: true };
     },
 
     isAuthenticated(input) {
@@ -1132,6 +1314,89 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   return api;
 }
 
+function assertDirectPullRequestMergeReady(input: MergeGitHubPullRequestOptions): void {
+  const github = input.status?.github;
+  if (!github) {
+    throw new Error("GitHub merge facts are unavailable for this pull request");
+  }
+
+  if (!DIRECT_PULL_REQUEST_MERGE_STATE_ALLOWLIST.has(github.mergeStateStatus ?? "")) {
+    throw new Error("GitHub does not report this pull request as ready for direct merge");
+  }
+  if (github.isMergeQueueEnabled || github.isInMergeQueue) {
+    throw new Error("Direct merge is not available because this repository uses a merge queue");
+  }
+  if (github.autoMergeRequest !== null) {
+    throw new Error("Direct merge is not available because auto-merge is already enabled");
+  }
+  if (!isPullRequestMergeMethodAllowed(github.repository, input.mergeMethod)) {
+    throw new Error(`Direct merge is not available because ${input.mergeMethod} is disabled`);
+  }
+}
+
+export function assertPullRequestAutoMergeEnableReady(
+  input: Pick<EnableGitHubPullRequestAutoMergeOptions, "mergeMethod" | "status">,
+): void {
+  const github = input.status?.github;
+  if (!github) {
+    throw new Error("GitHub auto-merge facts are unavailable for this pull request");
+  }
+
+  if (github.mergeStateStatus !== "BLOCKED") {
+    throw new Error("GitHub does not report this pull request as blocked for auto-merge");
+  }
+  if (!github.viewerCanEnableAutoMerge) {
+    throw new Error("GitHub does not allow this viewer to enable auto-merge");
+  }
+  if (!github.repository.autoMergeAllowed) {
+    throw new Error("Auto-merge is disabled for this repository");
+  }
+  if (!isPullRequestMergeMethodAllowed(github.repository, input.mergeMethod)) {
+    throw new Error(`Auto-merge is not available because ${input.mergeMethod} is disabled`);
+  }
+  if (github.autoMergeRequest !== null) {
+    throw new Error("Auto-merge is already enabled for this pull request");
+  }
+  if (github.isMergeQueueEnabled || github.isInMergeQueue) {
+    throw new Error("Auto-merge is not available because this repository uses a merge queue");
+  }
+  if (input.status?.mergeable === "CONFLICTING") {
+    throw new Error("Auto-merge is not available because this pull request has conflicts");
+  }
+}
+
+export function assertPullRequestAutoMergeDisableReady(
+  input: Pick<DisableGitHubPullRequestAutoMergeOptions, "status">,
+): void {
+  const github = input.status?.github;
+  if (!github) {
+    throw new Error("GitHub auto-merge facts are unavailable for this pull request");
+  }
+
+  if (github.autoMergeRequest === null) {
+    throw new Error("Auto-merge is not enabled for this pull request");
+  }
+  if (!github.viewerCanDisableAutoMerge) {
+    throw new Error("GitHub does not allow this viewer to disable auto-merge");
+  }
+  if (github.isMergeQueueEnabled || github.isInMergeQueue) {
+    throw new Error("Auto-merge is not available because this repository uses a merge queue");
+  }
+}
+
+export function isPullRequestMergeMethodAllowed(
+  repository: GitHubPullRequestStatusFacts["repository"],
+  method: GitHubPullRequestMergeMethod,
+): boolean {
+  if (method === "squash") {
+    return repository.squashMergeAllowed;
+  }
+  if (method === "merge") {
+    return repository.mergeCommitAllowed;
+  }
+  return repository.rebaseMergeAllowed;
+}
+
 export function computeGithubNextInterval(
   status: GitHubCurrentPullRequestStatus | null,
   consecutiveErrors: number,
@@ -1166,9 +1431,18 @@ async function runGhCommand(
 ): Promise<GitHubCommandResult> {
   return execCommand("gh", args, {
     cwd: options.cwd,
-    envOverlay: GITHUB_ENV,
+    envOverlay: { ...GITHUB_ENV, ...options.envOverlay },
     maxBuffer: 10 * 1024 * 1024,
   });
+}
+
+const GITHUB_ISSUE_OR_PR_URL_PATTERN =
+  /^https?:\/\/github\.com\/[^/\s]+\/[^/\s]+\/(?:pull|issues)\/(\d+)(?:[/?#].*)?$/i;
+
+function normalizeGitHubSearchQuery(query: string): string {
+  const trimmed = query.trim();
+  const match = trimmed.match(GITHUB_ISSUE_OR_PR_URL_PATTERN);
+  return match ? match[1] : query;
 }
 
 function buildCacheKey(params: { cwd: string; method: string; args: unknown }): string {
@@ -1277,6 +1551,13 @@ function isNoPullRequestFoundError(error: unknown): boolean {
   return text.includes("no pull requests found");
 }
 
+function isStatusCheckRollupPermissionError(error: unknown): boolean {
+  if (!(error instanceof GitHubCommandError)) {
+    return false;
+  }
+  return error.stderr.toLowerCase().includes("statuscheckrollup");
+}
+
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
@@ -1327,14 +1608,78 @@ async function resolveCurrentPullRequestView(options: {
   return match?.status ?? null;
 }
 
+async function addCurrentPullRequestGithubFacts(options: {
+  cwd: string;
+  status: GitHubCurrentPullRequestStatus | null;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}): Promise<GitHubCurrentPullRequestStatus | null> {
+  const { status } = options;
+  if (!status?.repoOwner || !status.repoName || typeof status.number !== "number") {
+    return status;
+  }
+
+  const facts = await loadPullRequestGithubFacts({
+    cwd: options.cwd,
+    owner: status.repoOwner,
+    name: status.repoName,
+    number: status.number,
+    run: options.run,
+  });
+  if (!facts) {
+    return status;
+  }
+  return {
+    ...status,
+    github: facts,
+  };
+}
+
+async function loadPullRequestGithubFacts(options: {
+  cwd: string;
+  owner: string;
+  name: string;
+  number: number;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}): Promise<GitHubPullRequestStatusFacts | null> {
+  try {
+    const stdout = await options.run(
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${PULL_REQUEST_STATUS_FACTS_QUERY}`,
+        "-F",
+        `owner=${options.owner}`,
+        "-F",
+        `name=${options.name}`,
+        "-F",
+        `number=${options.number}`,
+      ],
+      { cwd: options.cwd },
+    );
+    return parsePullRequestGithubFacts(stdout);
+  } catch (error) {
+    if (
+      error instanceof GitHubCommandError ||
+      error instanceof z.ZodError ||
+      error instanceof SyntaxError
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function tryCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<ResolvedPullRequestCandidate | null> {
   try {
-    const stdout = await options.run(["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS], {
+    const stdout = await runCurrentPullRequestStatusCommand({
       cwd: options.cwd,
+      run: options.run,
+      args: ["pr", "view"],
     });
     return parseCurrentPullRequestCandidate(stdout, options.headRef);
   } catch (error) {
@@ -1355,24 +1700,38 @@ async function listCurrentPullRequestCandidates(options: {
   if (options.repo) {
     args.push("--repo", options.repo);
   }
-  args.push(
-    "--state",
-    "all",
-    "--head",
-    options.headRef,
-    "--json",
-    CURRENT_PR_STATUS_FIELDS,
-    "--limit",
-    "10",
-  );
+  args.push("--state", "all", "--head", options.headRef, "--limit", "10");
   try {
-    const stdout = await options.run(args, { cwd: options.cwd });
+    const stdout = await runCurrentPullRequestStatusCommand({
+      cwd: options.cwd,
+      run: options.run,
+      args,
+    });
     return parseCurrentPullRequestCandidateList(stdout, options.headRef);
   } catch (error) {
     if (isNoPullRequestFoundError(error)) {
       return [];
     }
     throw error;
+  }
+}
+
+async function runCurrentPullRequestStatusCommand(options: {
+  cwd: string;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+  args: string[];
+}): Promise<string> {
+  try {
+    return await options.run([...options.args, "--json", CURRENT_PR_STATUS_FIELDS], {
+      cwd: options.cwd,
+    });
+  } catch (error) {
+    if (!isStatusCheckRollupPermissionError(error)) {
+      throw error;
+    }
+    return options.run([...options.args, "--json", CURRENT_PR_STATUS_BASE_FIELDS], {
+      cwd: options.cwd,
+    });
   }
 }
 
@@ -1406,6 +1765,52 @@ function parseCurrentPullRequestCandidateList(
   return items
     .map((item) => toCurrentPullRequestCandidate(item, fallbackHeadRefName))
     .filter((candidate): candidate is ResolvedPullRequestCandidate => candidate !== null);
+}
+
+function parsePullRequestGithubFacts(stdout: string): GitHubPullRequestStatusFacts | null {
+  const parsed = GitHubPullRequestFactsGraphqlSchema.parse(JSON.parse(stdout || "{}"));
+  const repository = parsed.data.repository;
+  const pullRequest = repository?.pullRequest;
+  if (!repository || !pullRequest) {
+    return null;
+  }
+
+  return {
+    mergeStateStatus: pullRequest.mergeStateStatus ?? null,
+    autoMergeRequest: toGitHubAutoMergeRequest(pullRequest.autoMergeRequest),
+    viewerCanEnableAutoMerge: pullRequest.viewerCanEnableAutoMerge ?? false,
+    viewerCanDisableAutoMerge: pullRequest.viewerCanDisableAutoMerge ?? false,
+    viewerCanMergeAsAdmin: pullRequest.viewerCanMergeAsAdmin ?? false,
+    viewerCanUpdateBranch: pullRequest.viewerCanUpdateBranch ?? false,
+    repository: toGitHubRepositoryMergePolicy(repository),
+    isMergeQueueEnabled: pullRequest.isMergeQueueEnabled ?? false,
+    isInMergeQueue: pullRequest.isInMergeQueue ?? false,
+  };
+}
+
+function toGitHubAutoMergeRequest(
+  request: GitHubPullRequestFactsPullRequest["autoMergeRequest"],
+): GitHubPullRequestStatusFacts["autoMergeRequest"] {
+  if (!request) {
+    return null;
+  }
+  return {
+    enabledAt: request.enabledAt ?? null,
+    mergeMethod: request.mergeMethod ?? null,
+    enabledBy: request.enabledBy?.login ?? null,
+  };
+}
+
+function toGitHubRepositoryMergePolicy(
+  repository: GitHubPullRequestFactsRepository,
+): GitHubPullRequestStatusFacts["repository"] {
+  return {
+    autoMergeAllowed: repository.autoMergeAllowed ?? false,
+    mergeCommitAllowed: repository.mergeCommitAllowed ?? false,
+    squashMergeAllowed: repository.squashMergeAllowed ?? false,
+    rebaseMergeAllowed: repository.rebaseMergeAllowed ?? false,
+    viewerDefaultMergeMethod: repository.viewerDefaultMergeMethod ?? null,
+  };
 }
 
 function toCurrentPullRequestCandidate(
@@ -1680,6 +2085,7 @@ function toCurrentPullRequestStatus(
     headRefName: item.headRefName || fallbackHeadRefName,
     isMerged: mergedAt !== null,
     isDraft: item.isDraft ?? false,
+    mergeable: item.mergeable,
     checks,
     checksStatus: computeChecksStatus(checks),
     reviewDecision: mapReviewDecision(item.reviewDecision),

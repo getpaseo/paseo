@@ -1,7 +1,7 @@
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import type { DaemonStartResult } from "@/runtime/daemon-start-service";
 import type { Href } from "expo-router";
-import { buildHostRootRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { buildHostRootRoute } from "@/utils/host-routes";
 
 export interface HostRuntimeBootstrapStore {
   boot: () => void;
@@ -66,8 +66,27 @@ export interface ResolveStartupRedirectInput {
   hasGivenUpWaitingForHost: boolean;
 }
 
+function isIndexPathname(pathname: string) {
+  return pathname === "/" || pathname === "";
+}
+
+export function resolveStartupWorkspaceSelection(
+  input: ResolveStartupRedirectInput,
+): ActiveWorkspaceSelection | null {
+  if (!isIndexPathname(input.pathname)) {
+    return null;
+  }
+  if (!input.isWorkspaceSelectionLoaded) {
+    return null;
+  }
+  if (!input.workspaceSelection) {
+    return null;
+  }
+  return input.workspaceSelection;
+}
+
 export function resolveStartupRedirectRoute(input: ResolveStartupRedirectInput): Href | null {
-  if (input.pathname !== "/" && input.pathname !== "") {
+  if (!isIndexPathname(input.pathname)) {
     return null;
   }
   if (!input.isWorkspaceSelectionLoaded) {
@@ -75,14 +94,8 @@ export function resolveStartupRedirectRoute(input: ResolveStartupRedirectInput):
   }
 
   if (input.anyOnlineHostServerId) {
-    if (
-      input.workspaceSelection &&
-      input.workspaceSelection.serverId === input.anyOnlineHostServerId
-    ) {
-      return buildHostWorkspaceRoute(
-        input.workspaceSelection.serverId,
-        input.workspaceSelection.workspaceId,
-      );
+    if (resolveStartupWorkspaceSelection(input)) {
+      return null;
     }
     return buildHostRootRoute(input.anyOnlineHostServerId);
   }

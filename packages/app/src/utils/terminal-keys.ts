@@ -82,6 +82,27 @@ export function hasPendingTerminalModifiers(modifiers: PendingTerminalModifiers)
   return modifiers.ctrl || modifiers.shift || modifiers.alt;
 }
 
+interface AppleHandheldDetectionInput {
+  userAgent: string | null | undefined;
+  platform: string | null | undefined;
+  maxTouchPoints: number | null | undefined;
+}
+
+// iPadOS 13+ WKWebView reports navigator.platform="MacIntel" and a Mac UA string. Distinguish
+// iPad/iPhone from real macOS via maxTouchPoints, which is 0 on macOS and >1 on iPadOS/iOS.
+export function isAppleHandheldPlatform(input: AppleHandheldDetectionInput): boolean {
+  const userAgent = input.userAgent ?? "";
+  const platform = input.platform ?? "";
+  const touchPoints = input.maxTouchPoints ?? 0;
+  if (/iPad|iPhone|iPod/.test(userAgent)) {
+    return true;
+  }
+  if (/Mac/i.test(platform) && touchPoints > 1) {
+    return true;
+  }
+  return false;
+}
+
 export function shouldInterceptDomTerminalKey(args: {
   key: string;
   ctrlKey: boolean;
@@ -89,14 +110,26 @@ export function shouldInterceptDomTerminalKey(args: {
   altKey: boolean;
   metaKey: boolean;
   pendingModifiers: PendingTerminalModifiers;
+  enhancedInputActive?: boolean;
+  isAppleHandheld?: boolean;
 }): boolean {
   if (hasPendingTerminalModifiers(args.pendingModifiers)) {
     return true;
   }
-  // xterm.js sends plain \r for Enter regardless of modifiers.
-  // Intercept modified Enter so it gets CSI u encoding (Kitty keyboard protocol),
-  // which Claude Code and other TUI apps use for Shift+Enter newlines.
   if (args.key === "Enter" && (args.shiftKey || args.ctrlKey || args.altKey || args.metaKey)) {
+    return Boolean(args.enhancedInputActive);
+  }
+  // COMPAT(xterm-ipad-ctrl-c): WebKit sends keyCode=13 for hardware-kbd Ctrl+C on iPad, so
+  // xterm.js emits \r instead of \x03. Upstream: xtermjs/xterm.js#5721, targeting xterm.js 7.0.0.
+  // Drop this block and the isAppleHandheld plumbing once @xterm/xterm is bumped past it.
+  if (
+    args.isAppleHandheld &&
+    args.ctrlKey &&
+    !args.metaKey &&
+    !args.altKey &&
+    !args.shiftKey &&
+    (args.key === "c" || args.key === "C")
+  ) {
     return true;
   }
   return false;

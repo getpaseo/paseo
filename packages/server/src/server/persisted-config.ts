@@ -1,13 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
   migrateProviderSettings,
-  ProviderOverrideSchema,
+  ProviderOverridesSchema,
 } from "./agent/provider-launch-config.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
+import { ensurePrivateFile, writePrivateFileSync } from "./private-files.js";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
 export const LogFormatSchema = z.enum(["pretty", "json"]);
@@ -85,6 +86,7 @@ const FeatureDictationSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
+        language: z.string().trim().min(1).optional(),
         confidenceThreshold: z.number().optional(),
       })
       .strict()
@@ -106,6 +108,7 @@ const FeatureVoiceModeSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
+        language: z.string().trim().min(1).optional(),
       })
       .strict()
       .optional(),
@@ -129,57 +132,6 @@ const FeatureVoiceModeSchema = z
   .strict();
 
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi"] as const;
-const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
-
-const ProviderOverridesSchema = z
-  .record(z.string(), ProviderOverrideSchema)
-  .superRefine((providers, ctx) => {
-    const builtinProviderIdSet = new Set<string>(BUILTIN_PROVIDER_IDS);
-    const validExtendsValues = new Set<string>([...BUILTIN_PROVIDER_IDS, "acp"]);
-
-    for (const [providerId, provider] of Object.entries(providers)) {
-      if (!PROVIDER_ID_PATTERN.test(providerId)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId],
-          message: `Provider ID "${providerId}" must match ${PROVIDER_ID_PATTERN}.`,
-        });
-      }
-
-      const isBuiltinProvider = builtinProviderIdSet.has(providerId);
-      if (!isBuiltinProvider && !provider.extends) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId, "extends"],
-          message: `Custom provider "${providerId}" must declare extends.`,
-        });
-      }
-
-      if (!isBuiltinProvider && !provider.label) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId, "label"],
-          message: `Custom provider "${providerId}" must declare label.`,
-        });
-      }
-
-      if (provider.extends && !validExtendsValues.has(provider.extends)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId, "extends"],
-          message: `Provider "${providerId}" extends unknown provider "${provider.extends}".`,
-        });
-      }
-
-      if (provider.extends === "acp" && !provider.command) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId, "command"],
-          message: `Provider "${providerId}" extending "acp" must declare command.`,
-        });
-      }
-    }
-  });
 
 function isLegacyProviderEntry(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -247,6 +199,8 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
+        autoArchiveAfterMerge: z.boolean().optional(),
+        appendSystemPrompt: z.string().optional(),
         cors: z
           .object({
             allowedOrigins: z.array(z.string()).optional(),
@@ -258,6 +212,8 @@ export const PersistedConfigSchema = z
             enabled: z.boolean().optional(),
             endpoint: z.string().optional(),
             publicEndpoint: z.string().optional(),
+            useTls: z.boolean().optional(),
+            publicUseTls: z.boolean().optional(),
           })
           .strict()
           .optional(),
@@ -368,8 +324,7 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
 
   if (!existsSync(configPath)) {
     try {
-      mkdirSync(path.dirname(configPath), { recursive: true });
-      writeFileSync(configPath, JSON.stringify(DEFAULT_PERSISTED_CONFIG, null, 2) + "\n");
+      writePrivateFileSync(configPath, JSON.stringify(DEFAULT_PERSISTED_CONFIG, null, 2) + "\n");
       log?.info(`Initialized config file at ${configPath}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -379,10 +334,13 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
 
   let raw: string;
   try {
+    ensurePrivateFile(configPath);
     raw = readFileSync(configPath, "utf-8");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, {
+      cause: err,
+    });
   }
 
   let parsed: unknown;
@@ -390,7 +348,9 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     parsed = JSON.parse(raw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, {
+      cause: err,
+    });
   }
 
   const migrated = stripDeprecatedLocalSpeechConfigFields(parsed);
@@ -423,10 +383,12 @@ export function savePersistedConfig(
   }
 
   try {
-    writeFileSync(configPath, JSON.stringify(result.data, null, 2) + "\n");
+    writePrivateFileSync(configPath, JSON.stringify(result.data, null, 2) + "\n");
     log?.info(`Saved to ${configPath}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, {
+      cause: err,
+    });
   }
 }

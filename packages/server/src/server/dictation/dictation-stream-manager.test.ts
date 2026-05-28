@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import pino from "pino";
 
 import { DictationStreamManager } from "./dictation-stream-manager.js";
+import { PersistedConfigSchema } from "../persisted-config.js";
+import { resolveSpeechConfig } from "../speech/speech-config-resolver.js";
 import type {
   SpeechToTextProvider,
   StreamingTranscriptionSession,
@@ -51,10 +53,12 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
+  public lastLanguage?: string;
   constructor(private readonly session: FakeRealtimeSession) {}
   createSession(
-    _params: Parameters<SpeechToTextProvider["createSession"]>[0],
+    params: Parameters<SpeechToTextProvider["createSession"]>[0],
   ): StreamingTranscriptionSession {
+    this.lastLanguage = params.language;
     return this.session;
   }
 }
@@ -123,6 +127,97 @@ describe("DictationStreamManager (finish buffer-too-small tolerance)", () => {
 });
 
 describe("DictationStreamManager (provider-agnostic provider)", () => {
+  function resolveDictationLanguage(params: {
+    env?: NodeJS.ProcessEnv;
+    persisted?: unknown;
+  }): string {
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: params.env ?? ({} as NodeJS.ProcessEnv),
+      persisted: PersistedConfigSchema.parse(params.persisted ?? {}),
+    });
+    return result.speech.sttLanguages.dictation;
+  }
+
+  async function startWithResolvedDictationLanguage(params: {
+    env?: NodeJS.ProcessEnv;
+    persisted?: unknown;
+  }): Promise<FakeSttProvider> {
+    const session = new FakeRealtimeSession();
+    const sttProvider = new FakeSttProvider(session);
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: () => {},
+      sessionId: "s1",
+      stt: sttProvider,
+      language: resolveDictationLanguage(params),
+    });
+
+    await manager.handleStart("d-lang", "audio/pcm;rate=24000;bits=16");
+    return sttProvider;
+  }
+
+  it("defaults to English when dictation language config is unset", async () => {
+    const sttProvider = await startWithResolvedDictationLanguage({});
+
+    expect(sttProvider.lastLanguage).toBe("en");
+  });
+
+  it("uses PASEO_DICTATION_LANGUAGE when set", async () => {
+    const sttProvider = await startWithResolvedDictationLanguage({
+      env: {
+        PASEO_DICTATION_LANGUAGE: "pt",
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(sttProvider.lastLanguage).toBe("pt");
+  });
+
+  it("treats empty PASEO_DICTATION_LANGUAGE as unset", async () => {
+    const sttProvider = await startWithResolvedDictationLanguage({
+      env: {
+        PASEO_DICTATION_LANGUAGE: "  ",
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(sttProvider.lastLanguage).toBe("en");
+  });
+
+  it("uses settings dictation STT language when env var is unset", async () => {
+    const sttProvider = await startWithResolvedDictationLanguage({
+      persisted: {
+        features: {
+          dictation: {
+            stt: {
+              language: "fr",
+            },
+          },
+        },
+      },
+    });
+
+    expect(sttProvider.lastLanguage).toBe("fr");
+  });
+
+  it("uses env dictation language over settings dictation STT language", async () => {
+    const sttProvider = await startWithResolvedDictationLanguage({
+      env: {
+        PASEO_DICTATION_LANGUAGE: "pt",
+      } as NodeJS.ProcessEnv,
+      persisted: {
+        features: {
+          dictation: {
+            stt: {
+              language: "fr",
+            },
+          },
+        },
+      },
+    });
+
+    expect(sttProvider.lastLanguage).toBe("pt");
+  });
+
   it("does not require OPENAI_API_KEY", async () => {
     const original = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;

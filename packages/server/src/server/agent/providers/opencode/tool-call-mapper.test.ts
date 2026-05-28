@@ -103,6 +103,21 @@ describe("opencode tool-call mapper", () => {
       query: "**/*.md",
       toolName: "glob",
     });
+
+    const grepItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "grep",
+        callId: "opencode-running-grep",
+        status: "running",
+        input: { pattern: "sendCorrelatedSessionRequest" },
+        output: null,
+      }),
+    );
+    expect(grepItem.detail).toEqual({
+      type: "search",
+      query: "sendCorrelatedSessionRequest",
+      toolName: "grep",
+    });
   });
 
   it("maps completed read calls", () => {
@@ -167,6 +182,36 @@ describe("opencode tool-call mapper", () => {
     }
   });
 
+  it("unwraps OpenCode XML read output into file content", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "read",
+        callId: "opencode-read-xml",
+        status: "completed",
+        input: { filePath: "/Users/moboudra/dev/paseo/docs/release.md" },
+        output: [
+          "<path>/Users/moboudra/dev/paseo/docs/release.md</path>",
+          "<type>file</type>",
+          "<content>",
+          "1: # Release",
+          "2:",
+          "3: All workspaces share one version and release together.",
+          "</content>",
+        ].join("\n"),
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "read",
+      filePath: "/Users/moboudra/dev/paseo/docs/release.md",
+      content: [
+        "1: # Release",
+        "2:",
+        "3: All workspaces share one version and release together.",
+      ].join("\n"),
+    });
+  });
+
   it("maps failed calls with required error", () => {
     const item = expectMapped(
       mapOpencodeToolCall({
@@ -227,6 +272,118 @@ describe("opencode tool-call mapper", () => {
       type: "search",
       query: "opencode mapper",
       toolName: "web_search",
+    });
+  });
+
+  it("maps completed write calls with OpenCode success text into canonical detail", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "write",
+        callId: "opencode-write-success-text",
+        status: "completed",
+        input: {
+          filePath: "/Users/moboudra/.paseo/worktrees/1luy0po7/cold-ladybug/dummy.txt",
+          content: "hello world\n",
+        },
+        output: "Wrote file successfully.",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "write",
+      filePath: "/Users/moboudra/.paseo/worktrees/1luy0po7/cold-ladybug/dummy.txt",
+      content: "hello world\n",
+    });
+  });
+
+  it("maps completed edit calls with OpenCode camelCase input and success text", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "edit",
+        callId: "opencode-edit-camel",
+        status: "completed",
+        input: {
+          filePath: "/Users/moboudra/dev/paseo/packages/website/src/data/agent-pages.ts",
+          oldString: 'metaTitle: "Junie agent Mobile and Desktop App, Open Source"',
+          newString: 'metaTitle: "Junie Agent Mobile and Desktop App, Open Source"',
+        },
+        output: "Edit applied successfully.",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "/Users/moboudra/dev/paseo/packages/website/src/data/agent-pages.ts",
+      oldString: 'metaTitle: "Junie agent Mobile and Desktop App, Open Source"',
+      newString: 'metaTitle: "Junie Agent Mobile and Desktop App, Open Source"',
+    });
+  });
+
+  it("maps skill calls to plain text detail with the loaded skill name", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "skill",
+        callId: "opencode-skill-1",
+        status: "completed",
+        input: { name: "diagnose" },
+        output: '<skill_content name="diagnose"># Skill: diagnose</skill_content>',
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "diagnose",
+      icon: "sparkles",
+      text: '<skill_content name="diagnose"># Skill: diagnose</skill_content>',
+    });
+  });
+
+  it("maps completed grep calls with string output into search detail", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "grep",
+        callId: "opencode-grep-string-output-1",
+        status: "completed",
+        input: { pattern: "todowrite" },
+        output: "Found 2 matches\nsrc/file.ts:\n  Line 1: todowrite",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "todowrite",
+      toolName: "grep",
+      content: "Found 2 matches\nsrc/file.ts:\n  Line 1: todowrite",
+      numFiles: 0,
+    });
+  });
+
+  it("maps apply_patch patchText payloads into edit detail", () => {
+    const patchText = [
+      "*** Begin Patch",
+      "*** Delete File: /tmp/repo/src/App.tsx",
+      "*** End Patch",
+    ].join("\n");
+
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "apply_patch",
+        callId: "opencode-apply-patch-text-1",
+        status: "completed",
+        input: { patchText },
+        output: "Success. Updated the following files:\nD /tmp/repo/src/App.tsx",
+      }),
+    );
+
+    expect(item.detail.type).toBe("edit");
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "/tmp/repo/src/App.tsx",
+      unifiedDiff: [
+        "diff --git a//tmp/repo/src/App.tsx b//tmp/repo/src/App.tsx",
+        "--- a//tmp/repo/src/App.tsx",
+        "+++ /dev/null",
+      ].join("\n"),
     });
   });
 

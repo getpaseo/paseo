@@ -4,12 +4,10 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildRelayWebSocketUrl,
-  DaemonClient,
-  generateLocalPairingOffer,
-  parseConnectionOfferFromUrl,
-} from "@getpaseo/server";
+import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
+import { parseConnectionOfferFromUrl } from "@getpaseo/protocol/connection-offer";
+import { generateLocalPairingOffer } from "@getpaseo/server";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { WebSocket } from "ws";
 import { getAvailablePort } from "../helpers/network.ts";
 import { createE2ETestContext } from "../helpers/test-daemon.ts";

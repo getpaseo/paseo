@@ -48,7 +48,7 @@ const port = target!.type === "tcp" ? target!.port : null;
 
 const client = new DaemonClient({
   url: `ws://127.0.0.1:${port}/ws`,
-  appVersion: "0.1.54", // see gotcha #1
+  appVersion: "0.1.70", // see gotcha #1
 });
 await client.connect();
 await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
@@ -78,7 +78,7 @@ import { DaemonClient } from "./test-utils/daemon-client.js";
 const daemon = await createTestPaseoDaemon();
 const client = new DaemonClient({
   url: `ws://127.0.0.1:${daemon.port}/ws`,
-  appVersion: "0.1.54",
+  appVersion: "0.1.70",
 });
 await client.connect();
 await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
@@ -116,7 +116,7 @@ Always pass `appVersion`:
 ```typescript
 const client = new DaemonClient({
   url: `ws://127.0.0.1:${port}/ws`,
-  appVersion: "0.1.54",
+  appVersion: "0.1.70",
 });
 ```
 

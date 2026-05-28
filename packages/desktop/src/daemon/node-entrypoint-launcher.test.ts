@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   createNodeEntrypointInvocation,
-  parseCliPassthroughArgsFromArgv,
   type NodeEntrypointSpec,
 } from "./node-entrypoint-launcher";
 
@@ -11,78 +10,6 @@ const CLI_ENTRYPOINT: NodeEntrypointSpec = {
 };
 
 describe("node-entrypoint-launcher", () => {
-  describe("parseCliPassthroughArgsFromArgv", () => {
-    it("returns null when no CLI args are provided", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo"],
-          isDefaultApp: false,
-          forceCli: false,
-        }),
-      ).toBeNull();
-    });
-
-    it("ignores macOS GUI launch arguments", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "-psn_0_12345"],
-          isDefaultApp: false,
-          forceCli: false,
-        }),
-      ).toBeNull();
-    });
-
-    it("ignores --no-sandbox injected by Linux wrapper", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/usr/bin/Paseo", "--no-sandbox", "status"],
-          isDefaultApp: false,
-          forceCli: false,
-        }),
-      ).toEqual(["status"]);
-    });
-
-    it("returns null when only --no-sandbox is present", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/usr/bin/Paseo", "--no-sandbox"],
-          isDefaultApp: false,
-          forceCli: false,
-        }),
-      ).toBeNull();
-    });
-
-    it("preserves CLI flags for direct app invocations", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "--version"],
-          isDefaultApp: false,
-          forceCli: false,
-        }),
-      ).toEqual(["--version"]);
-    });
-
-    it("passes --open-project through as a normal CLI arg", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "--open-project", "/tmp/project"],
-          isDefaultApp: false,
-          forceCli: false,
-        }),
-      ).toEqual(["--open-project", "/tmp/project"]);
-    });
-
-    it("forces CLI mode for shim launches even without args", () => {
-      expect(
-        parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo"],
-          isDefaultApp: false,
-          forceCli: true,
-        }),
-      ).toEqual([]);
-    });
-  });
-
   describe("createNodeEntrypointInvocation", () => {
     it("uses the packaged runner when the desktop app is packaged", () => {
       expect(

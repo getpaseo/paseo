@@ -52,7 +52,7 @@ export function CommandDialog({
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" onClick={handleToggle}>
+      <button type="button" aria-label={title} onClick={handleToggle}>
         {trigger}
       </button>
       <AnimatePresence>

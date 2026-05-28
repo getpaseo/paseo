@@ -188,7 +188,7 @@ async function isOpenAiApiKeyUsable(apiKey: string | undefined): Promise<boolean
 let daemonProcess: ChildProcess | null = null;
 let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
-let fakeGhBinDir: string | null = null;
+let fakeToolBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
 
 function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
@@ -209,8 +209,8 @@ interface OfferPayload {
   relay: { endpoint: string };
 }
 
-async function createFakeGhBin(): Promise<string> {
-  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-gh-bin-"));
+async function createFakeToolBin(): Promise<string> {
+  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-tool-bin-"));
   const ghPath = path.join(binDir, "gh");
   await writeFile(
     ghPath,
@@ -284,6 +284,27 @@ forwardToRealGh();
 `,
   );
   await chmod(ghPath, 0o755);
+
+  const fakeEditorSource = `#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+const recordPath = process.env.PASEO_E2E_EDITOR_RECORD_PATH;
+
+if (recordPath) {
+  fs.appendFileSync(recordPath, JSON.stringify({
+    command: path.basename(process.argv[1]),
+    args: process.argv.slice(2),
+    cwd: process.cwd(),
+    at: Date.now()
+  }) + "\\n");
+}
+`;
+  for (const editorCommand of ["cursor", "code"]) {
+    const editorPath = path.join(binDir, editorCommand);
+    await writeFile(editorPath, fakeEditorSource);
+    await chmod(editorPath, 0o755);
+  }
+
   return binDir;
 }
 
@@ -300,7 +321,7 @@ function ensureRelayBuildArtifact(repoRoot: string): void {
   }
 
   console.log("[e2e] Building @getpaseo/relay for daemon startup");
-  execSync("npm run build --workspace=@getpaseo/relay", {
+  execSync("npm run build:relay", {
     cwd: repoRoot,
     stdio: "inherit",
   });
@@ -414,15 +435,19 @@ async function resolveDictationConfig(): Promise<DictationConfig> {
   );
   const hasDefaultLocalModelsDir =
     defaultLocalModelsDir.trim().length > 0 && existsSync(defaultLocalModelsDir);
-  const dictationProvider = openAiUsable ? "openai" : "local";
 
-  if (dictationProvider === "local" && !hasDefaultLocalModelsDir) {
-    throw new Error(
-      "OpenAI key is not usable and local speech models are unavailable at ~/.paseo/models/local-speech. " +
-        "Either provide a valid OPENAI_API_KEY or install local speech models before running app e2e tests.",
+  // Fork PRs run without secrets and usually without local models. Don't crash
+  // the whole Playwright run — disable dictation/voice and let tests that need
+  // them gate on PASEO_DICTATION_ENABLED.
+  if (!openAiUsable && !hasDefaultLocalModelsDir) {
+    console.warn(
+      "[e2e] Neither OPENAI_API_KEY nor local speech models found — running with dictation/voice disabled. " +
+        "Tests that require dictation should gate on PASEO_DICTATION_ENABLED.",
     );
+    return { openAiUsable: false, localModelsDir: null };
   }
 
+  const dictationProvider = openAiUsable ? "openai" : "local";
   const localModelsDir = dictationProvider === "local" ? defaultLocalModelsDir : null;
   console.log(
     `[e2e] Dictation STT provider: ${dictationProvider}${openAiUsable ? "" : " (OpenAI probe failed)"}`,
@@ -512,13 +537,22 @@ async function awaitRelayReady(
   }
 }
 
-async function startRelay(): Promise<number> {
+async function getAvailablePortExcluding(excludedPorts: Set<number>): Promise<number> {
+  for (;;) {
+    const port = await getAvailablePort();
+    if (!excludedPorts.has(port)) {
+      return port;
+    }
+  }
+}
+
+async function startRelay(excludedPorts: Set<number>): Promise<number> {
   const relayDir = path.resolve(__dirname, "..", "..", "relay");
   const maxRelayStartupAttempts = 5;
   let lastRelayStartupError: unknown = null;
 
   for (let attempt = 1; attempt <= maxRelayStartupAttempts; attempt += 1) {
-    const relayPort = await getAvailablePort();
+    const relayPort = await getAvailablePortExcluding(excludedPorts);
     const buffer = createLineBuffer();
     const state: RelayStreamState = { failureLine: null, readyForSelectedPort: false };
 
@@ -595,7 +629,8 @@ interface DaemonSpawnArgs {
   relayPort: number;
   metroPort: number;
   paseoHome: string;
-  fakeGhBinDir: string;
+  fakeToolBinDir: string;
+  editorRecordPath: string;
   dictation: DictationConfig;
   buffer: ReturnType<typeof createLineBuffer>;
 }
@@ -609,8 +644,9 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     cwd: serverDir,
     env: {
       ...process.env,
-      PATH: `${args.fakeGhBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${args.fakeToolBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
       PASEO_HOME: args.paseoHome,
+      PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
       PASEO_SERVER_ID: "srv_e2e_test_daemon",
       PASEO_LISTEN: `0.0.0.0:${args.port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
@@ -674,9 +710,9 @@ async function performCleanup(shouldRemovePaseoHome: boolean): Promise<void> {
   } else if (paseoHome) {
     console.log(`[e2e] Preserving PASEO_HOME: ${paseoHome}`);
   }
-  if (fakeGhBinDir) {
-    await rm(fakeGhBinDir, { recursive: true, force: true });
-    fakeGhBinDir = null;
+  if (fakeToolBinDir) {
+    await rm(fakeToolBinDir, { recursive: true, force: true });
+    fakeToolBinDir = null;
   }
 }
 
@@ -690,7 +726,8 @@ export default async function globalSetup() {
   const requestedPaseoHome = resolveOptionalPaseoHomeEnv(process.env.E2E_PASEO_HOME);
   const shouldRemovePaseoHome = !requestedPaseoHome && process.env.E2E_KEEP_PASEO_HOME !== "1";
   paseoHome = requestedPaseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-")));
-  fakeGhBinDir = await createFakeGhBin();
+  const editorRecordPath = path.join(paseoHome, "editor-open-records.jsonl");
+  fakeToolBinDir = await createFakeToolBin();
   const metroLineBuffer = createLineBuffer();
   const daemonLineBuffer = createLineBuffer();
 
@@ -701,14 +738,15 @@ export default async function globalSetup() {
   const dictation = await resolveDictationConfig();
 
   try {
-    const relayPort = await startRelay();
+    const relayPort = await startRelay(new Set([port, metroPort]));
     metroProcess = startMetro(metroPort, metroLineBuffer);
     daemonProcess = startDaemon({
       port,
       relayPort,
       metroPort,
       paseoHome,
-      fakeGhBinDir,
+      fakeToolBinDir,
+      editorRecordPath,
       dictation,
       buffer: daemonLineBuffer,
     });
@@ -738,6 +776,7 @@ export default async function globalSetup() {
     process.env.E2E_RELAY_DAEMON_PUBLIC_KEY = offer.daemonPublicKeyB64;
     process.env.E2E_METRO_PORT = String(metroPort);
     process.env.E2E_PASEO_HOME = paseoHome;
+    process.env.E2E_EDITOR_RECORD_PATH = editorRecordPath;
     console.log(
       `[e2e] Test daemon started on port ${port}, Metro on port ${metroPort}, home: ${paseoHome}`,
     );

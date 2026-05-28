@@ -14,7 +14,6 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
-  ScrollView,
   Text,
   View,
   Dimensions,
@@ -25,10 +24,10 @@ import {
   type ViewStyle,
   type StyleProp,
 } from "react-native";
-import Animated, { Keyframe, runOnJS } from "react-native-reanimated";
+import { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, CheckCircle } from "lucide-react-native";
-import { isWeb } from "@/constants/platform";
+import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
@@ -172,42 +171,37 @@ function computePosition({
   return { x, y, actualPlacement };
 }
 
-interface SharedDropdownContentProps {
-  collapsable: false;
-  testID?: string;
-  style: StyleProp<ViewStyle>;
-}
-
 function renderDropdownSurface(input: {
-  isWebSurface: boolean;
-  sharedProps: SharedDropdownContentProps;
+  frameStyle: StyleProp<ViewStyle>;
+  testID?: string;
+  surfaceStyle: StyleProp<ViewStyle>;
   scrollable: boolean;
   scrollViewportStyle: StyleProp<ViewStyle>;
   content: ReactElement;
   onExited: () => void;
 }): ReactElement {
-  const { isWebSurface, sharedProps, scrollable, scrollViewportStyle, content, onExited } = input;
+  const { frameStyle, testID, surfaceStyle, scrollable, scrollViewportStyle, content, onExited } =
+    input;
 
   const body = scrollable ? (
-    <ScrollView
+    <FloatingScrollView
       bounces={false}
       showsVerticalScrollIndicator
       style={scrollViewportStyle}
       contentContainerStyle={DROPDOWN_SCROLL_CONTENT_STYLE}
     >
       {content}
-    </ScrollView>
+    </FloatingScrollView>
   ) : (
     content
   );
 
-  if (isWebSurface) {
-    return <View {...sharedProps}>{body}</View>;
-  }
-
   return (
-    <Animated.View
-      {...sharedProps}
+    <FloatingSurface
+      collapsable={false}
+      testID={testID}
+      style={surfaceStyle}
+      frameStyle={frameStyle}
       entering={contentEntering}
       exiting={contentExiting.withCallback((finished) => {
         "worklet";
@@ -217,7 +211,7 @@ function renderDropdownSurface(input: {
       })}
     >
       {body}
-    </Animated.View>
+    </FloatingSurface>
   );
 }
 
@@ -513,7 +507,8 @@ export function DropdownMenuContent({
     [],
   );
 
-  const contentStyle = useMemo(() => {
+  const surfaceStyle = styles.content;
+  const frameStyle = useMemo(() => {
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
@@ -523,7 +518,6 @@ export function DropdownMenuContent({
           ...(typeof maxWidth === "number" ? { maxWidth } : null),
         };
     return [
-      styles.content,
       resolvedWidthStyle,
       {
         position: "absolute" as const,
@@ -543,14 +537,6 @@ export function DropdownMenuContent({
     actualPlacement,
     align,
   ]);
-  const sharedContentProps = useMemo(
-    () => ({
-      collapsable: false as const,
-      testID,
-      style: contentStyle,
-    }),
-    [testID, contentStyle],
-  );
   const scrollViewportStyle = useMemo(
     () => [webScrollbarStyle, visibleContentSize ? { height: visibleContentSize.height } : null],
     [visibleContentSize, webScrollbarStyle],
@@ -583,8 +569,9 @@ export function DropdownMenuContent({
         />
         {!closing
           ? renderDropdownSurface({
-              isWebSurface: isWeb,
-              sharedProps: sharedContentProps,
+              frameStyle,
+              testID,
+              surfaceStyle,
               scrollable,
               scrollViewportStyle,
               content,

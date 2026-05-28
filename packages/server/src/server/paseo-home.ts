@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { ensurePrivateDirectory } from "./private-files.js";
 
 function expandHomeDir(input: string): string {
   if (input.startsWith("~/")) {
@@ -15,6 +15,6 @@ function expandHomeDir(input: string): string {
 export function resolvePaseoHome(env: NodeJS.ProcessEnv = process.env): string {
   const raw = env.PASEO_HOME ?? "~/.paseo";
   const resolved = path.resolve(expandHomeDir(raw));
-  mkdirSync(resolved, { recursive: true });
+  ensurePrivateDirectory(resolved);
   return resolved;
 }

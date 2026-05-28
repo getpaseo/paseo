@@ -39,35 +39,25 @@ async function readFixture(fileName: string): Promise<Buffer> {
   return readFile(fixturePath(fileName));
 }
 
-function hasSherpaZipformerModels(modelsDir: string): boolean {
+function hasSherpaParakeetModels(modelsDir: string): boolean {
   return (
     existsSync(
-      path.join(
-        modelsDir,
-        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-        "encoder-epoch-99-avg-1.onnx",
-      ),
+      path.join(modelsDir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8", "encoder.int8.onnx"),
     ) &&
-    existsSync(
-      path.join(
-        modelsDir,
-        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-        "tokens.txt",
-      ),
-    )
+    existsSync(path.join(modelsDir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8", "tokens.txt"))
   );
 }
 
-function hasSherpaKittenModels(modelsDir: string): boolean {
+function hasSherpaKokoroModels(modelsDir: string): boolean {
   return (
-    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "model.fp16.onnx")) &&
-    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "voices.bin")) &&
-    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "tokens.txt"))
+    existsSync(path.join(modelsDir, "kokoro-en-v0_19", "model.onnx")) &&
+    existsSync(path.join(modelsDir, "kokoro-en-v0_19", "voices.bin")) &&
+    existsSync(path.join(modelsDir, "kokoro-en-v0_19", "tokens.txt"))
   );
 }
 
 const hasLocalSpeech =
-  hasSherpaZipformerModels(localModelsDir) && hasSherpaKittenModels(localModelsDir);
+  hasSherpaParakeetModels(localModelsDir) && hasSherpaKokoroModels(localModelsDir);
 const hasAnySpeech = hasLocalSpeech || Boolean(openaiApiKey);
 const speechTest = hasAnySpeech ? test : test.skip;
 
@@ -121,6 +111,192 @@ test("DaemonClient surfaces password auth failures from WebSocket close reasons"
   }
 });
 
+test("createAgent without an initial prompt returns an idle snapshot", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: { subscriptionId: "create-no-prompt" } });
+
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: tmpCwd(),
+      title: "No prompt agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+    });
+
+    expect(agent.status).toBe("idle");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+test("createAgent with background initialPrompt returns a running snapshot before turn completion", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: { subscriptionId: "create-background-prompt" } });
+
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: tmpCwd(),
+      title: "Background prompt agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+      initialPrompt: "Run exactly: sleep 30",
+    });
+
+    expect(agent.status).toBe("running");
+
+    const fetchedWhileRunning = await client.fetchAgent(agent.id);
+    expect(fetchedWhileRunning?.agent.status).toBe("running");
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const fetchedAfterCompletion = await client.fetchAgent(agent.id);
+    expect(fetchedAfterCompletion?.agent.status).toBe("idle");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+test("createAgent fails when the initial turn cannot start", async () => {
+  class StartTurnFailureSession implements AgentSession {
+    readonly provider = "codex" as const;
+    readonly id = "start-turn-failure-session";
+    readonly capabilities = {
+      supportsStreaming: false,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+      supportsRewindConversation: false,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    } as const;
+
+    async run(): Promise<AgentRunResult> {
+      return {
+        sessionId: this.id,
+        finalText: "",
+        timeline: [],
+      };
+    }
+
+    async startTurn(): Promise<{ turnId: string }> {
+      throw new Error("Initial turn failed to start");
+    }
+
+    subscribe(): () => void {
+      return () => undefined;
+    }
+
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* [];
+    }
+
+    async getRuntimeInfo() {
+      return {
+        provider: "codex" as const,
+        sessionId: this.id,
+        model: "gpt-5.4-mini",
+        modeId: "full-access",
+      };
+    }
+
+    async getAvailableModes(): Promise<Array<{ id: string; label: string; description: string }>> {
+      return [{ id: "full-access", label: "Full access", description: "No prompts" }];
+    }
+
+    async getCurrentMode(): Promise<string | null> {
+      return "full-access";
+    }
+
+    async setMode(): Promise<void> {}
+
+    getPendingPermissions() {
+      return [];
+    }
+
+    async respondToPermission(): Promise<void> {}
+
+    describePersistence(): AgentPersistenceHandle | null {
+      return { provider: "codex", sessionId: this.id };
+    }
+
+    async interrupt(): Promise<void> {}
+
+    async close(): Promise<void> {}
+  }
+
+  class StartTurnFailureClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = {
+      supportsStreaming: false,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+      supportsRewindConversation: false,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    } as const;
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+      return new StartTurnFailureSession();
+    }
+
+    async resumeSession(): Promise<AgentSession> {
+      return new StartTurnFailureSession();
+    }
+  }
+
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: new StartTurnFailureClient() },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: { subscriptionId: "create-start-failure" } });
+
+    await expect(
+      client.createAgent({
+        provider: "codex",
+        cwd: tmpCwd(),
+        title: "Start failure agent",
+        modeId: "full-access",
+        model: "gpt-5.4-mini",
+        initialPrompt: "Run exactly: sleep 30",
+      }),
+    ).rejects.toThrow("Initial turn failed to start");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 function waitForSignal<T>(
   timeoutMs: number,
   setup: (resolve: (value: T) => void, reject: (error: Error) => void) => () => void,
@@ -151,7 +327,7 @@ function waitForSignal<T>(
 
 class NonPersistentReloadSession implements AgentSession {
   readonly provider = "claude" as const;
-  readonly id = null;
+  readonly id: string | null;
   readonly capabilities = {
     supportsStreaming: false,
     supportsSessionPersistence: true,
@@ -161,7 +337,12 @@ class NonPersistentReloadSession implements AgentSession {
     supportsToolInvocations: false,
   } as const;
 
-  constructor(private readonly onClose: () => void) {}
+  constructor(
+    private readonly onClose: () => void,
+    id: string | null = null,
+  ) {
+    this.id = id;
+  }
 
   async run(): Promise<AgentRunResult> {
     return {
@@ -259,6 +440,37 @@ class NonPersistentReloadClient implements AgentClient {
   }
 }
 
+class FailingResumeSession extends NonPersistentReloadSession {
+  constructor(onClose: () => void) {
+    super(onClose, "failing-resume-session");
+  }
+
+  describePersistence(): AgentPersistenceHandle | null {
+    return {
+      provider: "claude",
+      sessionId: this.id,
+      metadata: { cwd: process.cwd() },
+    };
+  }
+}
+
+class FailingResumeClient extends NonPersistentReloadClient {
+  async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+    this.createSessionCalls += 1;
+    return new FailingResumeSession(() => {
+      this.closeCalls += 1;
+    });
+  }
+
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    _overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeSessionCalls += 1;
+    throw new Error("resume exploded");
+  }
+}
+
 function resolveSpeechConfig() {
   if (hasLocalSpeech) {
     return {
@@ -270,11 +482,10 @@ function resolveSpeechConfig() {
       local: {
         modelsDir: localModelsDir,
         models: {
-          dictationStt:
-            process.env.PASEO_DICTATION_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
-          voiceStt:
-            process.env.PASEO_VOICE_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
-          voiceTts: process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+          dictationStt: "parakeet-tdt-0.6b-v2-int8",
+          voiceStt: "parakeet-tdt-0.6b-v2-int8",
+          voiceTts: "kokoro-en-v0_19",
+          voiceTtsSpeakerId: 0,
         },
       },
     };
@@ -482,6 +693,36 @@ test("refresh_agent rebuilds a live agent even when it has no persistence handle
   }
 });
 
+test("refresh_agent rejects when persisted session resume fails", async () => {
+  const cwd = tmpCwd();
+  const client = new FailingResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: {
+      claude: client,
+    },
+  });
+
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "claude",
+        cwd,
+      },
+    });
+    await localCtx.client.archiveAgent(created.id);
+
+    await expect(localCtx.client.refreshAgent(created.id)).rejects.toMatchObject({
+      name: "DaemonRpcError",
+      code: "agent_refresh_failed",
+      requestType: "refresh_agent_request",
+    });
+    expect(client.resumeSessionCalls).toBe(1);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("resume_agent auto-unarchives archived agents", async () => {
   const cwd = tmpCwd();
   try {
@@ -584,6 +825,7 @@ test("receives server_info on websocket connect", async () => {
   const serverInfo = client.getLastServerInfoMessage();
   expect(serverInfo).not.toBeNull();
   expect(serverInfo?.serverId.length).toBeGreaterThan(0);
+  expect(serverInfo?.features?.["terminal-restore-modes"]).toBe(true);
 
   await client.close();
 }, 15000);

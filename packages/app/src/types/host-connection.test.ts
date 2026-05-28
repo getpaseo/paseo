@@ -27,4 +27,48 @@ describe("normalizeStoredHostProfile", () => {
     });
     expect(profile?.connections[0]).not.toHaveProperty("password");
   });
+
+  it("preserves legacy relay ids when TLS is absent", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_relay",
+      connections: [
+        {
+          id: "relay:relay.example.com:80",
+          type: "relay",
+          relayEndpoint: "relay.example.com:80",
+          daemonPublicKeyB64: "pubkey",
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "relay:relay.example.com:80",
+      type: "relay",
+      relayEndpoint: "relay.example.com:80",
+      daemonPublicKeyB64: "pubkey",
+    });
+  });
+
+  it("namespaces relay ids only when TLS is true", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_relay",
+      connections: [
+        {
+          id: "relay:relay.example.com:443",
+          type: "relay",
+          relayEndpoint: "relay.example.com:443",
+          useTls: true,
+          daemonPublicKeyB64: "pubkey",
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "relay:wss:relay.example.com:443",
+      type: "relay",
+      relayEndpoint: "relay.example.com:443",
+      useTls: true,
+      daemonPublicKeyB64: "pubkey",
+    });
+  });
 });

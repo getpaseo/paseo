@@ -45,7 +45,7 @@ Write a problem-level prompt:
 - Symptoms (if a bug)
 - What you tried and why it failed
 - Explicit: "do root cause analysis"
-- Explicit: "use think-harder — state assumptions, ask why three levels deep, check whether you're patching a symptom or removing the problem"
+- Explicit: "state assumptions, ask why three levels deep, check whether you're patching a symptom or removing the problem"
 
 Create both agents in parallel via Paseo with `[Committee] <task>` titles and the same prompt. Wait for both — not just whichever finishes first.
 

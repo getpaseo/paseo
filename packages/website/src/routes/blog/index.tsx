@@ -3,13 +3,21 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { getPosts, formatDate } from "~/posts";
 import { pageMeta } from "~/meta";
 
+interface BlogSearch {
+  drafts?: true;
+}
+
 export const Route = createFileRoute("/blog/")({
-  validateSearch: (search: Record<string, unknown>) => ({
-    drafts: search.drafts === true || search.drafts === "" || search.drafts === "true",
-  }),
-  head: () => ({
-    meta: pageMeta("Blog - Paseo", "Updates, thoughts, and announcements from the Paseo team."),
-  }),
+  validateSearch: (search: Record<string, unknown>): BlogSearch => {
+    const drafts = search.drafts === true || search.drafts === "" || search.drafts === "true";
+    return drafts ? { drafts: true } : {};
+  },
+  head: () =>
+    pageMeta(
+      "Blog – Updates and announcements from the Paseo team",
+      "Product updates, technical posts, and announcements from the Paseo team. Notes on building a self-hosted, multi-agent dev environment for your phone.",
+      "/blog",
+    ),
   component: BlogIndex,
 });
 
@@ -43,7 +51,7 @@ function PostRow({ slug, title, date, draft }: PostRowProps) {
 
 function BlogIndex() {
   const { drafts } = Route.useSearch();
-  const posts = getPosts(drafts);
+  const posts = getPosts(drafts === true);
 
   return (
     <div>

@@ -26,10 +26,17 @@
         let
           pkgs = pkgsFor system;
           paseo = pkgs.callPackage ./nix/package.nix { };
+          isLinux = nixpkgs.lib.elem system [
+            "x86_64-linux"
+            "aarch64-linux"
+          ];
         in
         {
           default = paseo;
           paseo = paseo;
+        }
+        // nixpkgs.lib.optionalAttrs isLinux {
+          desktop = pkgs.callPackage ./nix/desktop-package.nix { inherit paseo; };
         }
       );
 

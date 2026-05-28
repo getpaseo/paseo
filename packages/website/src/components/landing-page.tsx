@@ -18,10 +18,7 @@ const FADE_IN_UP_40 = { opacity: 0, y: 40 };
 const FADE_IN_UP_4 = { opacity: 0, y: 4 };
 const FADE_OUT_UP_4 = { opacity: 0, y: 4 };
 
-const EASE_OUT_06: Transition = { duration: 0.6, ease: "easeOut" };
-const EASE_OUT_06_DELAY_015: Transition = { duration: 0.6, delay: 0.15, ease: "easeOut" };
 const EASE_OUT_06_DELAY_01: Transition = { duration: 0.6, delay: 0.1, ease: "easeOut" };
-const EASE_OUT_06_DELAY_04: Transition = { duration: 0.6, delay: 0.4, ease: "easeOut" };
 const EASE_OUT_08_DELAY_05: Transition = { duration: 0.8, delay: 0.5, ease: "easeOut" };
 const EASE_OUT_05: Transition = { duration: 0.5, ease: "easeOut" };
 const EASE_OUT_015: Transition = { duration: 0.15, ease: "easeOut" };
@@ -33,6 +30,7 @@ const SVG_OVERFLOW_VISIBLE_STYLE = { overflow: "visible" as const };
 const PHONE_PERSPECTIVE_STYLE = { minHeight: 480, perspective: 1200 };
 import { CursorFieldProvider } from "~/components/butterfly";
 import { CommandDialog } from "~/components/command-dialog";
+import { AGENT_PAGES } from "~/data/agent-pages";
 import {
   appStoreUrl,
   playStoreUrl,
@@ -116,22 +114,8 @@ function Nav() {
 function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: string }) {
   return (
     <div className="space-y-6">
-      <motion.h1
-        initial={FADE_IN_UP}
-        animate={FADE_IN}
-        transition={EASE_OUT_06}
-        className="text-3xl md:text-5xl font-medium tracking-tight"
-      >
-        {title}
-      </motion.h1>
-      <motion.p
-        initial={FADE_IN_UP}
-        animate={FADE_IN}
-        transition={EASE_OUT_06_DELAY_015}
-        className="text-white/70 text-lg leading-relaxed max-w-lg"
-      >
-        {subtitle}
-      </motion.p>
+      <h1 className="text-3xl md:text-5xl font-medium tracking-tight">{title}</h1>
+      <p className="text-white/70 text-lg leading-relaxed max-w-lg">{subtitle}</p>
     </div>
   );
 }
@@ -141,6 +125,9 @@ const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
 const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
 const COPILOT_BADGE_ICON = <CopilotIcon className="h-6 w-6" />;
 const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
+
+const FEATURED_AGENT_COUNT = 5;
+const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENT_COUNT;
 
 function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
   const [hovered, setHovered] = React.useState(false);
@@ -222,7 +209,7 @@ function MultiProviderSection() {
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-4 sm:w-2/3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:w-full">
         {providers.slice(3).map((p) => (
           <div
             key={p.name}
@@ -232,6 +219,12 @@ function MultiProviderSection() {
             <span className="font-medium">{p.name}</span>
           </div>
         ))}
+        <a
+          href="/agents"
+          className="flex items-center justify-center gap-3 rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-5 py-4 text-white/50 hover:text-white/80 hover:border-white/20 hover:bg-white/[0.03] transition-colors"
+        >
+          <span className="font-medium">+{ADDITIONAL_AGENT_COUNT} more</span>
+        </a>
       </div>
     </FeatureSection>
   );
@@ -856,12 +849,7 @@ function LocalVoiceSection() {
 
 function GetStarted() {
   return (
-    <motion.div
-      initial={FADE_IN_UP}
-      animate={FADE_IN}
-      transition={EASE_OUT_06_DELAY_04}
-      className="pt-10"
-    >
+    <div className="pt-10">
       <div className="flex flex-row flex-wrap gap-3">
         <DownloadButton />
         <a
@@ -894,12 +882,15 @@ function GetStarted() {
         <ServerInstallButton />
       </div>
       <div className="pt-3">
-        <a href="/download" className="text-xs text-white/40 hover:text-white/70 transition-colors">
+        <a
+          href="/download"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
           All download options
         </a>
       </div>
       <div className="flex items-center gap-2 pt-6">
-        <span className="text-xs text-white/40">Supports</span>
+        <span className="text-xs text-muted-foreground">Supports</span>
         <div className="flex items-center gap-1">
           <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
           <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
@@ -907,8 +898,14 @@ function GetStarted() {
           <AgentBadge name="Copilot" icon={COPILOT_BADGE_ICON} />
           <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
         </div>
+        <a
+          href="/agents"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          +{ADDITIONAL_AGENT_COUNT} more
+        </a>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -1338,8 +1335,14 @@ function PhoneShowcase() {
         {/* Left phone — rotated to face inward */}
         <motion.div style={leftPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
-            src="/phone-1.png"
+            src="/phone-1-480.webp"
+            srcSet="/phone-1-320.webp 320w, /phone-1-480.webp 480w"
+            sizes="(min-width: 768px) 240px, 160px"
             alt="Paseo sessions list"
+            width={480}
+            height={1044}
+            loading="lazy"
+            decoding="async"
             className="w-full rounded-[40px] shadow-2xl border-[3px] border-black outline-[3px] outline-white/20"
           />
         </motion.div>
@@ -1352,8 +1355,14 @@ function PhoneShowcase() {
           className="w-[220px] md:w-[240px] relative z-10"
         >
           <img
-            src="/phone-2.png"
+            src="/phone-2-480.webp"
+            srcSet="/phone-2-320.webp 320w, /phone-2-480.webp 480w"
+            sizes="(min-width: 768px) 240px, 220px"
             alt="Paseo agent chat"
+            width={480}
+            height={1044}
+            loading="lazy"
+            decoding="async"
             className="w-full rounded-[40px] shadow-2xl border-[3px] border-black outline-[3px] outline-white/20"
           />
         </motion.div>
@@ -1361,8 +1370,14 @@ function PhoneShowcase() {
         {/* Right phone — rotated to face inward */}
         <motion.div style={rightPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
-            src="/phone-3.png"
+            src="/phone-3-480.webp"
+            srcSet="/phone-3-320.webp 320w, /phone-3-480.webp 480w"
+            sizes="(min-width: 768px) 240px, 160px"
             alt="Paseo diff view"
+            width={480}
+            height={1044}
+            loading="lazy"
+            decoding="async"
             className="w-full rounded-[40px] shadow-2xl border-[3px] border-black outline-[3px] outline-white/20"
           />
         </motion.div>
@@ -1425,7 +1440,7 @@ function CLISection() {
 
       <a
         href="/docs/cli"
-        className="inline-flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors"
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
         Full CLI reference
         <svg
@@ -1458,9 +1473,9 @@ function FAQ() {
       <h2 className="text-3xl font-medium">FAQ</h2>
       <div className="space-y-6">
         <FAQItem question="Is this free?">
-          Yes. Paseo is free and open source. You need Claude Code, Codex, or OpenCode installed
-          with your own credentials. Voice is local-first by default and can optionally use OpenAI
-          speech providers if you configure them.
+          Yes. Paseo is free and open source. You need Claude Code, Codex, Copilot, OpenCode, or Pi
+          installed with your own credentials. Voice is local-first by default and can optionally
+          use OpenAI speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
           Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
@@ -1471,8 +1486,8 @@ function FAQ() {
           , connect directly over your local network, or use your own tunnel.
         </FAQItem>
         <FAQItem question="What agents does it support?">
-          Claude Code, Codex, and OpenCode. Each agent runs as its own process using its own CLI.
-          Paseo doesn&apos;t modify or wrap their behavior.
+          Claude Code, Codex, Copilot, OpenCode, and Pi. Each agent runs as its own process using
+          its own CLI or local integration. Paseo doesn&apos;t modify or wrap their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
@@ -1507,10 +1522,10 @@ function FAQ() {
         <FAQItem question="Can I get banned for using Paseo?">
           <p>We can&apos;t make promises on behalf of providers.</p>
           <p>
-            That said, Paseo launches the official first-party CLIs (Claude Code, Codex, OpenCode)
-            as subprocesses. It doesn&apos;t extract tokens or call inference APIs directly. From
-            the provider&apos;s perspective, usage through Paseo is indistinguishable from running
-            the CLI yourself.
+            That said, Paseo launches each provider&apos;s local CLI or integration (Claude Code,
+            Codex, Copilot, OpenCode, Pi) as a subprocess. It doesn&apos;t extract tokens or call
+            inference APIs directly. From the provider&apos;s perspective, usage through Paseo is
+            indistinguishable from running the provider yourself.
           </p>
           <p>I&apos;ve been using Paseo with all providers for months without issue.</p>
         </FAQItem>

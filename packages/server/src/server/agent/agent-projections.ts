@@ -1,4 +1,8 @@
-import type { AgentListItemPayload, AgentSnapshotPayload } from "../messages.js";
+import type {
+  AgentListItemPayload,
+  AgentSnapshotPayload,
+  RecentProviderSessionDescriptorPayload,
+} from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
@@ -10,7 +14,9 @@ import type {
   AgentProvider,
   AgentSessionConfig,
   AgentRuntimeInfo,
+  AgentTimelineItem,
   AgentUsage,
+  PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
@@ -22,6 +28,12 @@ interface ProjectionOptions {
   createdAt?: string;
   internal?: boolean;
 }
+
+interface RecentProviderSessionProjectionOptions {
+  providerLabel: string;
+}
+
+const PROMPT_PREVIEW_MAX_LENGTH = 160;
 
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
@@ -184,6 +196,9 @@ export function buildStoredAgentPayload(
     supportsMcpServers: false,
     supportsReasoningStream: false,
     supportsToolInvocations: true,
+    supportsRewindConversation: false,
+    supportsRewindFiles: false,
+    supportsRewindBoth: false,
   } as const;
 
   const createdAt = new Date(record.createdAt);
@@ -214,7 +229,7 @@ export function buildStoredAgentPayload(
     availableModes: [],
     pendingPermissions: [],
     persistence,
-    title: record.title ?? record.config?.title ?? null,
+    title: record.title ?? null,
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
@@ -247,6 +262,24 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
   };
 }
 
+export function toRecentProviderSessionDescriptorPayload(
+  descriptor: PersistedAgentDescriptor,
+  options: RecentProviderSessionProjectionOptions,
+): RecentProviderSessionDescriptorPayload {
+  const promptPreviews = collectPromptPreviews(descriptor.timeline);
+
+  return {
+    providerId: descriptor.provider,
+    providerLabel: options.providerLabel,
+    providerHandleId: descriptor.persistence.nativeHandle ?? descriptor.persistence.sessionId,
+    cwd: descriptor.cwd,
+    title: descriptor.title,
+    firstPromptPreview: promptPreviews[0] ?? null,
+    lastPromptPreview: promptPreviews.at(-1) ?? null,
+    lastActivityAt: descriptor.lastActivityAt.toISOString(),
+  };
+}
+
 export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
   const timestamps = [record.updatedAt, record.lastActivityAt]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
@@ -264,11 +297,28 @@ export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): s
   return timestamps[0].raw;
 }
 
+function collectPromptPreviews(timeline: readonly AgentTimelineItem[]): string[] {
+  return timeline.flatMap((item) => {
+    if (item.type !== "user_message") {
+      return [];
+    }
+    const preview = normalizePromptPreview(item.text);
+    return preview ? [preview] : [];
+  });
+}
+
+function normalizePromptPreview(text: string): string | null {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return null;
+  }
+  return normalized.length > PROMPT_PREVIEW_MAX_LENGTH
+    ? normalized.slice(0, PROMPT_PREVIEW_MAX_LENGTH)
+    : normalized;
+}
+
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
-  if (Object.prototype.hasOwnProperty.call(config, "title")) {
-    serializable.title = config.title ?? null;
-  }
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

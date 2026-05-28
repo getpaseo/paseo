@@ -11,5 +11,5 @@
   "arrowParens": "always",
   "bracketSameLine": false,
   "bracketSpacing": true,
-  "ignorePatterns": ["*.lock"]
+  "ignorePatterns": ["*.lock", "**/*.gen.ts", "**/*.gen.tsx"]
 }

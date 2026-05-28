@@ -1,6 +1,25 @@
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { PersistedConfigSchema } from "./persisted-config.js";
+import {
+  loadPersistedConfig,
+  PersistedConfigSchema,
+  savePersistedConfig,
+} from "./persisted-config.js";
+import { PRIVATE_FILE_MODE } from "./private-files.js";
+
+const MODE_MASK = 0o777;
+const PERMISSIVE_FILE_MODE = 0o644;
+
+function createTempHome(): string {
+  return mkdtempSync(path.join(tmpdir(), "paseo-config-"));
+}
+
+function modeOf(filePath: string): number {
+  return statSync(filePath).mode & MODE_MASK;
+}
 
 describe("PersistedConfigSchema daemon auth config", () => {
   test("accepts optional daemon password hash", () => {
@@ -12,6 +31,47 @@ describe("PersistedConfigSchema daemon auth config", () => {
     });
 
     expect(parsed.daemon?.auth?.password).toBe(hash);
+  });
+});
+
+describe("PersistedConfigSchema daemon append system prompt config", () => {
+  test("accepts optional append system prompt", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        appendSystemPrompt: "Prefer terse replies.",
+      },
+    });
+
+    expect(parsed.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
+  });
+});
+
+describe("PersistedConfigSchema daemon relay config", () => {
+  test("accepts optional relay TLS setting", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        relay: {
+          enabled: true,
+          endpoint: "relay.example.com:443",
+          publicEndpoint: "public.example.com:443",
+          useTls: true,
+        },
+      },
+    });
+
+    expect(parsed.daemon?.relay?.useTls).toBe(true);
+  });
+});
+
+describe("PersistedConfigSchema daemon append system prompt", () => {
+  test("accepts optional append system prompt", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        appendSystemPrompt: "Prefer terse replies.",
+      },
+    });
+
+    expect(parsed.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 });
 
@@ -446,5 +506,70 @@ describe("PersistedConfigSchema voice mode config", () => {
     });
 
     expect(parsed.features?.voiceMode?.turnDetection?.provider).toBe("local");
+  });
+
+  test("accepts trimmed STT language fields", () => {
+    const parsed = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          stt: {
+            language: " fr ",
+          },
+        },
+        voiceMode: {
+          stt: {
+            language: " de ",
+          },
+        },
+      },
+    });
+
+    expect(parsed.features?.dictation?.stt?.language).toBe("fr");
+    expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
+  });
+});
+
+describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {
+  test("initializes config.json with private permissions", () => {
+    const home = createTempHome();
+    try {
+      loadPersistedConfig(home);
+
+      expect(modeOf(path.join(home, "config.json"))).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("repairs permissive config.json permissions when loading", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, "{}\n", { mode: PERMISSIVE_FILE_MODE });
+      chmodSync(configPath, PERMISSIVE_FILE_MODE);
+
+      loadPersistedConfig(home);
+
+      expect(modeOf(configPath)).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("saves config.json with private permissions", () => {
+    const home = createTempHome();
+    try {
+      savePersistedConfig(home, {
+        providers: {
+          openai: {
+            apiKey: "secret",
+          },
+        },
+      });
+
+      expect(modeOf(path.join(home, "config.json"))).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

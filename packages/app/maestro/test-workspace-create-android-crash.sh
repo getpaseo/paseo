@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FLOW_TEMPLATE="$REPO_ROOT/packages/app/maestro/workspace-create-android-crash.yaml"
 FLOW_TEMPLATE_DIR="$REPO_ROOT/packages/app/maestro"
 OUT_DIR="/tmp/paseo-workspace-create-android-$(date +%s)"
-SERVER_EXPORTS="$REPO_ROOT/packages/server/dist/server/server/exports.js"
+CLIENT_EXPORTS="$REPO_ROOT/packages/client/dist/daemon-client.js"
 
 export PASEO_MAESTRO_APP_ID="${PASEO_MAESTRO_APP_ID:-sh.paseo.debug}"
 export PASEO_MAESTRO_DIRECT_ENDPOINT="${PASEO_MAESTRO_DIRECT_ENDPOINT:-127.0.0.1:6767}"
@@ -62,9 +62,9 @@ render_flow_tree() {
   done
 }
 
-if [ ! -f "$SERVER_EXPORTS" ]; then
-  echo "Missing server build artifact: $SERVER_EXPORTS" >&2
-  echo "Run: npm run build --workspace=@getpaseo/server" >&2
+if [ ! -f "$CLIENT_EXPORTS" ]; then
+  echo "Missing client build artifact: $CLIENT_EXPORTS" >&2
+  echo "Run: npm run build:client" >&2
   exit 1
 fi
 
@@ -117,7 +117,7 @@ if (!repoRoot || !projectPath || !daemonUrl) {
   throw new Error("Missing required environment for daemon project setup.");
 }
 
-const moduleUrl = pathToFileURL(`${repoRoot}/packages/server/dist/server/server/exports.js`).href;
+const moduleUrl = pathToFileURL(`${repoRoot}/packages/client/dist/daemon-client.js`).href;
 const { DaemonClient } = await import(moduleUrl);
 const client = new DaemonClient({
   url: daemonUrl,

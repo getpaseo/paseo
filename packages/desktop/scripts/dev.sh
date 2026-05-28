@@ -14,6 +14,9 @@ npm run build:main
 EXPO_PORT=$("$ROOT_DIR/node_modules/.bin/get-port" 8081 8082 8083 8084 8085)
 export EXPO_PORT
 
+REMOTE_DEBUGGING_PORT="${PASEO_ELECTRON_REMOTE_DEBUGGING_PORT:-9223}"
+export PASEO_ELECTRON_FLAGS="${PASEO_ELECTRON_FLAGS:+$PASEO_ELECTRON_FLAGS }--remote-debugging-port=$REMOTE_DEBUGGING_PORT"
+
 # Allow any origin in dev so Electron on random localhost ports can reach
 # the daemon websocket. Safe here because this script is development-only
 # and the daemon still binds to localhost.
@@ -23,6 +26,7 @@ echo "════════════════════════�
 echo "  Paseo Desktop Dev"
 echo "══════════════════════════════════════════════════════"
 echo "  Metro:     http://localhost:${EXPO_PORT}"
+echo "  CDP:       http://127.0.0.1:${REMOTE_DEBUGGING_PORT}"
 echo "══════════════════════════════════════════════════════"
 
 # Launch Metro + Electron together, kill both on exit

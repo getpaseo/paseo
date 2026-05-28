@@ -196,16 +196,9 @@ function buildCheckResult(input: {
   };
 }
 
-function scheduleQuitAndInstall(onBeforeQuit?: () => Promise<void>): void {
-  // Use a short delay to allow the renderer to receive the response.
-  setTimeout(async () => {
-    try {
-      if (onBeforeQuit) await onBeforeQuit();
-      autoUpdater.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
-    } catch (error) {
-      console.error("[auto-updater] quitAndInstall failed:", error);
-    }
-  }, 1500);
+async function performQuitAndInstall(onBeforeQuit?: () => Promise<void>): Promise<void> {
+  if (onBeforeQuit) await onBeforeQuit();
+  autoUpdater.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +307,7 @@ export async function downloadAndInstallUpdate(
 
   const readyVersion = cachedUpdateInfo.version;
   if (isReadyToInstallVersion(readyVersion)) {
-    scheduleQuitAndInstall(onBeforeQuit);
+    await performQuitAndInstall(onBeforeQuit);
     return {
       installed: true,
       version: readyVersion,
@@ -336,7 +329,7 @@ export async function downloadAndInstallUpdate(
     await autoUpdater.downloadUpdate();
     downloadedUpdateVersion = readyVersion;
     downloading = false;
-    scheduleQuitAndInstall(onBeforeQuit);
+    await performQuitAndInstall(onBeforeQuit);
 
     return {
       installed: true,

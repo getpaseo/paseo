@@ -55,7 +55,6 @@ function HostAgentReadyRouteContent() {
         serverId,
         workspaceId: resolvedWorkspaceId,
         target: { kind: "agent", agentId },
-        navigationMethod: "replace",
         currentPathname: pathname,
       });
     }
@@ -107,7 +106,6 @@ function HostAgentReadyRouteContent() {
             serverId,
             workspaceId,
             target: { kind: "agent", agentId },
-            navigationMethod: "replace",
             currentPathname: pathname,
           });
           return;

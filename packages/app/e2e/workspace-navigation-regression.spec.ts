@@ -271,6 +271,48 @@ test.describe("Workspace navigation regression", () => {
     await expect(page).toHaveURL(/\/settings\/general$/);
   });
 
+  test("cold workspace URL keeps sidebar workspace navigation functional", async ({ page }) => {
+    const serverId = process.env.E2E_SERVER_ID;
+    if (!serverId) {
+      throw new Error("E2E_SERVER_ID is not set.");
+    }
+
+    const workspaceClient = await connectNewWorkspaceDaemonClient();
+    const workspaceIds = new Set<string>();
+    const firstRepo = await createTempGitRepo("workspace-cold-url-a-");
+    const secondRepo = await createTempGitRepo("workspace-cold-url-b-");
+
+    try {
+      const firstWorkspace = await openProjectViaDaemon(workspaceClient, firstRepo.path);
+      const secondWorkspace = await openProjectViaDaemon(workspaceClient, secondRepo.path);
+      workspaceIds.add(firstWorkspace.workspaceId);
+      workspaceIds.add(secondWorkspace.workspaceId);
+
+      await page.goto(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId));
+      await waitForSidebarHydration(page);
+      await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId), {
+        timeout: 30_000,
+      });
+
+      const secondRow = page.getByTestId(
+        `sidebar-workspace-row-${serverId}:${secondWorkspace.workspaceId}`,
+      );
+      await expect(secondRow).toBeVisible({ timeout: 30_000 });
+      await secondRow.click();
+
+      await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
+        timeout: 30_000,
+      });
+    } finally {
+      for (const workspaceId of workspaceIds) {
+        await archiveLocalWorkspaceFromDaemon(workspaceClient, workspaceId).catch(() => undefined);
+      }
+      await workspaceClient.close().catch(() => undefined);
+      await secondRepo.cleanup();
+      await firstRepo.cleanup();
+    }
+  });
+
   test("sidebar navigation and reload keep workspace selection and tabs aligned", async ({
     page,
   }) => {

@@ -1,6 +1,7 @@
 import type pino from "pino";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+
+import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.js";
 
 /**
  * Store for Expo push tokens.
@@ -46,6 +47,7 @@ export class PushTokenStore {
       if (!existsSync(this.filePath)) {
         return;
       }
+      ensurePrivateFile(this.filePath);
       const raw = readFileSync(this.filePath, "utf-8");
       const parsed = JSON.parse(raw) as { tokens?: unknown };
       const tokens = Array.isArray(parsed.tokens)
@@ -61,11 +63,8 @@ export class PushTokenStore {
 
   private persist(): void {
     try {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      const tmpPath = `${this.filePath}.tmp`;
       const payload = JSON.stringify({ tokens: Array.from(this.tokens) }, null, 2) + "\n";
-      writeFileSync(tmpPath, payload);
-      renameSync(tmpPath, this.filePath);
+      writePrivateFileAtomicSync(this.filePath, payload);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.logger.warn({ err }, "Failed to persist push tokens");

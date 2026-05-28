@@ -8,7 +8,7 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { Plus, Settings } from "lucide-react-native";
+import { Home, Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
@@ -106,6 +106,8 @@ function CommandCenterActionRow({
     actionIcon = <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />;
   } else if (action.icon === "settings") {
     actionIcon = <Settings size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />;
+  } else if (action.icon === "home") {
+    actionIcon = <Home size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />;
   }
   const titleStyle = useMemo(
     () => [styles.title, { color: theme.colors.foreground }],

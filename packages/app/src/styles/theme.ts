@@ -1,3 +1,5 @@
+import { darkHighlightColors, lightHighlightColors } from "@getpaseo/highlight";
+
 export const baseColors = {
   // Base colors
   white: "#ffffff",
@@ -233,6 +235,7 @@ interface DarkThemeConfig {
   borderAccent: string;
   accent: string;
   accentBright: string;
+  accentForeground?: string;
   destructive: string;
 }
 
@@ -275,7 +278,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     accent: tint.accent,
     accentBright: tint.accentBright,
-    accentForeground: "#ffffff",
+    accentForeground: tint.accentForeground ?? "#ffffff",
 
     destructive: tint.destructive,
     destructiveForeground: "#ffffff",
@@ -350,8 +353,9 @@ const zincDarkColors = buildDarkSemanticColors({
   scrollbarHandle: "#71717a",
   border: "#27272a",
   borderAccent: "#303036",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  accent: "#e4e4e7",
+  accentBright: "#fafafa",
+  accentForeground: "#18181b", // monochrome zinc accent is near-white — needs dark text
   destructive: "#c44a4a", // neutral red, hue 0 — clearly red without screaming
 });
 
@@ -430,6 +434,7 @@ export const SPACING = {
 
 export const FONT_SIZE = {
   xs: 12,
+  code: 12,
   sm: 14,
   base: 16,
   lg: 18,
@@ -518,6 +523,7 @@ function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColor
     colors: {
       ...semanticColors,
       palette: baseColors,
+      syntax: darkHighlightColors,
     },
     shadow: darkShadow,
     ...commonTheme,
@@ -535,6 +541,7 @@ export const lightTheme = {
   colors: {
     ...lightSemanticColors,
     palette: baseColors,
+    syntax: lightHighlightColors,
   },
   shadow: {
     sm: {

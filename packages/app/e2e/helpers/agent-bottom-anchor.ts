@@ -1,7 +1,6 @@
 import { expect, type Page } from "@playwright/test";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { loadDaemonClientConstructor } from "./daemon-client-loader";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
@@ -91,21 +90,11 @@ interface DaemonClientConfig {
   webSocketFactory?: NodeWebSocketFactory;
 }
 
-async function loadDaemonClientConstructor(): Promise<
-  new (config: DaemonClientConfig) => DaemonClientInstance
-> {
-  const repoRoot = path.resolve(__dirname, "../../../../");
-  const moduleUrl = pathToFileURL(
-    path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
-  ).href;
-  const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: DaemonClientConfig) => DaemonClientInstance;
-  };
-  return mod.DaemonClient;
-}
-
 export async function connectDaemonClient(): Promise<DaemonClientInstance> {
-  const DaemonClient = await loadDaemonClientConstructor();
+  const DaemonClient = await loadDaemonClientConstructor<
+    DaemonClientConfig,
+    DaemonClientInstance
+  >();
   const webSocketFactory = createNodeWebSocketFactory();
   const client = new DaemonClient({
     url: getDaemonWsUrl(),

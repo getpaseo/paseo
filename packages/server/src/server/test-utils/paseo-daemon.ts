@@ -11,12 +11,14 @@ import {
 } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
+import type { PushNotificationSender } from "../push/notifications.js";
 
 interface TestPaseoDaemonOptions {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
   logger?: Parameters<typeof createPaseoDaemon>[1];
+  mcpDebug?: boolean;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
@@ -30,6 +32,7 @@ interface TestPaseoDaemonOptions {
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
   auth?: PaseoDaemonConfig["auth"];
+  pushNotificationSender?: PushNotificationSender;
 }
 
 export interface TestPaseoDaemon {
@@ -150,13 +153,14 @@ async function prepareTestDaemonConfig(
     hostnames: true,
     mcpEnabled: true,
     staticDir,
-    mcpDebug: false,
+    mcpDebug: options.mcpDebug ?? false,
     agentClients: options.agentClients ?? createTestAgentClients(),
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
+    pushNotificationSender: options.pushNotificationSender,
     openai: options.openai,
     speech: options.speech,
     voiceLlmProvider: options.voiceLlmProvider ?? null,

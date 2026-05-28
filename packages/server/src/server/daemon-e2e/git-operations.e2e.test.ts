@@ -6,6 +6,7 @@ import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/i
 import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { deriveWorktreeProjectHash } from "../../utils/worktree.js";
+import { isPlatform } from "../../test-utils/platform.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../messages.js";
 
@@ -220,54 +221,59 @@ test("returns error for non-git directory", async () => {
   rmSync(cwd, { recursive: true, force: true });
 }, 60000); // 1 minute timeout
 
-test("returns repo info for git repo with branch and dirty state", async () => {
-  const cwd = tmpCwd();
+// POSIX-only: asserts repo-root containment across macOS /var symlink normalization.
+test.skipIf(isPlatform("win32"))(
+  "returns repo info for git repo with branch and dirty state",
+  async () => {
+    const cwd = tmpCwd();
 
-  // Initialize git repo
-  const { execSync } = await import("child_process");
-  execSync("git init -b main", { cwd, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
-  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+    // Initialize git repo
+    const { execSync } = await import("child_process");
+    execSync("git init -b main", { cwd, stdio: "pipe" });
+    execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+    execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
 
-  // Create and commit a file
-  const testFile = path.join(cwd, "test.txt");
-  writeFileSync(testFile, "original content\n");
-  execSync("git add test.txt", { cwd, stdio: "pipe" });
-  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
-    cwd,
-    stdio: "pipe",
-  });
+    // Create and commit a file
+    const testFile = path.join(cwd, "test.txt");
+    writeFileSync(testFile, "original content\n");
+    execSync("git add test.txt", { cwd, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+      cwd,
+      stdio: "pipe",
+    });
 
-  // Modify the file (makes repo dirty)
-  writeFileSync(testFile, "modified content\n");
+    // Modify the file (makes repo dirty)
+    writeFileSync(testFile, "modified content\n");
 
-  // Create agent in the git repo
-  const agent = await ctx.client.createAgent({
-    provider: "codex",
-    model: CODEX_TEST_MODEL,
-    thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-    cwd,
-    title: "Git Repo Info Test",
-  });
+    // Create agent in the git repo
+    const agent = await ctx.client.createAgent({
+      provider: "codex",
+      model: CODEX_TEST_MODEL,
+      thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+      cwd,
+      title: "Git Repo Info Test",
+    });
 
-  expect(agent.id).toBeTruthy();
-  expect(agent.status).toBe("idle");
+    expect(agent.id).toBeTruthy();
+    expect(agent.status).toBe("idle");
 
-  // Get checkout status
-  const result = await ctx.client.getCheckoutStatus(cwd);
+    // Get checkout status
+    const result = await ctx.client.getCheckoutStatus(cwd);
 
-  // Verify repo info returned without error
-  expect(result.error).toBeNull();
-  expect(result.isGit).toBe(true);
-  // macOS symlinks /var to /private/var, so we check containment
-  expect(result.repoRoot).toContain("daemon-e2e-");
-  expect(result.currentBranch).toBeTruthy();
-  expect(result.isDirty).toBe(true);
+    // Verify repo info returned without error
+    expect(result.error).toBeNull();
+    expect(result.isGit).toBe(true);
+    // macOS symlinks /var to /private/var, so we check containment
+    expect(result.repoRoot).toContain("daemon-e2e-");
+    expect(result.currentBranch).toBeTruthy();
+    expect(result.isDirty).toBe(true);
 
-  // Cleanup
-  await ctx.client.deleteAgent(agent.id);
-  rmSync(cwd, { recursive: true, force: true });
-}, 60000); // 1 minute timeout
+    // Cleanup
+    await ctx.client.deleteAgent(agent.id);
+    rmSync(cwd, { recursive: true, force: true });
+  },
+  60000,
+); // 1 minute timeout
 
 test("returns clean state when no uncommitted changes", async () => {
   const cwd = tmpCwd();

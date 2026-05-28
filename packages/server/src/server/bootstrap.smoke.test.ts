@@ -8,6 +8,7 @@ import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
+import { isPlatform } from "../test-utils/platform.js";
 
 describe("paseo daemon bootstrap", () => {
   afterEach(() => {
@@ -35,6 +36,52 @@ describe("paseo daemon bootstrap", () => {
       const payload = await response.json();
       expect(payload.status).toBe("ok");
       expect(typeof payload.timestamp).toBe("string");
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("redacts Agent MCP debug request credentials and bodies", async () => {
+    const logLines: string[] = [];
+    const logger = pino(
+      { level: "debug" },
+      {
+        write: (line: string) => {
+          logLines.push(line);
+        },
+      },
+    );
+    const daemonHandle = await createTestPaseoDaemon({
+      logger,
+      mcpDebug: true,
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/mcp/agents`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret-debug-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            apiKey: "secret-body-token",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const logs = logLines.join("\n");
+      expect(logs).toContain("Agent MCP request");
+      expect(logs).toContain("[redacted]");
+      expect(logs).toContain('"method":"tools/call"');
+      expect(logs).toContain('"hasParams":true');
+      expect(logs).not.toContain("secret-debug-token");
+      expect(logs).not.toContain("secret-body-token");
+      expect(logs).not.toContain("apiKey");
     } finally {
       await daemonHandle.close();
     }
@@ -100,8 +147,8 @@ describe("paseo daemon bootstrap", () => {
         local: {
           modelsDir: path.join(os.tmpdir(), `paseo-missing-models-${Date.now()}`),
           models: {
-            dictationStt: "parakeet-tdt-0.6b-v3-int8",
-            voiceStt: "parakeet-tdt-0.6b-v3-int8",
+            dictationStt: "parakeet-tdt-0.6b-v2-int8",
+            voiceStt: "parakeet-tdt-0.6b-v2-int8",
             voiceTts: "kokoro-en-v0_19",
           },
         },
@@ -152,52 +199,56 @@ describe("paseo daemon bootstrap", () => {
     });
   });
 
-  test("generates a relay pairing offer for unix socket listeners", async () => {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-socket-relay-"));
-    const paseoHome = path.join(paseoHomeRoot, ".paseo");
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-    const socketPath = path.join(paseoHomeRoot, "run", "paseo.sock");
-    await mkdir(path.dirname(socketPath), { recursive: true });
-    await mkdir(paseoHome, { recursive: true });
-    const logger = pino({ level: "silent" });
+  // POSIX-only: Unix socket listen paths are invalid Windows listen targets.
+  test.skipIf(isPlatform("win32"))(
+    "generates a relay pairing offer for unix socket listeners",
+    async () => {
+      const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-socket-relay-"));
+      const paseoHome = path.join(paseoHomeRoot, ".paseo");
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+      const socketPath = path.join(paseoHomeRoot, "run", "paseo.sock");
+      await mkdir(path.dirname(socketPath), { recursive: true });
+      await mkdir(paseoHome, { recursive: true });
+      const logger = pino({ level: "silent" });
 
-    const config: PaseoDaemonConfig = {
-      listen: socketPath,
-      paseoHome,
-      corsAllowedOrigins: [],
-      hostnames: true,
-      mcpEnabled: false,
-      staticDir,
-      mcpDebug: false,
-      agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
-      relayEnabled: true,
-      relayEndpoint: "127.0.0.1:9",
-      relayPublicEndpoint: "127.0.0.1:9",
-      appBaseUrl: "https://app.paseo.sh",
-      openai: undefined,
-      speech: undefined,
-    };
-
-    const daemon = await createPaseoDaemon(config, logger);
-
-    try {
-      await daemon.start();
-      const pairing = await generateLocalPairingOffer({
+      const config: PaseoDaemonConfig = {
+        listen: socketPath,
         paseoHome,
+        corsAllowedOrigins: [],
+        hostnames: true,
+        mcpEnabled: false,
+        staticDir,
+        mcpDebug: false,
+        agentClients: createTestAgentClients(),
+        agentStoragePath: path.join(paseoHome, "agents"),
         relayEnabled: true,
         relayEndpoint: "127.0.0.1:9",
         relayPublicEndpoint: "127.0.0.1:9",
         appBaseUrl: "https://app.paseo.sh",
-        includeQr: false,
-      });
-      expect(pairing.relayEnabled).toBe(true);
-      expect(pairing.url?.startsWith("https://app.paseo.sh/#offer=")).toBe(true);
-    } finally {
-      await daemon.stop().catch(() => undefined);
-      await daemon.agentManager.flush().catch(() => undefined);
-      await rm(paseoHomeRoot, { recursive: true, force: true });
-      await rm(staticDir, { recursive: true, force: true });
-    }
-  });
+        openai: undefined,
+        speech: undefined,
+      };
+
+      const daemon = await createPaseoDaemon(config, logger);
+
+      try {
+        await daemon.start();
+        const pairing = await generateLocalPairingOffer({
+          paseoHome,
+          relayEnabled: true,
+          relayEndpoint: "127.0.0.1:9",
+          relayPublicEndpoint: "127.0.0.1:9",
+          appBaseUrl: "https://app.paseo.sh",
+          includeQr: false,
+        });
+        expect(pairing.relayEnabled).toBe(true);
+        expect(pairing.url?.startsWith("https://app.paseo.sh/#offer=")).toBe(true);
+      } finally {
+        await daemon.stop().catch(() => undefined);
+        await daemon.agentManager.flush().catch(() => undefined);
+        await rm(paseoHomeRoot, { recursive: true, force: true });
+        await rm(staticDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

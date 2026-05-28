@@ -2,76 +2,81 @@
 title: Orchestration skills
 description: "Paseo orchestration skills: teach coding agents to spawn, coordinate, and manage other agents using slash commands."
 nav: Skills
-order: 6
+order: 8
 ---
 
 # Orchestration skills
 
-Paseo ships orchestration skills that teach coding agents (Claude Code, Codex) how to use the Paseo CLI to spawn, coordinate, and manage other agents. Skills are slash commands your agent can invoke — they provide the prompts, context, and workflows so agents know how to orchestrate without you writing boilerplate. Install them from the desktop app's Integrations settings or via the CLI.
+Paseo ships orchestration skills that teach coding agents (Claude Code, Codex) how to use the Paseo CLI to spawn, coordinate, and manage other agents. Skills are slash commands your agent can invoke, they provide the prompts, context, and workflows so agents know how to orchestrate without you writing boilerplate. Install them from the desktop app's Integrations settings or via the CLI.
 
 ## Installation
 
 Two ways to install:
 
 - **Desktop app:** Settings → Integrations → Install
-- **Manual:** `npx skills add getpaseo/paseo` — this installs to `~/.agents/skills/` and sets up symlinks for each agent.
+- **Manual:** `npx skills add getpaseo/paseo`, this installs to `~/.agents/skills/` and sets up symlinks for each agent.
 
-## `/paseo` — CLI Reference
+## `/paseo`, Paseo Reference
 
-The foundational skill. Loaded automatically by other skills. Contains the full Paseo CLI command reference so agents know how to run commands.
+The foundational skill. Paseo reference for managing agents and worktrees. Load it when an agent needs to create agents, send them prompts, or manage worktrees.
 
-Not typically invoked directly by users — it's a reference that other skills depend on.
+Not typically invoked directly by users, it's a reference that other skills depend on.
 
-## `/paseo-handoff` — Task Handoff
+```
+/paseo show me the Paseo CLI surface for creating an agent in a worktree
+```
 
-Hands off your current task to another agent with full context. The receiving agent gets a comprehensive prompt with: task description, relevant files, what's been tried, decisions made, and acceptance criteria.
+## `/paseo-handoff`, Task Handoff
 
-Default provider is Codex. Can specify Claude (sonnet/opus). Supports `--worktree` for isolated git branches.
+Hands off the current task to another agent with full context. Use it when you say "handoff", "hand off", "hand this to", or want to pass work to another agent.
+
+The receiving agent gets a self-contained briefing with the task, context, relevant files, current state, what's been tried, decisions, acceptance criteria, and constraints. Provider comes from orchestration preferences unless you name one. Supports worktrees when you ask for one.
 
 ```
 /paseo-handoff hand off the auth fix to codex in a worktree
 /paseo-handoff hand this to claude opus for review
 ```
 
-## `/paseo-loop` — Iterative Loops
+## `/paseo-loop`, Iterative Loops
 
-Runs an agent in a loop with automatic verification until an exit condition is met. Worker runs, verifier checks, repeat until done or max iterations. Supports different providers for worker vs verifier (e.g., Codex implements, Claude verifies).
+Runs an agent loop until an exit condition is met. Use it when you say "loop", "babysit", "keep trying until", "check every X", "watch", or want iterative autonomous execution.
 
-Stop conditions: `--max-iterations`, `--max-time`, or verification passes.
-
-```
-/paseo-loop fix the failing tests, verify with npm test, max 5 iterations
-/paseo-loop use codex to implement, claude sonnet to verify, loop until tests pass
-```
-
-## `/paseo-orchestrator` — Team Orchestration
-
-Builds and manages a team of agents coordinating through a shared chat room. You describe the work, it sets up roles, launches agents, and coordinates through chat. Uses a heartbeat schedule to check progress.
-
-Cross-provider: typically Codex for implementation, Claude for review.
+A loop is a worker/verifier cycle: launch a worker, check verification, repeat until done or limits hit. It can use a shell check, a verifier prompt, or both. Set a sensible `--max-iterations` or `--max-time`.
 
 ```
-/paseo-orchestrator spin up a team to implement the database migration, codex implements, claude reviews
+/paseo-loop keep trying until the changed test file passes, max 5 iterations
+/paseo-loop babysit PR 123 until checks are green, check every 2m, max-time 1h
 ```
 
-## `/paseo-chat` — Chat Rooms
+## `/paseo-committee`, Committee Planning
 
-Use persistent chat rooms for asynchronous agent coordination. Create rooms, post messages, read history, wait for replies. Supports @mentions for specific agents or @everyone.
+Forms a committee of two high-reasoning agents to step back, do root cause analysis, and produce a plan. Use it when stuck, looping, tunnel-visioning, or facing a hard planning problem.
 
-Typically used by the orchestrator skill, but can be used directly.
-
-```
-/paseo-chat create a room called "backend-refactor" for coordinating the API changes
-/paseo-chat post to backend-refactor: "API endpoints are done, ready for review"
-```
-
-## `/paseo-committee` — Committee Planning
-
-Forms a committee of two high-reasoning agents (Claude Opus + GPT 5.4) to analyze a problem before implementing. Both agents reason in parallel, then plans are merged. Useful when stuck, looping, or facing a hard architectural decision.
-
-Agents are prevented from editing code — they only produce a plan.
+Committee members do analysis only. They do not edit, create, or delete files. The orchestrating agent synthesizes their plans, implements, then sends the diff back for review.
 
 ```
 /paseo-committee why are the websocket connections dropping under load?
 /paseo-committee plan the auth system migration
+```
+
+## `/paseo-advisor`, Advisor
+
+Spins up a single agent as an advisor, a second opinion on the current task. Use it when you say "advisor", "second opinion", "what does X think", or want an outside take without delegating the work itself.
+
+The advisor gives a judgment. You decide what to do. The advisor prompt is analysis-only and ends with a no-edits instruction.
+
+```
+/paseo-advisor did I miss anything in this migration plan?
+/paseo-advisor --provider claude/opus what is the UX risk in this flow?
+```
+
+## `/paseo-epic`, Epic Orchestration
+
+Heavy-ceremony orchestration for big work: research, planning, adversarial review, phased implementation, audit, and delivery. Use it when you say "epic", "long task", "build this end to end", or want a feature that runs all night.
+
+The plan file at `~/.paseo/plans/<slug>.md` is the source of truth. Default mode is conversational, with clarification and gates between phases. `--autopilot` runs through delivery without grills or gates. `--worktree` isolates the work in a new Paseo worktree.
+
+```
+/paseo-epic build the settings import/export flow end to end
+/paseo-epic --autopilot --worktree migrate the relay config UI overnight
 ```

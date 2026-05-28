@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import websitePackage from "../package.json";
+import { getBlockingColdCache } from "./github-cache";
 
 interface GitHubAsset {
   name: string;
@@ -50,46 +50,56 @@ interface ReleaseInfo {
 }
 
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
+const RELEASE_CACHE_KEY = "github-release:v1";
 
 async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
-  const fallbackVersion = websitePackage.version.replace(/-.*$/, "");
-  const fallback: ReleaseInfo = {
-    version: fallbackVersion,
-    windowsX64Asset: `Paseo-Setup-${fallbackVersion}.exe`,
-    windowsArm64Asset: null,
+  const res = await fetch(GITHUB_RELEASES_URL, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "paseo-website",
+    },
+    cf: {
+      cacheEverything: true,
+      cacheTtl: 60,
+      cacheKey: "github-releases-latest",
+    },
+  } as RequestInit);
+  if (!res.ok) throw new Error(`github releases ${res.status}`);
+
+  const releases = (await res.json()) as GitHubRelease[];
+  const ready = releases.find((r) => !r.prerelease && !r.draft && hasRequiredAssets(r));
+  if (!ready) throw new Error("no ready GitHub release found");
+  const win = pickWindowsAssets(ready.assets);
+  return {
+    version: versionFromTag(ready.tag_name),
+    windowsX64Asset: win.x64,
+    windowsArm64Asset: win.arm64,
   };
+}
 
-  try {
-    const res = await fetch(GITHUB_RELEASES_URL, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "paseo-website",
-      },
-      // Cloudflare Workers: cache the upstream response with stale-while-revalidate.
-      // Fresh for 60s, serve stale for up to 300s while revalidating in background.
-      // In non-Workers environments this is ignored.
-      cf: {
-        cacheEverything: true,
-        cacheTtl: 60,
-        cacheKey: "github-releases-latest",
-      },
-    } as RequestInit);
-    if (!res.ok) return fallback;
-
-    const releases = (await res.json()) as GitHubRelease[];
-    const ready = releases.find((r) => !r.prerelease && !r.draft && hasRequiredAssets(r));
-    if (!ready) return fallback;
-    const win = pickWindowsAssets(ready.assets);
-    return {
-      version: versionFromTag(ready.tag_name),
-      windowsX64Asset: win.x64,
-      windowsArm64Asset: win.arm64,
-    };
-  } catch {
-    return fallback;
-  }
+function isReleaseInfo(value: unknown): value is ReleaseInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.version === "string" &&
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(record.version) &&
+    (typeof record.windowsX64Asset === "string" || record.windowsX64Asset === null) &&
+    (typeof record.windowsArm64Asset === "string" || record.windowsArm64Asset === null) &&
+    (record.windowsX64Asset === null ||
+      new RegExp(`^Paseo-Setup-${record.version.replaceAll(".", "\\.")}(?:-x64)?\\.exe$`).test(
+        record.windowsX64Asset,
+      )) &&
+    (record.windowsArm64Asset === null ||
+      new RegExp(`^Paseo-Setup-${record.version.replaceAll(".", "\\.")}-arm64\\.exe$`).test(
+        record.windowsArm64Asset,
+      ))
+  );
 }
 
 export const getLatestRelease = createServerFn({ method: "GET" }).handler(async () => {
-  return fetchLatestReadyRelease();
+  return getBlockingColdCache({
+    key: RELEASE_CACHE_KEY,
+    isValue: isReleaseInfo,
+    fetchFresh: fetchLatestReadyRelease,
+  });
 });

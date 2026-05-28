@@ -2,7 +2,7 @@
 title: CLI
 description: "Paseo CLI reference: manage agents, daemons, permissions, and worktrees from your terminal."
 nav: CLI
-order: 5
+order: 6
 ---
 
 # CLI
@@ -58,7 +58,7 @@ Use `paseo attach` to stream an agent's output in real-time:
 paseo attach abc123   # Attach to agent (Ctrl+C to detach)
 ```
 
-Agent IDs can be shortened — `abc` works if it's unambiguous.
+Agent IDs can be shortened, `abc` works if it's unambiguous.
 
 ## Sending messages
 
@@ -122,7 +122,7 @@ Use `PASEO_HOME` to run multiple isolated daemon instances.
 
 ## Connecting to a remote daemon
 
-`--host` accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL — the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.
+`--host` accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL, the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.
 
 Get an offer URL from the daemon you want to control:
 
@@ -165,7 +165,7 @@ while true; do
 done
 ```
 
-This pattern enables hierarchical task decomposition — a lead agent can break down work, delegate to specialists, and synthesize results.
+This pattern enables hierarchical task decomposition, a lead agent can break down work, delegate to specialists, and synthesize results.
 
 ## Output formats
 
@@ -179,7 +179,7 @@ paseo ls -q                    # IDs only (quiet)
 
 ## Global options
 
-- `--host <target>` — connect to a different daemon (`host:port`, unix socket, or `https://app.paseo.sh/#offer=...` for relay). See [Connecting to a remote daemon](#connecting-to-a-remote-daemon).
-- `--json` — JSON output
-- `-q, --quiet` — minimal output
-- `--no-color` — disable colors
+- `--host <target>`, connect to a different daemon (`host:port`, unix socket, or `https://app.paseo.sh/#offer=...` for relay). See [Connecting to a remote daemon](#connecting-to-a-remote-daemon).
+- `--json`, JSON output
+- `-q, --quiet`, minimal output
+- `--no-color`, disable colors

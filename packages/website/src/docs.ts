@@ -8,6 +8,7 @@ interface DocFrontmatter {
 export interface Doc {
   slug: string;
   href: string;
+  sourcePath: string;
   frontmatter: DocFrontmatter;
   content: string;
 }
@@ -43,6 +44,10 @@ function pathToSlug(path: string): string {
   return noExt === "index" ? "" : noExt;
 }
 
+function pathToSourcePath(path: string): string {
+  return path.split("/public-docs/")[1] ?? path;
+}
+
 function loadDocs(): Doc[] {
   const docs: Doc[] = [];
 
@@ -55,6 +60,7 @@ function loadDocs(): Doc[] {
     docs.push({
       slug,
       href,
+      sourcePath: `public-docs/${pathToSourcePath(path)}`,
       frontmatter: {
         title: data.title ?? "",
         description: data.description ?? "",

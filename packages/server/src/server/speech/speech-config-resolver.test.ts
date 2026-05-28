@@ -51,9 +51,13 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
     expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "en",
+      voice: "en",
+    });
   });
 
-  test("resolves feature-scoped local model env vars", () => {
+  test("resolves feature-scoped local speech settings", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {
         voiceMode: {
@@ -66,11 +70,13 @@ describe("resolveSpeechConfig", () => {
       },
     });
     const env = {
-      PASEO_DICTATION_LOCAL_STT_MODEL: "zipformer",
-      PASEO_VOICE_LOCAL_STT_MODEL: "parakeet",
-      PASEO_VOICE_LOCAL_TTS_MODEL: "kitten",
+      PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
+      PASEO_VOICE_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
+      PASEO_VOICE_LOCAL_TTS_MODEL: "kokoro-en-v0_19",
       PASEO_VOICE_LOCAL_TTS_SPEAKER_ID: "5",
       PASEO_VOICE_LOCAL_TTS_SPEED: "1.35",
+      PASEO_DICTATION_LANGUAGE: "es",
+      PASEO_VOICE_LANGUAGE: "pt",
       PASEO_LOCAL_MODELS_DIR: "/tmp/models",
       OPENAI_API_KEY: "env-key",
       PASEO_VOICE_STT_PROVIDER: "openai",
@@ -87,9 +93,9 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local).toEqual({
       modelsDir: "/tmp/models",
       models: {
-        dictationStt: "zipformer-bilingual-zh-en-2023-02-20",
-        voiceStt: "parakeet-tdt-0.6b-v3-int8",
-        voiceTts: "kitten-nano-en-v0_1-fp16",
+        dictationStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceTts: "kokoro-en-v0_19",
         voiceTtsSpeakerId: 5,
         voiceTtsSpeed: 1.35,
       },
@@ -114,32 +120,48 @@ describe("resolveSpeechConfig", () => {
       explicit: true,
       enabled: true,
     });
-    expect(result.speech.local?.models.dictationStt).toBe("zipformer-bilingual-zh-en-2023-02-20");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.local?.models.voiceTts).toBe("kitten-nano-en-v0_1-fp16");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
+    expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(5);
     expect(result.speech.local?.models.voiceTtsSpeed).toBe(1.35);
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "es",
+      voice: "pt",
+    });
     expect(result.openai?.apiKey).toBe("env-key");
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
 
-  test("ignores deprecated shared local model env vars", () => {
-    const persisted = PersistedConfigSchema.parse({});
-    const env = {
-      PASEO_LOCAL_STT_MODEL: "zipformer-bilingual-zh-en-2023-02-20",
-      PASEO_LOCAL_TTS_MODEL: "kitten-nano-en-v0_1-fp16",
-    } as NodeJS.ProcessEnv;
+  test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          stt: {
+            language: "fr",
+          },
+        },
+        voiceMode: {
+          stt: {
+            language: "de",
+          },
+        },
+      },
+    });
 
     const result = resolveSpeechConfig({
       paseoHome: "/tmp/paseo-home",
-      env,
+      env: {
+        PASEO_DICTATION_LANGUAGE: "es",
+        PASEO_VOICE_LANGUAGE: "  ",
+      } as NodeJS.ProcessEnv,
       persisted,
     });
 
-    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
-    expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
+    expect(result.speech.sttLanguages).toEqual({
+      dictation: "es",
+      voice: "es",
+    });
   });
 
   test("respects disabled dictation and voice mode feature flags", () => {

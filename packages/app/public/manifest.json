@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "Paseo",
+  "short_name": "Paseo",
+  "description": "Monitor and control local AI coding agents from anywhere.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#181B1A",
+  "background_color": "#181B1A",
+  "categories": ["developer", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

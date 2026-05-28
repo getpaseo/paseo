@@ -1,18 +1,15 @@
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
-import type { TerminalCell, TerminalState } from "../shared/messages.js";
-export {
-  captureTerminalLines,
-  type CaptureTerminalLinesOptions,
-  type CaptureTerminalLinesResult,
-} from "./terminal-capture.js";
+import { writePrivateFileAtomicSync } from "../server/private-files.js";
+import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
@@ -20,6 +17,11 @@ let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
+const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
+  [10, "rgb:e6e6/e6e6/e6e6"],
+  [11, "rgb:0b0b/0b0b/0b0b"],
+  [12, "rgb:e6e6/e6e6/e6e6"],
+]);
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -36,6 +38,14 @@ export interface TerminalStateSnapshot {
   revision: number;
 }
 
+export interface TerminalStateSnapshotOptions {
+  scrollbackLines?: number;
+}
+
+export interface TerminalSubscribeOptions {
+  initialSnapshot?: "state" | "ready";
+}
+
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -44,6 +54,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
   | { type: "snapshot"; state: TerminalState; revision?: number }
+  | { type: "snapshotReady"; revision?: number }
   | { type: "titleChange"; title?: string };
 
 export interface TerminalSession {
@@ -51,14 +62,16 @@ export interface TerminalSession {
   name: string;
   cwd: string;
   send(msg: ClientMessage): void;
-  subscribe(listener: (msg: ServerMessage) => void): () => void;
+  subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   getSize(): { rows: number; cols: number };
   getState(): TerminalState;
-  getStateSnapshot(): TerminalStateSnapshot;
+  getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
+  getReplayPreamble(): string;
   getTitle(): string | undefined;
+  setTitle(title: string): void;
   getExitInfo(): TerminalExitInfo | null;
   kill(): void;
   killAndWait(options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number }): Promise<void>;
@@ -105,6 +118,10 @@ interface EnsureNodePtySpawnHelperExecutableOptions {
   platform?: NodeJS.Platform;
   arch?: string;
   force?: boolean;
+}
+
+interface WindowsPtyProcessReadiness {
+  _agent?: { innerPid?: number };
 }
 
 function resolveNodePtyPackageRoot(): string | null {
@@ -203,10 +220,13 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
   const runtimeDir = resolveZshShellIntegrationRuntimeDir();
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   chmodSync(runtimeDir, 0o700);
-  copyFileSync(join(readableSourceDir, ".zshenv"), join(runtimeDir, ".zshenv"));
-  copyFileSync(
-    join(readableSourceDir, "paseo-integration.zsh"),
+  writePrivateFileAtomicSync(
+    join(runtimeDir, ".zshenv"),
+    readFileSync(join(readableSourceDir, ".zshenv")),
+  );
+  writePrivateFileAtomicSync(
     join(runtimeDir, "paseo-integration.zsh"),
+    readFileSync(join(readableSourceDir, "paseo-integration.zsh")),
   );
   return runtimeDir;
 }
@@ -216,6 +236,7 @@ export function buildTerminalEnvironment(
 ): Record<string, string> {
   const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
     TERM: "xterm-256color",
+    TERM_PROGRAM: "kitty",
   });
 
   if (basename(input.shell) !== "zsh") {
@@ -285,14 +306,21 @@ function extractGrid(terminal: TerminalType): TerminalCell[][] {
   return grid;
 }
 
-function extractScrollback(terminal: TerminalType): TerminalCell[][] {
+function extractScrollback(
+  terminal: TerminalType,
+  options?: { scrollbackLines?: number },
+): TerminalCell[][] {
   const scrollback: TerminalCell[][] = [];
   const buffer = terminal.buffer.active;
   // baseY is the first row of the visible viewport (0-indexed)
   // Lines 0 to baseY-1 are in scrollback, lines baseY onwards are visible
   const scrollbackLines = buffer.baseY;
+  const startRow =
+    typeof options?.scrollbackLines === "number"
+      ? Math.max(0, scrollbackLines - options.scrollbackLines)
+      : 0;
 
-  for (let row = 0; row < scrollbackLines; row++) {
+  for (let row = startRow; row < scrollbackLines; row++) {
     const rowCells: TerminalCell[] = [];
     const line = buffer.getLine(row);
     for (let col = 0; col < terminal.cols; col++) {
@@ -543,11 +571,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   let exitInfo: TerminalExitInfo | null = null;
   let recentOutputText = "";
   let title: string | undefined;
+  let titleMode: "auto" | "manual" = presetTitle?.trim() ? "manual" : "auto";
   let pendingTitle: string | undefined;
   let titleDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingInput = "";
   let inputFlushImmediate: ReturnType<typeof setImmediate> | null = null;
   let stateRevision = 0;
+  const inputModeTracker = new TerminalInputModeTracker();
+  let titleChangeSubscription: { dispose(): void } | null = null;
 
   // Create xterm.js headless terminal
   const terminal = new Terminal({
@@ -591,14 +622,40 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  const lockedTitle = presetTitle?.trim() || undefined;
+  function clearPendingTitleChange(): void {
+    pendingTitle = undefined;
+    if (titleDebounceTimer) {
+      clearTimeout(titleDebounceTimer);
+      titleDebounceTimer = null;
+    }
+  }
+
+  function disposeTitleChangeSubscription(): void {
+    titleChangeSubscription?.dispose();
+    titleChangeSubscription = null;
+  }
+
+  function setTitle(nextTitle: string): void {
+    const manualTitle = nextTitle.trim();
+    if (!manualTitle) {
+      return;
+    }
+
+    titleMode = "manual";
+    disposeTitleChangeSubscription();
+    clearPendingTitleChange();
+    emitTitleChange(manualTitle);
+  }
+
+  const initialManualTitle = presetTitle?.trim() || undefined;
   const processTitle = command ? [command, ...args].join(" ") : null;
-  let initialTitle = lockedTitle;
+  let initialTitle = initialManualTitle;
   if (!initialTitle && processTitle) {
     initialTitle = humanizeProcessTitle(processTitle) ?? normalizeProcessTitle(processTitle);
   }
   emitTitleChange(initialTitle);
 
+  // Respond to DA1 queries (CSI c or CSI 0 c) — apps like nvim query terminal capabilities
   terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
     if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
       ptyProcess.write("\x1b[?62;4;22c");
@@ -629,10 +686,18 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
     return true;
   });
+  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+    terminal.parser.registerOscHandler(code, (data) => {
+      if (data.trim() !== "?") {
+        return false;
+      }
+      ptyProcess.write(`\x1b]${code};${response}\x1b\\`);
+      return true;
+    });
+  }
 
-  let disposeTitleChangeSubscription: { dispose(): void } | null = null;
-  if (!lockedTitle) {
-    disposeTitleChangeSubscription = terminal.onTitleChange((nextTitle) => {
+  if (titleMode === "auto") {
+    titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
       if (disposed || killed) {
         return;
       }
@@ -643,6 +708,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       titleDebounceTimer = setTimeout(() => {
         titleDebounceTimer = null;
         emitTitleChange(pendingTitle);
+        pendingTitle = undefined;
       }, TERMINAL_TITLE_DEBOUNCE_MS);
     });
   }
@@ -700,15 +766,13 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
     disposed = true;
     pendingInput = "";
+    inputModeTracker.reset();
     if (inputFlushImmediate) {
       clearImmediate(inputFlushImmediate);
       inputFlushImmediate = null;
     }
-    if (titleDebounceTimer) {
-      clearTimeout(titleDebounceTimer);
-      titleDebounceTimer = null;
-    }
-    disposeTitleChangeSubscription?.dispose();
+    clearPendingTitleChange();
+    disposeTitleChangeSubscription();
     disposeCommandLifecycleSubscription.dispose();
     terminal.dispose();
     listeners.clear();
@@ -732,6 +796,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   // Pipe PTY output to terminal emulator
   ptyProcess.onData((data) => {
     if (killed) return;
+    const inputModeUpdate = inputModeTracker.feed(data);
+    for (const response of inputModeUpdate.responses) {
+      ptyProcess.write(response);
+    }
     recentOutputText = `${recentOutputText}${data}`;
     if (recentOutputText.length > TERMINAL_EXIT_OUTPUT_CHAR_LIMIT) {
       recentOutputText = recentOutputText.slice(-TERMINAL_EXIT_OUTPUT_CHAR_LIMIT);
@@ -759,20 +827,38 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     disposeResources();
   });
 
-  function getState(): TerminalState {
+  async function waitForPtyProcessStart(): Promise<void> {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const started = (): boolean => {
+      const windowsPtyProcess = ptyProcess as unknown as WindowsPtyProcessReadiness;
+      return ptyProcess.pid > 0 || (windowsPtyProcess._agent?.innerPid ?? 0) > 0 || processExited;
+    };
+
+    const deadline = Date.now() + 5000;
+    while (!started() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  function getState(snapshotOptions?: TerminalStateSnapshotOptions): TerminalState {
     return {
       rows: terminal.rows,
       cols: terminal.cols,
       grid: extractGrid(terminal),
-      scrollback: extractScrollback(terminal),
+      scrollback: extractScrollback(terminal, {
+        scrollbackLines: snapshotOptions?.scrollbackLines,
+      }),
       cursor: extractCursorState(terminal),
       ...(title ? { title } : {}),
     };
   }
 
-  function getStateSnapshot(): TerminalStateSnapshot {
+  function getStateSnapshot(snapshotOptions?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
     return {
-      state: getState(),
+      state: getState(snapshotOptions),
       revision: stateRevision,
     };
   }
@@ -782,6 +868,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       rows: terminal.rows,
       cols: terminal.cols,
     };
+  }
+
+  function getReplayPreamble(): string {
+    return inputModeTracker.getPreamble();
   }
 
   function writeInputToPty(data: string): void {
@@ -833,17 +923,45 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  function subscribe(listener: (msg: ServerMessage) => void): () => void {
-    listeners.add(listener);
+  function subscribe(
+    listener: (msg: ServerMessage) => void,
+    subscribeOptions?: TerminalSubscribeOptions,
+  ): () => void {
+    let active = true;
+    let snapshotDelivered = false;
+    const queuedMessages: ServerMessage[] = [];
+    const initialSnapshot = subscribeOptions?.initialSnapshot ?? "state";
+    const subscriptionListener = (msg: ServerMessage): void => {
+      if (!active) {
+        return;
+      }
+      if (!snapshotDelivered) {
+        queuedMessages.push(msg);
+        return;
+      }
+      listener(msg);
+    };
+
+    listeners.add(subscriptionListener);
 
     terminal.write("", () => {
-      if (!disposed && listeners.has(listener)) {
-        listener({ type: "snapshot", ...getStateSnapshot() });
+      if (!disposed && active && listeners.has(subscriptionListener)) {
+        snapshotDelivered = true;
+        if (initialSnapshot === "ready") {
+          listener({ type: "snapshotReady", revision: stateRevision });
+        } else {
+          listener({ type: "snapshot", ...getStateSnapshot() });
+        }
+        for (const message of queuedMessages.splice(0)) {
+          listener(message);
+        }
       }
     });
 
     return () => {
-      listeners.delete(listener);
+      active = false;
+      queuedMessages.length = 0;
+      listeners.delete(subscriptionListener);
     };
   }
 
@@ -902,10 +1020,24 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   function kill(): void {
     if (!killed) {
       killed = true;
-      ptyProcess.kill();
+      if (!processExited) {
+        killPtyProcess();
+      }
       emitExit(buildExitInfo());
     }
-    disposeResources();
+    if (processExited) {
+      disposeResources();
+      return;
+    }
+    void waitForProcessExit(1000).finally(disposeResources);
+  }
+
+  function killPtyProcess(signal?: NodeJS.Signals): void {
+    if (process.platform === "win32") {
+      ptyProcess.kill();
+      return;
+    }
+    ptyProcess.kill(signal);
   }
 
   function waitForProcessExit(timeoutMs: number): Promise<boolean> {
@@ -945,7 +1077,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
 
     try {
-      ptyProcess.kill();
+      killPtyProcess();
     } catch {
       // process may already be gone
     }
@@ -953,7 +1085,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
     if (!exitedGracefully) {
       try {
-        ptyProcess.kill("SIGKILL");
+        killPtyProcess("SIGKILL");
       } catch {
         // process may already be gone
       }
@@ -963,6 +1095,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     // Finalize bookkeeping (idempotent if ptyProcess.onExit already fired).
     kill();
   }
+
+  await waitForPtyProcessStart();
 
   // Small delay to let shell initialize
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -979,7 +1113,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     getSize,
     getState,
     getStateSnapshot,
+    getReplayPreamble,
     getTitle,
+    setTitle,
     getExitInfo,
     kill,
     killAndWait,
