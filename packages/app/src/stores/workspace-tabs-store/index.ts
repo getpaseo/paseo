@@ -17,14 +17,10 @@ import {
   type WorkspaceTab,
   type WorkspaceTabsCoreState,
   type WorkspaceTabTarget,
-} from "./workspace-tabs-store.pure";
+} from "./state";
 
-export { buildWorkspaceTabPersistenceKey } from "./workspace-tabs-store.pure";
-export type {
-  WorkspaceDraftTabSetup,
-  WorkspaceTab,
-  WorkspaceTabTarget,
-} from "./workspace-tabs-store.pure";
+export { buildWorkspaceTabPersistenceKey } from "./state";
+export type { WorkspaceDraftTabSetup, WorkspaceTab, WorkspaceTabTarget } from "./state";
 
 interface WorkspaceTabsState extends WorkspaceTabsCoreState {
   openDraftTab: (input: {

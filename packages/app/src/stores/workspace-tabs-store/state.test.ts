@@ -9,7 +9,7 @@ import {
   buildWorkspaceTabPersistenceKey,
   initialWorkspaceTabsCoreState,
   type WorkspaceTabsCoreState,
-} from "@/stores/workspace-tabs-store.pure";
+} from "./state";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "/repo/worktree";
