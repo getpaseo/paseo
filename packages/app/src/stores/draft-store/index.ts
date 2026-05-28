@@ -16,8 +16,6 @@ import {
   isAttachmentMetadata,
   isCanonicalDraftInput,
   isLegacyDraftImage,
-  migrateDraftInput,
-  migratePersistedState,
   normalizeComposerAttachment,
   pruneFinalizedDraftRecords,
   toDraftInputIfReady,
@@ -25,10 +23,10 @@ import {
   type DraftLifecycleState,
   type DraftRecord,
   type DraftStoreState,
-  type MigrateLegacyImages,
-} from "@/stores/draft-store.pure";
+} from "./state";
+import { migrateDraftInput, migratePersistedState, type MigrateLegacyImages } from "./migration";
 
-export type { DraftInput, DraftLifecycleState } from "@/stores/draft-store.pure";
+export type { DraftInput, DraftLifecycleState } from "./state";
 
 interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;

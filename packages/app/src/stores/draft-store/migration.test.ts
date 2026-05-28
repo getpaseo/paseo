@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ComposerAttachment } from "@/attachments/types";
-import {
-  isAttachmentMetadata,
-  migratePersistedState,
-  type MigrateLegacyImages,
-} from "./draft-store.pure";
+import { migratePersistedState, type MigrateLegacyImages } from "./migration";
+import { isAttachmentMetadata } from "./state";
 
 const passThroughMigrateLegacyImages: MigrateLegacyImages = async (images) =>
   images.filter(isAttachmentMetadata);

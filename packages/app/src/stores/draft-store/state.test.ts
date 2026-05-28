@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyClearDraftRecord, pruneFinalizedDraftRecords } from "./draft-store.pure";
+import { applyClearDraftRecord, pruneFinalizedDraftRecords } from "./state";
 
 describe("draft-store lifecycle", () => {
   it("prunes finalized tombstones after TTL", () => {
