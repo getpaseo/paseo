@@ -7,7 +7,7 @@ import {
   serializeCollapsedProjects,
   setProjectCollapsed,
   toggleProjectCollapsed,
-} from "./sidebar-collapsed-sections-store.pure";
+} from "./state";
 
 interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
   toggleProjectCollapsed: (projectKey: string) => void;

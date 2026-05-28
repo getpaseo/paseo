@@ -5,7 +5,7 @@ import {
   serializeCollapsedProjects,
   setProjectCollapsed,
   toggleProjectCollapsed,
-} from "@/stores/sidebar-collapsed-sections-store.pure";
+} from "@/stores/sidebar-collapsed-sections-store/state";
 
 function emptyState(): CollapsedProjectsState {
   return { collapsedProjectKeys: new Set() };
