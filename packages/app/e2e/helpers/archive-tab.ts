@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
-import { loadDaemonClientConstructor } from "./daemon-client-loader";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { connectDaemonClient } from "./daemon-client-loader";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
   buildHostAgentDetailRoute,
@@ -59,10 +58,6 @@ function getServerId(): string {
   return serverId;
 }
 
-function getDaemonWsUrl(): string {
-  return `ws://127.0.0.1:${getDaemonPort()}/ws`;
-}
-
 function buildSeededStoragePayload() {
   const nowIso = new Date().toISOString();
   return {
@@ -75,27 +70,8 @@ function buildSeededStoragePayload() {
   };
 }
 
-interface ArchiveTabDaemonClientConfig {
-  url: string;
-  clientId: string;
-  clientType: "cli";
-  webSocketFactory?: NodeWebSocketFactory;
-}
-
 export async function connectArchiveTabDaemonClient(): Promise<ArchiveTabDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor<
-    ArchiveTabDaemonClientConfig,
-    ArchiveTabDaemonClient
-  >();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `app-e2e-archive-tab-${randomUUID()}`,
-    clientType: "cli",
-    webSocketFactory,
-  });
-  await client.connect();
-  return client;
+  return connectDaemonClient<ArchiveTabDaemonClient>({ clientIdPrefix: "app-e2e-archive-tab" });
 }
 
 export async function createIdleAgent(

@@ -1,9 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { loadDaemonClientConstructor } from "./daemon-client-loader";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { connectDaemonClient } from "./daemon-client-loader";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 export interface TerminalPerfDaemonClient {
@@ -57,14 +55,6 @@ export interface TerminalPerfDaemonClient {
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
 }
 
-function getDaemonWsUrl(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  return `ws://127.0.0.1:${daemonPort}/ws`;
-}
-
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
   if (!serverId) {
@@ -73,29 +63,11 @@ function getServerId(): string {
   return serverId;
 }
 
-interface TerminalPerfDaemonClientConfig {
-  url: string;
-  clientId: string;
-  clientType: "cli";
-  appVersion?: string;
-  webSocketFactory?: NodeWebSocketFactory;
-}
-
 export async function connectTerminalClient(): Promise<TerminalPerfDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor<
-    TerminalPerfDaemonClientConfig,
-    TerminalPerfDaemonClient
-  >();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `terminal-perf-${randomUUID()}`,
-    clientType: "cli",
+  return connectDaemonClient<TerminalPerfDaemonClient>({
+    clientIdPrefix: "terminal-perf",
     appVersion: loadAppVersion(),
-    webSocketFactory,
   });
-  await client.connect();
-  return client;
 }
 
 function loadAppVersion(): string {

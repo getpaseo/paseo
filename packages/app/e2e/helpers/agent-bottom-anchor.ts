@@ -1,7 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { randomUUID } from "node:crypto";
-import { loadDaemonClientConstructor } from "./daemon-client-loader";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { connectDaemonClient as connectSharedDaemonClient } from "./daemon-client-loader";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 72;
@@ -35,14 +33,6 @@ export interface DaemonClientInstance {
   }): Promise<{ id: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   waitForFinish(agentId: string, timeout?: number): Promise<{ status: string }>;
-}
-
-function getDaemonWsUrl(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  return `ws://127.0.0.1:${daemonPort}/ws`;
 }
 
 function getServerId(): string {
@@ -83,27 +73,8 @@ export function createReplyTurn(label: string): {
   };
 }
 
-interface DaemonClientConfig {
-  url: string;
-  clientId: string;
-  clientType: "cli";
-  webSocketFactory?: NodeWebSocketFactory;
-}
-
 export async function connectDaemonClient(): Promise<DaemonClientInstance> {
-  const DaemonClient = await loadDaemonClientConstructor<
-    DaemonClientConfig,
-    DaemonClientInstance
-  >();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `app-e2e-${randomUUID()}`,
-    clientType: "cli",
-    webSocketFactory,
-  });
-  await client.connect();
-  return client;
+  return connectSharedDaemonClient<DaemonClientInstance>({ clientIdPrefix: "app-e2e" });
 }
 
 export async function seedBottomAnchorAgent(input: {

@@ -1,10 +1,8 @@
 import { realpathSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
-import { loadDaemonClientConstructor } from "./daemon-client-loader";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { connectDaemonClient } from "./daemon-client-loader";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
@@ -61,33 +59,8 @@ export type WorkspaceSetupProgressPayload = Extract<
 
 export type { WorkspaceSetupDaemonClient };
 
-function getDaemonWsUrl(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  return `ws://127.0.0.1:${daemonPort}/ws`;
-}
-
 export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor<
-    {
-      url: string;
-      clientId: string;
-      clientType: "cli";
-      webSocketFactory?: NodeWebSocketFactory;
-    },
-    WorkspaceSetupDaemonClient
-  >();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `workspace-setup-${randomUUID()}`,
-    clientType: "cli",
-    webSocketFactory,
-  });
-  await client.connect();
-  return client;
+  return connectDaemonClient<WorkspaceSetupDaemonClient>({ clientIdPrefix: "workspace-setup" });
 }
 
 export async function openProjectViaDaemon(
