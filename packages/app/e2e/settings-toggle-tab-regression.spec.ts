@@ -1,13 +1,8 @@
 import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "./fixtures";
-import {
-  archiveAgentFromDaemon,
-  connectArchiveTabDaemonClient,
-  createIdleAgent,
-  openWorkspaceWithAgents,
-} from "./helpers/archive-tab";
+import { createIdleAgent, openWorkspaceWithAgents } from "./helpers/archive-tab";
 import { waitForTabBar, expectAgentTabActive } from "./helpers/launcher";
-import { createTempGitRepo } from "./helpers/workspace";
+import { seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 
 async function pressSettingsToggleShortcut(page: import("@playwright/test").Page) {
@@ -54,20 +49,17 @@ test.describe("Settings toggle tab regression", () => {
     page,
   }) => {
     const serverId = getServerId();
-    const client = await connectArchiveTabDaemonClient();
-    const repo = await createTempGitRepo("settings-toggle-tab-");
-    const agentIds: string[] = [];
+    const workspace = await seedWorkspace({ repoPrefix: "settings-toggle-tab-" });
 
     try {
-      const firstAgent = await createIdleAgent(client, {
-        cwd: repo.path,
+      const firstAgent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: `settings-toggle-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(client, {
-        cwd: repo.path,
+      const secondAgent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: `settings-toggle-b-${Date.now()}`,
       });
-      agentIds.push(firstAgent.id, secondAgent.id);
 
       await openWorkspaceWithAgents(page, [firstAgent, secondAgent]);
       await waitForTabBar(page);
@@ -82,7 +74,7 @@ test.describe("Settings toggle tab regression", () => {
       await expectSendBehavior(page, "interrupt");
 
       await pressSettingsToggleShortcut(page);
-      await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, repo.path));
+      await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, workspace.repoPath));
       await waitForTabBar(page);
       await expectAgentTabActive(page, secondAgent.id);
 
@@ -90,11 +82,7 @@ test.describe("Settings toggle tab regression", () => {
       await waitForTabBar(page);
       await expectAgentTabActive(page, secondAgent.id);
     } finally {
-      for (const agentId of agentIds) {
-        await archiveAgentFromDaemon(client, agentId).catch(() => undefined);
-      }
-      await client.close().catch(() => undefined);
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 
@@ -102,31 +90,28 @@ test.describe("Settings toggle tab regression", () => {
     page,
   }) => {
     const serverId = getServerId();
-    const client = await connectArchiveTabDaemonClient();
-    const repo = await createTempGitRepo("agent-route-refresh-");
-    const agentIds: string[] = [];
+    const workspace = await seedWorkspace({ repoPrefix: "agent-route-refresh-" });
 
     try {
-      const firstAgent = await createIdleAgent(client, {
-        cwd: repo.path,
+      const firstAgent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: `agent-route-refresh-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(client, {
-        cwd: repo.path,
+      const secondAgent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: `agent-route-refresh-b-${Date.now()}`,
       });
-      agentIds.push(firstAgent.id, secondAgent.id);
 
       await openAgentRouteAndExpectFocused({
         page,
         serverId,
-        workspaceId: repo.path,
+        workspaceId: workspace.repoPath,
         agentId: firstAgent.id,
       });
       await openAgentRouteAndExpectFocused({
         page,
         serverId,
-        workspaceId: repo.path,
+        workspaceId: workspace.repoPath,
         agentId: secondAgent.id,
       });
 
@@ -136,11 +121,7 @@ test.describe("Settings toggle tab regression", () => {
         await expectAgentTabActive(page, secondAgent.id);
       }
     } finally {
-      for (const agentId of agentIds) {
-        await archiveAgentFromDaemon(client, agentId).catch(() => undefined);
-      }
-      await client.close().catch(() => undefined);
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });
