@@ -4,14 +4,7 @@ import { gotoAppShell } from "./helpers/app";
 import { createTempGitRepo } from "./helpers/workspace";
 import { connectWorkspaceSetupClient, openProjectViaDaemon } from "./helpers/workspace-setup";
 import { captureWsSessionFrames } from "./helpers/rename";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
+import { getServerId } from "./helpers/server-id";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;

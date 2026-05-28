@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { connectDaemonClient as connectSharedDaemonClient } from "./daemon-client-loader";
+import { getServerId } from "./server-id";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 72;
@@ -33,14 +34,6 @@ export interface DaemonClientInstance {
   }): Promise<{ id: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   waitForFinish(agentId: string, timeout?: number): Promise<{ status: string }>;
-}
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
 }
 
 function buildReplyBlock(label: string, lineCount = 14): string {

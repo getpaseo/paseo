@@ -2,14 +2,7 @@ import type { Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 import { createTempGitRepo } from "./workspace";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
+import { getServerId } from "./server-id";
 
 export interface MockAgentWorkspace {
   agentId: string;

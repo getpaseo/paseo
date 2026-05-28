@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { requireServerId } from "./sidebar";
+import { getServerId } from "./server-id";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -113,13 +113,13 @@ export async function expectHostSettingsUrl(page: Page, serverId: string): Promi
 }
 
 export async function verifyLegacyHostSettingsRedirect(page: Page): Promise<void> {
-  const serverId = requireServerId();
+  const serverId = getServerId();
   await page.goto(`/h/${encodeURIComponent(serverId)}/settings`);
   await expectHostSettingsUrl(page, serverId);
 }
 
 export async function openCompactSettingsHost(page: Page): Promise<void> {
-  const serverId = requireServerId();
+  const serverId = getServerId();
   await openSettingsHost(page, serverId);
   await expectHostSettingsUrl(page, serverId);
 }

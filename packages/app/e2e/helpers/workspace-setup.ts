@@ -3,6 +3,7 @@ import { expect, type Page } from "@playwright/test";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
+import { getServerId } from "./server-id";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
@@ -289,11 +290,11 @@ export async function navigateToWorkspaceViaSidebar(
   page: Page,
   workspaceId: string,
 ): Promise<void> {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  await switchWorkspaceViaSidebar({ page, serverId, targetWorkspacePath: workspaceId });
+  await switchWorkspaceViaSidebar({
+    page,
+    serverId: getServerId(),
+    targetWorkspacePath: workspaceId,
+  });
 }
 
 export async function openWorkspaceScriptsMenu(page: Page): Promise<void> {

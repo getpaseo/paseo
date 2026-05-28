@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { connectDaemonClient } from "./daemon-client-loader";
+import { getServerId } from "./server-id";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
   buildHostAgentDetailRoute,
@@ -48,14 +49,6 @@ function getDaemonPort(): string {
     throw new Error("E2E_DAEMON_PORT must not point at the developer daemon.");
   }
   return daemonPort;
-}
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
 }
 
 function buildSeededStoragePayload() {

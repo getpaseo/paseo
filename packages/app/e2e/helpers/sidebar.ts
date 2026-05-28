@@ -1,15 +1,8 @@
 import { expect, type Page } from "@playwright/test";
-
-export function requireServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
+import { getServerId } from "./server-id";
 
 export async function selectWorkspaceInSidebar(page: Page, workspaceId: string): Promise<void> {
-  const row = page.getByTestId(`sidebar-workspace-row-${requireServerId()}:${workspaceId}`);
+  const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
 }

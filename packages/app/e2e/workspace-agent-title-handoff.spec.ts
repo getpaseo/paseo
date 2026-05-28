@@ -4,6 +4,7 @@ import { expectComposerVisible, submitMessage } from "./helpers/composer";
 import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { captureWsSessionFrames } from "./helpers/rename";
+import { getServerId } from "./helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 interface WorkspaceTabProbeRecord {
@@ -18,14 +19,6 @@ interface WorkspaceTabProbeRecord {
 interface CapturedCreateAgentFrame {
   initialPrompt: string | null;
   configTitle: string | null;
-}
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
 }
 
 async function installWorkspaceTabProbe(page: Page): Promise<void> {

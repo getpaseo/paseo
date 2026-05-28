@@ -4,6 +4,7 @@ import { createTempGitRepo } from "./workspace";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 import { connectWorkspaceSetupClient, openHomeWithProject } from "./workspace-setup";
 import { selectWorkspaceInSidebar } from "./sidebar";
+import { getServerId } from "./server-id";
 import { waitForTabBar } from "./launcher";
 
 function composerInput(page: Page) {
@@ -154,8 +155,7 @@ export async function startRunningMockAgent(
   page: Page,
   opts: { prefix: string; model: string; prompt: string },
 ): Promise<MockAgentSetup> {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) throw new Error("E2E_SERVER_ID is not set.");
+  const serverId = getServerId();
 
   const repo = await createTempGitRepo(opts.prefix);
   const client = await connectSeedClient();

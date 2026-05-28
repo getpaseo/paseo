@@ -8,14 +8,7 @@ import {
 } from "./helpers/archive-tab";
 import { waitForTabBar, expectAgentTabActive } from "./helpers/launcher";
 import { createTempGitRepo } from "./helpers/workspace";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
+import { getServerId } from "./helpers/server-id";
 
 async function pressSettingsToggleShortcut(page: import("@playwright/test").Page) {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";

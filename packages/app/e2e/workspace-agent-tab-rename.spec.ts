@@ -9,14 +9,7 @@ import {
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { captureWsSessionFrames, renameModalInput, renameModalSubmit } from "./helpers/rename";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
+import { getServerId } from "./helpers/server-id";
 
 async function openAgentInWorkspace(page: Page, agent: { id: string; cwd: string }) {
   await page.goto(buildHostAgentDetailRoute(getServerId(), agent.id, agent.cwd));

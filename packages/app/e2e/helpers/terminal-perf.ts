@@ -1,13 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
+import { getServerId } from "./server-id";
 
 export function buildTerminalWorkspaceUrl(workspaceId: string, terminalId: string): string {
   const serverId = getServerId();

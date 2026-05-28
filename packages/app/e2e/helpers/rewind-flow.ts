@@ -5,6 +5,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expectComposerEditable, submitMessage } from "./composer";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
+import { getServerId } from "./server-id";
 
 export type RewindFlowProvider = "claude" | "codex" | "opencode" | "pi";
 export type RewindFlowMode = "conversation" | "files" | "both";
@@ -32,14 +33,6 @@ interface ProviderLaunchConfig {
 
 const SEND_TIMEOUT_MS = 240_000;
 const REWIND_TIMEOUT_MS = 120_000;
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
 
 function fullAccessConfig(provider: RewindFlowProvider): ProviderLaunchConfig {
   switch (provider) {
