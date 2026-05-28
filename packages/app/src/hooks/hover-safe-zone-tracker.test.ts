@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createHoverSafeZoneTracker, type RectLike } from "@/hooks/use-hover-safe-zone.pure";
+import { createHoverSafeZoneTracker, type RectLike } from "@/hooks/hover-safe-zone-tracker";
 
 const TRIGGER: RectLike = { left: 0, right: 100, top: 20, bottom: 60 };
 const CONTENT: RectLike = { left: 120, right: 240, top: 20, bottom: 120 };

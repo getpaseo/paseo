@@ -1,7 +1,7 @@
 import { useEffect, type RefObject } from "react";
 import type { View } from "react-native";
 import { isWeb } from "@/constants/platform";
-import { createHoverSafeZoneTracker, type RectLike } from "@/hooks/use-hover-safe-zone.pure";
+import { createHoverSafeZoneTracker, type RectLike } from "@/hooks/hover-safe-zone-tracker";
 
 interface UseHoverSafeZoneParams {
   enabled: boolean;
