@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -378,9 +379,12 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       const listener = vi.fn();
       manager.on("change", listener);
 
-      // Prime two distinct cwd snapshots.
-      manager.getSnapshot("/tmp/project-a");
-      manager.getSnapshot("/tmp/project-b");
+      // Prime two distinct cwd snapshots. resolve() makes the keys platform-
+      // native so Windows ("D:\\tmp\\...") matches the assertion below.
+      const cwdA = resolve("/tmp/project-a");
+      const cwdB = resolve("/tmp/project-b");
+      manager.getSnapshot(cwdA);
+      manager.getSnapshot(cwdB);
 
       listener.mockClear();
       manager.applyMutableProviderConfig({
@@ -388,7 +392,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       });
 
       const cwds = listener.mock.calls.map((call) => call[1]).sort();
-      expect(cwds).toEqual(["/tmp/project-a", "/tmp/project-b"]);
+      expect(cwds).toEqual([cwdA, cwdB].sort());
     } finally {
       manager.destroy();
     }
