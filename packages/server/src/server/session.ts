@@ -68,7 +68,6 @@ import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
   sendPromptToAgent,
-  startCreatedAgentInitialPrompt,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
 import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
