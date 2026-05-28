@@ -1983,11 +1983,11 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
   });
   await manager.closeAgent(created.id);
 
-  const lifecycles: string[] = [];
+  const events: ManagedAgent[] = [];
   manager.subscribe(
     (event) => {
       if (event.type === "agent_state" && event.agent.id === created.id) {
-        lifecycles.push(event.agent.lifecycle);
+        events.push(event.agent);
       }
     },
     { agentId: created.id, replayState: false },
@@ -1995,7 +1995,10 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
 
   await manager.archiveSnapshot(created.id, new Date().toISOString());
 
-  expect(lifecycles).toContain("closed");
+  expect(events.length).toBeGreaterThanOrEqual(1);
+  const last = events[events.length - 1];
+  expect(last.id).toBe(created.id);
+  expect(last.lifecycle).toBe("closed");
 });
 
 test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
@@ -4096,8 +4099,8 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
 });
 
-test("fires onAgentArchived for live, stored, and cascaded archives", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-"));
+test("fires onAgentArchived for archived parent and cascaded children", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const archivedIds: string[] = [];
@@ -4120,6 +4123,25 @@ test("fires onAgentArchived for live, stored, and cascaded archives", async () =
     undefined,
     { labels: { [PARENT_AGENT_ID_LABEL]: liveParent.id } },
   );
+
+  await manager.archiveAgent(liveParent.id);
+  expect([...archivedIds].sort()).toEqual([liveChild.id, liveParent.id].sort());
+});
+
+test("fires onAgentArchived for stored-only snapshot archives", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-snapshot-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const archivedIds: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  manager.setAgentArchivedCallback((agentId) => {
+    archivedIds.push(agentId);
+  });
+
   const storedOnly = await manager.createAgent({
     provider: "codex",
     cwd: workdir,
@@ -4127,10 +4149,6 @@ test("fires onAgentArchived for live, stored, and cascaded archives", async () =
   });
   await manager.closeAgent(storedOnly.id);
 
-  await manager.archiveAgent(liveParent.id);
-  expect(archivedIds).toEqual(expect.arrayContaining([liveParent.id, liveChild.id]));
-
-  archivedIds.length = 0;
   await manager.archiveSnapshot(storedOnly.id, new Date().toISOString());
   expect(archivedIds).toEqual([storedOnly.id]);
 });
