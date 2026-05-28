@@ -4,13 +4,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey } from "./agent-history-query-key";
-import { applyArchivedAgentCloseResults } from "./use-archive-agent";
 import {
+  applyArchivedAgentCloseResults,
   isAgentArchiving,
   removeAgentFromListPayload,
   selectPendingArchiveAgentIds,
   setAgentArchiving,
-} from "./use-archive-agent.pure";
+} from "./use-archive-agent";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
