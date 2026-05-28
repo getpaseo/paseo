@@ -3,20 +3,13 @@ import type { WebSocketRoute } from "@playwright/test";
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import {
-  archiveAgentFromDaemon,
-  connectArchiveTabDaemonClient,
   createIdleAgent,
   expectWorkspaceTabHidden,
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
 } from "./helpers/archive-tab";
-import {
-  archiveLocalWorkspaceFromDaemon,
-  connectNewWorkspaceDaemonClient,
-  openProjectViaDaemon,
-} from "./helpers/new-workspace";
 import { expectComposerVisible } from "./helpers/composer";
-import { createTempGitRepo } from "./helpers/workspace";
+import { seedWorkspace } from "./helpers/seed-client";
 import {
   getVisibleWorkspaceAgentTabIds,
   expectOnlyWorkspaceAgentTabsVisible,
@@ -175,21 +168,13 @@ test.describe("Workspace navigation regression", () => {
 
     const daemonGate = await installDaemonWebSocketGate(page, daemonPort);
 
-    const workspaceClient = await connectNewWorkspaceDaemonClient();
-    const archiveClient = await connectArchiveTabDaemonClient();
-    const workspaceIds = new Set<string>();
-    const agentIds: string[] = [];
-    const repo = await createTempGitRepo("workspace-reconnect-");
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-reconnect-" });
 
     try {
-      const workspace = await openProjectViaDaemon(workspaceClient, repo.path);
-      workspaceIds.add(workspace.workspaceId);
-
-      const agent = await createIdleAgent(archiveClient, {
-        cwd: repo.path,
+      const agent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: `workspace-reconnect-${Date.now()}`,
       });
-      agentIds.push(agent.id);
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -229,15 +214,7 @@ test.describe("Workspace navigation regression", () => {
       await expectComposerVisible(page);
     } finally {
       daemonGate.restore();
-      for (const agentId of agentIds) {
-        await archiveAgentFromDaemon(archiveClient, agentId).catch(() => undefined);
-      }
-      for (const workspaceId of workspaceIds) {
-        await archiveLocalWorkspaceFromDaemon(workspaceClient, workspaceId).catch(() => undefined);
-      }
-      await archiveClient.close().catch(() => undefined);
-      await workspaceClient.close().catch(() => undefined);
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 
@@ -269,17 +246,10 @@ test.describe("Workspace navigation regression", () => {
   test("cold workspace URL keeps sidebar workspace navigation functional", async ({ page }) => {
     const serverId = getServerId();
 
-    const workspaceClient = await connectNewWorkspaceDaemonClient();
-    const workspaceIds = new Set<string>();
-    const firstRepo = await createTempGitRepo("workspace-cold-url-a-");
-    const secondRepo = await createTempGitRepo("workspace-cold-url-b-");
+    const firstWorkspace = await seedWorkspace({ repoPrefix: "workspace-cold-url-a-" });
+    const secondWorkspace = await seedWorkspace({ repoPrefix: "workspace-cold-url-b-" });
 
     try {
-      const firstWorkspace = await openProjectViaDaemon(workspaceClient, firstRepo.path);
-      const secondWorkspace = await openProjectViaDaemon(workspaceClient, secondRepo.path);
-      workspaceIds.add(firstWorkspace.workspaceId);
-      workspaceIds.add(secondWorkspace.workspaceId);
-
       await page.goto(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId));
       await waitForSidebarHydration(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId), {
@@ -296,12 +266,8 @@ test.describe("Workspace navigation regression", () => {
         timeout: 30_000,
       });
     } finally {
-      for (const workspaceId of workspaceIds) {
-        await archiveLocalWorkspaceFromDaemon(workspaceClient, workspaceId).catch(() => undefined);
-      }
-      await workspaceClient.close().catch(() => undefined);
-      await secondRepo.cleanup();
-      await firstRepo.cleanup();
+      await secondWorkspace.cleanup();
+      await firstWorkspace.cleanup();
     }
   });
 
@@ -310,28 +276,18 @@ test.describe("Workspace navigation regression", () => {
   }) => {
     const serverId = getServerId();
 
-    const workspaceClient = await connectNewWorkspaceDaemonClient();
-    const archiveClient = await connectArchiveTabDaemonClient();
-    const workspaceIds = new Set<string>();
-    const agentIds: string[] = [];
-    const firstRepo = await createTempGitRepo("workspace-nav-reg-a-");
-    const secondRepo = await createTempGitRepo("workspace-nav-reg-b-");
+    const firstWorkspace = await seedWorkspace({ repoPrefix: "workspace-nav-reg-a-" });
+    const secondWorkspace = await seedWorkspace({ repoPrefix: "workspace-nav-reg-b-" });
 
     try {
-      const firstWorkspace = await openProjectViaDaemon(workspaceClient, firstRepo.path);
-      const secondWorkspace = await openProjectViaDaemon(workspaceClient, secondRepo.path);
-      workspaceIds.add(firstWorkspace.workspaceId);
-      workspaceIds.add(secondWorkspace.workspaceId);
-
-      const firstAgent = await createIdleAgent(archiveClient, {
-        cwd: firstRepo.path,
+      const firstAgent = await createIdleAgent(firstWorkspace.client, {
+        cwd: firstWorkspace.repoPath,
         title: `workspace-nav-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(archiveClient, {
-        cwd: secondRepo.path,
+      const secondAgent = await createIdleAgent(secondWorkspace.client, {
+        cwd: secondWorkspace.repoPath,
         title: `workspace-nav-b-${Date.now()}`,
       });
-      agentIds.push(firstAgent.id, secondAgent.id);
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -476,16 +432,8 @@ test.describe("Workspace navigation regression", () => {
         `workspace-tab-agent_${firstAgent.id}`,
       ]);
     } finally {
-      for (const agentId of agentIds) {
-        await archiveAgentFromDaemon(archiveClient, agentId).catch(() => undefined);
-      }
-      for (const workspaceId of workspaceIds) {
-        await archiveLocalWorkspaceFromDaemon(workspaceClient, workspaceId).catch(() => undefined);
-      }
-      await archiveClient.close().catch(() => undefined);
-      await workspaceClient.close().catch(() => undefined);
-      await secondRepo.cleanup();
-      await firstRepo.cleanup();
+      await secondWorkspace.cleanup();
+      await firstWorkspace.cleanup();
     }
   });
 });
