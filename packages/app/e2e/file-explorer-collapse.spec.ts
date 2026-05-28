@@ -9,39 +9,31 @@ import {
   openFileFromExplorer,
 } from "./helpers/file-explorer";
 import { gotoWorkspace } from "./helpers/launcher";
-import { createTempGitRepo } from "./helpers/workspace";
-import {
-  connectWorkspaceSetupClient,
-  openProjectViaDaemon,
-  type WorkspaceSetupDaemonClient,
-} from "./helpers/workspace-setup";
+import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 
-let tempRepo: { path: string; cleanup: () => Promise<void> };
-let workspaceId: string;
-let seedClient: WorkspaceSetupDaemonClient;
+let workspace: SeededWorkspace;
 
 test.beforeAll(async () => {
-  tempRepo = await createTempGitRepo("file-explorer-collapse-", {
-    files: [
-      { path: "assets/logo.png", content: "image bytes for explorer e2e\n" },
-      { path: "docs/guide.md", content: "# Guide\n" },
-    ],
+  workspace = await seedWorkspace({
+    repoPrefix: "file-explorer-collapse-",
+    repo: {
+      files: [
+        { path: "assets/logo.png", content: "image bytes for explorer e2e\n" },
+        { path: "docs/guide.md", content: "# Guide\n" },
+      ],
+    },
   });
-  seedClient = await connectWorkspaceSetupClient();
-  const workspace = await openProjectViaDaemon(seedClient, tempRepo.path);
-  workspaceId = workspace.id;
 });
 
 test.afterAll(async () => {
-  await seedClient?.close();
-  await tempRepo?.cleanup();
+  await workspace?.cleanup();
 });
 
 test.describe("File explorer collapse", () => {
   test("collapses an opened image file parent folder and still expands other folders", async ({
     page,
   }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
     await openFileExplorer(page);
 
     await expandFolder(page, "assets");

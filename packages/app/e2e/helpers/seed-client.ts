@@ -80,8 +80,11 @@ export interface SeededWorkspace {
   cleanup(): Promise<void>;
 }
 
-export async function seedWorkspace(options: { repoPrefix: string }): Promise<SeededWorkspace> {
-  const repo = await createTempGitRepo(options.repoPrefix);
+export async function seedWorkspace(options: {
+  repoPrefix: string;
+  repo?: Parameters<typeof createTempGitRepo>[1];
+}): Promise<SeededWorkspace> {
+  const repo = await createTempGitRepo(options.repoPrefix, options.repo);
   const client = await connectSeedClient();
   try {
     const opened = await client.openProject(repo.path);
