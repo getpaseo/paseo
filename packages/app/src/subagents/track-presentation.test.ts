@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { SubagentRow } from "./select";
-import { formatHeaderLabel, resolveRowLabel } from "./track-presentation";
+import {
+  buildSubagentRowPresentationData,
+  formatHeaderLabel,
+  resolveRowLabel,
+} from "./track-presentation";
 
 function row(overrides: Partial<SubagentRow> & Pick<SubagentRow, "id">): SubagentRow {
   return {
@@ -82,5 +86,42 @@ describe("resolveRowLabel", () => {
 
   it("returns the trimmed title for real names", () => {
     expect(resolveRowLabel("  Build the thing  ")).toBe("Build the thing");
+  });
+});
+
+describe("buildSubagentRowPresentationData", () => {
+  it("namespaces the key with a subagent prefix", () => {
+    expect(buildSubagentRowPresentationData(row({ id: "child-a" })).key).toBe("subagent_child-a");
+  });
+
+  it("marks the row ready when the title resolves to a real label", () => {
+    const presentation = buildSubagentRowPresentationData(row({ id: "a", title: "Build it" }));
+    expect(presentation.titleState).toBe("ready");
+    expect(presentation.label).toBe("Build it");
+  });
+
+  it("marks the row loading and blanks the label for the placeholder title", () => {
+    const presentation = buildSubagentRowPresentationData(row({ id: "a", title: "new agent" }));
+    expect(presentation.titleState).toBe("loading");
+    expect(presentation.label).toBe("");
+  });
+
+  it("maps a running row to the running status bucket so callers render the synced loader", () => {
+    expect(buildSubagentRowPresentationData(row({ id: "a", status: "running" })).statusBucket).toBe(
+      "running",
+    );
+  });
+
+  it("maps an idle row to the done status bucket so callers render the static provider icon", () => {
+    expect(buildSubagentRowPresentationData(row({ id: "a", status: "idle" })).statusBucket).toBe(
+      "done",
+    );
+  });
+
+  it("ignores requiresAttention on the source row when computing the bucket", () => {
+    expect(
+      buildSubagentRowPresentationData(row({ id: "a", status: "idle", requiresAttention: true }))
+        .statusBucket,
+    ).toBe("done");
   });
 });

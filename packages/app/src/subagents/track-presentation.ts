@@ -1,4 +1,30 @@
+import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
+
+export interface SubagentRowPresentationData {
+  key: string;
+  kind: "agent";
+  label: string;
+  subtitle: string;
+  titleState: "ready" | "loading";
+  statusBucket: SidebarStateBucket | null;
+}
+
+export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
+  const label = resolveRowLabel(row.title);
+  return {
+    key: `subagent_${row.id}`,
+    kind: "agent",
+    label: label ?? "",
+    subtitle: "",
+    titleState: label ? "ready" : "loading",
+    statusBucket: deriveSidebarStateBucket({
+      status: row.status,
+      requiresAttention: false,
+    }),
+  };
+}
 
 export function formatHeaderLabel(rows: readonly SubagentRow[]): string {
   let runningCount = 0;

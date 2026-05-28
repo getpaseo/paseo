@@ -11,9 +11,8 @@ import {
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
-import { formatHeaderLabel, resolveRowLabel } from "./track-presentation";
+import { buildSubagentRowPresentationData, formatHeaderLabel } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -33,18 +32,9 @@ export interface SubagentsTrackProps {
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
-  const label = resolveRowLabel(row.title);
   return {
-    key: `subagent_${row.id}`,
-    kind: "agent",
-    label: label ?? "",
-    subtitle: "",
-    titleState: label ? "ready" : "loading",
+    ...buildSubagentRowPresentationData(row),
     icon: getProviderIcon(row.provider),
-    statusBucket: deriveSidebarStateBucket({
-      status: row.status,
-      requiresAttention: false,
-    }),
   };
 }
 
