@@ -1,7 +1,8 @@
 /**
  * @vitest-environment jsdom
  */
-import { act } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,9 +21,56 @@ const pathnameState = vi.hoisted(() => ({
 vi.mock("expo-router", () => ({
   router: {
     dismissTo: vi.fn(),
+    navigate: vi.fn(),
+    replace: vi.fn(),
   },
   useLocalSearchParams: () => ({}),
   usePathname: () => pathnameState.value,
+}));
+
+vi.mock("react-native-unistyles", () => ({
+  StyleSheet: {
+    create: <T,>(factory: T) =>
+      typeof factory === "function"
+        ? factory({
+            borderRadius: { full: 999, lg: 12, md: 8, sm: 4 },
+            borderWidth: { 1: 1 },
+            colors: {
+              border: "#d0d0d0",
+              foreground: "#111111",
+              foregroundMuted: "#666666",
+              palette: {
+                amber: { 500: "#f59e0b", 700: "#b45309" },
+                blue: { 500: "#3b82f6" },
+                green: { 500: "#22c55e" },
+                purple: { 500: "#a855f7" },
+                red: { 500: "#ef4444" },
+              },
+              popoverForeground: "#111111",
+              surface0: "#ffffff",
+              surface1: "#f7f7f7",
+              surface2: "#eeeeee",
+              surfaceSidebarHover: "#f2f2f2",
+            },
+            colorScheme: "light",
+            fontSize: { xs: 12, sm: 14 },
+            fontWeight: { medium: "500", normal: "400" },
+            iconSize: { md: 20 },
+            shadow: { md: {} },
+            spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24 },
+          })
+        : factory,
+  },
+  useUnistyles: () => ({
+    theme: {},
+    rt: {},
+    breakpoint: undefined,
+  }),
+  withUnistyles: (Component: unknown) => Component,
+  UnistylesRuntime: {
+    setTheme: vi.fn(),
+    themeName: "light",
+  },
 }));
 
 import {
@@ -30,6 +78,7 @@ import {
   type SidebarProjectEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
+import { SidebarWorkspaceList } from "@/components/sidebar-workspace-list";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   getHostRuntimeStore,
@@ -41,6 +90,7 @@ import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-stor
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -324,6 +374,172 @@ async function renderProbe(counts: RenderCounts): Promise<{ root: Root; containe
 function renderSidebarFrame(root: Root, counts: RenderCounts) {
   root.render(<SidebarFrameProbe counts={counts} />);
 }
+
+function createTestQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: Infinity,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  });
+}
+
+function SidebarWorkspaceListHarness({
+  projects,
+  collapsedProjectKeys,
+}: {
+  projects: SidebarProjectEntry[];
+  collapsedProjectKeys: ReadonlySet<string>;
+}): ReactElement {
+  return (
+    <SidebarWorkspaceList
+      projects={projects}
+      serverId={SERVER_ID}
+      collapsedProjectKeys={collapsedProjectKeys}
+      onToggleProjectCollapsed={vi.fn()}
+      shortcutIndexByWorkspaceKey={new Map()}
+    />
+  );
+}
+
+function createSidebarProjectsFixture(): SidebarProjectEntry[] {
+  const workspaces = useSessionStore.getState().sessions[SERVER_ID]?.workspaces;
+  const projectAWorkspaces = ["a-main", "a-one", "a-two"]
+    .map((id) => workspaces?.get(id))
+    .filter((entry): entry is WorkspaceDescriptor => Boolean(entry))
+    .map((entry) => createSidebarWorkspaceEntry({ serverId: SERVER_ID, workspace: entry }));
+
+  return [
+    {
+      projectKey: "project-a",
+      projectName: "Project A",
+      projectKind: "git",
+      iconWorkingDir: "/repo/project-a",
+      workspaces: projectAWorkspaces,
+    },
+  ];
+}
+
+async function renderWorkspaceList(input?: {
+  collapsedProjectKeys?: ReadonlySet<string>;
+}): Promise<{ root: Root; container: HTMLElement; queryClient: QueryClient }> {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const queryClient = createTestQueryClient();
+  const projects = createSidebarProjectsFixture();
+
+  await act(async () => {
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <SidebarWorkspaceListHarness
+          projects={projects}
+          collapsedProjectKeys={input?.collapsedProjectKeys ?? new Set()}
+        />
+      </QueryClientProvider>,
+    );
+  });
+
+  return { root, container, queryClient };
+}
+
+function resetWorkspaceLayoutStore(): void {
+  useWorkspaceLayoutStore.setState({
+    layoutByWorkspace: {},
+    splitSizesByWorkspace: {},
+    pinnedAgentIdsByWorkspace: {},
+    hiddenAgentIdsByWorkspace: {},
+    focusRestorationByWorkspace: {},
+  });
+}
+
+describe("sidebar workspace row actions", () => {
+  let root: Root | null = null;
+  let container: HTMLElement | null = null;
+  let queryClient: QueryClient | null = null;
+
+  beforeEach(() => {
+    initializeSidebarState(createWorkspaces());
+    resetWorkspaceLayoutStore();
+  });
+
+  afterEach(() => {
+    if (root) {
+      act(() => {
+        root?.unmount();
+      });
+    }
+    root = null;
+    container?.remove();
+    container = null;
+    queryClient?.clear();
+    queryClient = null;
+    act(() => {
+      pathnameState.value = "/";
+      getHostRuntimeStore().syncHosts([]);
+      useSessionStore.getState().clearSession(SERVER_ID);
+      useSidebarOrderStore.setState({
+        projectOrderByServerId: {},
+        workspaceOrderByServerAndProject: {},
+      });
+      resetWorkspaceLayoutStore();
+    });
+  });
+
+  it("shows the new-agent action only on worktree rows", async () => {
+    ({ root, container, queryClient } = await renderWorkspaceList());
+
+    expect(
+      container.querySelector(
+        '[data-testid="sidebar-workspace-new-agent-sidebar-render-count:a-one"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="sidebar-workspace-new-agent-sidebar-render-count:a-main"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid^="sidebar-project-new-worktree-"]'),
+    ).not.toBeNull();
+  });
+
+  it("opens a fresh draft tab for the selected worktree action", async () => {
+    ({ root, container, queryClient } = await renderWorkspaceList());
+
+    const row = container.querySelector(
+      '[data-testid="sidebar-workspace-row-sidebar-render-count:a-one"]',
+    );
+    if (!(row instanceof HTMLElement) || !(row.parentElement instanceof HTMLElement)) {
+      throw new Error("Expected worktree row to render");
+    }
+
+    await act(async () => {
+      fireEvent.pointerEnter(row.parentElement);
+    });
+
+    const button = container.querySelector(
+      '[data-testid="sidebar-workspace-new-agent-sidebar-render-count:a-one"]',
+    );
+    if (!(button instanceof HTMLElement)) {
+      throw new Error("Expected worktree new-agent button to render");
+    }
+
+    await act(async () => {
+      button.click();
+    });
+
+    const tabs = useWorkspaceLayoutStore.getState().getWorkspaceTabs(`${SERVER_ID}:a-one`);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.target.kind).toBe("draft");
+    expect(tabs[0]?.target.kind === "draft" ? tabs[0].target.draftId : null).not.toBe("new");
+  });
+});
 
 describe("sidebar workspace render isolation", () => {
   let root: Root | null = null;

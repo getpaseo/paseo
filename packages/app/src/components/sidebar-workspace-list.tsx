@@ -28,6 +28,7 @@ import {
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { type GestureType } from "react-native-gesture-handler";
@@ -144,6 +145,7 @@ const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedFolderPlus = withUnistyles(FolderPlus);
+const ThemedPlus = withUnistyles(Plus);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
@@ -238,6 +240,7 @@ interface WorkspaceRowInnerProps {
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onCreateDraftTab?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -635,6 +638,7 @@ function WorkspaceRowRightGroup({
   workspace,
   isHovered,
   isTouchPlatform,
+  isCompact,
   showScriptsIcon,
   hasRunningService,
   isCreating,
@@ -648,10 +652,12 @@ function WorkspaceRowRightGroup({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onCreateDraftTab,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
   isTouchPlatform: boolean;
+  isCompact: boolean;
   showScriptsIcon: boolean;
   hasRunningService: boolean;
   isCreating: boolean;
@@ -665,8 +671,12 @@ function WorkspaceRowRightGroup({
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onCreateDraftTab?: () => void;
 }) {
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
+  const showRowActions = isHovered || isTouchPlatform || isCompact;
+  const canCreateDraftTab = Boolean(workspace.workspaceKind === "worktree" && onCreateDraftTab);
+  const showCreateDraftTab = canCreateDraftTab && showRowActions;
   return (
     <View style={styles.workspaceRowRight}>
       {showScriptsIcon ? (
@@ -679,6 +689,14 @@ function WorkspaceRowRightGroup({
         </View>
       ) : null}
       {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
+      {canCreateDraftTab && onCreateDraftTab ? (
+        <NewWorkspaceAgentButton
+          workspaceName={workspace.name}
+          onPress={onCreateDraftTab}
+          visible={showCreateDraftTab}
+          testID={`sidebar-workspace-new-agent-${workspace.workspaceKey}`}
+        />
+      ) : null}
       {showKebab && onArchive ? (
         <WorkspaceKebabMenu
           workspaceKey={workspace.workspaceKey}
@@ -703,6 +721,61 @@ function WorkspaceRowRightGroup({
           <Text style={styles.shortcutBadgeText}>{shortcutNumber}</Text>
         </View>
       ) : null}
+    </View>
+  );
+}
+
+function NewWorkspaceAgentButton({
+  workspaceName,
+  onPress,
+  visible,
+  testID,
+}: {
+  workspaceName: string;
+  onPress: () => void;
+  visible: boolean;
+  testID: string;
+}) {
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.workspaceIconActionButton,
+      !visible && styles.workspaceIconActionButtonHidden,
+      visible && (Boolean(hovered) || pressed) && styles.workspaceIconActionButtonHovered,
+    ],
+    [visible],
+  );
+
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onPress();
+    },
+    [onPress],
+  );
+
+  return (
+    <View style={styles.workspaceTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild disabled={!visible}>
+          <Pressable
+            style={pressableStyle}
+            onPress={handlePress}
+            accessibilityRole={platformIsWeb ? undefined : "button"}
+            accessibilityLabel={`New agent tab in ${workspaceName}`}
+            testID={testID}
+          >
+            {({ hovered, pressed }) => (
+              <ThemedPlus
+                size={14}
+                uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
+              />
+            )}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <Text style={styles.projectActionTooltipText}>New agent tab</Text>
+        </TooltipContent>
+      </Tooltip>
     </View>
   );
 }
@@ -1341,9 +1414,10 @@ function WorkspaceRowInner({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onCreateDraftTab,
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
-  const _isCompact = useIsCompactFormFactor();
+  const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
   const isTouchPlatform = platformIsNative;
   const prHint = workspace.prHint;
@@ -1432,6 +1506,7 @@ function WorkspaceRowInner({
               workspace={workspace}
               isHovered={isHovered}
               isTouchPlatform={isTouchPlatform}
+              isCompact={isCompact}
               showScriptsIcon={showScriptsIcon}
               hasRunningService={hasRunningService}
               isCreating={isCreating}
@@ -1445,6 +1520,7 @@ function WorkspaceRowInner({
               onCopyBranchName={onCopyBranchName}
               onCopyPath={onCopyPath}
               onRename={onRename}
+              onCreateDraftTab={onCreateDraftTab}
             />
           </View>
           {prHint ? (
@@ -1664,6 +1740,14 @@ function WorkspaceRowWithMenu({
 
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
 
+  const handleCreateDraftTab = useCallback(() => {
+    navigateToPreparedWorkspaceTab({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+      target: { kind: "draft", draftId: "new" },
+    });
+  }, [workspace.serverId, workspace.workspaceId]);
+
   useKeyboardActionHandler({
     handlerId: `worktree-archive-${workspace.workspaceKey}`,
     actions: ["worktree.archive"],
@@ -1700,6 +1784,7 @@ function WorkspaceRowWithMenu({
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={canCopyBranchName ? handleOpenRename : undefined}
+        onCreateDraftTab={isWorktree ? handleCreateDraftTab : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
       <AdaptiveRenameModal
@@ -2827,6 +2912,27 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    flexShrink: 0,
+  },
+  workspaceIconActionButton: {
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  workspaceIconActionButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  workspaceIconActionButtonHidden: {
+    opacity: 0,
+  },
+  workspaceTrailingControlSlot: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
     flexShrink: 0,
   },
   workspaceRowHovered: {
