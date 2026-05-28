@@ -16,12 +16,12 @@ import {
   serializeReviewDraftState,
   setActiveModeInState,
   updateCommentInState,
-} from "@/review/store.pure";
+} from "@/review/state";
 import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
-export type { ReviewDraftComment, ReviewDraftMode, ReviewDraftSide } from "@/review/store.pure";
+export type { ReviewDraftComment, ReviewDraftMode, ReviewDraftSide } from "@/review/state";
 
 const STORE_VERSION = 1;
 const CONTEXT_RADIUS = 3;

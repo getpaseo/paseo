@@ -14,7 +14,7 @@ import {
   type ReviewDraftStoreState,
   setActiveModeInState,
   updateCommentInState,
-} from "./store.pure";
+} from "./state";
 
 function emptyState(): ReviewDraftStoreState {
   return { drafts: {}, activeModesByScope: {} };
