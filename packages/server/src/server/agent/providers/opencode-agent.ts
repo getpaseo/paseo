@@ -37,6 +37,8 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type ResolveAgentCreateConfigInput,
+  type ResolveAgentCreateConfigResult,
   type ListModelsOptions,
   type ListModesOptions,
   type ListPersistedAgentsOptions,
@@ -46,9 +48,9 @@ import {
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
-  DEFAULT_PROVIDER_CREATE_POLICY,
-  type ProviderCreatePolicy,
-} from "../provider-create-policy.js";
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "../create-agent-mode.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
@@ -125,41 +127,44 @@ function withOpenCodeAutoAcceptFeature(
   };
 }
 
-export const OPENCODE_CREATE_POLICY: ProviderCreatePolicy = {
-  resolve(input) {
-    const legacyFullAccess = input.requestedMode === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID;
-    const inheritsUnattended =
-      input.requestedMode === undefined && input.parent?.isUnattended === true;
-    const requestedMode = legacyFullAccess ? OPENCODE_BUILD_MODE_ID : input.requestedMode;
-    const featureValues =
-      legacyFullAccess ||
-      (inheritsUnattended && input.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === undefined)
-        ? withOpenCodeAutoAcceptFeature(input.featureValues, true)
-        : input.featureValues;
+function resolveOpenCodeCreateConfig(
+  input: ResolveAgentCreateConfigInput,
+): ResolveAgentCreateConfigResult {
+  const legacyFullAccess = input.requestedMode === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID;
+  const inheritsUnattended =
+    input.requestedMode === undefined && input.parent?.isUnattended === true;
+  const requestedMode = legacyFullAccess ? OPENCODE_BUILD_MODE_ID : input.requestedMode;
+  const featureValues =
+    legacyFullAccess ||
+    (inheritsUnattended && input.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === undefined)
+      ? withOpenCodeAutoAcceptFeature(input.featureValues, true)
+      : input.featureValues;
 
-    if (inheritsUnattended && requestedMode === undefined) {
-      return { modeId: OPENCODE_BUILD_MODE_ID, featureValues };
-    }
+  if (inheritsUnattended && requestedMode === undefined) {
+    return { modeId: OPENCODE_BUILD_MODE_ID, featureValues };
+  }
 
-    const resolved = DEFAULT_PROVIDER_CREATE_POLICY.resolve({
-      ...input,
-      requestedMode,
-      featureValues,
-    });
-    return { ...resolved, featureValues };
-  },
-  isUnattended(input) {
-    return (
-      DEFAULT_PROVIDER_CREATE_POLICY.isUnattended(input) ||
-      input.config.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true ||
-      input.features?.some(
-        (feature) =>
-          feature.id === OPENCODE_AUTO_ACCEPT_FEATURE_ID &&
-          (feature.value === true || feature.value === "true"),
-      ) === true
-    );
-  },
-};
+  const resolved = resolveDefaultAgentCreateConfig({
+    ...input,
+    requestedMode,
+    featureValues,
+  });
+  return { ...resolved, featureValues };
+}
+
+function isOpenCodeCreateConfigUnattended(
+  input: Parameters<typeof isDefaultAgentCreateConfigUnattended>[0],
+): boolean {
+  return (
+    isDefaultAgentCreateConfigUnattended(input) ||
+    input.config.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true ||
+    input.features?.some(
+      (feature) =>
+        feature.id === OPENCODE_AUTO_ACCEPT_FEATURE_ID &&
+        (feature.value === true || feature.value === "true"),
+    ) === true
+  );
+}
 
 function buildOpenCodeAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
   return {
@@ -1197,7 +1202,8 @@ class ProductionOpenCodeRuntime implements OpenCodeRuntime {
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
-  readonly createPolicy = OPENCODE_CREATE_POLICY;
+  readonly resolveCreateConfig = resolveOpenCodeCreateConfig;
+  readonly isCreateConfigUnattended = isOpenCodeCreateConfigUnattended;
 
   private readonly runtime: OpenCodeRuntime;
   private readonly logger: Logger;

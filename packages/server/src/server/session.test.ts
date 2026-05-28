@@ -21,7 +21,10 @@ import type {
   ListModelsOptions,
 } from "./agent/agent-sdk-types.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
-import { DEFAULT_PROVIDER_CREATE_POLICY } from "./agent/provider-create-policy.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "./agent/create-agent-mode.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
 import type {
@@ -161,7 +164,8 @@ function createTestProviderDefinition(overrides?: Partial<ProviderDefinition>): 
     enabled: true,
     defaultModeId: null,
     modes: [],
-    createPolicy: DEFAULT_PROVIDER_CREATE_POLICY,
+    resolveCreateConfig: resolveDefaultAgentCreateConfig,
+    isCreateConfigUnattended: isDefaultAgentCreateConfigUnattended,
     createClient: () =>
       ({
         provider: "codex",

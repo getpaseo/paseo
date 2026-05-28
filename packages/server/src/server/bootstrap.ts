@@ -99,8 +99,12 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
-import { shutdownProviders } from "./agent/provider-registry.js";
-import { ProviderRuntime } from "./agent/provider-runtime.js";
+import {
+  buildProviderRegistry,
+  createClientsFromRegistry,
+  shutdownProviders,
+} from "./agent/provider-registry.js";
+import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
@@ -513,16 +517,20 @@ export async function createPaseoDaemon(
       github,
     },
   });
-  const providerRuntime = new ProviderRuntime(logger.child({ module: "provider-runtime" }), {
+  const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
+  const providerRegistry = buildProviderRegistry(providerSnapshotLogger, {
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,
     isDev: config.isDev === true,
   });
-  const providerRegistry = providerRuntime.getRegistry();
+  const providerSnapshotManager = new ProviderSnapshotManager(
+    providerRegistry,
+    providerSnapshotLogger,
+  );
   const agentManager = new AgentManager({
     clients: {
-      ...providerRuntime.createClients(logger),
+      ...createClientsFromRegistry(providerRegistry, logger),
       ...config.agentClients,
     },
     providerDefinitions: providerRegistry,
@@ -669,7 +677,7 @@ export async function createPaseoDaemon(
         getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
         scheduleService,
         providerRegistry,
-        providerCatalog: providerRuntime.catalog,
+        providerSnapshotManager,
         github,
         workspaceGitService,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -962,7 +970,8 @@ export async function createPaseoDaemon(
                 publicUseTls: relayPublicUseTls,
               },
             },
-            providerRuntime,
+            providerRegistry,
+            providerSnapshotManager,
           );
 
           if (relayEnabled) {

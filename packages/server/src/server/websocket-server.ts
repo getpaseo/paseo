@@ -34,7 +34,12 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
-import { ProviderRuntime } from "./agent/provider-runtime.js";
+import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import {
+  buildProviderRegistry,
+  createClientsFromRegistry,
+  type ProviderDefinition,
+} from "./agent/provider-registry.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -375,7 +380,8 @@ export class VoiceAssistantWebSocketServer {
   private agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private isDev!: boolean;
-  private readonly providerRuntime: ProviderRuntime;
+  private providerRegistry: Record<AgentProvider, ProviderDefinition>;
+  private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
@@ -437,7 +443,8 @@ export class VoiceAssistantWebSocketServer {
         publicUseTls: boolean;
       };
     },
-    providerRuntime?: ProviderRuntime,
+    providerRegistry?: Record<AgentProvider, ProviderDefinition>,
+    providerSnapshotManager?: ProviderSnapshotManager,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -481,15 +488,18 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost,
       resolveScriptHealth,
     });
-    const providerRuntimeLogger = this.logger.child({ module: "provider-runtime" });
-    this.providerRuntime =
-      providerRuntime ??
-      new ProviderRuntime(providerRuntimeLogger, {
+    const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
+    this.providerRegistry =
+      providerRegistry ??
+      buildProviderRegistry(providerSnapshotLogger, {
         runtimeSettings: this.agentProviderRuntimeSettings,
         providerOverrides: this.providerOverrides,
         workspaceGitService: this.workspaceGitService,
         isDev: this.isDev,
       });
+    this.providerSnapshotManager =
+      providerSnapshotManager ??
+      new ProviderSnapshotManager(this.providerRegistry, providerSnapshotLogger);
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
@@ -502,15 +512,18 @@ export class VoiceAssistantWebSocketServer {
         this.providerOverrides,
         config.providers,
       );
-      this.providerRuntime.replace({
+      this.providerRegistry = buildProviderRegistry(providerSnapshotLogger, {
         runtimeSettings: this.agentProviderRuntimeSettings,
         providerOverrides: this.providerOverrides,
         workspaceGitService: this.workspaceGitService,
         isDev: this.isDev,
       });
-      const registry = this.providerRuntime.getRegistry();
-      const clients = this.providerRuntime.createClients(providerRuntimeLogger);
-      this.agentManager.updateProviderRegistry({ providerDefinitions: registry, clients });
+      const clients = createClientsFromRegistry(this.providerRegistry, providerSnapshotLogger);
+      this.providerSnapshotManager.replaceRegistry(this.providerRegistry);
+      this.agentManager.updateProviderRegistry({
+        providerDefinitions: this.providerRegistry,
+        clients,
+      });
       this.broadcastDaemonConfigChanged(config);
     });
 
@@ -753,7 +766,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     await Promise.all(cleanupPromises);
-    this.providerRuntime.destroy();
+    this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
     this.workspaceGitService.dispose();
     this.pendingConnections.clear();
@@ -908,8 +921,7 @@ export class VoiceAssistantWebSocketServer {
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
-      providerSnapshotManager: this.providerRuntime.snapshots,
-      providerCatalog: this.providerRuntime.catalog,
+      providerSnapshotManager: this.providerSnapshotManager,
       scriptRouteStore: this.scriptRouteStore ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,

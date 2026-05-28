@@ -25,9 +25,12 @@ import type {
 import type { AgentStorage } from "../agent-storage.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type { ProviderDefinition } from "../provider-registry.js";
-import type { ProviderCatalog } from "../provider-catalog.js";
-import { DEFAULT_PROVIDER_CREATE_POLICY } from "../provider-create-policy.js";
+import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "../create-agent-mode.js";
 import { resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
 import {
@@ -55,7 +58,7 @@ interface CreateAgentCommandDependencies {
   >;
   terminalManager?: TerminalManager | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
-  providerCatalog?: ProviderCatalog | null;
+  providerSnapshotManager?: ProviderSnapshotManager | null;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
 }
 
@@ -250,22 +253,23 @@ async function resolveMcpCreateAgent(
     initialPrompt: input.initialPrompt,
   });
 
-  const { modeId: resolvedMode, featureValues: resolvedFeatures } = dependencies.providerCatalog
-    ? await dependencies.providerCatalog.resolveCreate({
-        cwd: resolvedCwd,
-        provider,
-        requestedMode: input.mode,
-        featureValues: input.features,
-        parent: parentAgent,
-      })
-    : {
-        ...resolveCreateFromRegistry(dependencies, {
+  const { modeId: resolvedMode, featureValues: resolvedFeatures } =
+    dependencies.providerSnapshotManager
+      ? await dependencies.providerSnapshotManager.resolveCreateConfig({
+          cwd: resolvedCwd,
           provider,
           requestedMode: input.mode,
           featureValues: input.features,
           parent: parentAgent,
-        }),
-      };
+        })
+      : {
+          ...resolveCreateFromRegistry(dependencies, {
+            provider,
+            requestedMode: input.mode,
+            featureValues: input.features,
+            parent: parentAgent,
+          }),
+        };
 
   const labels = mergeLabels(
     input.callerAgentId,
@@ -343,9 +347,8 @@ function resolveCreateFromRegistry(
   },
 ): { modeId: string | undefined; featureValues: Record<string, unknown> | undefined } {
   const availableModes = getProviderModes(dependencies, input.provider) ?? [];
-  const providerPolicy =
-    dependencies.providerRegistry?.[input.provider]?.createPolicy ?? DEFAULT_PROVIDER_CREATE_POLICY;
-  return providerPolicy.resolve({
+  const definition = dependencies.providerRegistry?.[input.provider];
+  return (definition?.resolveCreateConfig ?? resolveDefaultAgentCreateConfig)({
     provider: input.provider,
     requestedMode: input.requestedMode,
     featureValues: input.featureValues,
@@ -359,13 +362,11 @@ function resolveParentFromRegistry(
   parent: ManagedAgent,
 ) {
   const availableModes = getProviderModes(dependencies, parent.provider) ?? [];
-  const providerPolicy =
-    dependencies.providerRegistry?.[parent.provider]?.createPolicy ??
-    DEFAULT_PROVIDER_CREATE_POLICY;
+  const definition = dependencies.providerRegistry?.[parent.provider];
   return {
     provider: parent.provider,
     modeId: parent.currentModeId,
-    isUnattended: providerPolicy.isUnattended({
+    isUnattended: (definition?.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended)({
       modeId: parent.currentModeId,
       config: parent.config,
       features: parent.features,

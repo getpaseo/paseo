@@ -13,10 +13,11 @@ import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { DEFAULT_PROVIDER_CREATE_POLICY } from "./provider-create-policy.js";
-import { ProviderCatalog } from "./provider-catalog.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "./create-agent-mode.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
-import { OPENCODE_CREATE_POLICY } from "./providers/opencode-agent.js";
 import {
   AgentListItemPayloadSchema,
   AgentSnapshotPayloadSchema,
@@ -228,7 +229,8 @@ function createProviderDefinition(overrides: Partial<ProviderDefinition>): Provi
     enabled: true,
     defaultModeId: "default",
     modes,
-    createPolicy: DEFAULT_PROVIDER_CREATE_POLICY,
+    resolveCreateConfig: resolveDefaultAgentCreateConfig,
+    isCreateConfigUnattended: isDefaultAgentCreateConfigUnattended,
     createClient: vi.fn(() => ({
       provider,
       capabilities: {
@@ -254,15 +256,14 @@ function createProviderDefinition(overrides: Partial<ProviderDefinition>): Provi
   };
 }
 
-function createProviderCatalog(
+function createProviderSnapshotManager(
   registry: Record<string, ProviderDefinition>,
   logger = createTestLogger(),
-): ProviderCatalog {
-  const snapshots = new ProviderSnapshotManager(registry, logger);
-  return new ProviderCatalog(snapshots, () => registry);
+): ProviderSnapshotManager {
+  return new ProviderSnapshotManager(registry, logger);
 }
 
-function createOpenCodePolicyRegistry(): Record<string, ProviderDefinition> {
+function createOpenCodeCreateConfigRegistry(): Record<string, ProviderDefinition> {
   return {
     claude: createProviderDefinition({
       id: "claude",
@@ -282,7 +283,25 @@ function createOpenCodePolicyRegistry(): Record<string, ProviderDefinition> {
         { id: "build", label: "Build", description: "Can edit" },
         { id: "plan", label: "Plan", description: "Read-only" },
       ],
-      createPolicy: OPENCODE_CREATE_POLICY,
+      resolveCreateConfig(input) {
+        if (input.requestedMode === "full-access") {
+          return { modeId: "build", featureValues: { ...input.featureValues, auto_accept: true } };
+        }
+        if (input.requestedMode === undefined && input.parent?.isUnattended) {
+          return { modeId: "build", featureValues: { ...input.featureValues, auto_accept: true } };
+        }
+        return resolveDefaultAgentCreateConfig(input);
+      },
+      isCreateConfigUnattended(input) {
+        return (
+          isDefaultAgentCreateConfigUnattended(input) ||
+          input.config.featureValues?.auto_accept === true ||
+          input.features?.some(
+            (feature) =>
+              feature.id === "auto_accept" && (feature.value === true || feature.value === "true"),
+          ) === true
+        );
+      },
     }),
   };
 }
@@ -510,7 +529,7 @@ describe("create_agent MCP tool", () => {
 
   it("requires a concise title no longer than 60 characters", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const providerRegistry = createOpenCodePolicyRegistry();
+    const providerRegistry = createOpenCodeCreateConfigRegistry();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -551,7 +570,7 @@ describe("create_agent MCP tool", () => {
 
   it("requires initialPrompt", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const providerRegistry = createOpenCodePolicyRegistry();
+    const providerRegistry = createOpenCodeCreateConfigRegistry();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -584,7 +603,7 @@ describe("create_agent MCP tool", () => {
       config: { title: "Feature test", featureValues: { fast_mode: true } },
     } as ManagedAgent);
 
-    const providerRegistry = createOpenCodePolicyRegistry();
+    const providerRegistry = createOpenCodeCreateConfigRegistry();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -1548,7 +1567,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
-      providerRegistry: createOpenCodePolicyRegistry(),
+      providerRegistry: createOpenCodeCreateConfigRegistry(),
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1655,7 +1674,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1685,7 +1704,7 @@ describe("create_agent MCP tool", () => {
       availableModes: [],
       config: { title: "Child", featureValues: { auto_accept: true } },
     } as ManagedAgent);
-    const providerRegistry = createOpenCodePolicyRegistry();
+    const providerRegistry = createOpenCodeCreateConfigRegistry();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -1730,7 +1749,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
-      providerRegistry: createOpenCodePolicyRegistry(),
+      providerRegistry: createOpenCodeCreateConfigRegistry(),
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1760,7 +1779,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
-      providerRegistry: createOpenCodePolicyRegistry(),
+      providerRegistry: createOpenCodeCreateConfigRegistry(),
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1798,7 +1817,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
-      providerRegistry: createOpenCodePolicyRegistry(),
+      providerRegistry: createOpenCodeCreateConfigRegistry(),
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -2491,7 +2510,7 @@ describe("provider listing MCP tool", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "list_providers");
@@ -2537,7 +2556,7 @@ describe("provider listing MCP tool", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "list_providers");
@@ -2573,7 +2592,7 @@ describe("provider listing MCP tool", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "list_providers");
@@ -2610,7 +2629,7 @@ describe("provider listing MCP tool", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "list_providers");
@@ -2654,7 +2673,7 @@ describe("provider MCP tools", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "inspect_provider");
@@ -2722,7 +2741,7 @@ describe("provider MCP tools", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "list_models");
@@ -2755,7 +2774,7 @@ describe("provider MCP tools", () => {
       agentManager,
       agentStorage,
       providerRegistry,
-      providerCatalog: createProviderCatalog(providerRegistry, logger),
+      providerSnapshotManager: createProviderSnapshotManager(providerRegistry, logger),
       logger,
     });
     const tool = registeredTool(server, "inspect_provider");

@@ -5,7 +5,13 @@ import { resolve } from "node:path";
 import type { Logger } from "pino";
 
 import { withTimeout } from "../../utils/promise-timeout.js";
-import type { AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
+import type {
+  AgentMode,
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderSnapshotEntry,
+} from "./agent-sdk-types.js";
+import type { ManagedAgent } from "./agent-manager.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
@@ -17,6 +23,31 @@ interface ProviderSnapshotManagerOptions {
 interface ProviderSnapshotRefreshOptions {
   cwd: string;
   providers?: AgentProvider[];
+}
+
+interface ProviderSnapshotReadOptions {
+  cwd?: string | null;
+  providers?: AgentProvider[];
+  wait?: boolean;
+}
+
+interface ProviderSnapshotProviderOptions {
+  cwd?: string | null;
+  provider: AgentProvider;
+  wait?: boolean;
+}
+
+interface ResolveProviderCreateConfigOptions {
+  cwd?: string | null;
+  provider: AgentProvider;
+  requestedMode: string | undefined;
+  featureValues: Record<string, unknown> | undefined;
+  parent: ManagedAgent | null;
+}
+
+export interface ResolvedProviderCreateConfig {
+  modeId: string | undefined;
+  featureValues: Record<string, unknown> | undefined;
 }
 interface ProviderLoadOptions {
   cwd: string;
@@ -118,6 +149,58 @@ export class ProviderSnapshotManager {
     await this.refreshSnapshotForCwd(options);
   }
 
+  listRegisteredProviderIds(): AgentProvider[] {
+    return this.getProviderIds();
+  }
+
+  async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
+    const cwd = resolveSnapshotCwd(input.cwd);
+    if (input.wait) {
+      await this.warmUpSnapshotForCwd({ cwd, providers: input.providers });
+    }
+    const providerFilter = input.providers ? new Set(input.providers) : null;
+    const entries = this.getSnapshot(cwd);
+    return providerFilter ? entries.filter((entry) => providerFilter.has(entry.provider)) : entries;
+  }
+
+  async getProvider(input: ProviderSnapshotProviderOptions): Promise<ProviderSnapshotEntry> {
+    const entry = (await this.listProviders({ ...input, providers: [input.provider] })).find(
+      (candidate) => candidate.provider === input.provider,
+    );
+    if (!entry) {
+      throw new Error(`Provider ${input.provider} is not configured`);
+    }
+    return entry;
+  }
+
+  async listModels(input: ProviderSnapshotProviderOptions): Promise<AgentModelDefinition[]> {
+    const entry = await this.getReadyProvider(input);
+    return entry.models ?? [];
+  }
+
+  async listModes(input: ProviderSnapshotProviderOptions): Promise<AgentMode[]> {
+    const entry = await this.getReadyProvider(input);
+    return entry.modes ?? [];
+  }
+
+  async resolveCreateConfig(
+    input: ResolveProviderCreateConfigOptions,
+  ): Promise<ResolvedProviderCreateConfig> {
+    const entry = await this.getReadyProvider({
+      cwd: input.cwd,
+      provider: input.provider,
+      wait: true,
+    });
+    const definition = this.requireProvider(input.provider);
+    return definition.resolveCreateConfig({
+      provider: input.provider,
+      requestedMode: input.requestedMode,
+      featureValues: input.featureValues,
+      parent: input.parent ? this.resolveParent(input.parent) : null,
+      availableModes: entry.modes ?? [],
+    });
+  }
+
   on(event: "change", listener: ProviderSnapshotChangeListener): this {
     this.events.on(event, listener);
     return this;
@@ -143,6 +226,44 @@ export class ProviderSnapshotManager {
       this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
       this.emitChange(cwd);
     }
+  }
+
+  private resolveParent(parent: ManagedAgent) {
+    const definition = this.requireProvider(parent.provider);
+    return {
+      provider: parent.provider,
+      modeId: parent.currentModeId,
+      isUnattended: definition.isCreateConfigUnattended({
+        modeId: parent.currentModeId,
+        config: parent.config,
+        features: parent.features,
+        availableModes: parent.availableModes,
+      }),
+    };
+  }
+
+  private async getReadyProvider(
+    input: ProviderSnapshotProviderOptions,
+  ): Promise<ProviderSnapshotEntry> {
+    const entry = await this.getProvider(input);
+    if (!entry.enabled) {
+      throw new Error(`Provider '${entry.provider}' is disabled`);
+    }
+    if (entry.status === "ready") {
+      return entry;
+    }
+    if (entry.status === "error") {
+      throw new Error(entry.error ?? `Failed to load provider '${entry.provider}'`);
+    }
+    throw new Error(`Provider '${entry.provider}' is not available`);
+  }
+
+  private requireProvider(provider: AgentProvider): ProviderDefinition {
+    const definition = this.providerRegistry[provider];
+    if (!definition) {
+      throw new Error(`Provider ${provider} is not configured`);
+    }
+    return definition;
   }
 
   private createLoadingEntries(): Map<AgentProvider, ProviderSnapshotEntry> {

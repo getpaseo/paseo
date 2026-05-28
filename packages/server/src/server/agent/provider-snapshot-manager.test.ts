@@ -13,7 +13,10 @@ import type {
   ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { DEFAULT_PROVIDER_CREATE_POLICY } from "./provider-create-policy.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "./create-agent-mode.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 
 interface Deferred<T> {
@@ -1317,7 +1320,8 @@ function createMockProvider(options: MockProviderOptions): MockProviderHandle {
     description: options.description ?? `${options.provider} test provider`,
     defaultModeId: options.defaultModeId ?? null,
     modes: options.modes ?? [],
-    createPolicy: DEFAULT_PROVIDER_CREATE_POLICY,
+    resolveCreateConfig: resolveDefaultAgentCreateConfig,
+    isCreateConfigUnattended: isDefaultAgentCreateConfigUnattended,
     createClient: () => {
       createClient();
       return {
