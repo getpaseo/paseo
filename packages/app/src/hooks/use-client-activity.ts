@@ -9,7 +9,7 @@ import {
   createClientActivityTracker,
   DESKTOP_IDLE_POLL_INTERVAL_MS,
   HEARTBEAT_INTERVAL_MS,
-} from "./use-client-activity.pure";
+} from "./client-activity-tracker";
 
 interface ClientActivityOptions {
   client: DaemonClient;

@@ -6,7 +6,7 @@ import {
   type ClientActivityTrackerInput,
   type HeartbeatClient,
   type HeartbeatPayload,
-} from "./use-client-activity.pure";
+} from "./client-activity-tracker";
 
 const START_MS = new Date("2026-04-19T10:00:00.000Z").getTime();
 
