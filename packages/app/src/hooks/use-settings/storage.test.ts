@@ -9,8 +9,8 @@ import {
   parseTerminalScrollbackLines,
   saveAppSettings,
   type SettingsDeps,
-} from "./use-settings.pure";
-import { createFakeDesktopBridge, createInMemoryKeyValueStorage } from "./use-settings.test-utils";
+} from "./storage";
+import { createFakeDesktopBridge, createInMemoryKeyValueStorage } from "./fakes";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 

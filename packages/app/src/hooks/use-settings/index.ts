@@ -29,7 +29,7 @@ import {
   type ServiceUrlBehavior,
   type Settings,
   type SettingsDeps,
-} from "./use-settings.pure";
+} from "./storage";
 
 export {
   APP_SETTINGS_KEY,
