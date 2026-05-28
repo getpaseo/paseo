@@ -21,7 +21,10 @@ export interface NavigateToAgentDeps {
   navigateToPreparedWorkspaceTab: (input: NavigateToPreparedWorkspaceTabInput) => string;
 }
 
-export function navigateToAgent(input: NavigateToAgentInput, deps: NavigateToAgentDeps): string {
+export function resolveNavigateToAgent(
+  input: NavigateToAgentInput,
+  deps: NavigateToAgentDeps,
+): string {
   const { workspaces, agentCwd } = deps.readAgentNavTarget({
     serverId: input.serverId,
     agentId: input.agentId,

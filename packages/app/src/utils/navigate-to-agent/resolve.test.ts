@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
-  navigateToAgent,
+  resolveNavigateToAgent,
   type AgentNavTarget,
   type NavigateToAgentDeps,
-} from "@/utils/navigate-to-agent.pure";
+} from "@/utils/navigate-to-agent/resolve";
 import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/workspace-navigation.pure";
 
 const SERVER_ID = "server-1";
@@ -57,14 +57,17 @@ function createFakeNavigators(target: AgentNavTarget): {
   };
 }
 
-describe("navigateToAgent", () => {
+describe("resolveNavigateToAgent", () => {
   it("opens the resolved workspace tab when the agent's cwd matches a workspace", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
       workspaces: [createWorkspace()],
       agentCwd: "/repo/worktree",
     });
 
-    const route = navigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID, pin: true }, deps);
+    const route = resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, pin: true },
+      deps,
+    );
 
     expect(route).toBe("/h/server-1/workspace/workspace-1");
     expect(hostNavigations).toEqual([]);
@@ -85,7 +88,7 @@ describe("navigateToAgent", () => {
       agentCwd: null,
     });
 
-    const route = navigateToAgent({ serverId: SERVER_ID, agentId: "missing-agent" }, deps);
+    const route = resolveNavigateToAgent({ serverId: SERVER_ID, agentId: "missing-agent" }, deps);
 
     expect(route).toBe("/h/server-1/agent/missing-agent");
     expect(hostNavigations).toEqual([{ route: "/h/server-1/agent/missing-agent" }]);
