@@ -67,8 +67,28 @@ export async function connectArchiveTabDaemonClient(): Promise<ArchiveTabDaemonC
   return connectDaemonClient<ArchiveTabDaemonClient>({ clientIdPrefix: "app-e2e-archive-tab" });
 }
 
+/**
+ * The slice of a daemon client `createIdleAgent` needs: spawn an agent and await
+ * its idle upsert. Both the archive-tab client and the shared seed client
+ * satisfy it, so a spec can seed an idle agent from whichever it already holds.
+ */
+export interface IdleAgentSeedClient {
+  createAgent(options: {
+    provider: string;
+    model: string;
+    modeId: string;
+    cwd: string;
+    title: string;
+  }): Promise<{ id: string }>;
+  waitForAgentUpsert(
+    agentId: string,
+    predicate: (snapshot: { status: string }) => boolean,
+    timeout?: number,
+  ): Promise<{ status: string }>;
+}
+
 export async function createIdleAgent(
-  client: ArchiveTabDaemonClient,
+  client: IdleAgentSeedClient,
   input: { cwd: string; title: string },
 ): Promise<ArchiveTabAgent> {
   const created = await client.createAgent({

@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, type Page } from "./fixtures";
-import { createTempGitRepo } from "./helpers/workspace";
-import {
-  connectArchiveTabDaemonClient,
-  createIdleAgent,
-  expectWorkspaceTabVisible,
-} from "./helpers/archive-tab";
+import { seedWorkspace } from "./helpers/seed-client";
+import { createIdleAgent, expectWorkspaceTabVisible } from "./helpers/archive-tab";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { captureWsSessionFrames, renameModalInput, renameModalSubmit } from "./helpers/rename";
@@ -27,13 +23,12 @@ test.describe("Workspace agent tab rename", () => {
   }) => {
     test.setTimeout(120_000);
 
-    const client = await connectArchiveTabDaemonClient();
-    const repo = await createTempGitRepo("workspace-agent-rename-");
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-agent-rename-" });
 
     try {
       const initialTitle = `agent-rename-${randomUUID().slice(0, 8)}`;
-      const agent = await createIdleAgent(client, {
-        cwd: repo.path,
+      const agent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: initialTitle,
       });
 
@@ -74,8 +69,7 @@ test.describe("Workspace agent tab rename", () => {
       expect(lastFrame.name).toBe(renamed);
       expect(lastFrame.requestId.length).toBeGreaterThan(0);
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });
