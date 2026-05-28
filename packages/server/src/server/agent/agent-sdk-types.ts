@@ -633,4 +633,10 @@ export interface AgentClient {
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
   archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  /**
+   * Release any provider-owned resources held by this client (background
+   * processes, sockets, cached subprocesses, etc.). Called when the daemon
+   * shuts down. Must be idempotent.
+   */
+  shutdown?(): Promise<void>;
 }

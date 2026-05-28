@@ -38,6 +38,7 @@ import {
   asDaemonConfigStore,
   asTerminalManager,
   asSessionInternals,
+  createProviderSnapshotManagerStub,
   isSessionOutboundMessage,
   filterByType,
   findByType,
@@ -510,6 +511,7 @@ function createSessionForWorkspaceTests(
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -619,6 +621,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
         mcpBaseUrl: null,
         stt: null,
         tts: null,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         terminalManager: null,
       }),
     );
@@ -1000,6 +1003,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -1165,6 +1169,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: asTerminalManager({
         killTerminal,
         subscribeTerminalsChanged: () => () => {},
@@ -1353,6 +1358,7 @@ test("close_items_request archives stored agents that are not currently loaded",
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -1502,6 +1508,7 @@ test("close_items_request continues after an archive failure", async () => {
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: asTerminalManager({
         killTerminal: killTerminalBestEffort,
         subscribeTerminalsChanged: () => () => {},
@@ -2368,6 +2375,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );

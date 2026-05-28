@@ -19,10 +19,13 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./provider-launch-config.js";
-import { buildProviderRegistry, type ProviderDefinition } from "./provider-registry.js";
+import {
+  buildProviderRegistry,
+  shutdownAgentClients,
+  type ProviderDefinition,
+} from "./provider-registry.js";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
-import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
 
@@ -348,7 +351,14 @@ export class ProviderSnapshotManager {
   }
 
   async shutdown(): Promise<void> {
-    await OpenCodeServerManager.getInstance(this.logger, this.runtimeSettings?.opencode).shutdown();
+    // Materialize a client per enabled provider so provider-owned resources
+    // (background processes, sockets, etc.) get a chance to release even when
+    // a given provider hasn't been touched yet during this daemon's lifetime.
+    const state = this.getAgentManagerProviderState();
+    const clients = Object.values(state.clients).filter(
+      (client): client is AgentClient => client !== undefined,
+    );
+    await shutdownAgentClients(clients, this.logger);
   }
 
   destroy(): void {

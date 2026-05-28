@@ -1460,6 +1460,10 @@ export class OpenCodeAgentClient implements AgentClient {
     return availability.available;
   }
 
+  async shutdown(): Promise<void> {
+    await this.runtime.shutdown();
+  }
+
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const launch = await resolveProviderLaunch({

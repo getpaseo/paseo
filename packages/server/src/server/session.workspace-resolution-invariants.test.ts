@@ -12,6 +12,7 @@ import { Session, type SessionOptions } from "./session.js";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
+import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -162,6 +163,7 @@ function createHarness(input: {
     mcpBaseUrl: null,
     stt: null,
     tts: null,
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
   });
 

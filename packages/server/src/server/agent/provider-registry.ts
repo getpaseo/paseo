@@ -35,7 +35,6 @@ import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
-import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
@@ -687,5 +686,22 @@ export async function shutdownProviders(
   logger: Logger,
   options?: BuildProviderRegistryOptions,
 ): Promise<void> {
-  await OpenCodeServerManager.getInstance(logger, options?.runtimeSettings?.opencode).shutdown();
+  const clients = createAllClients(logger, options);
+  await shutdownAgentClients(Object.values(clients), logger);
+}
+
+export async function shutdownAgentClients(
+  clients: Iterable<AgentClient>,
+  logger: Logger,
+): Promise<void> {
+  await Promise.all(
+    Array.from(clients).map(async (client) => {
+      if (!client.shutdown) return;
+      try {
+        await client.shutdown();
+      } catch (error) {
+        logger.warn({ err: error, provider: client.provider }, "Provider client shutdown failed");
+      }
+    }),
+  );
 }

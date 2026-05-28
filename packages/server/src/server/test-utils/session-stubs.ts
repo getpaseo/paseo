@@ -1,5 +1,7 @@
 import { vi } from "vitest";
 
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+
 import type {
   AgentMode,
   AgentModelDefinition,
@@ -170,7 +172,13 @@ export function createProviderSnapshotManagerStub(): {
   const warmUpSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
   const listRegisteredProviderIds = vi.fn<[], AgentProvider[]>(() => []);
   const hasProvider = vi.fn<[AgentProvider], boolean>(() => false);
-  const getProviderLabel = vi.fn<[AgentProvider], string>((provider) => provider);
+  const getProviderLabel = vi.fn<[AgentProvider], string>((provider) => {
+    try {
+      return getAgentProviderDefinition(provider).label;
+    } catch {
+      return provider;
+    }
+  });
   const getAgentManagerProviderState = vi.fn<[], AgentManagerProviderState>(() => ({
     providerDefinitions: {},
     clients: {},
