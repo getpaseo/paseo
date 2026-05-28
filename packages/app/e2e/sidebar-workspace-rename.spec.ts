@@ -1,8 +1,7 @@
 import { execSync } from "node:child_process";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
-import { createTempGitRepo } from "./helpers/workspace";
-import { connectWorkspaceSetupClient, openProjectViaDaemon } from "./helpers/workspace-setup";
+import { seedWorkspace } from "./helpers/seed-client";
 import { captureWsSessionFrames } from "./helpers/rename";
 import { getServerId } from "./helpers/server-id";
 
@@ -37,12 +36,10 @@ test.describe("Sidebar workspace rename", () => {
   test("renaming via kebab updates the branch name on disk and in the sidebar", async ({
     page,
   }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-rename-");
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-" });
 
     try {
-      const workspace = await openProjectViaDaemon(client, repo.path);
-      expect(workspace.name).toBe("main");
+      expect(workspace.workspaceName).toBe("main");
 
       const renameRequests = captureWsSessionFrames(
         page,
@@ -54,18 +51,18 @@ test.describe("Sidebar workspace rename", () => {
       );
 
       await gotoAppShell(page);
-      await expect(page.getByTestId(workspaceRowTestId(workspace.id))).toBeVisible({
+      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
         timeout: 30_000,
       });
 
-      const input = await openRenameModal(page, workspace.id);
+      const input = await openRenameModal(page, workspace.workspaceId);
       await expect(input).toHaveValue("main");
       await input.fill("Feature Rename 2");
 
-      await page.getByTestId(workspaceRenameModalTestId(workspace.id, "submit")).click();
+      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
 
       await expect(input).toHaveCount(0, { timeout: 15_000 });
-      await expect(page.getByTestId(workspaceRowTestId(workspace.id))).toContainText(
+      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         "feature-rename-2",
         { timeout: 15_000 },
       );
@@ -77,40 +74,42 @@ test.describe("Sidebar workspace rename", () => {
       });
 
       const currentBranchOnDisk = execSync("git branch --show-current", {
-        cwd: repo.path,
+        cwd: workspace.repoPath,
         stdio: "pipe",
       })
         .toString()
         .trim();
       expect(currentBranchOnDisk).toBe("feature-rename-2");
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 
   test("rename surfaces server errors inline and keeps the modal open", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-rename-error-", { branches: ["taken"] });
+    const workspace = await seedWorkspace({
+      repoPrefix: "sidebar-rename-error-",
+      repo: { branches: ["taken"] },
+    });
 
     try {
-      const workspace = await openProjectViaDaemon(client, repo.path);
-
       await gotoAppShell(page);
-      const input = await openRenameModal(page, workspace.id);
+      const input = await openRenameModal(page, workspace.workspaceId);
       await expect(input).toHaveValue("main");
 
       await input.fill("taken");
-      await page.getByTestId(workspaceRenameModalTestId(workspace.id, "submit")).click();
+      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
 
-      const errorNode = page.getByTestId(workspaceRenameModalTestId(workspace.id, "error"));
+      const errorNode = page.getByTestId(
+        workspaceRenameModalTestId(workspace.workspaceId, "error"),
+      );
       await expect(errorNode).toBeVisible({ timeout: 15_000 });
       await expect(errorNode).toContainText(/already exists|branch/i);
       await expect(input).toBeVisible();
-      await expect(page.getByTestId(workspaceRowTestId(workspace.id))).toContainText("main");
+      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
+        "main",
+      );
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });

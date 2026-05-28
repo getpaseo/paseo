@@ -13,7 +13,12 @@ export interface SeedDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
   openProject(cwd: string): Promise<{
-    workspace: { id: string; name: string; projectRootPath: string } | null;
+    workspace: {
+      id: string;
+      name: string;
+      projectRootPath: string;
+      workspaceDirectory: string;
+    } | null;
     error: string | null;
   }>;
   createTerminal(
@@ -77,6 +82,8 @@ export interface SeededWorkspace {
   client: SeedDaemonClient;
   repoPath: string;
   workspaceId: string;
+  workspaceName: string;
+  workspaceDirectory: string;
   cleanup(): Promise<void>;
 }
 
@@ -95,6 +102,8 @@ export async function seedWorkspace(options: {
       client,
       repoPath: repo.path,
       workspaceId: opened.workspace.id,
+      workspaceName: opened.workspace.name,
+      workspaceDirectory: opened.workspace.workspaceDirectory,
       cleanup: async () => {
         await client.close().catch(() => undefined);
         await repo.cleanup().catch(() => undefined);
