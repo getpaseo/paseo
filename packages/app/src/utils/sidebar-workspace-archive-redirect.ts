@@ -3,7 +3,7 @@ import { useSessionStore } from "@/stores/session-store";
 import {
   redirectIfArchivingActiveWorkspace as redirectIfArchivingActiveWorkspacePure,
   type RedirectIfArchivingActiveWorkspaceInput,
-} from "@/utils/sidebar-workspace-archive-redirect.pure";
+} from "@/utils/workspace-archive-redirect";
 
 export function redirectIfArchivingActiveWorkspace(
   input: RedirectIfArchivingActiveWorkspaceInput,

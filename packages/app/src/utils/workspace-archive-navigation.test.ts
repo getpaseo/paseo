@@ -4,7 +4,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   redirectIfArchivingActiveWorkspace,
   type RedirectIfArchivingActiveWorkspaceDeps,
-} from "@/utils/sidebar-workspace-archive-redirect.pure";
+} from "@/utils/workspace-archive-redirect";
 
 function workspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
