@@ -11,7 +11,7 @@ import {
   selectIsFileExplorerOpen,
   selectPanelVisibility,
   type PanelCoreState,
-} from "@/stores/panel-store.pure";
+} from "./state";
 
 function makePanelState(overrides: Partial<PanelCoreState> = {}): PanelCoreState {
   return {

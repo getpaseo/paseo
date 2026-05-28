@@ -6,8 +6,8 @@ import {
   coerceExplorerTabForCheckout,
   resolveExplorerTabForCheckout,
   type ExplorerTab,
-} from "./explorer-tab-memory";
-import { type ExplorerCheckoutContext } from "./explorer-checkout-context";
+} from "../explorer-tab-memory";
+import { type ExplorerCheckoutContext } from "../explorer-checkout-context";
 import {
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
@@ -33,10 +33,10 @@ import {
   type PanelLayoutInput,
   type PanelVisibilityState,
   type SortOption,
-} from "./panel-store.pure";
+} from "./state";
 import { isWeb } from "@/constants/platform";
-export type { ExplorerTab } from "./explorer-tab-memory";
-export type { ExplorerCheckoutContext } from "./explorer-checkout-context";
+export type { ExplorerTab } from "../explorer-tab-memory";
+export type { ExplorerCheckoutContext } from "../explorer-checkout-context";
 export type {
   DesktopSidebarState,
   ExplorerPanelIntent,
@@ -44,7 +44,7 @@ export type {
   PanelLayoutInput,
   PanelVisibilityState,
   SortOption,
-} from "./panel-store.pure";
+} from "./state";
 export {
   DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
   DEFAULT_EXPLORER_SIDEBAR_WIDTH,
