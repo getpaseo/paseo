@@ -99,11 +99,6 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
-import {
-  buildProviderRegistry,
-  createClientsFromRegistry,
-  shutdownProviders,
-} from "./agent/provider-registry.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
@@ -518,22 +513,18 @@ export async function createPaseoDaemon(
     },
   });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
-  const providerRegistry = buildProviderRegistry(providerSnapshotLogger, {
+  const providerSnapshotManager = new ProviderSnapshotManager({
+    logger: providerSnapshotLogger,
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,
     isDev: config.isDev === true,
+    extraClients: config.agentClients,
   });
-  const providerSnapshotManager = new ProviderSnapshotManager(
-    providerRegistry,
-    providerSnapshotLogger,
-  );
+  const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
-    clients: {
-      ...createClientsFromRegistry(providerRegistry, logger),
-      ...config.agentClients,
-    },
-    providerDefinitions: providerRegistry,
+    clients: initialAgentManagerState.clients,
+    providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
     logger,
@@ -676,7 +667,6 @@ export async function createPaseoDaemon(
         terminalManager,
         getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
         scheduleService,
-        providerRegistry,
         providerSnapshotManager,
         github,
         workspaceGitService,
@@ -934,9 +924,6 @@ export async function createPaseoDaemon(
             {
               finalTimeoutMs: config.dictationFinalTimeoutMs,
             },
-            config.agentProviderSettings,
-            config.providerOverrides,
-            config.isDev === true,
             daemonVersion,
             (intent) => {
               try {
@@ -960,6 +947,7 @@ export async function createPaseoDaemon(
             workspaceGitService,
             github,
             config.pushNotificationSender,
+            providerSnapshotManager,
             {
               listen: formatListenTarget(boundListenTarget ?? listenTarget),
               relay: {
@@ -970,8 +958,6 @@ export async function createPaseoDaemon(
                 publicUseTls: relayPublicUseTls,
               },
             },
-            providerRegistry,
-            providerSnapshotManager,
           );
 
           if (relayEnabled) {
@@ -1030,10 +1016,7 @@ export async function createPaseoDaemon(
     await agentManager.flush().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
-    await shutdownProviders(logger, {
-      runtimeSettings: config.agentProviderSettings,
-      providerOverrides: config.providerOverrides,
-    });
+    await providerSnapshotManager.shutdown();
     terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);

@@ -47,7 +47,6 @@ import {
   type ScheduleCadence,
   type UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
-import type { ProviderDefinition } from "./provider-registry.js";
 import { resolveSnapshotCwd, type ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import {
   AgentModelSchema,
@@ -88,8 +87,7 @@ export interface AgentMcpServerOptions {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
-  providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
-  providerSnapshotManager?: ProviderSnapshotManager | null;
+  providerSnapshotManager: ProviderSnapshotManager;
   github?: GitHubService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -215,17 +213,6 @@ function resolveAgentListActivityTime(agent: AgentListItemPayload): number {
     parseTimestamp(agent.archivedAt),
     parseTimestamp(agent.createdAt),
   );
-}
-
-function resolveRegisteredProviderIds(
-  agentManager: AgentManager,
-  providerRegistry: Record<AgentProvider, ProviderDefinition> | null | undefined,
-  providerSnapshotManager: ProviderSnapshotManager | null | undefined,
-): AgentProvider[] {
-  if (providerSnapshotManager) {
-    return providerSnapshotManager.listRegisteredProviderIds();
-  }
-  return providerRegistry ? Object.keys(providerRegistry) : agentManager.getRegisteredProviderIds();
 }
 
 interface ProviderSummary {
@@ -496,7 +483,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     agentStorage,
     terminalManager,
     scheduleService,
-    providerRegistry,
     providerSnapshotManager,
     callerAgentId,
     resolveSpeakHandler,
@@ -525,13 +511,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       throw new Error(`Parent agent ${callerAgentId} not found`);
     }
     return parentAgent;
-  };
-
-  const requireProviderSnapshotManager = (): ProviderSnapshotManager => {
-    if (!providerSnapshotManager) {
-      throw new Error("Provider snapshot manager is not configured");
-    }
-    return providerSnapshotManager;
   };
 
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
@@ -888,7 +867,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           paseoHome: options.paseoHome,
           workspaceGitService: options.workspaceGitService,
           terminalManager,
-          providerRegistry,
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,
         },
@@ -1211,7 +1189,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const structuredSnapshot = buildStoredAgentPayload(
         record,
-        resolveRegisteredProviderIds(agentManager, providerRegistry, providerSnapshotManager),
+        providerSnapshotManager.listRegisteredProviderIds(),
       );
       return {
         content: [],
@@ -1258,11 +1236,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       );
       const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
       const storedRecords = await agentStorage.list();
-      const registeredProviderIds = resolveRegisteredProviderIds(
-        agentManager,
-        providerRegistry,
-        providerSnapshotManager,
-      );
+      const registeredProviderIds = providerSnapshotManager.listRegisteredProviderIds();
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
         .filter((record) => includeArchived || !record.archivedAt)
@@ -1907,7 +1881,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async () => {
-      const providers = (await requireProviderSnapshotManager().listProviders({ wait: true })).map(
+      const providers = (await providerSnapshotManager.listProviders({ wait: true })).map(
         toProviderSummary,
       );
       return {
@@ -1931,7 +1905,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ provider }) => {
-      const models = await requireProviderSnapshotManager().listModels({
+      const models = await providerSnapshotManager.listModels({
         cwd: resolveSnapshotCwd(),
         provider,
         wait: true,
@@ -1971,7 +1945,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       });
       const providerId = resolvedProviderModel.provider;
       const resolvedCwd = resolveScopedCwd(cwd, { required: true });
-      const entry = await requireProviderSnapshotManager().getProvider({
+      const entry = await providerSnapshotManager.getProvider({
         cwd: resolvedCwd,
         provider: providerId,
         wait: true,

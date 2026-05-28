@@ -16,21 +16,14 @@ import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../
 import type { AgentManager, ManagedAgent } from "../agent-manager.js";
 import { scheduleAgentMetadataGeneration } from "../agent-metadata-generator.js";
 import type {
-  AgentProvider,
   AgentPromptContentBlock,
   AgentPromptInput,
   AgentRunOptions,
   AgentSessionConfig,
 } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
-import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import type { ProviderDefinition } from "../provider-registry.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
-import {
-  isDefaultAgentCreateConfigUnattended,
-  resolveDefaultAgentCreateConfig,
-} from "../create-agent-mode.js";
 import { resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
 import {
@@ -57,8 +50,7 @@ interface CreateAgentCommandDependencies {
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
   terminalManager?: TerminalManager | null;
-  providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
-  providerSnapshotManager?: ProviderSnapshotManager | null;
+  providerSnapshotManager: ProviderSnapshotManager;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
 }
 
@@ -254,22 +246,13 @@ async function resolveMcpCreateAgent(
   });
 
   const { modeId: resolvedMode, featureValues: resolvedFeatures } =
-    dependencies.providerSnapshotManager
-      ? await dependencies.providerSnapshotManager.resolveCreateConfig({
-          cwd: resolvedCwd,
-          provider,
-          requestedMode: input.mode,
-          featureValues: input.features,
-          parent: parentAgent,
-        })
-      : {
-          ...resolveCreateFromRegistry(dependencies, {
-            provider,
-            requestedMode: input.mode,
-            featureValues: input.features,
-            parent: parentAgent,
-          }),
-        };
+    await dependencies.providerSnapshotManager.resolveCreateConfig({
+      cwd: resolvedCwd,
+      provider,
+      requestedMode: input.mode,
+      featureValues: input.features,
+      parent: parentAgent,
+    });
 
   const labels = mergeLabels(
     input.callerAgentId,
@@ -335,44 +318,6 @@ async function sendInitialPrompt(
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
     return { started: false, liveSnapshot: snapshot };
   }
-}
-
-function resolveCreateFromRegistry(
-  dependencies: CreateAgentCommandDependencies,
-  input: {
-    provider: AgentProvider;
-    requestedMode: string | undefined;
-    featureValues: Record<string, unknown> | undefined;
-    parent: ManagedAgent | null;
-  },
-): { modeId: string | undefined; featureValues: Record<string, unknown> | undefined } {
-  const availableModes = getProviderModes(dependencies, input.provider) ?? [];
-  const definition = dependencies.providerRegistry?.[input.provider];
-  return (definition?.resolveCreateConfig ?? resolveDefaultAgentCreateConfig)({
-    provider: input.provider,
-    requestedMode: input.requestedMode,
-    featureValues: input.featureValues,
-    parent: input.parent ? resolveParentFromRegistry(dependencies, input.parent) : null,
-    availableModes,
-  });
-}
-
-function resolveParentFromRegistry(
-  dependencies: CreateAgentCommandDependencies,
-  parent: ManagedAgent,
-) {
-  const availableModes = getProviderModes(dependencies, parent.provider) ?? [];
-  const definition = dependencies.providerRegistry?.[parent.provider];
-  return {
-    provider: parent.provider,
-    modeId: parent.currentModeId,
-    isUnattended: (definition?.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended)({
-      modeId: parent.currentModeId,
-      config: parent.config,
-      features: parent.features,
-      availableModes,
-    }),
-  };
 }
 
 function buildAgentPrompt(
@@ -525,19 +470,4 @@ function mergeLabels(
     ...labels,
   };
   return Object.keys(mergedLabels).length > 0 ? mergedLabels : undefined;
-}
-
-function getProviderModes(
-  dependencies: CreateAgentCommandDependencies,
-  provider: AgentProvider,
-): ProviderDefinition["modes"] | undefined {
-  const fromRegistry = dependencies.providerRegistry?.[provider];
-  if (fromRegistry) {
-    return fromRegistry.modes;
-  }
-  try {
-    return getAgentProviderDefinition(provider).modes;
-  } catch {
-    return undefined;
-  }
 }

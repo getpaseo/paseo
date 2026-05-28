@@ -10,6 +10,7 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
+import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import {
   asUint8Array,
   decodeTerminalStreamFrame,
@@ -230,9 +231,6 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
       : undefined,
     undefined,
     undefined,
-    undefined,
-    undefined,
-    false,
     TEST_DAEMON_VERSION,
     undefined,
     undefined,
@@ -251,6 +249,16 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
       })),
       dispose: vi.fn(),
     }),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    createProviderSnapshotManagerStub().manager,
   );
 }
 
