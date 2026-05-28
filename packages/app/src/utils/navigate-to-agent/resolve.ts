@@ -1,7 +1,7 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
-import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/workspace-navigation.pure";
+import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
 
 export interface NavigateToAgentInput {
   serverId: string;

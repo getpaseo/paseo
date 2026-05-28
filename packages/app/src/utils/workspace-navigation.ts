@@ -5,12 +5,12 @@ import {
   navigateToPreparedWorkspaceTab as navigateToPreparedWorkspaceTabPure,
   type PrepareWorkspaceTabInput,
   type NavigateToPreparedWorkspaceTabInput,
-} from "./workspace-navigation.pure";
+} from "./prepare-workspace-tab";
 
 export type {
   PrepareWorkspaceTabInput,
   NavigateToPreparedWorkspaceTabInput,
-} from "./workspace-navigation.pure";
+} from "./prepare-workspace-tab";
 
 function layoutStoreDeps() {
   const store = useWorkspaceLayoutStore.getState();

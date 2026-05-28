@@ -5,7 +5,7 @@ import {
   type AgentNavTarget,
   type NavigateToAgentDeps,
 } from "@/utils/navigate-to-agent/resolve";
-import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/workspace-navigation.pure";
+import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "workspace-1";

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
-import {
-  navigateToPreparedWorkspaceTab,
-  prepareWorkspaceTab,
-} from "@/utils/workspace-navigation.pure";
+import { navigateToPreparedWorkspaceTab, prepareWorkspaceTab } from "@/utils/prepare-workspace-tab";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "/repo/worktree";
