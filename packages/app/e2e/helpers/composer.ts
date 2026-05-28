@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
-import { connectTerminalClient, type TerminalPerfDaemonClient } from "./terminal-perf";
+import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 import { connectWorkspaceSetupClient, openHomeWithProject } from "./workspace-setup";
 import { selectWorkspaceInSidebar } from "./sidebar";
 import { waitForTabBar } from "./launcher";
@@ -145,7 +145,7 @@ export async function selectGithubOption(
 }
 
 export interface MockAgentSetup {
-  client: TerminalPerfDaemonClient;
+  client: SeedDaemonClient;
   repo: Awaited<ReturnType<typeof createTempGitRepo>>;
 }
 
@@ -158,7 +158,7 @@ export async function startRunningMockAgent(
   if (!serverId) throw new Error("E2E_SERVER_ID is not set.");
 
   const repo = await createTempGitRepo(opts.prefix);
-  const client = await connectTerminalClient();
+  const client = await connectSeedClient();
   const opened = await client.openProject(repo.path);
   if (!opened.workspace) throw new Error(opened.error ?? "Failed to open project");
   const agent = await client.createAgent({

@@ -16,22 +16,18 @@ import {
   terminalSurfaceLocator,
 } from "./helpers/launcher";
 import { expectComposerVisible, composerLocator } from "./helpers/composer";
-import { expectTerminalSurfaceVisible } from "./helpers/terminal-perf";
-import {
-  connectTerminalClient,
-  setupDeterministicPrompt,
-  type TerminalPerfDaemonClient,
-} from "./helpers/terminal-perf";
+import { expectTerminalSurfaceVisible, setupDeterministicPrompt } from "./helpers/terminal-perf";
+import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
 
 // ─── Shared state ──────────────────────────────────────────────────────────
 
 let tempRepo: { path: string; cleanup: () => Promise<void> };
 let workspaceId: string;
-let seedClient: TerminalPerfDaemonClient;
+let seedClient: SeedDaemonClient;
 
 test.beforeAll(async () => {
   tempRepo = await createTempGitRepo("launcher-e2e-");
-  seedClient = await connectTerminalClient();
+  seedClient = await connectSeedClient();
   const result = await seedClient.openProject(tempRepo.path);
   if (!result.workspace) throw new Error(result.error ?? "Failed to seed workspace");
   workspaceId = result.workspace.id;
@@ -117,10 +113,10 @@ test.describe("Terminal title propagation", () => {
   // must re-render before the assertion deadline. Allow retries.
   test.describe.configure({ retries: 2 });
 
-  let client: TerminalPerfDaemonClient;
+  let client: SeedDaemonClient;
 
   test.beforeAll(async () => {
-    client = await connectTerminalClient();
+    client = await connectSeedClient();
   });
 
   test.afterAll(async () => {

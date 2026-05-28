@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
-import { connectTerminalClient, type TerminalPerfDaemonClient } from "./terminal-perf";
+import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 import { createTempGitRepo } from "./workspace";
 
 function getServerId(): string {
@@ -14,7 +14,7 @@ function getServerId(): string {
 export interface MockAgentWorkspace {
   agentId: string;
   cwd: string;
-  client: TerminalPerfDaemonClient;
+  client: SeedDaemonClient;
   cleanup(): Promise<void>;
 }
 
@@ -36,7 +36,7 @@ export async function seedMockAgentWorkspace(
   options: MockAgentOptions,
 ): Promise<MockAgentWorkspace> {
   const repo = await createTempGitRepo(options.repoPrefix);
-  const client = await connectTerminalClient();
+  const client = await connectSeedClient();
   try {
     const opened = await client.openProject(repo.path);
     if (!opened.workspace) {

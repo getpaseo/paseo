@@ -1,59 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import path from "node:path";
-import { readFileSync } from "node:fs";
-import { connectDaemonClient } from "./daemon-client-loader";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
-
-export interface TerminalPerfDaemonClient {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  openProject(cwd: string): Promise<{
-    workspace: { id: string; name: string; projectRootPath: string } | null;
-    error: string | null;
-  }>;
-  createTerminal(
-    cwd: string,
-    name?: string,
-  ): Promise<{
-    terminal: { id: string; name: string; cwd: string } | null;
-    error: string | null;
-  }>;
-  createAgent(options: {
-    provider: string;
-    cwd: string;
-    title?: string;
-    modeId?: string;
-    model?: string;
-    thinkingOptionId?: string;
-    featureValues?: Record<string, unknown>;
-    initialPrompt?: string;
-  }): Promise<{ id: string; status: string }>;
-  fetchAgents(options?: { scope?: "active" }): Promise<{
-    entries: Array<{ agent: { id: string; cwd: string; title?: string | null } }>;
-  }>;
-  updateAgent(agentId: string, updates: { name?: string }): Promise<void>;
-  waitForAgentUpsert(
-    agentId: string,
-    predicate: (snapshot: { status: string }) => boolean,
-    timeout?: number,
-  ): Promise<{ status: string }>;
-  sendAgentMessage(agentId: string, text: string): Promise<void>;
-  waitForFinish(
-    agentId: string,
-    timeout?: number,
-  ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
-  subscribeTerminal(
-    terminalId: string,
-  ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;
-  sendTerminalInput(
-    terminalId: string,
-    message: { type: "input"; data: string } | { type: "resize"; rows: number; cols: number },
-  ): void;
-  onTerminalStreamEvent(
-    handler: (event: { terminalId: string; type: string; data?: Uint8Array }) => void,
-  ): () => void;
-  killTerminal(terminalId: string): Promise<{ error: string | null }>;
-}
 
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
@@ -61,22 +7,6 @@ function getServerId(): string {
     throw new Error("E2E_SERVER_ID is not set.");
   }
   return serverId;
-}
-
-export async function connectTerminalClient(): Promise<TerminalPerfDaemonClient> {
-  return connectDaemonClient<TerminalPerfDaemonClient>({
-    clientIdPrefix: "terminal-perf",
-    appVersion: loadAppVersion(),
-  });
-}
-
-function loadAppVersion(): string {
-  const packageJsonPath = path.resolve(__dirname, "../../package.json");
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
-  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
-    throw new Error(`Missing app version in ${packageJsonPath}`);
-  }
-  return packageJson.version;
 }
 
 export function buildTerminalWorkspaceUrl(workspaceId: string, terminalId: string): string {

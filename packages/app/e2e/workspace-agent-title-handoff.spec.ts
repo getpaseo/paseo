@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { createTempGitRepo } from "./helpers/workspace";
 import { expectComposerVisible, submitMessage } from "./helpers/composer";
-import { connectTerminalClient, type TerminalPerfDaemonClient } from "./helpers/terminal-perf";
+import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { captureWsSessionFrames } from "./helpers/rename";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
@@ -122,10 +122,7 @@ function recordHasLoadingTitle(record: WorkspaceTabProbeRecord): boolean {
   return record.tabs.some(tabHasLoadingTitle);
 }
 
-async function waitForCreatedAgentId(
-  client: TerminalPerfDaemonClient,
-  cwd: string,
-): Promise<string> {
+async function waitForCreatedAgentId(client: SeedDaemonClient, cwd: string): Promise<string> {
   await expect
     .poll(
       async () => {
@@ -146,7 +143,7 @@ async function waitForCreatedAgentId(
 }
 
 async function fetchActiveAgentTitle(
-  client: TerminalPerfDaemonClient,
+  client: SeedDaemonClient,
   agentId: string,
 ): Promise<string | null> {
   const result = await client.fetchAgents({ scope: "active" });
@@ -179,7 +176,7 @@ test.describe("Workspace agent title handoff", () => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 900 });
 
-    const client = await connectTerminalClient();
+    const client = await connectSeedClient();
     const repo = await createTempGitRepo("workspace-title-handoff-");
 
     try {

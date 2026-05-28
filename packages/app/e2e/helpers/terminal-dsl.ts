@@ -1,11 +1,7 @@
 import type { Page } from "@playwright/test";
 import { createTempGitRepo } from "./workspace";
-import {
-  connectTerminalClient,
-  navigateToTerminal,
-  setupDeterministicPrompt,
-  type TerminalPerfDaemonClient,
-} from "./terminal-perf";
+import { navigateToTerminal, setupDeterministicPrompt } from "./terminal-perf";
+import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 
 interface TempRepo {
   path: string;
@@ -19,12 +15,12 @@ export interface TerminalInstance {
 }
 
 export class TerminalE2EHarness {
-  readonly client: TerminalPerfDaemonClient;
+  readonly client: SeedDaemonClient;
   readonly tempRepo: TempRepo;
   readonly workspaceId: string;
 
   private constructor(input: {
-    client: TerminalPerfDaemonClient;
+    client: SeedDaemonClient;
     tempRepo: TempRepo;
     workspaceId: string;
   }) {
@@ -35,7 +31,7 @@ export class TerminalE2EHarness {
 
   static async create(input: { tempPrefix: string }): Promise<TerminalE2EHarness> {
     const tempRepo = await createTempGitRepo(input.tempPrefix);
-    const client = await connectTerminalClient();
+    const client = await connectSeedClient();
     const seedResult = await client.openProject(tempRepo.path);
     if (!seedResult.workspace) {
       await client.close().catch(() => {});

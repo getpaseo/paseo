@@ -4,14 +4,14 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expectComposerEditable, submitMessage } from "./composer";
-import { connectTerminalClient, type TerminalPerfDaemonClient } from "./terminal-perf";
+import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
 
 export type RewindFlowProvider = "claude" | "codex" | "opencode" | "pi";
 export type RewindFlowMode = "conversation" | "files" | "both";
 
 export interface AgentHandle {
   page: Page;
-  client: TerminalPerfDaemonClient;
+  client: SeedDaemonClient;
   agentId: string;
   cwd: string;
   provider: RewindFlowProvider;
@@ -173,7 +173,7 @@ export async function launchAgent(input: {
   writeFileSync(`${input.cwd}/README.md`, "# Paseo rewind flow\n", "utf8");
   execFileSync("git", ["add", "README.md"], { cwd: input.cwd, stdio: "ignore" });
   execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: input.cwd, stdio: "ignore" });
-  const client = await connectTerminalClient();
+  const client = await connectSeedClient();
   const opened = await client.openProject(input.cwd);
   if (!opened.workspace) {
     throw new Error(opened.error ?? `Failed to open project ${input.cwd}`);
@@ -324,7 +324,7 @@ export async function cleanupRewindFlow(input: {
 }
 
 async function fetchTimelineEpoch(handle: AgentHandle): Promise<string | undefined> {
-  const client = handle.client as TerminalPerfDaemonClient & {
+  const client = handle.client as SeedDaemonClient & {
     fetchAgentTimeline: (
       agentId: string,
       options?: { direction?: "head" | "tail"; projection?: "canonical"; limit?: number },
