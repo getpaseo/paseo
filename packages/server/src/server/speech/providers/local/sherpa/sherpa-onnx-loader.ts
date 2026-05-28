@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import { loadLocalSpeechPackage } from "../runtime/index.js";
 
 export interface SherpaOnnxModule {
   createOnlineRecognizer: (config: unknown) => unknown;
@@ -13,7 +13,8 @@ export function loadSherpaOnnx(): SherpaOnnxModule {
     return cached;
   }
 
-  const require = createRequire(import.meta.url);
-  cached = require("sherpa-onnx") as SherpaOnnxModule;
+  cached = loadLocalSpeechPackage<SherpaOnnxModule>("sherpa-onnx", {
+    requireFrom: import.meta.url,
+  });
   return cached;
 }

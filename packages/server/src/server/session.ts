@@ -2624,11 +2624,12 @@ export class Session {
   private toVoiceFeatureUnavailableContext(
     state: SpeechReadinessState,
   ): VoiceFeatureUnavailableContext {
+    const missingModelIds = state.missingAssets.find((asset) => asset.kind === "models")?.ids ?? [];
     return {
       reasonCode: state.reasonCode,
       message: state.message,
       retryable: state.retryable,
-      missingModelIds: [...state.missingModelIds],
+      missingModelIds: missingModelIds as LocalSpeechModelId[],
     };
   }
 

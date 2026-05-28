@@ -201,12 +201,22 @@ function resolveCapabilityReason(params: {
     return "";
   }
 
-  if (readiness.voiceFeature.reasonCode === "model_download_in_progress") {
+  if (
+    readiness.voiceFeature.reasonCode === "model_download_in_progress" ||
+    readiness.voiceFeature.reasonCode === "runtime_install_in_progress"
+  ) {
     const baseMessage = readiness.voiceFeature.message.trim();
     if (baseMessage.includes("Try again in a few minutes")) {
       return baseMessage;
     }
     return `${baseMessage} Try again in a few minutes.`;
+  }
+
+  if (
+    readiness.voiceFeature.reasonCode === "runtime_missing" ||
+    readiness.voiceFeature.reasonCode === "runtime_install_failed"
+  ) {
+    return readiness.voiceFeature.message;
   }
 
   return state.message;

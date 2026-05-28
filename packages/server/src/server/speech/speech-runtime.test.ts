@@ -39,6 +39,19 @@ vi.mock("./providers/local/models.js", () => ({
   listLocalSpeechModels: vi.fn(() => []),
 }));
 
+vi.mock("./providers/local/runtime/index.js", () => ({
+  clearLocalSpeechRuntimeHome: vi.fn(),
+  configureLocalSpeechRuntimeHome: vi.fn(),
+  ensureLocalSpeechRuntime: vi.fn(async () => ({
+    runtimeDir: "/tmp/paseo/runtime/local-speech",
+    missingPackageIds: [],
+  })),
+  getLocalSpeechRuntimeStatus: vi.fn(async () => ({
+    runtimeDir: "/tmp/paseo/runtime/local-speech",
+    missingPackageIds: [],
+  })),
+}));
+
 function createStubStt(id: string): SpeechToTextProvider {
   return {
     id,
@@ -100,6 +113,7 @@ describe("createSpeechService readiness", () => {
 
     const runtime = createSpeechService({
       logger: pino({ level: "silent" }),
+      paseoHome: "/tmp/paseo",
       speechConfig: createSpeechConfig({
         dictationStt: { provider: "local", enabled: true, explicit: true },
         voiceTurnDetection: { provider: "local", enabled: false, explicit: true },
@@ -140,6 +154,7 @@ describe("createSpeechService readiness", () => {
 
     const runtime = createSpeechService({
       logger: pino({ level: "silent" }),
+      paseoHome: "/tmp/paseo",
       speechConfig: createSpeechConfig({
         dictationStt: { provider: "local", enabled: false, explicit: true },
         voiceTurnDetection: { provider: "local", enabled: true, explicit: true },

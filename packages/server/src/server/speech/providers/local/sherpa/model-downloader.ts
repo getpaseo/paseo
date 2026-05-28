@@ -19,7 +19,10 @@ export function getSherpaOnnxModelDir(modelsDir: string, modelId: SherpaOnnxMode
   return path.join(modelsDir, spec.extractedDir);
 }
 
-async function hasRequiredFiles(modelDir: string, requiredFiles: string[]): Promise<boolean> {
+export async function hasRequiredFiles(
+  modelDir: string,
+  requiredFiles: string[],
+): Promise<boolean> {
   const results = await Promise.all(
     requiredFiles.map(async (rel) => {
       const abs = path.join(modelDir, rel);
@@ -42,7 +45,7 @@ interface DownloadToFileOptions {
   outputPath: string;
 }
 
-async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
+export async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   const { url, outputPath } = options;
   const res = await fetch(url);
   if (!res.ok) {
@@ -68,7 +71,7 @@ async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   }
 }
 
-async function extractTarArchive(archivePath: string, destDir: string): Promise<void> {
+export async function extractTarArchive(archivePath: string, destDir: string): Promise<void> {
   await mkdir(destDir, { recursive: true });
 
   await new Promise<void>((resolve, reject) => {
@@ -83,7 +86,7 @@ async function extractTarArchive(archivePath: string, destDir: string): Promise<
   });
 }
 
-async function isNonEmptyFile(filePath: string): Promise<boolean> {
+export async function isNonEmptyFile(filePath: string): Promise<boolean> {
   try {
     const s = await stat(filePath);
     return s.isFile() && s.size > 0;

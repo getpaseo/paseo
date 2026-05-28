@@ -259,9 +259,19 @@ function createReadySpeechReadinessSnapshot(): SpeechReadinessSnapshot {
     generatedAt: "2026-02-14T00:00:00.000Z",
     requiredLocalModelIds: [],
     missingLocalModelIds: [],
-    download: {
-      inProgress: false,
-      error: null,
+    assets: {
+      models: {
+        label: "models",
+        missingIds: [],
+        inProgress: false,
+        error: null,
+      },
+      runtime: {
+        label: "local voice runtime",
+        missingIds: [],
+        inProgress: false,
+        error: null,
+      },
     },
     dictation: {
       enabled: true,
@@ -269,7 +279,7 @@ function createReadySpeechReadinessSnapshot(): SpeechReadinessSnapshot {
       reasonCode: "ready",
       message: "Dictation is ready.",
       retryable: false,
-      missingModelIds: [],
+      missingAssets: [],
     },
     realtimeVoice: {
       enabled: true,
@@ -277,7 +287,7 @@ function createReadySpeechReadinessSnapshot(): SpeechReadinessSnapshot {
       reasonCode: "ready",
       message: "Realtime voice is ready.",
       retryable: false,
-      missingModelIds: [],
+      missingAssets: [],
     },
     voiceFeature: {
       enabled: true,
@@ -285,7 +295,7 @@ function createReadySpeechReadinessSnapshot(): SpeechReadinessSnapshot {
       reasonCode: "ready",
       message: "Voice features are ready.",
       retryable: false,
-      missingModelIds: [],
+      missingAssets: [],
     },
   };
 }
@@ -295,9 +305,19 @@ function createDownloadInProgressSpeechReadinessSnapshot(): SpeechReadinessSnaps
     generatedAt: "2026-02-14T00:00:00.000Z",
     requiredLocalModelIds: ["sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"],
     missingLocalModelIds: ["sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"],
-    download: {
-      inProgress: true,
-      error: null,
+    assets: {
+      models: {
+        label: "models",
+        missingIds: ["sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"],
+        inProgress: true,
+        error: null,
+      },
+      runtime: {
+        label: "local voice runtime",
+        missingIds: [],
+        inProgress: false,
+        error: null,
+      },
     },
     dictation: {
       enabled: true,
@@ -305,7 +325,7 @@ function createDownloadInProgressSpeechReadinessSnapshot(): SpeechReadinessSnaps
       reasonCode: "stt_unavailable",
       message: "Dictation is unavailable: speech-to-text service is not ready.",
       retryable: false,
-      missingModelIds: [],
+      missingAssets: [],
     },
     realtimeVoice: {
       enabled: true,
@@ -313,7 +333,7 @@ function createDownloadInProgressSpeechReadinessSnapshot(): SpeechReadinessSnaps
       reasonCode: "stt_unavailable",
       message: "Realtime voice is unavailable: speech-to-text service is not ready.",
       retryable: false,
-      missingModelIds: [],
+      missingAssets: [],
     },
     voiceFeature: {
       enabled: true,
@@ -322,7 +342,57 @@ function createDownloadInProgressSpeechReadinessSnapshot(): SpeechReadinessSnaps
       message:
         "Voice features are unavailable while models download in the background (sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20).",
       retryable: true,
-      missingModelIds: ["sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"],
+      missingAssets: [
+        {
+          kind: "models",
+          ids: ["sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"],
+        },
+      ],
+    },
+  };
+}
+
+function createRuntimeMissingSpeechReadinessSnapshot(): SpeechReadinessSnapshot {
+  return {
+    ...createReadySpeechReadinessSnapshot(),
+    assets: {
+      models: {
+        label: "models",
+        missingIds: [],
+        inProgress: false,
+        error: null,
+      },
+      runtime: {
+        label: "local voice runtime",
+        missingIds: ["sherpa-onnx-node"],
+        inProgress: false,
+        error: null,
+      },
+    },
+    dictation: {
+      enabled: true,
+      available: false,
+      reasonCode: "stt_unavailable",
+      message: "Dictation is unavailable: speech-to-text service is not ready.",
+      retryable: false,
+      missingAssets: [],
+    },
+    realtimeVoice: {
+      enabled: true,
+      available: false,
+      reasonCode: "stt_unavailable",
+      message: "Realtime voice is unavailable: speech-to-text service is not ready.",
+      retryable: false,
+      missingAssets: [],
+    },
+    voiceFeature: {
+      enabled: true,
+      available: false,
+      reasonCode: "runtime_missing",
+      message:
+        "Voice features are unavailable: local voice runtime is downloading / not installed (sherpa-onnx-node).",
+      retryable: true,
+      missingAssets: [{ kind: "runtime", ids: ["sherpa-onnx-node"] }],
     },
   };
 }
@@ -723,6 +793,27 @@ describe("relay external socket reconnect behavior", () => {
     expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
     expect(payload?.capabilities?.voice?.dictation.reason).toContain("Try again in a few minutes.");
     expect(payload?.capabilities?.voice?.voice.reason).toContain("Try again in a few minutes.");
+
+    await server.close();
+  });
+
+  test("keeps runtime missing capability reason stable on the wire", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-server-info-runtime-missing",
+    });
+
+    server.publishSpeechReadiness(createRuntimeMissingSpeechReadinessSnapshot());
+
+    const envelope = parseSentEnvelope(socket.sent[1]);
+    const payload = parseServerInfoStatusPayload(envelope.message?.payload);
+    const expected =
+      "Voice features are unavailable: local voice runtime is downloading / not installed (sherpa-onnx-node).";
+    expect(payload?.capabilities?.voice?.dictation.reason).toBe(expected);
+    expect(payload?.capabilities?.voice?.voice.reason).toBe(expected);
 
     await server.close();
   });

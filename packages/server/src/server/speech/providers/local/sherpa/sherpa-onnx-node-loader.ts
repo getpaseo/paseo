@@ -8,6 +8,7 @@ import {
   sherpaPlatformPackageName,
 } from "./sherpa-runtime-env.js";
 import { createExternalCommandProcessEnv } from "../../../../paseo-env.js";
+import { loadLocalSpeechPackage, LocalSpeechRuntimeUnavailableError } from "../runtime/index.js";
 
 export interface SherpaOnnxNodeModule {
   OfflineRecognizer: new (config: unknown) => unknown;
@@ -103,24 +104,26 @@ export function loadSherpaOnnxNode(): SherpaOnnxNodeModule {
 
   const require = createRequire(import.meta.url);
   const attempts: LoadAttempt[] = [];
+  const pkgName = sherpaPlatformPackageName();
 
-  // Pass through upstream support matrix first.
-  const direct = loadWithRequire(require, "sherpa-onnx-node", attempts);
-  if (direct) {
-    cached = direct;
+  try {
+    cached = loadLocalSpeechPackage<SherpaOnnxNodeModule>("sherpa-onnx-node", {
+      requireFrom: import.meta.url,
+    });
     return cached;
+  } catch (error) {
+    if (error instanceof LocalSpeechRuntimeUnavailableError) {
+      throw error;
+    }
+    appendAttempt(attempts, "sherpa-onnx-node", error);
   }
 
-  // sherpa-onnx-node depends on a platform-specific package (e.g. sherpa-onnx-darwin-arm64)
-  // that contains the native addon and shared libraries.
-  const pkgName = sherpaPlatformPackageName();
   const resolvedEnv = resolveSherpaLoaderEnv();
   const platformPkgDir = resolvedEnv?.libDir ?? null;
 
   if (platformPkgDir) {
     applySherpaLoaderEnv(process.env);
     const addonPath = path.join(platformPkgDir, "sherpa-onnx.node");
-
     if (existsSync(addonPath)) {
       const byPath = loadWithRequire(require, addonPath, attempts);
       if (byPath) {

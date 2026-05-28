@@ -11,6 +11,7 @@ import {
   pcm16leToFloat32,
 } from "../../../audio.js";
 import { Pcm16MonoResampler } from "../../../../agent/pcm16-resampler.js";
+import { loadLocalSpeechPackage } from "../runtime/index.js";
 
 type OrtModule = typeof import("onnxruntime-node");
 type OrtSession = import("onnxruntime-node").InferenceSession;
@@ -98,7 +99,9 @@ function normalizeTextForPocket(text: string): string {
 }
 
 async function loadOrt(): Promise<OrtModule> {
-  return import("onnxruntime-node");
+  return loadLocalSpeechPackage<OrtModule>("onnxruntime-node", {
+    requireFrom: import.meta.url,
+  });
 }
 
 interface SentencePieceModule {

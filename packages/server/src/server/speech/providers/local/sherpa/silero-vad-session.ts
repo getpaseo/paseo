@@ -77,11 +77,11 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
 
   constructor(params: {
     logger: { debug: (...args: unknown[]) => void };
-    config?: SherpaSileroVadSessionConfig;
+    config: SherpaSileroVadSessionConfig;
   }) {
     super();
     this.logger = params.logger;
-    const config = params.config ?? {};
+    const config = params.config;
     this.requiredSampleRate = config.sampleRate ?? DEFAULT_SAMPLE_RATE;
     this.windowSize = config.windowSize ?? DEFAULT_WINDOW_SIZE;
     this.msPerWindow = (this.windowSize / this.requiredSampleRate) * 1000;

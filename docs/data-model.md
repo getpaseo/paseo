@@ -173,7 +173,25 @@ All fields are optional with sensible defaults.
 
 ---
 
-## 3. Schedule
+## 3. Local Speech Runtime
+
+**Path:** `$PASEO_HOME/runtime/local-speech/node_modules/`
+
+Native local voice packages are installed on demand at daemon bootstrap, not bundled with the daemon package. The runtime installer downloads npm tarballs into `$PASEO_HOME/runtime/local-speech/.downloads`, extracts them into a temporary directory, verifies required files, then atomically moves each package into `node_modules`.
+
+Installed packages:
+
+- `sherpa-onnx`
+- `sherpa-onnx-node`
+- `sherpa-onnx-<platform>-<arch>` for the current host
+- `onnxruntime-common`
+- `onnxruntime-node`
+
+The daemon starts without waiting for these packages. While they are missing, `server_info.capabilities.voice.*` reports local voice unavailable through the existing capability fields. Once the runtime and required local speech models are present, the next speech runtime reconcile makes local voice available without restarting the daemon.
+
+---
+
+## 4. Schedule
 
 **Path:** `$PASEO_HOME/schedules/{id}.json`
 
@@ -221,7 +239,7 @@ One file per schedule. ID is 8 hex characters. Writes are direct (not atomic).
 
 ---
 
-## 4. Chat
+## 5. Chat
 
 **Path:** `$PASEO_HOME/chat/rooms.json`
 
@@ -258,7 +276,7 @@ Single file containing all rooms and messages.
 
 ---
 
-## 5. Loop
+## 6. Loop
 
 **Path:** `$PASEO_HOME/loops/loops.json`
 
@@ -347,7 +365,7 @@ Single file containing an array of all loop records. Writes are direct (not atom
 
 ---
 
-## 6. Project Registry
+## 7. Project Registry
 
 **Path:** `$PASEO_HOME/projects/projects.json`
 
@@ -370,7 +388,7 @@ emptied duplicate.
 
 ---
 
-## 7. Workspace Registry
+## 8. Workspace Registry
 
 **Path:** `$PASEO_HOME/projects/workspaces.json`
 
@@ -389,7 +407,7 @@ Array of workspace records. A workspace is a specific working directory within a
 
 ---
 
-## 8. Push Token Store
+## 9. Push Token Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
 
@@ -403,7 +421,7 @@ Simple set of Expo push notification tokens. Loaded with permissive parsing (fil
 
 ---
 
-## 9. Daemon meta files
+## 10. Daemon meta files
 
 These small files are not validated as full Zod schemas but are persisted under `$PASEO_HOME` for daemon identity and runtime coordination.
 

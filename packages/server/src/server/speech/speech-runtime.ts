@@ -9,6 +9,13 @@ import {
   getLocalSpeechModelDir,
   listLocalSpeechModels,
 } from "./providers/local/models.js";
+import {
+  clearLocalSpeechRuntimeHome,
+  configureLocalSpeechRuntimeHome,
+  ensureLocalSpeechRuntime,
+  getLocalSpeechRuntimeStatus,
+  type LocalSpeechRuntimePackageId,
+} from "./providers/local/runtime/index.js";
 import { initializeLocalSpeechServices } from "./providers/local/runtime.js";
 import {
   getOpenAiSpeechAvailability,
@@ -24,6 +31,9 @@ const SPEECH_RUNTIME_MONITOR_INTERVAL_MS = 3000;
 export type SpeechReadinessReasonCode =
   | "ready"
   | "disabled"
+  | "runtime_install_in_progress"
+  | "runtime_missing"
+  | "runtime_install_failed"
   | "model_download_in_progress"
   | "models_missing"
   | "model_download_failed"
@@ -31,26 +41,62 @@ export type SpeechReadinessReasonCode =
   | "stt_unavailable"
   | "tts_unavailable";
 
+export type SpeechInstallableAssetKind = "models" | "runtime";
+
+export interface SpeechMissingAsset {
+  kind: SpeechInstallableAssetKind;
+  ids: string[];
+}
+
 export interface SpeechReadinessState {
   enabled: boolean;
   available: boolean;
   reasonCode: SpeechReadinessReasonCode;
   message: string;
   retryable: boolean;
-  missingModelIds: LocalSpeechModelId[];
+  missingAssets: SpeechMissingAsset[];
 }
 
 export interface SpeechReadinessSnapshot {
   generatedAt: string;
   requiredLocalModelIds: LocalSpeechModelId[];
   missingLocalModelIds: LocalSpeechModelId[];
-  download: {
-    inProgress: boolean;
-    error: string | null;
-  };
+  assets: Record<
+    SpeechInstallableAssetKind,
+    {
+      label: string;
+      missingIds: string[];
+      inProgress: boolean;
+      error: string | null;
+    }
+  >;
   realtimeVoice: SpeechReadinessState;
   dictation: SpeechReadinessState;
   voiceFeature: SpeechReadinessState;
+}
+
+interface InstallableAsset<TMissingId extends string> {
+  readonly kind: SpeechInstallableAssetKind;
+  readonly label: string;
+  readonly reasonCodes: {
+    inProgress: SpeechReadinessReasonCode;
+    failed: SpeechReadinessReasonCode;
+    missing: SpeechReadinessReasonCode;
+  };
+  readonly messages: {
+    inProgress(missingIds: TMissingId[]): string;
+    failed(error: string): string;
+    missing(missingIds: TMissingId[]): string;
+  };
+  getMissing(): Promise<TMissingId[]>;
+  install(missingIds: TMissingId[]): Promise<void>;
+}
+
+interface InstallableAssetRuntimeState {
+  label: string;
+  missingIds: string[];
+  inProgress: boolean;
+  error: string | null;
 }
 
 function resolveRequestedSpeechProviders(
@@ -125,6 +171,20 @@ function joinModelIds(modelIds: LocalSpeechModelId[]): string {
   return modelIds.join(", ");
 }
 
+function readinessState(params: {
+  enabled: boolean;
+  available: boolean;
+  reasonCode: SpeechReadinessReasonCode;
+  message: string;
+  retryable: boolean;
+  missingAssets?: SpeechMissingAsset[];
+}): SpeechReadinessState {
+  return {
+    ...params,
+    missingAssets: params.missingAssets ?? [],
+  };
+}
+
 function buildRealtimeVoiceReadiness(params: {
   providers: RequestedSpeechProviders;
   turnDetectionService: TurnDetectionProvider | null;
@@ -136,53 +196,48 @@ function buildRealtimeVoiceReadiness(params: {
   const voiceTtsEnabled = params.providers.voiceTts.enabled !== false;
   const enabled = voiceTurnDetectionEnabled || voiceSttEnabled || voiceTtsEnabled;
   if (!enabled) {
-    return {
+    return readinessState({
       enabled: false,
       available: false,
       reasonCode: "disabled",
       message: "Realtime voice is disabled in daemon config.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
   if (voiceTurnDetectionEnabled && !params.turnDetectionService) {
-    return {
+    return readinessState({
       enabled: true,
       available: false,
       reasonCode: "turn_detection_unavailable",
       message: "Realtime voice is unavailable: turn-detection service is not ready.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
   if (voiceSttEnabled && !params.sttService) {
-    return {
+    return readinessState({
       enabled: true,
       available: false,
       reasonCode: "stt_unavailable",
       message: "Realtime voice is unavailable: speech-to-text service is not ready.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
   if (voiceTtsEnabled && !params.ttsService) {
-    return {
+    return readinessState({
       enabled: true,
       available: false,
       reasonCode: "tts_unavailable",
       message: "Realtime voice is unavailable: text-to-speech service is not ready.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
-  return {
+  return readinessState({
     enabled: true,
     available: true,
     reasonCode: "ready",
     message: "Realtime voice is ready.",
     retryable: false,
-    missingModelIds: [],
-  };
+  });
 }
 
 function buildDictationReadiness(params: {
@@ -191,94 +246,92 @@ function buildDictationReadiness(params: {
 }): SpeechReadinessState {
   const enabled = params.providers.dictationStt.enabled !== false;
   if (!enabled) {
-    return {
+    return readinessState({
       enabled: false,
       available: false,
       reasonCode: "disabled",
       message: "Dictation is disabled in daemon config.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
   if (!params.dictationSttService) {
-    return {
+    return readinessState({
       enabled: true,
       available: false,
       reasonCode: "stt_unavailable",
       message: "Dictation is unavailable: speech-to-text service is not ready.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
-  return {
+  return readinessState({
     enabled: true,
     available: true,
     reasonCode: "ready",
     message: "Dictation is ready.",
     retryable: false,
-    missingModelIds: [],
-  };
+  });
 }
 
 function buildVoiceFeatureReadiness(params: {
   realtimeVoice: SpeechReadinessState;
   dictation: SpeechReadinessState;
-  missingLocalModelIds: LocalSpeechModelId[];
-  backgroundDownloadInProgress: boolean;
-  backgroundDownloadError: string | null;
+  registry: Array<InstallableAsset<string>>;
+  assets: Record<SpeechInstallableAssetKind, InstallableAssetRuntimeState>;
 }): SpeechReadinessState {
   const enabled = params.realtimeVoice.enabled || params.dictation.enabled;
   if (!enabled) {
-    return {
+    return readinessState({
       enabled: false,
       available: false,
       reasonCode: "disabled",
       message: "Voice features are disabled in daemon config.",
       retryable: false,
-      missingModelIds: [],
-    };
+    });
   }
 
-  if (params.missingLocalModelIds.length > 0) {
-    const missingModelIds = [...params.missingLocalModelIds];
-    if (params.backgroundDownloadInProgress) {
-      return {
+  for (const asset of params.registry) {
+    const state = params.assets[asset.kind];
+    if (state.missingIds.length === 0) {
+      continue;
+    }
+    const missingAsset = { kind: asset.kind, ids: [...state.missingIds] };
+    if (state.inProgress) {
+      return readinessState({
         enabled: true,
         available: false,
-        reasonCode: "model_download_in_progress",
-        message: `Voice features are unavailable while models download in the background (${joinModelIds(missingModelIds)}).`,
+        reasonCode: asset.reasonCodes.inProgress,
+        message: asset.messages.inProgress(state.missingIds),
         retryable: true,
-        missingModelIds,
-      };
+        missingAssets: [missingAsset],
+      });
     }
-    if (params.backgroundDownloadError) {
-      return {
+    if (state.error) {
+      return readinessState({
         enabled: true,
         available: false,
-        reasonCode: "model_download_failed",
-        message: `Voice features are unavailable: model download failed (${params.backgroundDownloadError}).`,
+        reasonCode: asset.reasonCodes.failed,
+        message: asset.messages.failed(state.error),
         retryable: false,
-        missingModelIds,
-      };
+        missingAssets: [missingAsset],
+      });
     }
-    return {
+    return readinessState({
       enabled: true,
       available: false,
-      reasonCode: "models_missing",
-      message: `Voice features are unavailable: missing local models (${joinModelIds(missingModelIds)}).`,
+      reasonCode: asset.reasonCodes.missing,
+      message: asset.messages.missing(state.missingIds),
       retryable: true,
-      missingModelIds,
-    };
+      missingAssets: [missingAsset],
+    });
   }
 
-  return {
+  return readinessState({
     enabled: true,
     available: true,
     reasonCode: "ready",
     message: "Voice features are ready.",
     retryable: false,
-    missingModelIds: [],
-  };
+  });
 }
 
 function describeRequestedProviders(providers: RequestedSpeechProviders): {
@@ -309,6 +362,16 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
       explicit: providers.voiceTts.explicit,
     },
   };
+}
+
+function requiresLocalSpeechRuntime(providers: RequestedSpeechProviders): boolean {
+  return (
+    (providers.dictationStt.enabled !== false && providers.dictationStt.provider === "local") ||
+    (providers.voiceTurnDetection.enabled !== false &&
+      providers.voiceTurnDetection.provider === "local") ||
+    (providers.voiceStt.enabled !== false && providers.voiceStt.provider === "local") ||
+    (providers.voiceTts.enabled !== false && providers.voiceTts.provider === "local")
+  );
 }
 
 function resolveVoiceTtsLabel(
@@ -356,14 +419,17 @@ export interface SpeechService {
 
 export function createSpeechService(params: {
   logger: Logger;
+  paseoHome: string;
   openaiConfig?: PaseoOpenAIConfig;
   speechConfig?: PaseoSpeechConfig;
 }): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
+  configureLocalSpeechRuntimeHome(params.paseoHome);
   const speechConfig = params.speechConfig ?? null;
   const openaiConfig = params.openaiConfig;
   const providers = resolveRequestedSpeechProviders(speechConfig);
   const requestedProviders = describeRequestedProviders(providers);
+  const localRuntimeRequired = requiresLocalSpeechRuntime(providers);
 
   validateOpenAiCredentialRequirements({
     providers,
@@ -392,9 +458,20 @@ export function createSpeechService(params: {
   let localCleanup = () => {};
   let localVoiceTtsProvider: TextToSpeechProvider | null = null;
 
-  let missingLocalModelIds: LocalSpeechModelId[] = [];
-  let backgroundDownloadInProgress = false;
-  let backgroundDownloadError: string | null = null;
+  const assetStates: Record<SpeechInstallableAssetKind, InstallableAssetRuntimeState> = {
+    models: {
+      label: "models",
+      missingIds: [],
+      inProgress: false,
+      error: null,
+    },
+    runtime: {
+      label: "local voice runtime",
+      missingIds: [],
+      inProgress: false,
+      error: null,
+    },
+  };
   let stopped = false;
   let monitorTimeout: ReturnType<typeof setTimeout> | null = null;
   let reconcileInFlight: Promise<void> | null = null;
@@ -410,6 +487,72 @@ export function createSpeechService(params: {
     rejectReady = reject;
   });
 
+  const installableAssets: Array<InstallableAsset<string>> = [
+    {
+      kind: "runtime",
+      label: "local voice runtime",
+      reasonCodes: {
+        inProgress: "runtime_install_in_progress",
+        failed: "runtime_install_failed",
+        missing: "runtime_missing",
+      },
+      messages: {
+        inProgress: (missingIds) =>
+          `Voice features are unavailable while the local voice runtime installs in the background (${missingIds.join(", ")}).`,
+        failed: (error) =>
+          `Voice features are unavailable: local voice runtime install failed (${error}).`,
+        missing: (missingIds) =>
+          `Voice features are unavailable: local voice runtime is downloading / not installed (${missingIds.join(", ")}).`,
+      },
+      getMissing: async (): Promise<LocalSpeechRuntimePackageId[]> => {
+        if (!localRuntimeRequired) {
+          return [];
+        }
+        const status = await getLocalSpeechRuntimeStatus({ paseoHome: params.paseoHome });
+        return status.missingPackageIds;
+      },
+      install: async () => {
+        await ensureLocalSpeechRuntime({
+          paseoHome: params.paseoHome,
+          logger,
+        });
+      },
+    },
+    {
+      kind: "models",
+      label: "models",
+      reasonCodes: {
+        inProgress: "model_download_in_progress",
+        failed: "model_download_failed",
+        missing: "models_missing",
+      },
+      messages: {
+        inProgress: (missingIds) =>
+          `Voice features are unavailable while models download in the background (${joinModelIds(missingIds as LocalSpeechModelId[])}).`,
+        failed: (error) => `Voice features are unavailable: model download failed (${error}).`,
+        missing: (missingIds) =>
+          `Voice features are unavailable: missing local models (${joinModelIds(missingIds as LocalSpeechModelId[])}).`,
+      },
+      getMissing: async (): Promise<LocalSpeechModelId[]> => {
+        return findMissingRequiredLocalModels({
+          modelsDir: localModelConfig?.modelsDir ?? null,
+          requiredModelIds: localModelConfig?.defaultModelIds ?? [],
+        });
+      },
+      install: async (missingIds) => {
+        const modelsDir = localModelConfig?.modelsDir ?? null;
+        if (!modelsDir || missingIds.length === 0) {
+          return;
+        }
+        await ensureLocalSpeechModels({
+          modelsDir,
+          modelIds: missingIds as LocalSpeechModelId[],
+          logger,
+        });
+      },
+    },
+  ];
+
   const computeReadinessSnapshot = (): SpeechReadinessSnapshot => {
     const realtimeVoice = buildRealtimeVoiceReadiness({
       providers,
@@ -424,17 +567,22 @@ export function createSpeechService(params: {
     const voiceFeature = buildVoiceFeatureReadiness({
       realtimeVoice,
       dictation,
-      missingLocalModelIds,
-      backgroundDownloadInProgress,
-      backgroundDownloadError,
+      registry: installableAssets,
+      assets: assetStates,
     });
     return {
       generatedAt: new Date().toISOString(),
       requiredLocalModelIds: localModelConfig?.defaultModelIds ?? [],
-      missingLocalModelIds: [...missingLocalModelIds],
-      download: {
-        inProgress: backgroundDownloadInProgress,
-        error: backgroundDownloadError,
+      missingLocalModelIds: [...assetStates.models.missingIds] as LocalSpeechModelId[],
+      assets: {
+        models: {
+          ...assetStates.models,
+          missingIds: [...assetStates.models.missingIds],
+        },
+        runtime: {
+          ...assetStates.runtime,
+          missingIds: [...assetStates.runtime.missingIds],
+        },
       },
       realtimeVoice: {
         ...realtimeVoice,
@@ -490,14 +638,28 @@ export function createSpeechService(params: {
     };
   };
 
-  const refreshMissingLocalModels = async (): Promise<void> => {
-    missingLocalModelIds = await findMissingRequiredLocalModels({
-      modelsDir: localModelConfig?.modelsDir ?? null,
-      requiredModelIds: localModelConfig?.defaultModelIds ?? [],
-    });
+  const refreshAssetState = async (asset: InstallableAsset<string>): Promise<void> => {
+    assetStates[asset.kind].missingIds = await asset.getMissing();
+  };
+
+  const refreshInstallableAssets = async (): Promise<void> => {
+    await Promise.all(installableAssets.map(refreshAssetState));
   };
 
   const reconcileServices = async (): Promise<void> => {
+    await refreshAssetState(installableAssets[0]);
+    if (assetStates.runtime.missingIds.length > 0) {
+      turnDetectionService = null;
+      sttService = null;
+      ttsService = null;
+      dictationSttService = null;
+      localVoiceTtsProvider = null;
+      localModelConfig = null;
+      localCleanup();
+      localCleanup = () => {};
+      return;
+    }
+
     const nextLocalSpeech = await initializeLocalSpeechServices({
       providers,
       speechConfig,
@@ -525,7 +687,7 @@ export function createSpeechService(params: {
     localCleanup = nextLocalSpeech.cleanup;
     previousLocalCleanup();
 
-    await refreshMissingLocalModels();
+    await refreshAssetState(installableAssets[1]);
 
     const effectiveProviders = resolveEffectiveProviderIds({
       turnDetectionService,
@@ -549,7 +711,7 @@ export function createSpeechService(params: {
           requestedProviders,
           effectiveProviders,
           unavailableFeatures,
-          missingLocalModelIds,
+          missingLocalModelIds: assetStates.models.missingIds,
         },
         "Speech provider reconciliation completed with unavailable features",
       );
@@ -587,51 +749,48 @@ export function createSpeechService(params: {
     }, SPEECH_RUNTIME_MONITOR_INTERVAL_MS);
   };
 
-  const startBackgroundDownload = (): void => {
-    if (stopped || backgroundDownloadInProgress) {
+  const startBackgroundInstall = (asset: InstallableAsset<string>): void => {
+    const state = assetStates[asset.kind];
+    if (stopped || state.inProgress || state.missingIds.length === 0) {
       return;
     }
-    const modelsDir = localModelConfig?.modelsDir ?? null;
-    const modelIds = [...missingLocalModelIds];
-    if (!modelsDir || modelIds.length === 0) {
-      return;
-    }
-
-    backgroundDownloadInProgress = true;
-    backgroundDownloadError = null;
+    const missingIds = [...state.missingIds];
+    state.inProgress = true;
+    state.error = null;
     publishReadinessIfChanged();
 
     logger.info(
       {
-        modelsDir,
-        modelIds,
+        kind: asset.kind,
+        missingIds,
       },
-      "Starting background download for missing local speech models",
+      "Starting background local speech asset install",
     );
 
     void (async () => {
       try {
-        await ensureLocalSpeechModels({
-          modelsDir,
-          modelIds,
-          logger,
-        });
+        await asset.install(missingIds);
+        await refreshAssetState(asset);
+        state.error = null;
         await runReconcile();
-        backgroundDownloadError = null;
       } catch (error) {
-        backgroundDownloadError = error instanceof Error ? error.message : String(error);
+        state.error = error instanceof Error ? error.message : String(error);
         publishReadinessIfChanged();
         logger.error(
           {
             err: error,
-            modelIds,
+            kind: asset.kind,
+            missingIds,
           },
-          "Background local speech model download failed",
+          "Background local speech asset install failed",
         );
       } finally {
-        backgroundDownloadInProgress = false;
-        await refreshMissingLocalModels().catch((error) => {
-          logger.warn({ err: error }, "Failed to refresh local speech model status after download");
+        state.inProgress = false;
+        await refreshAssetState(asset).catch((error) => {
+          logger.warn(
+            { err: error, kind: asset.kind },
+            "Failed to refresh local speech asset status after install",
+          );
         });
         publishReadinessIfChanged();
         scheduleMonitor();
@@ -644,23 +803,22 @@ export function createSpeechService(params: {
       return;
     }
     try {
-      await refreshMissingLocalModels();
+      await refreshInstallableAssets();
       const snapshot = computeReadinessSnapshot();
       if (
         snapshot.voiceFeature.enabled &&
         !snapshot.voiceFeature.available &&
-        missingLocalModelIds.length === 0 &&
-        !backgroundDownloadInProgress
+        installableAssets.every((asset) => assetStates[asset.kind].missingIds.length === 0) &&
+        installableAssets.every((asset) => !assetStates[asset.kind].inProgress)
       ) {
         await runReconcile();
       }
 
-      if (
-        missingLocalModelIds.length > 0 &&
-        !backgroundDownloadInProgress &&
-        !backgroundDownloadError
-      ) {
-        startBackgroundDownload();
+      for (const asset of installableAssets) {
+        const state = assetStates[asset.kind];
+        if (state.missingIds.length > 0 && !state.inProgress && !state.error) {
+          startBackgroundInstall(asset);
+        }
       }
     } catch (error) {
       logger.warn({ err: error }, "Speech runtime monitor tick failed");
@@ -680,8 +838,10 @@ export function createSpeechService(params: {
         await runReconcile();
         const snapshot = computeReadinessSnapshot();
         if (snapshot.voiceFeature.enabled && !snapshot.voiceFeature.available) {
-          if (missingLocalModelIds.length > 0) {
-            startBackgroundDownload();
+          for (const asset of installableAssets) {
+            if (assetStates[asset.kind].missingIds.length > 0) {
+              startBackgroundInstall(asset);
+            }
           }
           scheduleMonitor();
         }
@@ -706,6 +866,7 @@ export function createSpeechService(params: {
       monitorTimeout = null;
     }
     localCleanup();
+    clearLocalSpeechRuntimeHome();
   };
 
   return {

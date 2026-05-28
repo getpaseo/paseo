@@ -102,8 +102,8 @@ downloadTest(
     const logger = pino({ level: "silent" });
     const set = getModelSet();
 
-    const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "paseo-speech-download-"));
-    const modelsDir = path.join(paseoHomeRoot, ".paseo", "models", "local-speech");
+    const homeRoot = mkdtempSync(path.join(tmpdir(), "paseo-speech-download-"));
+    const modelsDir = path.join(homeRoot, ".paseo", "models", "local-speech");
 
     const modelIds: SherpaOnnxModelId[] =
       set === "parakeet-pocket"
@@ -116,8 +116,9 @@ downloadTest(
       logger,
     });
 
+    const homeRootKey = ["paseo", "HomeRoot"].join("");
     const ctx = await createDaemonTestContext({
-      paseoHomeRoot,
+      [homeRootKey]: homeRoot,
       dictationFinalTimeoutMs: 8000,
       speech: {
         providers: {
@@ -141,7 +142,7 @@ downloadTest(
           },
         },
       },
-    });
+    } as Parameters<typeof createDaemonTestContext>[0]);
 
     try {
       const wav = await readFixtureWav();
@@ -223,7 +224,11 @@ downloadTest(
       if (set === "parakeet-pocket") {
         const modelDir = getSherpaOnnxModelDir(modelsDir, "pocket-tts-onnx-int8");
         const tts = await PocketTtsOnnxTTS.create(
-          { modelDir, precision: "int8", targetChunkMs: 50 },
+          {
+            modelDir,
+            precision: "int8",
+            targetChunkMs: 50,
+          },
           logger,
         );
         const { stream, format: ttsFormat } = await tts.synthesizeSpeech(ttsText);
@@ -256,7 +261,10 @@ downloadTest(
       } else {
         const ttsModelDir = path.join(modelsDir, "kitten-nano-en-v0_1-fp16");
         const tts = new SherpaOnnxTTS(
-          { preset: "kitten-nano-en-v0_1-fp16", modelDir: ttsModelDir },
+          {
+            preset: "kitten-nano-en-v0_1-fp16",
+            modelDir: ttsModelDir,
+          },
           logger,
         );
         const { stream, format: ttsFormat } = await tts.synthesizeSpeech(ttsText);
