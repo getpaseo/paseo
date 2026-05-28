@@ -12,6 +12,7 @@ import { gotoWorkspace } from "./helpers/launcher";
 import { createTempGitRepo } from "./helpers/workspace";
 import {
   connectWorkspaceSetupClient,
+  openProjectViaDaemon,
   type WorkspaceSetupDaemonClient,
 } from "./helpers/workspace-setup";
 
@@ -27,11 +28,8 @@ test.beforeAll(async () => {
     ],
   });
   seedClient = await connectWorkspaceSetupClient();
-  const result = await seedClient.openProject(tempRepo.path);
-  if (!result.workspace) {
-    throw new Error(result.error ?? "Failed to seed workspace");
-  }
-  workspaceId = result.workspace.id;
+  const workspace = await openProjectViaDaemon(seedClient, tempRepo.path);
+  workspaceId = workspace.id;
 });
 
 test.afterAll(async () => {
