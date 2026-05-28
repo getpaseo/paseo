@@ -41,6 +41,7 @@ import {
   isTerminalFileDrag,
   prepareDroppedPathsForTerminal,
 } from "../terminal/drop/terminal-file-drop";
+import { getDesktopHost } from "@/desktop/host";
 
 export interface TerminalEmulatorHandle {
   writeOutput: (data: TerminalOutputData) => void;
@@ -833,13 +834,14 @@ export default function TerminalEmulator({
       event.stopPropagation();
       clearTerminalDropActive();
 
-      const paths = extractTerminalDropPaths(event.dataTransfer);
+      const bridge = getDesktopHost();
+      const paths = extractTerminalDropPaths(event.dataTransfer, bridge);
       if (paths.length === 0) {
         return;
       }
 
       runtimeRef.current?.focus();
-      mountCallbacksRef.current.onInput?.(prepareDroppedPathsForTerminal(paths));
+      mountCallbacksRef.current.onInput?.(prepareDroppedPathsForTerminal(paths, bridge));
     };
 
     root.addEventListener("dragenter", handleDragEnter, { capture: true });
