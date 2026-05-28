@@ -16,8 +16,8 @@ import {
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
   type SidebarOrderSnapshot,
-} from "./session-store-hooks.pure";
-import { useSessionStore, type WorkspaceDescriptor } from "./session-store";
+} from "./selectors";
+import { useSessionStore, type WorkspaceDescriptor } from "../session-store";
 
 const SERVER_ID = "test-server";
 

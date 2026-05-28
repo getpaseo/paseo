@@ -16,8 +16,8 @@ import {
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
   type WorkspaceStructure,
-} from "./session-store-hooks.pure";
-import { useSessionStore, type WorkspaceDescriptor } from "./session-store";
+} from "./selectors";
+import { useSessionStore, type WorkspaceDescriptor } from "../session-store";
 import type { WorkspaceExecutionAuthorityResult } from "@/utils/workspace-execution";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 
@@ -29,7 +29,7 @@ export type {
   DesktopBadgeWorkspaceStatus,
   WorkspaceStructure,
   WorkspaceStructureProject,
-} from "./session-store-hooks.pure";
+} from "./selectors";
 
 export function useWorkspace(
   serverId: string | null,

@@ -7,7 +7,7 @@ import {
   resolveWorkspaceMapKeyByIdentity,
   type WorkspaceExecutionAuthorityResult,
 } from "@/utils/workspace-execution";
-import type { WorkspaceDescriptor } from "./session-store";
+import type { WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 
