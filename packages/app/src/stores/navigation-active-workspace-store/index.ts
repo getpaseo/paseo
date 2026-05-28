@@ -11,7 +11,7 @@ import {
   navigateToWorkspace as navigateToWorkspacePure,
   parseActiveWorkspaceSelection,
   type NavigateToWorkspaceDeps,
-} from "@/stores/navigation-active-workspace-store.pure";
+} from "./navigation";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 

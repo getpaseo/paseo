@@ -6,7 +6,7 @@ import {
   parseActiveWorkspaceSelection,
   type NavigateToLastWorkspaceDeps,
   type NavigateToWorkspaceDeps,
-} from "@/stores/navigation-active-workspace-store.pure";
+} from "./navigation";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 
 interface RecordedAgentTab {
