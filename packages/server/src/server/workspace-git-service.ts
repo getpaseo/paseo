@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { LRUCache } from "lru-cache";
 import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
@@ -47,6 +48,10 @@ const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
+// Heavy values (multi-MB highlighted diffs); cap aggressively. Ephemeral worktree cwds would otherwise pile up forever.
+const WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX = 64;
+// Small values (booleans, short strings, small arrays); generous cap.
+const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
 const WORKSPACE_GIT_FACTS_REUSE_TTL_MS = 1_000;
 const LINUX_WATCH_MAX_DIRS = 5_000;
 const LINUX_WATCH_REFRESH_COOLDOWN_MS = 2_000;
@@ -349,34 +354,34 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly linuxIgnoredDirsCache = new Map<string, { ignored: Set<string>; ts: number }>();
-  private readonly branchValidationCache = new Map<
+  private readonly branchValidationCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitBranchValidationResult>
-  >();
-  private readonly localBranchCache = new Map<
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly localBranchCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<boolean>
-  >();
-  private readonly branchSuggestionsCache = new Map<
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly branchSuggestionsCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitBranchSuggestion[]>
-  >();
-  private readonly stashListCache = new Map<
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly stashListCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitStashEntry[]>
-  >();
-  private readonly worktreeListCache = new Map<
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly worktreeListCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitWorktreeInfo[]>
-  >();
-  private readonly defaultBranchCache = new Map<
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly defaultBranchCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<string>
-  >();
-  private readonly checkoutDiffCache = new Map<
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly checkoutDiffCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
-  >();
+  >({ max: WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX });
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
@@ -697,7 +702,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private readAuxiliaryCache<T>(
-    cache: Map<string, WorkspaceGitAuxiliaryReadCacheEntry<T>>,
+    cache: LRUCache<string, WorkspaceGitAuxiliaryReadCacheEntry<T>>,
     key: string,
     options: WorkspaceGitReadOptions | undefined,
     load: () => Promise<T>,
@@ -739,7 +744,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private ensureAuxiliaryCacheEntry<T>(
-    cache: Map<string, WorkspaceGitAuxiliaryReadCacheEntry<T>>,
+    cache: LRUCache<string, WorkspaceGitAuxiliaryReadCacheEntry<T>>,
     key: string,
   ): WorkspaceGitAuxiliaryReadCacheEntry<T> {
     const existing = cache.get(key);

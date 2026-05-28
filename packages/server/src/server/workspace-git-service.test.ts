@@ -897,4 +897,30 @@ describe("WorkspaceGitServiceImpl", () => {
     workspaceSubscription.unsubscribe();
     service.dispose();
   });
+
+  test("checkoutDiffCache evicts least-recently-used entries past its size cap", async () => {
+    vi.useRealTimers();
+    const getCheckoutDiff = vi.fn(async (cwd: string) => ({
+      diff: `diff for ${cwd}`,
+    }));
+    const service = createService({
+      getCheckoutDiff: getCheckoutDiff as unknown as ReturnType<typeof vi.fn>,
+    });
+
+    const CACHE_MAX = 64;
+    const OVERFLOW = 5;
+
+    for (let i = 0; i < CACHE_MAX + OVERFLOW; i++) {
+      await service.getCheckoutDiff(`/tmp/repo-${i}`, { mode: "uncommitted" });
+    }
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW);
+
+    await service.getCheckoutDiff(`/tmp/repo-${CACHE_MAX - 1}`, { mode: "uncommitted" });
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW);
+
+    await service.getCheckoutDiff("/tmp/repo-0", { mode: "uncommitted" });
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW + 1);
+
+    service.dispose();
+  });
 });
