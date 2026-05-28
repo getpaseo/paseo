@@ -1,12 +1,8 @@
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { expect, test } from "./fixtures";
-import {
-  archiveAgentFromDaemon,
-  connectArchiveTabDaemonClient,
-  createIdleAgent,
-} from "./helpers/archive-tab";
+import { createIdleAgent } from "./helpers/archive-tab";
 import { expectComposerVisible } from "./helpers/composer";
-import { createTempGitRepo } from "./helpers/workspace";
+import { seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 
@@ -17,16 +13,13 @@ test.describe("Workspace pane mounting", () => {
     test.setTimeout(90_000);
     const serverId = getServerId();
 
-    const client = await connectArchiveTabDaemonClient();
-    const repo = await createTempGitRepo("pane-remount-");
-    let agentId: string | null = null;
+    const workspace = await seedWorkspace({ repoPrefix: "pane-remount-" });
 
     try {
-      const agent = await createIdleAgent(client, {
-        cwd: repo.path,
+      const agent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
         title: `pane-remount-${Date.now()}`,
       });
-      agentId = agent.id;
 
       await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.cwd));
       await page.waitForURL(
@@ -52,11 +45,7 @@ test.describe("Workspace pane mounting", () => {
       const originalStillConnected = await originalComposer!.evaluate((node) => node.isConnected);
       expect(originalStillConnected).toBe(true);
     } finally {
-      if (agentId) {
-        await archiveAgentFromDaemon(client, agentId).catch(() => undefined);
-      }
-      await client.close().catch(() => undefined);
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });
