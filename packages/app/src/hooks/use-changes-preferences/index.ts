@@ -8,7 +8,7 @@ import {
   saveChangesPreferences as saveChangesPreferencesPure,
   type ChangesPreferences,
   type KeyValueStorage,
-} from "./use-changes-preferences.pure";
+} from "./storage";
 
 export { DEFAULT_CHANGES_PREFERENCES, type ChangesPreferences, type KeyValueStorage };
 

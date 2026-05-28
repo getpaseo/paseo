@@ -1,4 +1,4 @@
-import type { KeyValueStorage } from "./use-changes-preferences.pure";
+import type { KeyValueStorage } from "./storage";
 
 export interface InMemoryKeyValueStorage extends KeyValueStorage {
   readonly entries: Map<string, string>;

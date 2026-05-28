@@ -1,13 +1,13 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { createInMemoryKeyValueStorage } from "./use-changes-preferences.test-utils";
+import { createInMemoryKeyValueStorage } from "./fakes";
 import {
   CHANGES_PREFERENCES_QUERY_KEY,
   CHANGES_PREFERENCES_STORAGE_KEY,
   DEFAULT_CHANGES_PREFERENCES,
   loadChangesPreferencesFromStorage,
   saveChangesPreferences,
-} from "./use-changes-preferences.pure";
+} from "./storage";
 
 describe("loadChangesPreferencesFromStorage", () => {
   it("defaults to unified layout with visible whitespace and writes the defaults back", async () => {
