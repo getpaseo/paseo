@@ -16,6 +16,8 @@ export interface SeedDaemonClient {
     workspace: {
       id: string;
       name: string;
+      projectId: string;
+      projectDisplayName: string;
       projectRootPath: string;
       workspaceDirectory: string;
     } | null;
@@ -85,6 +87,10 @@ export interface SeededWorkspace {
   workspaceId: string;
   workspaceName: string;
   workspaceDirectory: string;
+  /** Stable project identity the daemon groups workspaces under. */
+  projectId: string;
+  /** Project label the UI shows (owner/repo for known remotes, else basename). */
+  projectDisplayName: string;
   cleanup(): Promise<void>;
 }
 
@@ -111,6 +117,8 @@ export async function seedWorkspace(options: {
       workspaceId: opened.workspace.id,
       workspaceName: opened.workspace.name,
       workspaceDirectory: opened.workspace.workspaceDirectory,
+      projectId: opened.workspace.projectId,
+      projectDisplayName: opened.workspace.projectDisplayName,
       cleanup: async () => {
         await client.close().catch(() => undefined);
         await project.cleanup().catch(() => undefined);
