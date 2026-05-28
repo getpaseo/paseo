@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { openProjectDirectly } from "@/hooks/open-project.pure";
+import { openProjectDirectly } from "@/hooks/open-project";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 const SERVER_ID = "server-1";

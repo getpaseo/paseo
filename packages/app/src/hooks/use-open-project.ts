@@ -4,10 +4,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { openProjectDirectly } from "@/hooks/open-project.pure";
-
-export { openProjectDirectly } from "@/hooks/open-project.pure";
-export type { OpenProjectDirectlyInput } from "@/hooks/open-project.pure";
+import { openProjectDirectly } from "@/hooks/open-project";
 
 export function useOpenProject(serverId: string | null): (path: string) => Promise<boolean> {
   const normalizedServerId = serverId?.trim() ?? "";
