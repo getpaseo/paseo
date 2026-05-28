@@ -11,7 +11,7 @@ import {
   resolveProvidersToFetch,
   type SessionsQueryResult,
   sumFilteredAlreadyImportedCount,
-} from "@/components/import-session-sheet.pure";
+} from "@/components/import-session-sheet-view-model";
 
 function entry(
   overrides: Partial<FetchRecentProviderSessionEntry> = {},

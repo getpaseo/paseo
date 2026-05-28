@@ -25,7 +25,7 @@ import {
   PER_PROVIDER_LIMIT,
   resolveProvidersToFetch,
   sumFilteredAlreadyImportedCount,
-} from "@/components/import-session-sheet.pure";
+} from "@/components/import-session-sheet-view-model";
 
 const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
 const DISABLED_ACCESSIBILITY_STATE = { disabled: true };
