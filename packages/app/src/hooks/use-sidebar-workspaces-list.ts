@@ -16,7 +16,7 @@ import {
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
-} from "./use-sidebar-workspaces-list.pure";
+} from "./sidebar-workspaces-view-model";
 
 export {
   appendMissingOrderKeys,
@@ -29,7 +29,7 @@ export {
   type SidebarProjectEntry,
   type SidebarStateBucket,
   type SidebarWorkspaceEntry,
-} from "./use-sidebar-workspaces-list.pure";
+} from "./sidebar-workspaces-view-model";
 
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;

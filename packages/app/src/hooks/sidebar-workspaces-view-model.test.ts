@@ -7,7 +7,7 @@ import {
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
-} from "./use-sidebar-workspaces-list.pure";
+} from "./sidebar-workspaces-view-model";
 
 interface OrderedItem {
   key: string;
