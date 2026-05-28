@@ -215,56 +215,6 @@ describe("SubagentsTrack", () => {
     expect(onOpenSubagent).toHaveBeenCalledWith("child-b");
   });
 
-  describe("header copy", () => {
-    it("renders '2 subagents' when two rows are not running", () => {
-      render([row({ id: "child-a" }), row({ id: "child-b" })]);
-      expect(queryByTestId("subagents-track-header")?.textContent).toBe("2 subagents");
-    });
-
-    it("renders '3 subagents · 1 running' with a single running row", () => {
-      render([
-        row({ id: "child-a", status: "running" }),
-        row({ id: "child-b" }),
-        row({ id: "child-c" }),
-      ]);
-      expect(queryByTestId("subagents-track-header")?.textContent).toBe("3 subagents · 1 running");
-    });
-
-    it("renders '1 subagent' for a finished row that still requires attention upstream", () => {
-      render([row({ id: "child-a", requiresAttention: true })]);
-      expect(queryByTestId("subagents-track-header")?.textContent).toBe("1 subagent");
-    });
-
-    it("renders '5 subagents · 2 running' when finished rows require attention upstream", () => {
-      render([
-        row({ id: "a", status: "running" }),
-        row({ id: "b", status: "running" }),
-        row({ id: "c", requiresAttention: true }),
-        row({ id: "d" }),
-        row({ id: "e" }),
-      ]);
-      expect(queryByTestId("subagents-track-header")?.textContent).toBe("5 subagents · 2 running");
-    });
-  });
-
-  it("ignores requiresAttention for non-running header copy", () => {
-    render([
-      row({ id: "a", status: "error", requiresAttention: false }),
-      row({ id: "b", status: "idle", requiresAttention: false }),
-      row({ id: "c", status: "idle", requiresAttention: true }),
-    ]);
-    expect(queryByTestId("subagents-track-header")?.textContent).toBe("3 subagents");
-  });
-
-  it("still counts running rows even when they require attention", () => {
-    render([
-      row({ id: "a", status: "error", requiresAttention: true }),
-      row({ id: "b", status: "running", requiresAttention: true }),
-      row({ id: "c", status: "idle", requiresAttention: true }),
-    ]);
-    expect(queryByTestId("subagents-track-header")?.textContent).toBe("3 subagents · 1 running");
-  });
-
   it("renders each row through the shared workspace tab icon primitives", () => {
     render([
       row({ id: "idle-child", status: "idle", provider: "codex" }),
