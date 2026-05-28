@@ -1,0 +1,86 @@
+import type { Page } from "@playwright/test";
+import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
+import { connectTerminalClient, type TerminalPerfDaemonClient } from "./terminal-perf";
+import { createTempGitRepo } from "./workspace";
+
+function getServerId(): string {
+  const serverId = process.env.E2E_SERVER_ID;
+  if (!serverId) {
+    throw new Error("E2E_SERVER_ID is not set.");
+  }
+  return serverId;
+}
+
+export interface MockAgentWorkspace {
+  agentId: string;
+  cwd: string;
+  client: TerminalPerfDaemonClient;
+  cleanup(): Promise<void>;
+}
+
+export interface MockAgentOptions {
+  repoPrefix: string;
+  title: string;
+  initialPrompt?: string;
+  model?: string;
+  modeId?: string;
+  featureValues?: Record<string, unknown>;
+}
+
+/**
+ * Seeds a temp git repo, opens it as a project, and creates a ready mock-provider
+ * agent in it via the daemon. Returns the agent id plus a cleanup that closes the
+ * client and removes the repo. Pair with {@link openAgentRoute} to drive the UI.
+ */
+export async function seedMockAgentWorkspace(
+  options: MockAgentOptions,
+): Promise<MockAgentWorkspace> {
+  const repo = await createTempGitRepo(options.repoPrefix);
+  const client = await connectTerminalClient();
+  try {
+    const opened = await client.openProject(repo.path);
+    if (!opened.workspace) {
+      throw new Error(opened.error ?? `Failed to open project ${repo.path}`);
+    }
+    const agent = await client.createAgent({
+      provider: "mock",
+      cwd: repo.path,
+      title: options.title,
+      modeId: options.modeId ?? "load-test",
+      model: options.model ?? "ten-second-stream",
+      initialPrompt: options.initialPrompt,
+      featureValues: options.featureValues,
+    });
+    return {
+      agentId: agent.id,
+      cwd: repo.path,
+      client,
+      cleanup: async () => {
+        await client.close().catch(() => undefined);
+        await repo.cleanup().catch(() => undefined);
+      },
+    };
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    await repo.cleanup().catch(() => undefined);
+    throw error;
+  }
+}
+
+export function buildAgentRoute(cwd: string, agentId: string): string {
+  return `${buildHostWorkspaceRoute(getServerId(), cwd)}?open=${encodeURIComponent(
+    `agent:${agentId}`,
+  )}`;
+}
+
+/** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */
+export async function openAgentRoute(
+  page: Page,
+  input: { cwd: string; agentId: string },
+): Promise<void> {
+  await page.goto(buildAgentRoute(input.cwd, input.agentId));
+  await page.waitForURL(
+    (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
+    { timeout: 60_000 },
+  );
+}
