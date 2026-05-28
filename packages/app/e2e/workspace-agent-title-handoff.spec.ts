@@ -1,7 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
-import { createTempGitRepo } from "./helpers/workspace";
 import { expectComposerVisible, submitMessage } from "./helpers/composer";
-import { connectSeedClient, type SeedDaemonClient } from "./helpers/seed-client";
+import { seedWorkspace, type SeedDaemonClient } from "./helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { captureWsSessionFrames } from "./helpers/rename";
 import { getServerId } from "./helpers/server-id";
@@ -169,15 +168,9 @@ test.describe("Workspace agent title handoff", () => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 900 });
 
-    const client = await connectSeedClient();
-    const repo = await createTempGitRepo("workspace-title-handoff-");
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-title-handoff-" });
 
     try {
-      const opened = await client.openProject(repo.path);
-      if (!opened.workspace) {
-        throw new Error(opened.error ?? "Failed to open test workspace");
-      }
-
       const createFrames = captureWsSessionFrames(page, "create_agent_request", (inner) => {
         const config = (inner.config ?? {}) as Record<string, unknown>;
         return {
@@ -186,7 +179,7 @@ test.describe("Workspace agent title handoff", () => {
         };
       });
 
-      await page.goto(buildHostWorkspaceRoute(getServerId(), opened.workspace.id));
+      await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
       await waitForWorkspaceTabsVisible(page);
       await page.getByTestId("workspace-new-agent-tab").click();
       await expectComposerVisible(page);
@@ -196,7 +189,7 @@ test.describe("Workspace agent title handoff", () => {
       await installWorkspaceTabProbe(page);
       await submitMessage(page, `${promptTitle}\n\nMake the UI state deterministic.`);
 
-      const agentId = await waitForCreatedAgentId(client, repo.path);
+      const agentId = await waitForCreatedAgentId(workspace.client, workspace.repoPath);
       await expect
         .poll(() => countCreateFramesForPrompt(createFrames, promptTitle), {
           timeout: 10_000,
@@ -209,9 +202,9 @@ test.describe("Workspace agent title handoff", () => {
 
       await waitForPromptTabAgentActions(page, promptTitle);
 
-      await client.updateAgent(agentId, { name: generatedTitle });
+      await workspace.client.updateAgent(agentId, { name: generatedTitle });
       await expect
-        .poll(() => fetchActiveAgentTitle(client, agentId), { timeout: 10_000 })
+        .poll(() => fetchActiveAgentTitle(workspace.client, agentId), { timeout: 10_000 })
         .toBe(generatedTitle);
       await expect(page.getByRole("button", { name: generatedTitle }).first()).toBeVisible({
         timeout: 15_000,
@@ -222,8 +215,7 @@ test.describe("Workspace agent title handoff", () => {
       expect(records.some((record) => recordHasTabLabel(record, generatedTitle))).toBe(true);
       expect(records.filter(recordHasLoadingTitle)).toEqual([]);
     } finally {
-      await client.close().catch(() => undefined);
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });

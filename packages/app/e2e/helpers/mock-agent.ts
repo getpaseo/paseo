@@ -1,7 +1,6 @@
 import type { Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
-import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
-import { createTempGitRepo } from "./workspace";
+import { seedWorkspace, type SeedDaemonClient } from "./seed-client";
 import { getServerId } from "./server-id";
 
 export interface MockAgentWorkspace {
@@ -28,16 +27,11 @@ export interface MockAgentOptions {
 export async function seedMockAgentWorkspace(
   options: MockAgentOptions,
 ): Promise<MockAgentWorkspace> {
-  const repo = await createTempGitRepo(options.repoPrefix);
-  const client = await connectSeedClient();
+  const workspace = await seedWorkspace({ repoPrefix: options.repoPrefix });
   try {
-    const opened = await client.openProject(repo.path);
-    if (!opened.workspace) {
-      throw new Error(opened.error ?? `Failed to open project ${repo.path}`);
-    }
-    const agent = await client.createAgent({
+    const agent = await workspace.client.createAgent({
       provider: "mock",
-      cwd: repo.path,
+      cwd: workspace.repoPath,
       title: options.title,
       modeId: options.modeId ?? "load-test",
       model: options.model ?? "ten-second-stream",
@@ -46,16 +40,12 @@ export async function seedMockAgentWorkspace(
     });
     return {
       agentId: agent.id,
-      cwd: repo.path,
-      client,
-      cleanup: async () => {
-        await client.close().catch(() => undefined);
-        await repo.cleanup().catch(() => undefined);
-      },
+      cwd: workspace.repoPath,
+      client: workspace.client,
+      cleanup: workspace.cleanup,
     };
   } catch (error) {
-    await client.close().catch(() => undefined);
-    await repo.cleanup().catch(() => undefined);
+    await workspace.cleanup();
     throw error;
   }
 }

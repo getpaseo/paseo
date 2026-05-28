@@ -1,6 +1,7 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { connectDaemonClient } from "./daemon-client-loader";
+import { createTempGitRepo } from "./workspace";
 
 /**
  * The general-purpose E2E daemon client used to seed and drive state out of
@@ -64,6 +65,43 @@ export async function connectSeedClient(): Promise<SeedDaemonClient> {
     clientIdPrefix: "seed",
     appVersion: loadAppVersion(),
   });
+}
+
+/**
+ * A temp git repo opened as a workspace, with a seed client connected to drive
+ * it out of band. `cleanup` closes the client and removes the repo. This is the
+ * canonical bootstrap for specs that need a real workspace plus daemon access;
+ * domain helpers (e.g. mock-agent) build on it rather than re-rolling the trio.
+ */
+export interface SeededWorkspace {
+  client: SeedDaemonClient;
+  repoPath: string;
+  workspaceId: string;
+  cleanup(): Promise<void>;
+}
+
+export async function seedWorkspace(options: { repoPrefix: string }): Promise<SeededWorkspace> {
+  const repo = await createTempGitRepo(options.repoPrefix);
+  const client = await connectSeedClient();
+  try {
+    const opened = await client.openProject(repo.path);
+    if (!opened.workspace) {
+      throw new Error(opened.error ?? `Failed to open project ${repo.path}`);
+    }
+    return {
+      client,
+      repoPath: repo.path,
+      workspaceId: opened.workspace.id,
+      cleanup: async () => {
+        await client.close().catch(() => undefined);
+        await repo.cleanup().catch(() => undefined);
+      },
+    };
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    await repo.cleanup().catch(() => undefined);
+    throw error;
+  }
 }
 
 function loadAppVersion(): string {
