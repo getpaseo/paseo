@@ -1324,6 +1324,12 @@ export class AgentManager {
 
     await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
 
+    if (this.agents.has(agentId)) {
+      this.notifyAgentState(agentId);
+    } else if (!nextRecord.internal) {
+      this.dispatchArchivedStoredAgent(nextRecord);
+    }
+
     await this.fireAgentArchived(agentId);
 
     return nextRecord;

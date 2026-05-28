@@ -1966,6 +1966,38 @@ test("archiveSnapshot clears persisted attention and normalizes running status",
   expect(persisted?.attentionTimestamp).toBeNull();
 });
 
+test("archiveSnapshot dispatches archived state for stored-only agents", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-snapshot-dispatch-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const created = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Stored archive dispatch",
+  });
+  await manager.closeAgent(created.id);
+
+  const lifecycles: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === created.id) {
+        lifecycles.push(event.agent.lifecycle);
+      }
+    },
+    { agentId: created.id, replayState: false },
+  );
+
+  await manager.archiveSnapshot(created.id, new Date().toISOString());
+
+  expect(lifecycles).toContain("closed");
+});
+
 test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-active-"));
   const storagePath = join(workdir, "agents");

@@ -316,8 +316,21 @@ export class ScheduleService {
     const matches = schedules.filter(
       (schedule) => schedule.target.type === "agent" && schedule.target.agentId === agentId,
     );
-    await Promise.all(matches.map((schedule) => this.store.delete(schedule.id)));
-    return matches.length;
+    const results = await Promise.allSettled(
+      matches.map((schedule) => this.store.delete(schedule.id)),
+    );
+    let deleted = 0;
+    for (const [index, result] of results.entries()) {
+      if (result.status === "fulfilled") {
+        deleted += 1;
+      } else {
+        this.logger.warn(
+          { err: result.reason, scheduleId: matches[index].id, agentId },
+          "Failed to delete schedule for archived agent; continuing",
+        );
+      }
+    }
+    return deleted;
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
