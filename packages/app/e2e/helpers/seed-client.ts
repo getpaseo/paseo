@@ -54,6 +54,10 @@ export interface SeedDaemonClient {
     agentId: string,
     timeout?: number,
   ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
+  archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
+  fetchAgentHistory(options?: {
+    page?: { limit: number };
+  }): Promise<{ entries: Array<{ id: string }> }>;
   subscribeTerminal(
     terminalId: string,
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;

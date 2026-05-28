@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
-import { connectDaemonClient } from "./daemon-client-loader";
 import { getServerId } from "./server-id";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
@@ -14,30 +13,6 @@ export interface ArchiveTabAgent {
   id: string;
   title: string;
   cwd: string;
-}
-
-interface ArchiveTabDaemonClient {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  createAgent(options: {
-    provider: string;
-    model: string;
-    thinkingOptionId?: string;
-    modeId: string;
-    cwd: string;
-    title: string;
-    initialPrompt?: string;
-  }): Promise<{ id: string }>;
-  archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
-  waitForFinish(agentId: string, timeout?: number): Promise<{ status: string }>;
-  waitForAgentUpsert(
-    agentId: string,
-    predicate: (snapshot: { status: string }) => boolean,
-    timeout?: number,
-  ): Promise<{ status: string }>;
-  fetchAgentHistory(options?: {
-    page?: { limit: number };
-  }): Promise<{ entries: Array<{ id: string }> }>;
 }
 
 function getDaemonPort(): string {
@@ -63,14 +38,10 @@ function buildSeededStoragePayload() {
   };
 }
 
-export async function connectArchiveTabDaemonClient(): Promise<ArchiveTabDaemonClient> {
-  return connectDaemonClient<ArchiveTabDaemonClient>({ clientIdPrefix: "app-e2e-archive-tab" });
-}
-
 /**
  * The slice of a daemon client `createIdleAgent` needs: spawn an agent and await
- * its idle upsert. Both the archive-tab client and the shared seed client
- * satisfy it, so a spec can seed an idle agent from whichever it already holds.
+ * its idle upsert. The shared seed client satisfies it, so a spec can seed an
+ * idle agent from the same client it uses for everything else.
  */
 export interface IdleAgentSeedClient {
   createAgent(options: {
@@ -114,7 +85,7 @@ export async function createIdleAgent(
 }
 
 export async function archiveAgentFromDaemon(
-  client: ArchiveTabDaemonClient,
+  client: { archiveAgent(agentId: string): Promise<{ archivedAt: string }> },
   agentId: string,
 ): Promise<void> {
   await client.archiveAgent(agentId);
