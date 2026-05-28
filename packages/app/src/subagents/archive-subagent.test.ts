@@ -5,7 +5,7 @@ import {
   resolveArchiveSubagentDialog,
   type ArchiveSubagentDeps,
   type ResolveArchiveSubagentDialogInput,
-} from "./use-archive-subagent.pure";
+} from "./archive-subagent";
 
 interface RecordedArchive {
   serverId: string;

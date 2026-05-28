@@ -2,17 +2,14 @@ import { useCallback } from "react";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import {
-  requestArchiveSubagent,
-  type ResolveArchiveSubagentDialogInput,
-} from "./use-archive-subagent.pure";
+import { requestArchiveSubagent, type ResolveArchiveSubagentDialogInput } from "./archive-subagent";
 
-export { resolveArchiveSubagentDialog, requestArchiveSubagent } from "./use-archive-subagent.pure";
+export { resolveArchiveSubagentDialog, requestArchiveSubagent } from "./archive-subagent";
 export type {
   ArchiveSubagentDeps,
   RequestArchiveSubagentInput,
   ResolveArchiveSubagentDialogInput,
-} from "./use-archive-subagent.pure";
+} from "./archive-subagent";
 
 export interface UseArchiveSubagentInput {
   serverId: string;
