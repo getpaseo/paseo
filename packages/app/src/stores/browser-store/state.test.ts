@@ -6,7 +6,7 @@ import {
   normalizeBrowserUrl,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
-} from "./browser-store.pure";
+} from "./state";
 
 function withRecords(records: ReturnType<typeof createBrowserRecord>[]): BrowserIndexState {
   return {

@@ -11,9 +11,9 @@ import {
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
   trimNonEmpty,
-} from "./browser-store.pure";
+} from "./state";
 
-export type { BrowserRecord } from "./browser-store.pure";
+export type { BrowserRecord } from "./state";
 
 interface BrowserStoreState extends BrowserIndexState {
   createBrowser: (input?: { initialUrl?: string }) => string;
