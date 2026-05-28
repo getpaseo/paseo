@@ -3,7 +3,6 @@ import type { Logger } from "pino";
 import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
-import type { SessionOutboundMessage } from "../messages.js";
 import { archivePaseoWorktree, killTerminalsUnderPath } from "../paseo-worktree-archive-service.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
@@ -26,7 +25,6 @@ export interface AutoArchiveArchiveOptions {
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
-  emitSessionMessage: (message: SessionOutboundMessage) => void;
 }
 
 export interface ArchiveIfSafeDependencies {
@@ -97,7 +95,6 @@ export async function archiveIfSafe(input: {
           agentManager: options.agentManager,
           agentStorage: options.agentStorage,
           archiveWorkspaceRecord: options.archiveWorkspaceRecord,
-          emit: options.emitSessionMessage,
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
           markWorkspaceArchiving: options.markWorkspaceArchiving,
           clearWorkspaceArchiving: options.clearWorkspaceArchiving,

@@ -311,6 +311,15 @@ export class ScheduleService {
     await this.store.delete(id);
   }
 
+  async deleteForAgent(agentId: string): Promise<number> {
+    const schedules = await this.store.list();
+    const matches = schedules.filter(
+      (schedule) => schedule.target.type === "agent" && schedule.target.agentId === agentId,
+    );
+    await Promise.all(matches.map((schedule) => this.store.delete(schedule.id)));
+    return matches.length;
+  }
+
   async runOnce(id: string): Promise<StoredSchedule> {
     const schedule = await this.inspect(id);
     if (schedule.status === "completed") {

@@ -590,6 +590,13 @@ export async function createPaseoDaemon(
     agentStorage,
   });
   await scheduleService.start();
+  agentManager.setAgentArchivedCallback(async (agentId) => {
+    try {
+      await scheduleService.deleteForAgent(agentId);
+    } catch (error) {
+      logger.warn({ err: error, agentId }, "Failed to delete schedules for archived agent");
+    }
+  });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
@@ -654,7 +661,6 @@ export async function createPaseoDaemon(
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
-    emitSessionMessage: emitExternalSessionMessage,
   });
 
   const mcpEnabled = config.mcpEnabled ?? true;
@@ -677,7 +683,6 @@ export async function createPaseoDaemon(
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,
         clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
-        emitSessionMessage: emitExternalSessionMessage,
         createPaseoWorktree: async (input, serviceOptions) => {
           return createPaseoWorktreeWorkflow(
             {
