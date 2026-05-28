@@ -3,14 +3,14 @@ import {
   normalizePickedImageAssetsWith,
   type ExpoImagePickerAssetLike,
   type PickedImageAttachmentInput,
-} from "./image-attachment-picker.native.pure";
+} from "./picked-image-normalizer";
 
 export type {
   ExportPickedImageAsPng,
   ExpoImagePickerAssetLike,
   PickedImageAttachmentInput,
   PickedImageSource,
-} from "./image-attachment-picker.native.pure";
+} from "./picked-image-normalizer";
 
 async function exportPickedImageAsPng(uri: string): Promise<string> {
   const context = ImageManipulator.manipulate(uri);

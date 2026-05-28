@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizePickedImageAssetsWith,
   type ExportPickedImageAsPng,
-} from "./image-attachment-picker.native.pure";
+} from "./picked-image-normalizer";
 
 function fakeExportAsPng(): {
   exportAsPng: ExportPickedImageAsPng;
