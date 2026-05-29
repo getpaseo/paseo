@@ -1,5 +1,6 @@
 import { test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
+import { getServerId } from "./helpers/server-id";
 import {
   loadRealDaemonState,
   injectDesktopBridge,
@@ -17,20 +18,12 @@ import {
   expectDaemonStatusVersion,
 } from "./helpers/desktop-updates";
 
-function getSeededServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
-
 // No Playwright Electron runner exists; we simulate the desktop bridge via
 // addInitScript so Electron-gated UI activates without a real Electron process.
 test.describe("Desktop updates", () => {
   test("update banner appears in the sidebar when an app update is available", async ({ page }) => {
     await injectDesktopBridge(page, {
-      serverId: getSeededServerId(),
+      serverId: getServerId(),
       updateAvailable: true,
       latestVersion: "1.2.3",
     });
@@ -41,7 +34,7 @@ test.describe("Desktop updates", () => {
 
   test("clicking install shows the installing state on the callout", async ({ page }) => {
     await injectDesktopBridge(page, {
-      serverId: getSeededServerId(),
+      serverId: getServerId(),
       updateAvailable: true,
       latestVersion: "1.2.3",
       slowInstall: true,
@@ -58,7 +51,7 @@ test.describe("Desktop daemon management", () => {
   test("disabling built-in daemon management shows confirm dialog with correct copy", async ({
     page,
   }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
     await injectDesktopBridge(page, {
       serverId,
       manageBuiltInDaemon: true,
@@ -74,7 +67,7 @@ test.describe("Desktop daemon management", () => {
   });
 
   test("cancelling the confirm dialog leaves the daemon management toggle on", async ({ page }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
     await injectDesktopBridge(page, {
       serverId,
       manageBuiltInDaemon: true,
@@ -89,7 +82,7 @@ test.describe("Desktop daemon management", () => {
   });
 
   test("confirming the dialog disables built-in daemon management", async ({ page }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
     await injectDesktopBridge(page, {
       serverId,
       manageBuiltInDaemon: true,
@@ -106,7 +99,7 @@ test.describe("Desktop daemon management", () => {
   test("daemon status panel renders version, PID, and log path from the real daemon", async ({
     page,
   }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
     const realState = await loadRealDaemonState();
     await injectDesktopBridge(page, {
       serverId,
@@ -124,7 +117,7 @@ test.describe("Desktop daemon management", () => {
   });
 
   test("stopping and restarting the daemon updates the PID", async ({ page }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
     const realState = await loadRealDaemonState();
     await injectDesktopBridge(page, {
       serverId,

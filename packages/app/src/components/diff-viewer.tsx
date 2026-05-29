@@ -4,6 +4,8 @@ import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import type { DiffLine } from "@/utils/tool-call-parsers";
+import { diffLinePrefix } from "@/utils/diff-highlight";
+import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
@@ -40,6 +42,26 @@ function DiffLineRow({ line }: { line: DiffLine }) {
     [line.type],
   );
 
+  const prefixStyle = React.useMemo(
+    () => [
+      line.type === "add" && styles.addText,
+      line.type === "remove" && styles.removeText,
+      line.type === "context" && styles.contextText,
+    ],
+    [line.type],
+  );
+
+  if (line.tokens) {
+    return (
+      <View style={lineContainerStyle}>
+        <Text style={styles.lineText}>
+          <Text style={prefixStyle}>{diffLinePrefix(line)}</Text>
+          <DiffTokens tokens={line.tokens} />
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={lineContainerStyle}>
       {line.segments ? (
@@ -59,6 +81,22 @@ function DiffLineRow({ line }: { line: DiffLine }) {
         <Text style={plainLineTextStyle}>{line.content}</Text>
       )}
     </View>
+  );
+}
+
+function DiffTokens({ tokens }: { tokens: NonNullable<DiffLine["tokens"]> }) {
+  const keyed = React.useMemo(
+    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
+    [tokens],
+  );
+  return (
+    <>
+      {keyed.map(({ key, token }) => (
+        <Text key={key} style={token.style ? syntaxTokenStyleFor(token.style) : undefined}>
+          {token.text}
+        </Text>
+      ))}
+    </>
   );
 }
 

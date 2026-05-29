@@ -27,6 +27,7 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 
 interface CodeLineProps {
@@ -398,16 +399,26 @@ export function FilePane({
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
+  const readTarget = useMemo(
+    () =>
+      normalizedFilePath
+        ? resolveFilePreviewReadTarget({
+            path: normalizedFilePath,
+            workspaceRoot: normalizedWorkspaceRoot,
+          })
+        : null,
+    [normalizedFilePath, normalizedWorkspaceRoot],
+  );
 
   const query = useQuery({
-    queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
-    enabled: Boolean(client && normalizedWorkspaceRoot && normalizedFilePath),
+    queryKey: ["workspaceFile", serverId, readTarget?.cwd ?? null, readTarget?.path ?? null],
+    enabled: Boolean(client && readTarget),
     queryFn: async () => {
-      if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
+      if (!client || !readTarget) {
         return { file: null as ExplorerFile | null, error: "Host is not connected" };
       }
       try {
-        const file = await client.readFile(normalizedWorkspaceRoot, normalizedFilePath);
+        const file = await client.readFile(readTarget.cwd, readTarget.path);
         const preview = await createFilePanePreview(file);
         return {
           file: preview.file,

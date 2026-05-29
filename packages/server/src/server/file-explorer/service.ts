@@ -1,7 +1,7 @@
 import { constants, promises as fs } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
-import { resolvePathFromBase } from "../path-utils.js";
+import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -276,7 +276,7 @@ async function resolveScopedPath({
   root,
   relativePath = ".",
 }: ScopedPathParams): Promise<ScopedPath> {
-  const normalizedRoot = path.resolve(root);
+  const normalizedRoot = expandUserPath(root);
   const requestedPath = resolvePathFromBase(normalizedRoot, relativePath);
   const relative = path.relative(normalizedRoot, requestedPath);
 
@@ -335,8 +335,8 @@ function isOutsideWorkspaceError(error: unknown): boolean {
 }
 
 function normalizeRelativePath({ root, targetPath }: { root: string; targetPath: string }): string {
-  const normalizedRoot = path.resolve(root);
-  const normalizedTarget = path.resolve(targetPath);
+  const normalizedRoot = expandUserPath(root);
+  const normalizedTarget = expandUserPath(targetPath);
   const relative = path.relative(normalizedRoot, normalizedTarget);
   return relative === "" ? "." : relative.split(path.sep).join("/");
 }

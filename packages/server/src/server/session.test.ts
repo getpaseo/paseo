@@ -63,6 +63,7 @@ interface SessionHandlerInternals {
   handleCheckoutGithubSetAutoMergeRequest(params: unknown): Promise<unknown>;
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
+  handleCheckoutRefreshRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
@@ -2549,6 +2550,76 @@ describe("session checkout pull and push handling", () => {
         success: true,
         error: null,
         requestId: "request-push",
+      },
+    });
+  });
+});
+
+describe("session checkout refresh handling", () => {
+  test("forces a git, GitHub, and diff refresh on demand", async () => {
+    const messages: unknown[] = [];
+    const github = { invalidate: vi.fn() };
+    const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+
+    await asSessionInternals(session).handleCheckoutRefreshRequest({
+      type: "checkout.refresh.request",
+      cwd: "/tmp/request-worktree",
+      requestId: "request-refresh",
+    });
+
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+      force: true,
+      includeGitHub: true,
+      reason: "manual-refresh",
+    });
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(messages).toContainEqual({
+      type: "checkout.refresh.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        success: true,
+        error: null,
+        requestId: "request-refresh",
+      },
+    });
+  });
+
+  test("reports an error when the snapshot refresh fails", async () => {
+    const messages: unknown[] = [];
+    const github = { invalidate: vi.fn() };
+    const workspaceGitService = {
+      getSnapshot: vi.fn().mockRejectedValue(new Error("not a git repository")),
+    };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+
+    await asSessionInternals(session).handleCheckoutRefreshRequest({
+      type: "checkout.refresh.request",
+      cwd: "/tmp/request-worktree",
+      requestId: "request-refresh-error",
+    });
+
+    expect(checkoutDiffManager.scheduleRefreshForCwd).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout.refresh.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        success: false,
+        error: { code: "UNKNOWN", message: "not a git repository" },
+        requestId: "request-refresh-error",
       },
     });
   });

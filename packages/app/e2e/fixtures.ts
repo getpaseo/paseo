@@ -1,4 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import { createWithWorkspace, type WithWorkspace } from "./helpers/with-workspace";
 
@@ -17,20 +18,8 @@ const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>(
   },
   paseoE2ESetup: [
     async ({ page }, provide, testInfo) => {
-      const daemonPort = process.env.E2E_DAEMON_PORT;
+      const daemonPort = getE2EDaemonPort();
       const metroPort = process.env.E2E_METRO_PORT;
-      if (!daemonPort) {
-        throw new Error(
-          "E2E_DAEMON_PORT is not set. Refusing to run e2e against the default daemon (e.g. localhost:6767). " +
-            "Ensure Playwright `globalSetup` starts the e2e daemon and exports E2E_DAEMON_PORT.",
-        );
-      }
-      if (daemonPort === "6767") {
-        throw new Error(
-          "E2E_DAEMON_PORT is 6767. Refusing to run e2e against the default local daemon. " +
-            "Fix Playwright globalSetup to start an isolated test daemon and export its port.",
-        );
-      }
       if (!metroPort) {
         throw new Error(
           "E2E_METRO_PORT is not set. Ensure Playwright `globalSetup` starts Metro and exports E2E_METRO_PORT.",

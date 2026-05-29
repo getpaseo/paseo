@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { test } from "./fixtures";
+import { connectSeedClient } from "./helpers/seed-client";
 import { createTempGitRepo } from "./helpers/workspace";
 import {
   archiveAgentFromDaemon,
   archiveAgentFromSessions,
   clickSessionRow,
   closeWorkspaceAgentTab,
-  connectArchiveTabDaemonClient,
   createIdleAgent,
   expectArchivedAgentFocused,
   expectSessionRowArchived,
@@ -21,14 +21,14 @@ import {
 } from "./helpers/archive-tab";
 
 test.describe("Archive tab reconciliation", () => {
-  let client: Awaited<ReturnType<typeof connectArchiveTabDaemonClient>>;
+  let client: Awaited<ReturnType<typeof connectSeedClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
 
   test.describe.configure({ timeout: 300_000 });
 
   test.beforeAll(async () => {
     tempRepo = await createTempGitRepo("archive-tab-");
-    client = await connectArchiveTabDaemonClient();
+    client = await connectSeedClient();
   });
 
   test.afterAll(async () => {

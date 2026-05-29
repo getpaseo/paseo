@@ -1,8 +1,7 @@
 import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test as base } from "./fixtures";
-import { connectNewWorkspaceDaemonClient, openProjectViaDaemon } from "./helpers/new-workspace";
-import { createTempGitRepo } from "./helpers/workspace";
+import { seedWorkspace } from "./helpers/seed-client";
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
@@ -63,38 +62,36 @@ const initialPaseoConfig = {
 
 const test = base.extend<ProjectsSettingsFixtures>({
   editableProject: async ({ page: _page }, provide) => {
-    const client = await connectNewWorkspaceDaemonClient();
-    const repo = await createTempGitRepo("projects-settings-", {
-      paseoConfig: initialPaseoConfig,
+    const workspace = await seedWorkspace({
+      repoPrefix: "projects-settings-",
+      repo: { paseoConfig: initialPaseoConfig },
     });
-    const openedProject = await openProjectViaDaemon(client, repo.path);
 
     await provide({
-      name: openedProject.projectDisplayName,
-      path: repo.path,
+      name: workspace.projectDisplayName,
+      path: workspace.repoPath,
     });
 
-    await client.close();
     // Defensive: restore directory write permission in case the test left it blocked
-    // (write_failed test), so that repo.cleanup() can remove files inside.
-    await chmod(repo.path, 0o755).catch(() => undefined);
-    await repo.cleanup();
+    // (write_failed test), so that cleanup can remove files inside.
+    await chmod(workspace.repoPath, 0o755).catch(() => undefined);
+    await workspace.cleanup();
   },
   gitlabRemoteProject: async ({ page: _page }, provide) => {
-    const client = await connectNewWorkspaceDaemonClient();
-    const repo = await createTempGitRepo("projects-settings-gitlab-", {
-      paseoConfig: initialPaseoConfig,
-      originUrl: "https://gitlab.com/acme/app.git",
+    const workspace = await seedWorkspace({
+      repoPrefix: "projects-settings-gitlab-",
+      repo: {
+        paseoConfig: initialPaseoConfig,
+        originUrl: "https://gitlab.com/acme/app.git",
+      },
     });
-    const openedProject = await openProjectViaDaemon(client, repo.path);
 
     await provide({
-      name: openedProject.projectDisplayName,
-      path: repo.path,
+      name: workspace.projectDisplayName,
+      path: workspace.repoPath,
     });
 
-    await client.close();
-    await repo.cleanup();
+    await workspace.cleanup();
   },
 });
 

@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { gotoHome } from "./app";
+import { escapeRegex } from "./regex";
 
 export async function openNewAgentComposer(page: Page): Promise<void> {
   await gotoHome(page);
@@ -21,10 +22,6 @@ export function workspaceLabelFromPath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? normalized;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function candidateWorkspaceIds(inputPath: string): string[] {

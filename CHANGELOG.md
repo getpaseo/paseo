@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.85 - 2026-05-29
+
+### Added
+
+- **Opus 4.8 in the Claude model picker**, with a 1M-context variant
+
+### Improved
+
+- Archiving a worktree now keeps its agents under the archived list instead of removing them
+- Archiving an agent cleans up any schedules targeting it
+
 ## 0.1.84 - 2026-05-28
 
 ### Added

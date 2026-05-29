@@ -1,9 +1,8 @@
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test, type Page } from "./fixtures";
 import { composerLocator, expectComposerVisible } from "./helpers/composer";
-import { connectTerminalClient, type TerminalPerfDaemonClient } from "./helpers/terminal-perf";
-import { createTempGitRepo } from "./helpers/workspace";
+import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
+import { daemonWsRoutePattern } from "./helpers/daemon-port";
 
 const TEST_COMMANDS = [
   {
@@ -99,28 +98,8 @@ async function getTopTestIdAtPoint(page: Page, x: number, y: number) {
   );
 }
 
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
-
-function getDaemonPort(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort || daemonPort === "6767") {
-    throw new Error("E2E_DAEMON_PORT must point at the isolated e2e daemon.");
-  }
-  return daemonPort;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 async function installListCommandsStub(page: Page): Promise<void> {
-  await page.routeWebSocket(new RegExp(`:${escapeRegex(getDaemonPort())}\\b`), (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
@@ -163,58 +142,26 @@ async function installListCommandsStub(page: Page): Promise<void> {
   });
 }
 
-async function openProject(client: TerminalPerfDaemonClient, cwd: string): Promise<void> {
-  const opened = await client.openProject(cwd);
-  if (!opened.workspace) {
-    throw new Error(opened.error ?? `Failed to open project ${cwd}`);
-  }
-}
-
-async function cleanupWithin(timeoutMs: number, cleanup: () => Promise<void>): Promise<void> {
-  const operation = cleanup().catch(() => undefined);
-  await Promise.race([operation, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
-}
-
 async function openReadyMockAgent(
   page: Page,
   options?: { expectWorkspaceTab?: boolean },
 ): Promise<{
   cleanup: () => Promise<void>;
 }> {
-  const repo = await createTempGitRepo("autocomplete-popover-");
-  const client = await connectTerminalClient();
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "autocomplete-popover-",
+    title: "Autocomplete popover regression",
+  });
 
   try {
-    await openProject(client, repo.path);
-    const agent = await client.createAgent({
-      provider: "mock",
-      cwd: repo.path,
-      title: "Autocomplete popover regression",
-      modeId: "load-test",
-      model: "ten-second-stream",
-    });
-    const route = `${buildHostWorkspaceRoute(
-      getServerId(),
-      repo.path,
-    )}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
-    await page.goto(route);
-    await page.waitForURL(
-      (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
-      { timeout: 60_000 },
-    );
+    await openAgentRoute(page, session);
     if (options?.expectWorkspaceTab !== false) {
-      await expectWorkspaceTabVisible(page, agent.id);
+      await expectWorkspaceTabVisible(page, session.agentId);
     }
     await expectComposerVisible(page);
-    return {
-      cleanup: async () => {
-        await cleanupWithin(2_000, () => client.close());
-        await cleanupWithin(2_000, () => repo.cleanup());
-      },
-    };
+    return { cleanup: session.cleanup };
   } catch (error) {
-    await cleanupWithin(2_000, () => client.close());
-    await cleanupWithin(2_000, () => repo.cleanup());
+    await session.cleanup();
     throw error;
   }
 }

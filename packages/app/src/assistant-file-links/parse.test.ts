@@ -336,12 +336,50 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
-  it("rejects absolute hrefs outside the workspace root", () => {
+  it("allows absolute hrefs outside the workspace root", () => {
     expect(
       parseAssistantFileLink("/tmp/outside.txt", {
         workspaceRoot: "/Users/test/project",
       }),
-    ).toBeNull();
+    ).toEqual({
+      raw: "/tmp/outside.txt",
+      path: "/tmp/outside.txt",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
+  it("keeps tilde hrefs as direct home-relative file targets", () => {
+    expect(
+      parseAssistantFileLink("~/.paseo/plans/file-preview.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "~/.paseo/plans/file-preview.md",
+      path: "~/.paseo/plans/file-preview.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+    expect(
+      parseAssistantFileLink("~/.paseo/plans/file-preview.md:12", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "~/.paseo/plans/file-preview.md:12",
+      path: "~/.paseo/plans/file-preview.md",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+    expect(
+      parseAssistantFileLink("~\\.paseo\\plans\\file-preview.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "~\\.paseo\\plans\\file-preview.md",
+      path: "~/.paseo/plans/file-preview.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
   });
 
   it("rejects external URLs", () => {
@@ -405,6 +443,15 @@ describe("normalizeInlinePathTarget", () => {
     expect(normalizeInlinePathTarget("/tmp/message.tsx", "/Users/test/project")).toEqual({
       directory: "/tmp",
       file: "/tmp/message.tsx",
+    });
+  });
+
+  it("keeps tilde paths as home-relative file targets", () => {
+    expect(
+      normalizeInlinePathTarget("~/.paseo/plans/file-preview.md", "/Users/test/project"),
+    ).toEqual({
+      directory: "~/.paseo/plans",
+      file: "~/.paseo/plans/file-preview.md",
     });
   });
 

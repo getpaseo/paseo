@@ -1,8 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegex } from "./regex";
 
 export const gotoAppShell = async (page: Page) => {
   await page.goto("/");

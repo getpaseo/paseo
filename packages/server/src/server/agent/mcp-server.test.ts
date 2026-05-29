@@ -1447,7 +1447,6 @@ describe("create_agent MCP tool", () => {
       const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => undefined);
       const markWorkspaceArchiving = vi.fn();
       const clearWorkspaceArchiving = vi.fn();
-      const emitSessionMessage = vi.fn();
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -1462,7 +1461,6 @@ describe("create_agent MCP tool", () => {
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving,
         clearWorkspaceArchiving,
-        emitSessionMessage,
         github: createGitHubServiceStub(),
         logger,
       });
@@ -1547,7 +1545,6 @@ describe("create_agent MCP tool", () => {
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
         markWorkspaceArchiving: vi.fn(),
         clearWorkspaceArchiving: vi.fn(),
-        emitSessionMessage: vi.fn(),
         github: createGitHubServiceStub(),
         logger,
       });

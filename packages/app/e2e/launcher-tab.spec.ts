@@ -1,5 +1,4 @@
 import { test, expect } from "./fixtures";
-import { createTempGitRepo } from "./helpers/workspace";
 import {
   gotoWorkspace,
   assertNewChatTileVisible,
@@ -16,30 +15,19 @@ import {
   terminalSurfaceLocator,
 } from "./helpers/launcher";
 import { expectComposerVisible, composerLocator } from "./helpers/composer";
-import { expectTerminalSurfaceVisible } from "./helpers/terminal-perf";
-import {
-  connectTerminalClient,
-  setupDeterministicPrompt,
-  type TerminalPerfDaemonClient,
-} from "./helpers/terminal-perf";
+import { expectTerminalSurfaceVisible, setupDeterministicPrompt } from "./helpers/terminal-perf";
+import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 
 // ─── Shared state ──────────────────────────────────────────────────────────
 
-let tempRepo: { path: string; cleanup: () => Promise<void> };
-let workspaceId: string;
-let seedClient: TerminalPerfDaemonClient;
+let workspace: SeededWorkspace;
 
 test.beforeAll(async () => {
-  tempRepo = await createTempGitRepo("launcher-e2e-");
-  seedClient = await connectTerminalClient();
-  const result = await seedClient.openProject(tempRepo.path);
-  if (!result.workspace) throw new Error(result.error ?? "Failed to seed workspace");
-  workspaceId = result.workspace.id;
+  workspace = await seedWorkspace({ repoPrefix: "launcher-e2e-" });
 });
 
 test.afterAll(async () => {
-  if (seedClient) await seedClient.close();
-  if (tempRepo) await tempRepo.cleanup();
+  await workspace?.cleanup();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,7 +36,7 @@ test.afterAll(async () => {
 
 test.describe("Tab creation", () => {
   test("Cmd+T opens a new agent tab with composer", async ({ page }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     await pressNewTabShortcut(page);
 
@@ -56,7 +44,7 @@ test.describe("Tab creation", () => {
   });
 
   test("opening two new tabs creates two draft tabs", async ({ page }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     const countBefore = await countTabsOfKind(page, "draft");
 
@@ -75,7 +63,7 @@ test.describe("Tab creation", () => {
   });
 
   test("clicking new agent tab creates a draft tab", async ({ page }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     await clickNewChat(page);
 
@@ -88,7 +76,7 @@ test.describe("Tab creation", () => {
 
   test("clicking terminal button creates a standalone terminal", async ({ page }) => {
     test.setTimeout(45_000);
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     await clickNewTerminal(page);
 
@@ -100,7 +88,7 @@ test.describe("Tab creation", () => {
   });
 
   test("tab bar shows action buttons per pane", async ({ page }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
     await assertSingleNewTabButton(page);
     await assertNewChatTileVisible(page);
     await assertTerminalTileVisible(page);
@@ -117,26 +105,16 @@ test.describe("Terminal title propagation", () => {
   // must re-render before the assertion deadline. Allow retries.
   test.describe.configure({ retries: 2 });
 
-  let client: TerminalPerfDaemonClient;
-
-  test.beforeAll(async () => {
-    client = await connectTerminalClient();
-  });
-
-  test.afterAll(async () => {
-    if (client) await client.close();
-  });
-
   test.skip("terminal tab title updates from OSC title escape sequence", async ({ page }) => {
     test.setTimeout(60_000);
 
-    const result = await client.createTerminal(tempRepo.path, "title-test");
+    const result = await workspace.client.createTerminal(workspace.repoPath, "title-test");
     if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
     const terminalId = result.terminal.id;
 
     try {
       // Navigate to workspace and open a terminal
-      await gotoWorkspace(page, workspaceId);
+      await gotoWorkspace(page, workspace.workspaceId);
       await clickNewTerminal(page);
 
       await expectTerminalSurfaceVisible(page);
@@ -153,19 +131,19 @@ test.describe("Terminal title propagation", () => {
       // Wait for the tab to reflect the new title
       await waitForTabWithTitle(page, testTitle, 15_000);
     } finally {
-      await client.killTerminal(terminalId).catch(() => {});
+      await workspace.client.killTerminal(terminalId).catch(() => {});
     }
   });
 
   test.skip("title debouncing coalesces rapid changes", async ({ page }) => {
     test.setTimeout(60_000);
 
-    const result = await client.createTerminal(tempRepo.path, "debounce-test");
+    const result = await workspace.client.createTerminal(workspace.repoPath, "debounce-test");
     if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
     const terminalId = result.terminal.id;
 
     try {
-      await gotoWorkspace(page, workspaceId);
+      await gotoWorkspace(page, workspace.workspaceId);
       await clickNewTerminal(page);
 
       await expectTerminalSurfaceVisible(page);
@@ -188,7 +166,7 @@ test.describe("Terminal title propagation", () => {
       // The tab should eventually settle on the final title
       await waitForTabWithTitle(page, finalTitle, 15_000);
     } finally {
-      await client.killTerminal(terminalId).catch(() => {});
+      await workspace.client.killTerminal(terminalId).catch(() => {});
     }
   });
 });
@@ -199,7 +177,7 @@ test.describe("Terminal title propagation", () => {
 
 test.describe("Tab transitions (no flash)", () => {
   test("New agent tab transition has no blank intermediate tab state", async ({ page }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     // Sample tabs at high frequency across the transition
     const snapshots = await sampleTabsDuringTransition(page, () => clickNewChat(page), 2_000, 30);
@@ -221,7 +199,7 @@ test.describe("Tab transitions (no flash)", () => {
 
   test("Terminal transition completes within visual budget", async ({ page }) => {
     test.setTimeout(30_000);
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     const elapsed = await measureTileTransition(
       page,
@@ -237,7 +215,7 @@ test.describe("Tab transitions (no flash)", () => {
   });
 
   test("New agent tab click shows composer without flash", async ({ page }) => {
-    await gotoWorkspace(page, workspaceId);
+    await gotoWorkspace(page, workspace.workspaceId);
 
     const elapsed = await measureTileTransition(
       page,

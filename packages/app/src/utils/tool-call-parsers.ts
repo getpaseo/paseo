@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { HighlightToken } from "@getpaseo/highlight";
 
 export interface DiffSegment {
   text: string;
@@ -9,6 +10,9 @@ export interface DiffLine {
   type: "add" | "remove" | "context" | "header";
   content: string;
   segments?: DiffSegment[];
+  // Syntax-highlight tokens for the code on this line (prefix char excluded),
+  // attached by highlightDiffLines when the file's language is supported.
+  tokens?: HighlightToken[];
 }
 
 function splitIntoLines(text: string): string[] {

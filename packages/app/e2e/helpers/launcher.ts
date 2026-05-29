@@ -1,16 +1,9 @@
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
+import { getServerId } from "./server-id";
 
 // ─── Navigation ────────────────────────────────────────────────────────────
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
 
 /** Navigate to a workspace and wait for the tab bar to appear. */
 export async function gotoWorkspace(page: Page, cwd: string): Promise<void> {

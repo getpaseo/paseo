@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import { openSettings } from "./app";
+import { getE2EDaemonPort } from "./daemon-port";
 import { openSettingsHost } from "./settings";
 
 interface DaemonApiStatus {
@@ -26,9 +27,8 @@ export interface RealDaemonState {
  * E2E_PASEO_HOME directory. Call this in Node test code (not in the browser).
  */
 export async function loadRealDaemonState(): Promise<RealDaemonState> {
-  const port = process.env.E2E_DAEMON_PORT;
+  const port = getE2EDaemonPort();
   const paseoHome = process.env.E2E_PASEO_HOME;
-  if (!port) throw new Error("E2E_DAEMON_PORT not set — globalSetup must run first");
   if (!paseoHome) throw new Error("E2E_PASEO_HOME not set — globalSetup must run first");
 
   const resp = await fetch(`http://127.0.0.1:${port}/api/status`);

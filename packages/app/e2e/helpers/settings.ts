@@ -1,9 +1,6 @@
 import { expect, type Page } from "@playwright/test";
-import { requireServerId } from "./sidebar";
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegex } from "./regex";
+import { getServerId } from "./server-id";
 
 const SECTION_LABELS = {
   general: "General",
@@ -113,13 +110,13 @@ export async function expectHostSettingsUrl(page: Page, serverId: string): Promi
 }
 
 export async function verifyLegacyHostSettingsRedirect(page: Page): Promise<void> {
-  const serverId = requireServerId();
+  const serverId = getServerId();
   await page.goto(`/h/${encodeURIComponent(serverId)}/settings`);
   await expectHostSettingsUrl(page, serverId);
 }
 
 export async function openCompactSettingsHost(page: Page): Promise<void> {
-  const serverId = requireServerId();
+  const serverId = getServerId();
   await openSettingsHost(page, serverId);
   await expectHostSettingsUrl(page, serverId);
 }
@@ -159,7 +156,7 @@ export async function expectDiagnosticsContent(page: Page): Promise<void> {
 }
 
 export async function expectAboutContent(page: Page): Promise<void> {
-  await expect(page.getByText("Version", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("App version", { exact: true }).first()).toBeVisible();
 }
 
 export async function expectGeneralContent(page: Page): Promise<void> {

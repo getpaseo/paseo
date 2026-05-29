@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
-import { loadDaemonClientConstructor } from "./daemon-client-loader";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { getE2EDaemonPort } from "./daemon-port";
+import { getServerId } from "./server-id";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
   buildHostAgentDetailRoute,
@@ -16,90 +16,40 @@ export interface ArchiveTabAgent {
   cwd: string;
 }
 
-interface ArchiveTabDaemonClient {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  createAgent(options: {
-    provider: string;
-    model: string;
-    thinkingOptionId?: string;
-    modeId: string;
-    cwd: string;
-    title: string;
-    initialPrompt?: string;
-  }): Promise<{ id: string }>;
-  archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
-  waitForFinish(agentId: string, timeout?: number): Promise<{ status: string }>;
-  waitForAgentUpsert(
-    agentId: string,
-    predicate: (snapshot: { status: string }) => boolean,
-    timeout?: number,
-  ): Promise<{ status: string }>;
-  fetchAgentHistory(options?: {
-    page?: { limit: number };
-  }): Promise<{ entries: Array<{ id: string }> }>;
-}
-
-function getDaemonPort(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  if (daemonPort === "6767") {
-    throw new Error("E2E_DAEMON_PORT must not point at the developer daemon.");
-  }
-  return daemonPort;
-}
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
-
-function getDaemonWsUrl(): string {
-  return `ws://127.0.0.1:${getDaemonPort()}/ws`;
-}
-
 function buildSeededStoragePayload() {
   const nowIso = new Date().toISOString();
   return {
     daemon: buildSeededHost({
       serverId: getServerId(),
-      endpoint: `127.0.0.1:${getDaemonPort()}`,
+      endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
       nowIso,
     }),
     preferences: buildCreateAgentPreferences(getServerId()),
   };
 }
 
-interface ArchiveTabDaemonClientConfig {
-  url: string;
-  clientId: string;
-  clientType: "cli";
-  webSocketFactory?: NodeWebSocketFactory;
-}
-
-export async function connectArchiveTabDaemonClient(): Promise<ArchiveTabDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor<
-    ArchiveTabDaemonClientConfig,
-    ArchiveTabDaemonClient
-  >();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `app-e2e-archive-tab-${randomUUID()}`,
-    clientType: "cli",
-    webSocketFactory,
-  });
-  await client.connect();
-  return client;
+/**
+ * The slice of a daemon client `createIdleAgent` needs: spawn an agent and await
+ * its idle upsert. The shared seed client satisfies it, so a spec can seed an
+ * idle agent from the same client it uses for everything else.
+ */
+export interface IdleAgentSeedClient {
+  createAgent(options: {
+    provider: string;
+    model: string;
+    modeId: string;
+    cwd: string;
+    title: string;
+  }): Promise<{ id: string }>;
+  waitForAgentUpsert(
+    agentId: string,
+    predicate: (snapshot: { status: string }) => boolean,
+    timeout?: number,
+  ): Promise<{ status: string }>;
 }
 
 export async function createIdleAgent(
-  client: ArchiveTabDaemonClient,
+  client: IdleAgentSeedClient,
   input: { cwd: string; title: string },
 ): Promise<ArchiveTabAgent> {
   const created = await client.createAgent({
@@ -125,7 +75,7 @@ export async function createIdleAgent(
 }
 
 export async function archiveAgentFromDaemon(
-  client: ArchiveTabDaemonClient,
+  client: { archiveAgent(agentId: string): Promise<{ archivedAt: string }> },
   agentId: string,
 ): Promise<void> {
   await client.archiveAgent(agentId);

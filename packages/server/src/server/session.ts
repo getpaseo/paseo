@@ -125,11 +125,14 @@ import {
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
 import {
-  DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
+import {
+  resolveStructuredGenerationProviders,
+  type StructuredGenerationDaemonConfig,
+} from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
@@ -784,7 +787,6 @@ export class Session {
     appVisible: boolean;
     appVisibilityChangedAt: Date;
   } | null = null;
-  private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
@@ -1063,6 +1065,37 @@ export class Session {
     return this.clientActivity;
   }
 
+  private getFocusedAgentSelectionForCwd(cwd: string):
+    | {
+        provider?: string | null;
+        model?: string | null;
+        thinkingOptionId?: string | null;
+      }
+    | undefined {
+    const focusedAgentId = this.clientActivity?.focusedAgentId;
+    if (!focusedAgentId) {
+      return undefined;
+    }
+
+    const agent = this.agentManager.getAgent(focusedAgentId);
+    if (!agent || agent.cwd !== cwd) {
+      return undefined;
+    }
+
+    return {
+      provider: agent.provider,
+      model: agent.runtimeInfo?.model ?? agent.config.model ?? null,
+      thinkingOptionId:
+        agent.runtimeInfo?.thinkingOptionId ?? agent.config.thinkingOptionId ?? null,
+    };
+  }
+
+  private readStructuredGenerationDaemonConfig(): StructuredGenerationDaemonConfig {
+    return {
+      metadataGeneration: this.daemonConfigStore.get().metadataGeneration,
+    };
+  }
+
   public getRuntimeMetrics(): SessionRuntimeMetrics {
     const terminalMetrics = this.terminalController.getMetrics();
     return {
@@ -1318,13 +1351,6 @@ export class Session {
             });
         }
 
-        // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
-        // for the focused agent, with a short grace window while backgrounded.
-        // History catch-up is handled via pull-based `fetch_agent_timeline_request`.
-        if (this.shouldSkipAgentStreamForward(event.agentId)) {
-          return;
-        }
-
         const serializedEvent = serializeAgentStreamEvent(event.event);
         if (!serializedEvent) {
           return;
@@ -1369,21 +1395,6 @@ export class Session {
       },
       { replayState: false },
     );
-  }
-
-  private shouldSkipAgentStreamForward(agentId: string): boolean {
-    const activity = this.clientActivity;
-    if (activity?.deviceType !== "mobile") {
-      return false;
-    }
-    if (!activity.focusedAgentId || activity.focusedAgentId !== agentId) {
-      return true;
-    }
-    if (activity.appVisible) {
-      return false;
-    }
-    const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
-    return hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS;
   }
 
   private buildAgentStreamPayload(
@@ -2072,6 +2083,8 @@ export class Session {
         return this.handleCheckoutPullRequest(msg);
       case "checkout_push_request":
         return this.handleCheckoutPushRequest(msg);
+      case "checkout.refresh.request":
+        return this.handleCheckoutRefreshRequest(msg);
       case "checkout_pr_create_request":
         return this.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
@@ -3103,6 +3116,7 @@ export class Session {
           paseoHome: this.paseoHome,
           workspaceGitService: this.workspaceGitService,
           providerSnapshotManager: this.providerSnapshotManager,
+          daemonConfig: this.readStructuredGenerationDaemonConfig(),
         },
         {
           kind: "session",
@@ -3301,6 +3315,8 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         workspaceGitService: this.workspaceGitService,
+        providerSnapshotManager: this.providerSnapshotManager,
+        daemonConfig: this.readStructuredGenerationDaemonConfig(),
         paseoHome: this.paseoHome,
         logger: this.sessionLogger,
       });
@@ -3539,6 +3555,9 @@ export class Session {
           agentManager: this.agentManager,
           cwd,
           workspaceGitService: this.workspaceGitService,
+          providerSnapshotManager: this.providerSnapshotManager,
+          daemonConfig: this.readStructuredGenerationDaemonConfig(),
+          currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
           firstAgentContext,
           logger: this.sessionLogger,
         });
@@ -4001,6 +4020,12 @@ export class Session {
         patch.length > 0 ? patch : "(No diff available)",
       ].join("\n"),
     });
+    const providers = await resolveStructuredGenerationProviders({
+      cwd,
+      providerSnapshotManager: this.providerSnapshotManager,
+      daemonConfig: this.readStructuredGenerationDaemonConfig(),
+      currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
+    });
     try {
       const result = await generateStructuredAgentResponseWithFallback({
         manager: this.agentManager,
@@ -4009,7 +4034,7 @@ export class Session {
         schema,
         schemaName: "CommitMessage",
         maxRetries: 2,
-        providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+        providers,
         persistSession: false,
         agentConfigOverrides: {
           title: "Commit generator",
@@ -4073,6 +4098,12 @@ export class Session {
         patch.length > 0 ? patch : "(No diff available)",
       ].join("\n"),
     });
+    const providers = await resolveStructuredGenerationProviders({
+      cwd,
+      providerSnapshotManager: this.providerSnapshotManager,
+      daemonConfig: this.readStructuredGenerationDaemonConfig(),
+      currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
+    });
     try {
       return await generateStructuredAgentResponseWithFallback({
         manager: this.agentManager,
@@ -4081,7 +4112,7 @@ export class Session {
         schema,
         schemaName: "PullRequest",
         maxRetries: 2,
-        providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+        providers,
         persistSession: false,
         agentConfigOverrides: {
           title: "PR generator",
@@ -5327,6 +5358,41 @@ export class Session {
     } catch (error) {
       this.emit({
         type: "checkout_push_response",
+        payload: {
+          cwd,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutRefreshRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.refresh.request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      this.github.invalidate({ cwd });
+      await this.workspaceGitService.getSnapshot(cwd, {
+        force: true,
+        includeGitHub: true,
+        reason: "manual-refresh",
+      });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "checkout.refresh.response",
+        payload: {
+          cwd,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.refresh.response",
         payload: {
           cwd,
           success: false,

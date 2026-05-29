@@ -156,6 +156,8 @@ export type AgentAttentionCallback = (params: {
   reason: "finished" | "error" | "permission";
 }) => void;
 
+export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
+
 export interface ProviderAvailability {
   provider: AgentProvider;
   available: boolean;
@@ -453,6 +455,7 @@ export class AgentManager {
   private mcpBaseUrl: string | null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
+  private onAgentArchived?: AgentArchivedCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
 
@@ -511,6 +514,10 @@ export class AgentManager {
 
   setAgentAttentionCallback(callback: AgentAttentionCallback): void {
     this.onAgentAttention = callback;
+  }
+
+  setAgentArchivedCallback(callback: AgentArchivedCallback): void {
+    this.onAgentArchived = callback;
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1185,7 +1192,21 @@ export class AgentManager {
       this.dispatchArchivedStoredAgent(archivedRecord);
     }
 
+    await this.fireAgentArchived(record.id);
+
     return archivedRecord;
+  }
+
+  private async fireAgentArchived(agentId: string): Promise<void> {
+    const callback = this.onAgentArchived;
+    if (!callback) {
+      return;
+    }
+    try {
+      await callback(agentId);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "onAgentArchived callback failed");
+    }
   }
 
   private dispatchArchivedStoredAgent(record: StoredAgentRecord): void {
@@ -1368,6 +1389,14 @@ export class AgentManager {
     await registry.upsert(nextRecord);
 
     await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+
+    if (this.agents.has(agentId)) {
+      this.notifyAgentState(agentId);
+    } else if (!nextRecord.internal) {
+      this.dispatchArchivedStoredAgent(nextRecord);
+    }
+
+    await this.fireAgentArchived(agentId);
 
     return nextRecord;
   }

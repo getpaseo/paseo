@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
-import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
+import { ProjectIconView } from "@/components/project-icon-view";
+import { projectIconToDataUri, useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -234,7 +235,11 @@ function ProjectSettingsBody({
 
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
-          <ProjectTitleIcon host={selectedHost} projectName={project.projectName} />
+          <ProjectTitleIcon
+            host={selectedHost}
+            projectName={project.projectName}
+            projectKey={project.projectKey}
+          />
           <ProjectNameEditor project={project} client={client} />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
@@ -880,19 +885,26 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
   );
 }
 
-function ProjectTitleIcon({ host, projectName }: { host: ProjectHostEntry; projectName: string }) {
+function ProjectTitleIcon({
+  host,
+  projectName,
+  projectKey,
+}: {
+  host: ProjectHostEntry;
+  projectName: string;
+  projectKey: string;
+}) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   const { icon } = useProjectIconQuery({ serverId: host.serverId, cwd: host.repoRoot });
-  const iconDataUri =
-    icon && icon.data && icon.mimeType ? `data:${icon.mimeType};base64,${icon.data}` : null;
-  const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
-  if (iconDataUri) {
-    return <Image source={imageSource} style={styles.titleIcon} />;
-  }
   return (
-    <View style={styles.titleIconFallback}>
-      <Text style={styles.titleIconFallbackText}>{initial}</Text>
-    </View>
+    <ProjectIconView
+      iconDataUri={projectIconToDataUri(icon)}
+      initial={initial}
+      projectKey={projectKey}
+      imageStyle={styles.titleIcon}
+      fallbackStyle={styles.titleIconFallback}
+      textStyle={styles.titleIconFallbackText}
+    />
   );
 }
 
@@ -1288,12 +1300,10 @@ const styles = StyleSheet.create((theme) => ({
     width: 28,
     height: 28,
     borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface2,
     alignItems: "center",
     justifyContent: "center",
   },
   titleIconFallbackText: {
-    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },

@@ -172,13 +172,33 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   mutable: MutableDaemonConfig;
 }): PersistedConfig {
   const { persisted, mutable } = params;
+  const metadataGenerationProviders = readMetadataGenerationProviders(mutable);
   const providerOverrides = applyMutableProviderConfigToOverrides(
     persisted.agents?.providers as Record<string, ProviderOverride> | undefined,
     mutable.providers,
   );
-  const persistedAgents = persisted.agents as
-    | ({ providers?: Record<string, ProviderOverride> } & Record<string, unknown>)
-    | undefined;
+  const persistedAgents = persisted.agents as Record<string, unknown> | undefined;
+  const persistedMetadataGeneration = {
+    providers: metadataGenerationProviders,
+  };
+  const shouldPersistMetadataGeneration =
+    metadataGenerationProviders.length > 0 || persisted.agents?.metadataGeneration !== undefined;
+
+  let nextAgents = persisted.agents as PersistedConfig["agents"];
+  if (providerOverrides && Object.keys(providerOverrides).length > 0) {
+    nextAgents = {
+      ...persistedAgents,
+      providers: providerOverrides,
+      ...(shouldPersistMetadataGeneration
+        ? { metadataGeneration: persistedMetadataGeneration }
+        : {}),
+    } as PersistedConfig["agents"];
+  } else if (shouldPersistMetadataGeneration) {
+    nextAgents = {
+      ...persistedAgents,
+      metadataGeneration: persistedMetadataGeneration,
+    } as PersistedConfig["agents"];
+  }
 
   return {
     ...persisted,
@@ -191,12 +211,33 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       autoArchiveAfterMerge: mutable.autoArchiveAfterMerge,
       appendSystemPrompt: mutable.appendSystemPrompt,
     },
-    agents:
-      providerOverrides && Object.keys(providerOverrides).length > 0
-        ? {
-            ...persistedAgents,
-            providers: providerOverrides,
-          }
-        : persisted.agents,
+    agents: nextAgents,
   } as PersistedConfig;
+}
+
+function readMetadataGenerationProviders(
+  mutable: MutableDaemonConfig,
+): Array<{ provider: string; model?: string; thinkingOptionId?: string }> {
+  const metadataGeneration = mutable.metadataGeneration;
+  if (!isRecord(metadataGeneration)) {
+    return [];
+  }
+  const providers = metadataGeneration["providers"];
+  if (!Array.isArray(providers)) {
+    return [];
+  }
+  return providers.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry["provider"] !== "string") {
+      return [];
+    }
+    return [
+      {
+        provider: entry["provider"],
+        ...(typeof entry["model"] === "string" ? { model: entry["model"] } : {}),
+        ...(typeof entry["thinkingOptionId"] === "string"
+          ? { thinkingOptionId: entry["thinkingOptionId"] }
+          : {}),
+      },
+    ];
+  });
 }

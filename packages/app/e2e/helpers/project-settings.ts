@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import type { WebSocketRoute } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
+import { daemonWsRoutePattern } from "./daemon-port";
 
 // --- Navigation ---
 
@@ -170,19 +171,13 @@ export async function unblockPaseoConfigWrites(repoPath: string): Promise<void> 
 
 // --- WebSocket helpers ---
 
-function buildDaemonPortPattern(): RegExp {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) throw new Error("E2E_DAEMON_PORT not set — globalSetup must run first");
-  return new RegExp(`:${port.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
-}
-
 // Proxies all daemon WS traffic transparently until a read_project_config_request
 // is seen, then closes that connection (triggering readQuery.isError). Subsequent
 // connections pass through so the Reload action can succeed.
 export async function installReadTransportFailure(page: Page): Promise<void> {
   let armed = true;
 
-  await page.routeWebSocket(buildDaemonPortPattern(), (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
@@ -230,7 +225,7 @@ export async function installDaemonConnectionGate(
   let acceptingConnections = true;
   const activeSockets = new Set<WebSocketRoute>();
 
-  await page.routeWebSocket(buildDaemonPortPattern(), (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
       void ws.close({ code: 1001 });
       return;

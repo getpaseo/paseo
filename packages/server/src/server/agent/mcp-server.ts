@@ -97,7 +97,6 @@ export interface AgentMcpServerOptions {
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["clearWorkspaceArchiving"];
-  emitSessionMessage?: ArchivePaseoWorktreeDependencies["emit"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   paseoHome?: string;
   /**
@@ -2325,10 +2324,6 @@ function archiveWorktreeDependencies(
   if (!options.clearWorkspaceArchiving) {
     throw new Error("Workspace archiving clearer is required to archive worktrees");
   }
-  if (!options.emitSessionMessage) {
-    throw new Error("Session message emitter is required to archive worktrees");
-  }
-
   return {
     paseoHome: options.paseoHome,
     github: options.github,
@@ -2336,7 +2331,6 @@ function archiveWorktreeDependencies(
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
-    emit: options.emitSessionMessage,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
     clearWorkspaceArchiving: options.clearWorkspaceArchiving,

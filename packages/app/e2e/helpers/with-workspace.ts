@@ -1,10 +1,9 @@
 import { execSync } from "node:child_process";
-import { realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { waitForTabBar } from "./launcher";
 import { selectWorkspaceInSidebar } from "./sidebar";
-import { createTempGitRepo } from "./workspace";
+import { createTempGitRepo, resolveTempRoot } from "./workspace";
 import {
   connectWorkspaceSetupClient,
   openHomeWithProject,
@@ -49,7 +48,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
 
     let workspacePath = repo.path;
     if (options?.worktree) {
-      const tempRoot = await realpath("/tmp");
+      const tempRoot = await resolveTempRoot();
       workspacePath = path.join(
         tempRoot,
         `paseo-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,

@@ -204,7 +204,6 @@ export class CreateAgentLifecycleDispatch {
         agentManager: this.dependencies.agentManager,
         agentStorage: this.dependencies.agentStorage,
         archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
-        emit: this.dependencies.emit,
         emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
         clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
