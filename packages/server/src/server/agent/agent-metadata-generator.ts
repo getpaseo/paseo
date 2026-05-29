@@ -3,14 +3,18 @@ import type { Logger } from "pino";
 
 import type { AgentManager } from "./agent-manager.js";
 import {
-  DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
+import {
+  resolveStructuredGenerationProviders,
+  type StructuredGenerationDaemonConfig,
+} from "./structured-generation-providers.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import { buildMetadataPrompt } from "../../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 
 export interface AgentMetadataGeneratorDeps {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
@@ -21,6 +25,13 @@ export interface AgentMetadataGenerationOptions {
   agentId: string;
   cwd: string;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
+  daemonConfig?: StructuredGenerationDaemonConfig | null;
+  currentSelection?: {
+    provider?: string | null;
+    model?: string | null;
+    thinkingOptionId?: string | null;
+  };
   initialPrompt?: string | null;
   explicitTitle?: string | null;
   paseoHome?: string;
@@ -120,6 +131,14 @@ export async function generateAndApplyAgentMetadata(
   let result: { title?: string };
 
   try {
+    const providers = options.providerSnapshotManager
+      ? await resolveStructuredGenerationProviders({
+          cwd: options.cwd,
+          providerSnapshotManager: options.providerSnapshotManager,
+          daemonConfig: options.daemonConfig,
+          currentSelection: options.currentSelection,
+        })
+      : [];
     result = await generator({
       manager: options.agentManager,
       cwd: options.cwd,
@@ -130,7 +149,7 @@ export async function generateAndApplyAgentMetadata(
       schema,
       schemaName: "AgentMetadata",
       maxRetries: 2,
-      providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+      providers,
       persistSession: false,
       logger: options.logger,
       agentConfigOverrides: {

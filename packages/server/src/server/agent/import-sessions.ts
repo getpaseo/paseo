@@ -11,6 +11,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
+import type { StructuredGenerationDaemonConfig } from "./structured-generation-providers.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
@@ -62,6 +63,8 @@ export interface ImportProviderSessionInput {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
+  daemonConfig?: StructuredGenerationDaemonConfig | null;
   paseoHome?: string;
   logger: Logger;
   deps?: {
@@ -180,6 +183,8 @@ export async function importProviderSession(
     snapshot,
     agentManager: input.agentManager,
     workspaceGitService: input.workspaceGitService,
+    providerSnapshotManager: input.providerSnapshotManager,
+    daemonConfig: input.daemonConfig,
     paseoHome: input.paseoHome,
     logger: input.logger,
     scheduleAgentMetadataGeneration:
@@ -213,6 +218,8 @@ async function applyImportedAgentTitle(input: {
   snapshot: ManagedAgent;
   agentManager: AgentManager;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
+  daemonConfig?: StructuredGenerationDaemonConfig | null;
   paseoHome?: string;
   logger: Logger;
   scheduleAgentMetadataGeneration: typeof scheduleAgentMetadataGeneration;
@@ -235,6 +242,16 @@ async function applyImportedAgentTitle(input: {
     agentId: input.snapshot.id,
     cwd: input.snapshot.cwd,
     workspaceGitService: input.workspaceGitService,
+    providerSnapshotManager: input.providerSnapshotManager,
+    daemonConfig: input.daemonConfig,
+    currentSelection: {
+      provider: input.snapshot.provider,
+      model: input.snapshot.runtimeInfo?.model ?? input.snapshot.config.model,
+      thinkingOptionId:
+        input.snapshot.runtimeInfo?.thinkingOptionId ??
+        input.snapshot.config.thinkingOptionId ??
+        null,
+    },
     initialPrompt,
     explicitTitle,
     paseoHome: input.paseoHome,

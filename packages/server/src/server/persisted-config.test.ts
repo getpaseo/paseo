@@ -133,6 +133,26 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
 
     expect(result.success).toBe(false);
   });
+
+  test("accepts metadata generation provider fallbacks", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        metadataGeneration: {
+          providers: [
+            { provider: "claude", model: "haiku" },
+            { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.agents?.metadataGeneration).toEqual({
+      providers: [
+        { provider: "claude", model: "haiku" },
+        { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
+      ],
+    });
+  });
 });
 
 describe("provider overrides (new format)", () => {

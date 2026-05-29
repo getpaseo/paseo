@@ -258,6 +258,13 @@ export interface PaseoDaemonConfig {
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
+  metadataGeneration?: {
+    providers?: Array<{
+      provider: string;
+      model?: string;
+      thinkingOptionId?: string;
+    }>;
+  };
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
@@ -297,6 +304,9 @@ export async function createPaseoDaemon(
           },
         ]),
       ),
+      metadataGeneration: {
+        providers: config.metadataGeneration?.providers ?? [],
+      },
       autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
       appendSystemPrompt: config.appendSystemPrompt ?? "",
     },

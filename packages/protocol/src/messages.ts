@@ -102,6 +102,20 @@ const MutableDaemonProviderConfigSchema = z
   })
   .passthrough();
 
+const MutableStructuredGenerationProviderSchema = z
+  .object({
+    provider: z.string().min(1),
+    model: z.string().min(1).optional(),
+    thinkingOptionId: z.string().min(1).optional(),
+  })
+  .passthrough();
+
+const MutableMetadataGenerationConfigSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -110,6 +124,7 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
   })
@@ -121,6 +136,7 @@ export const MutableDaemonConfigPatchSchema = z
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
   })
