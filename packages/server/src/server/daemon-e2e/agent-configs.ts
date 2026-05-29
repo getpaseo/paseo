@@ -25,6 +25,10 @@ export interface AgentTestConfig {
 export const agentConfigs = {
   antigravity: {
     provider: "antigravity",
+    modes: {
+      full: "bypass",
+      ask: "default",
+    },
   },
   claude: {
     provider: "claude",

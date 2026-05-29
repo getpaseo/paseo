@@ -161,7 +161,23 @@ const MOCK_SLOW_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
-const ANTIGRAVITY_MODES: AgentProviderModeDefinition[] = [];
+const ANTIGRAVITY_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "default",
+    label: "Default",
+    description: "Ask for permission before executing tools",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "bypass",
+    label: "Full Access",
+    description: "Auto-approve all tool calls (skips permission prompts)",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+];
 
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
@@ -169,7 +185,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     label: "Antigravity",
     description:
       "Google's Antigravity CLI agent with multi-step reasoning, multi-file editing, and MCP support",
-    defaultModeId: null,
+    defaultModeId: "default",
     modes: ANTIGRAVITY_MODES,
   },
   {
