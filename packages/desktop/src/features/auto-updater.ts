@@ -269,11 +269,7 @@ export async function checkForAppUpdate({
     });
   } catch (error) {
     console.error("[auto-updater] Failed to check for updates:", error);
-    return buildCheckResult({
-      currentVersion,
-      hasUpdate: false,
-      readyToInstall: false,
-    });
+    throw error;
   }
 }
 
