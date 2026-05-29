@@ -6,6 +6,13 @@ export function projectIconQueryKey(serverId: string, cwd: string) {
   return ["projectIcon", serverId, cwd] as const;
 }
 
+export function projectIconToDataUri(icon: ProjectIcon | null): string | null {
+  if (!icon) {
+    return null;
+  }
+  return `data:${icon.mimeType};base64,${icon.data}`;
+}
+
 interface UseProjectIconQueryOptions {
   serverId: string;
   cwd: string;
