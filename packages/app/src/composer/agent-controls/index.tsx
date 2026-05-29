@@ -24,6 +24,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
   buildProviderSelectorProviders,
+  buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { useSessionStore } from "@/stores/session-store";
@@ -91,6 +92,8 @@ interface ControlledAgentControlsProps {
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
+  onRetryModelProvider?: (provider: AgentProvider) => void;
+  isRetryingModelProvider?: boolean;
   /** Extra elements rendered inline with the agent controls (desktop only). */
   desktopExtras?: ReactNode;
   modelSelectorServerId?: string | null;
@@ -117,6 +120,8 @@ export interface DraftAgentControlsProps {
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
+  onRetryModelProvider?: (provider: AgentProvider) => void;
+  isRetryingModelProvider?: boolean;
   disabled?: boolean;
   modelSelectorServerId?: string | null;
 }
@@ -173,17 +178,6 @@ function getFeatureIconColor(
     default:
       return foregroundMuted;
   }
-}
-
-function resolveDisplayModel(
-  isModelLoading: boolean,
-  modelOptions: AgentControlOption[] | undefined,
-  selectedModelId: string | undefined,
-) {
-  if (isModelLoading && (!modelOptions || modelOptions.length === 0)) {
-    return "Loading models...";
-  }
-  return findOptionLabel(modelOptions, selectedModelId, "Select model");
 }
 
 // Mobile agent controls only — strip namespace prefix so providers like OpenCode
@@ -411,6 +405,8 @@ function ControlledAgentControls({
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
+  onRetryModelProvider,
+  isRetryingModelProvider = false,
   desktopExtras,
   modelSelectorServerId = null,
 }: ControlledAgentControlsProps) {
@@ -432,7 +428,6 @@ function ControlledAgentControls({
   );
 
   const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
-  const displayModel = resolveDisplayModel(isModelLoading, modelOptions, selectedModelId);
   const formattedThinkingOptions = useMemo(
     () => toThinkingControlOptions(thinkingOptions),
     [thinkingOptions],
@@ -588,6 +583,8 @@ function ControlledAgentControls({
           onToggleFavoriteModel={onToggleFavoriteModel}
           onDropdownClose={onDropdownClose}
           onModelSelectorOpen={onModelSelectorOpen}
+          onRetryModelProvider={onRetryModelProvider}
+          isRetryingModelProvider={isRetryingModelProvider}
           favoriteKeys={favoriteKeys}
           disabled={disabled}
           isModelLoading={isModelLoading}
@@ -599,7 +596,6 @@ function ControlledAgentControls({
           comboboxProviderOptions={comboboxProviderOptions}
           comboboxThinkingOptions={comboboxThinkingOptions}
           displayProvider={displayProvider}
-          displayModel={displayModel}
           displayThinking={displayThinking}
           openSelector={openSelector}
           providerAnchorRef={providerAnchorRef}
@@ -628,6 +624,8 @@ function ControlledAgentControls({
           onToggleFavoriteModel={onToggleFavoriteModel}
           onDropdownClose={onDropdownClose}
           onModelSelectorOpen={onModelSelectorOpen}
+          onRetryModelProvider={onRetryModelProvider}
+          isRetryingModelProvider={isRetryingModelProvider}
           favoriteKeys={favoriteKeys}
           disabled={disabled}
           isModelLoading={isModelLoading}
@@ -665,6 +663,8 @@ interface DesktopAgentControlsContentProps {
   onToggleFavoriteModel?: (provider: string, modelId: string) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
+  onRetryModelProvider?: (provider: AgentProvider) => void;
+  isRetryingModelProvider: boolean;
   favoriteKeys: Set<string>;
   disabled: boolean;
   isModelLoading: boolean;
@@ -676,7 +676,6 @@ interface DesktopAgentControlsContentProps {
   comboboxProviderOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
   displayProvider: string;
-  displayModel: string;
   displayThinking: string;
   openSelector: AgentControlSelector | null;
   providerAnchorRef: RefObject<View | null>;
@@ -717,6 +716,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     onToggleFavoriteModel,
     onDropdownClose,
     onModelSelectorOpen,
+    onRetryModelProvider,
+    isRetryingModelProvider,
     favoriteKeys,
     disabled,
     isModelLoading,
@@ -728,7 +729,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     comboboxProviderOptions,
     comboboxThinkingOptions,
     displayProvider,
-    displayModel,
     displayThinking,
     openSelector,
     providerAnchorRef,
@@ -779,12 +779,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
       ) : null}
 
       {canSelectModel ? (
-        <Tooltip
-          key={`model-${displayModel}`}
-          delayDuration={0}
-          enabledOnDesktop
-          enabledOnMobile={false}
-        >
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="ref">
             <View>
               <CombinedModelSelector
@@ -798,6 +793,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 disabled={modelDisabled}
                 onOpen={onModelSelectorOpen}
                 onClose={onDropdownClose}
+                onRetryProvider={onRetryModelProvider}
+                isRetryingProvider={isRetryingModelProvider}
                 serverId={modelSelectorServerId}
               />
             </View>
@@ -870,6 +867,8 @@ interface SheetAgentControlsContentProps {
   onToggleFavoriteModel?: (provider: string, modelId: string) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
+  onRetryModelProvider?: (provider: AgentProvider) => void;
+  isRetryingModelProvider: boolean;
   favoriteKeys: Set<string>;
   disabled: boolean;
   isModelLoading: boolean;
@@ -906,6 +905,8 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     onToggleFavoriteModel,
     onDropdownClose,
     onModelSelectorOpen,
+    onRetryModelProvider,
+    isRetryingModelProvider,
     favoriteKeys,
     disabled,
     isModelLoading,
@@ -992,6 +993,8 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
           disabled={modelDisabled}
           onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
+          onRetryProvider={onRetryModelProvider}
+          isRetryingProvider={isRetryingModelProvider}
           renderTrigger={renderModelTrigger}
           serverId={modelSelectorServerId}
         />
@@ -1353,6 +1356,8 @@ export const AgentControls = memo(function AgentControls({
   const {
     entries: snapshotEntries,
     isLoading: snapshotIsLoading,
+    isRefreshing: snapshotIsRefreshing,
+    refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
 
@@ -1373,14 +1378,15 @@ export const AgentControls = memo(function AgentControls({
     () => buildAgentProviderModels(agent?.provider, models),
     [agent?.provider, models],
   );
-  const agentModelSelectorProviders = useMemo(
-    () =>
-      buildProviderSelectorProviders({
-        providerDefinitions: agentProviderDefinitions,
-        modelsByProvider: agentProviderModels,
-      }),
-    [agentProviderDefinitions, agentProviderModels],
-  );
+  const agentModelSelectorProviders = useMemo(() => {
+    if (snapshotSelectedEntry) {
+      return buildSelectableProviderSelectorProviders([snapshotSelectedEntry]);
+    }
+    return buildProviderSelectorProviders({
+      providerDefinitions: agentProviderDefinitions,
+      modelsByProvider: agentProviderModels,
+    });
+  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
 
   const modelSelection = resolveAgentModelSelection({
     models,
@@ -1504,6 +1510,13 @@ export const AgentControls = memo(function AgentControls({
     refetchSnapshotIfStale(agentProvider);
   }, [agentProvider, refetchSnapshotIfStale]);
 
+  const handleRetryModelProvider = useCallback(
+    (provider: AgentProvider) => {
+      void refreshSnapshot([provider]);
+    },
+    [refreshSnapshot],
+  );
+
   const modeChip = useMemo(
     () => <AgentModeControl serverId={serverId} agentId={agentId} placement="toolbar" />,
     [serverId, agentId],
@@ -1529,6 +1542,8 @@ export const AgentControls = memo(function AgentControls({
       onSetFeature={handleSetFeature}
       isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
       onModelSelectorOpen={handleModelSelectorOpen}
+      onRetryModelProvider={handleRetryModelProvider}
+      isRetryingModelProvider={snapshotIsRefreshing}
       onDropdownClose={onDropdownClose}
       disabled={!client}
       desktopExtras={modeChip}
@@ -1558,6 +1573,8 @@ export function DraftAgentControls({
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
+  onRetryModelProvider,
+  isRetryingModelProvider = false,
   disabled = false,
   modelSelectorServerId = null,
 }: DraftAgentControlsProps) {
@@ -1627,6 +1644,8 @@ export function DraftAgentControls({
           disabled={disabled}
           onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
+          onRetryProvider={onRetryModelProvider}
+          isRetryingProvider={isRetryingModelProvider}
           serverId={modelSelectorServerId}
         />
         {selectedProvider ? (
@@ -1638,6 +1657,8 @@ export function DraftAgentControls({
             features={features}
             onSetFeature={onSetFeature}
             onDropdownClose={onDropdownClose}
+            onRetryModelProvider={onRetryModelProvider}
+            isRetryingModelProvider={isRetryingModelProvider}
             disabled={disabled}
             desktopExtras={draftModeChip}
           />
@@ -1663,6 +1684,8 @@ export function DraftAgentControls({
       features={features}
       onSetFeature={onSetFeature}
       onModelSelectorOpen={onModelSelectorOpen}
+      onRetryModelProvider={onRetryModelProvider}
+      isRetryingModelProvider={isRetryingModelProvider}
       disabled={disabled}
       modelSelectorServerId={modelSelectorServerId}
     />

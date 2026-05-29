@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.86 - 2026-05-29
+
+### Added
+
+- **Launch Grok (xAI) as a coding agent**
+- **Fast mode for Claude Opus**
+- **Multilingual local dictation with the new Parakeet v3 speech model**
+
+### Improved
+
+- Edit, Write, and Read tool calls are now syntax-highlighted
+- The model selector shows the error when a provider fails to load
+- The About page shows the versions of connected host daemons
+- Refresh git diffs on demand with a new refresh button
+- Previews can open readable files outside the current workspace
+- Projects without an icon now show a colored icon instead of a grey placeholder
+- Auto-generated agent titles and worktree branch names now use your configured provider fallbacks ([#1219](https://github.com/getpaseo/paseo/pull/1219) by [@mcowger](https://github.com/mcowger))
+- Local dictation keeps its speech models out of the daemon, lowering its memory use
+
+### Fixed
+
+- On mobile, the whole composer now stays above the keyboard so the subagents track and draft pills no longer hide behind it
+- The mobile agent timeline now catches up fully after reconnecting, so no messages go missing
+- The slash command menu no longer shows /clear twice
+
 ## 0.1.85 - 2026-05-29
 
 ### Added

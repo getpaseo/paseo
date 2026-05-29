@@ -46,6 +46,8 @@ export function buildDraftAgentControls(input: {
     onSetFeature,
     onDropdownClose,
     onModelSelectorOpen: formState.refetchProviderModelsIfStale,
+    onRetryModelProvider: formState.refreshProviderModels,
+    isRetryingModelProvider: formState.isProviderModelsRefreshing,
     modelSelectorServerId: formState.selectedServerId,
   };
 }
