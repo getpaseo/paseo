@@ -40,6 +40,7 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import { computeNotificationPlan, type ClientPresenceState } from "./agent-attention-policy.js";
+import type { AgentAttentionHookRunner } from "./agent-attention-hooks.js";
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
@@ -353,6 +354,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushNotificationSender: PushNotificationSender;
+  private readonly agentAttentionHookRunner: AgentAttentionHookRunner | undefined;
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -427,6 +429,7 @@ export class VoiceAssistantWebSocketServer {
         publicUseTls: boolean;
       };
     },
+    agentAttentionHookRunner?: AgentAttentionHookRunner,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -490,6 +493,7 @@ export class VoiceAssistantWebSocketServer {
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
     this.pushNotificationSender =
       pushNotificationSender ?? createPushNotificationSender(pushLogger, this.pushTokenStore);
+    this.agentAttentionHookRunner = agentAttentionHookRunner;
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -1674,6 +1678,16 @@ export class VoiceAssistantWebSocketServer {
       void this.pushNotificationSender.send(notification).catch((err) => {
         this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
       });
+      void this.agentAttentionHookRunner
+        ?.run({
+          agentId: params.agentId,
+          provider: params.provider,
+          reason: params.reason,
+          notification,
+        })
+        .catch((err) => {
+          this.logger.warn({ err, agentId: params.agentId }, "Failed to run agent attention hook");
+        });
     }
 
     for (const [clientIndex, { ws }] of clientEntries.entries()) {

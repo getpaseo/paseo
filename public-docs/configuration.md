@@ -89,6 +89,27 @@ Daemon logging uses separate console and file sinks by default:
 
 Legacy fields `log.level` and `log.format` are still supported and map to the new destination settings.
 
+## Notification hooks
+
+Paseo can run a local command when an agent attention event also qualifies for an external push notification. Hooks are disabled unless configured. Hook failures, non-zero exits, and timeouts are logged but do not block Paseo's built-in push notifications or in-app attention messages.
+
+The command receives one JSON payload on stdin and should exit quickly. The payload includes the agent id, provider, reason, and the same notification payload used for Paseo's push notification.
+
+```json
+{
+  "notifications": {
+    "hooks": {
+      "agentAttention": {
+        "command": ["node", "/opt/paseo/attention-hook.mjs"],
+        "timeoutMs": 5000
+      }
+    }
+  }
+}
+```
+
+Set `enabled` to `false` to keep a hook entry in your config without running it.
+
 ## Password authentication
 
 You can require a password to connect to the daemon. When set, all HTTP and WebSocket clients must authenticate. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.

@@ -17,6 +17,7 @@ import type {
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
+import type { AgentAttentionHookConfig } from "./agent-attention-hooks.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 
@@ -260,6 +261,20 @@ function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedCon
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
 
+function resolveAgentAttentionHookConfig(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): AgentAttentionHookConfig | undefined {
+  const config = persisted.notifications?.hooks?.agentAttention;
+  if (!config || config.enabled === false || !config.command) {
+    return undefined;
+  }
+
+  return {
+    command: config.command,
+    ...(config.timeoutMs ? { timeoutMs: config.timeoutMs } : {}),
+  };
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -344,6 +359,7 @@ export function loadConfig(
     voiceLlmProvider: voiceLlm.provider,
     voiceLlmProviderExplicit: voiceLlm.providerExplicit,
     voiceLlmModel: voiceLlm.model,
+    agentAttentionHook: resolveAgentAttentionHookConfig(persisted),
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     metadataGeneration: persisted.agents?.metadataGeneration,
     providerOverrides,
