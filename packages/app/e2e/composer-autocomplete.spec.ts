@@ -2,6 +2,7 @@ import { expect, test, type Page } from "./fixtures";
 import { composerLocator, expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
+import { escapeRegex } from "./helpers/regex";
 
 const TEST_COMMANDS = [
   {
@@ -103,10 +104,6 @@ function getDaemonPort(): string {
     throw new Error("E2E_DAEMON_PORT must point at the isolated e2e daemon.");
   }
   return daemonPort;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function installListCommandsStub(page: Page): Promise<void> {

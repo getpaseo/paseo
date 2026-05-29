@@ -10,15 +10,12 @@ import {
 import { seedWorkspace } from "./helpers/seed-client";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
 import { getServerId } from "./helpers/server-id";
+import { escapeRegex } from "./helpers/regex";
 
 const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
 
 function getWorkspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function openWorkspaceFromSidebar(

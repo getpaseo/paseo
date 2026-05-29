@@ -1,9 +1,6 @@
 import { expect, type Page } from "@playwright/test";
+import { escapeRegex } from "./regex";
 import { getServerId } from "./server-id";
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 const SECTION_LABELS = {
   general: "General",

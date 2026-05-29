@@ -1,5 +1,6 @@
 import { expect, type Page } from "../fixtures";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
+import { escapeRegex } from "./regex";
 
 const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -226,8 +227,4 @@ function buildStoredHost(input: {
 
 function buildStoredCreateAgentPreferences(serverId: string) {
   return buildCreateAgentPreferences(serverId);
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

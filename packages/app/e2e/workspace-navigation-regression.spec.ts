@@ -31,12 +31,9 @@ import {
 } from "./helpers/workspace-ui";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
+import { escapeRegex } from "./helpers/regex";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 async function expectNoLoadingWorkspacePane(
   page: Page,
