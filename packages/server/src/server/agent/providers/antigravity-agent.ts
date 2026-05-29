@@ -107,6 +107,12 @@ class AntigravityAgentSession implements AgentSession {
   private _activeProcess: ChildProcess | null = null;
   private _activeTurnId: string | null = null;
   private _sessionId: string = randomUUID();
+  /**
+   * Accumulated raw stdout from all prior turns. Because `agy --conversation`
+   * replays the full conversation history on every invocation, we strip this
+   * prefix to extract only the new response (same technique as openab/agy-acp).
+   */
+  private _prevOutput: string = "";
 
   constructor(options: AntigravityAgentSessionOptions) {
     this._conversationId = options.conversationId;
@@ -164,17 +170,28 @@ class AntigravityAgentSession implements AgentSession {
     });
     this._activeProcess = proc;
 
-    let outputText = "";
+    let fullOutput = "";
+    let deltaText = "";
+    const prevOutput = this._prevOutput;
     const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
 
     rl.on("line", (line) => {
       if (this._activeTurnId !== turnId) {
         return;
       }
-      outputText += `${line}\n`;
+      fullOutput += `${line}\n`;
+      // Strip the prior-turn prefix so only the new response is shown.
+      // agy --conversation replays full history on every invocation.
+      const candidate = fullOutput.startsWith(prevOutput)
+        ? fullOutput.slice(prevOutput.length).trimStart()
+        : fullOutput;
+      if (candidate === deltaText) {
+        return;
+      }
+      deltaText = candidate;
       this.emit({
         type: "timeline",
-        item: { type: "assistant_message", text: outputText },
+        item: { type: "assistant_message", text: deltaText },
         provider: ANTIGRAVITY_PROVIDER,
         turnId,
         timestamp: new Date().toISOString(),
@@ -189,13 +206,24 @@ class AntigravityAgentSession implements AgentSession {
 
       if (!this._conversationId) {
         const postConversations = listConversationIds();
-        for (const id of postConversations) {
-          if (!preConversations.has(id)) {
-            this._conversationId = id;
-            break;
-          }
+        const newIds = [...postConversations].filter((id) => !preConversations.has(id));
+        if (newIds.length === 1) {
+          this._conversationId = newIds[0];
+        } else if (newIds.length > 1) {
+          // Concurrent sessions created multiple .pb files; refuse to bind to avoid
+          // associating with the wrong conversation (same guard as openab/agy-acp).
+          console.warn(
+            `[antigravity] Multiple new conversation files appeared (${newIds.join(", ")}); ` +
+              "cannot determine which belongs to this session. Session continuity disabled.",
+          );
         }
       }
+
+      // Update the accumulated-output baseline for the next turn's delta extraction.
+      if (!fullOutput.startsWith(prevOutput)) {
+        console.warn("[antigravity] agy stdout was not append-only; resetting delta baseline.");
+      }
+      this._prevOutput = fullOutput;
 
       if (code === 0 || code === null) {
         this.emit({ type: "turn_completed", provider: ANTIGRAVITY_PROVIDER, turnId });
