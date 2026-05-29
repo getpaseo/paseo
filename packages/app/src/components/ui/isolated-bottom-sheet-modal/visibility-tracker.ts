@@ -50,7 +50,7 @@ export function createBottomSheetVisibilityTracker(opts: {
         isPresented = false;
         return;
       }
-      if (next && visible && isEnabled !== false) {
+      if (visible && isEnabled !== false) {
         present();
       }
     },
