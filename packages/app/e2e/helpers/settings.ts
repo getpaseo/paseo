@@ -156,7 +156,7 @@ export async function expectDiagnosticsContent(page: Page): Promise<void> {
 }
 
 export async function expectAboutContent(page: Page): Promise<void> {
-  await expect(page.getByText("Version", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("App version", { exact: true }).first()).toBeVisible();
 }
 
 export async function expectGeneralContent(page: Page): Promise<void> {
