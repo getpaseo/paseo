@@ -29,12 +29,6 @@ export function SiteHeader() {
           Changelog
         </a>
         <a
-          href="/cloud"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Cloud
-        </a>
-        <a
           href="/download"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
