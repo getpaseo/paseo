@@ -6,7 +6,7 @@
  */
 
 import assert from "node:assert";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,15 +57,6 @@ async function readPidLockState(paseoHome: string): Promise<PidLockState> {
   } catch {
     return { pid: null };
   }
-}
-
-function readProcessCommand(pid: number): string | null {
-  const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
-  if (result.status !== 0 || result.error) {
-    return null;
-  }
-  const command = result.stdout.trim();
-  return command.length > 0 ? command : null;
 }
 
 interface DaemonStatus {
@@ -168,11 +159,10 @@ try {
   assert(isProcessRunning(daemonPid), "daemon process should be running");
   const pidLockBeforeStop = await readPidLockState(paseoHome);
   assert.strictEqual(pidLockBeforeStop.pid, daemonPid, "pid lock should match status pid");
-  const command = readProcessCommand(daemonPid);
-  assert(command !== null, "pid lock pid should resolve to a running process command");
-  assert(
-    command.includes("supervisor-entrypoint.ts") || command.includes("supervisor-entrypoint.js"),
-    `pid lock pid should be supervisor-entrypoint process, got: ${command}`,
+  assert.strictEqual(
+    daemonPid,
+    supervisorProcess.pid,
+    "pid lock pid should be the supervisor-entrypoint process",
   );
   console.log(`✓ dev daemon started with daemon pid ${daemonPid}\n`);
 

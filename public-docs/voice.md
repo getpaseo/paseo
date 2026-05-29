@@ -24,7 +24,7 @@ This keeps credentials and execution in your environment and avoids introducing 
 
 ## Local Speech
 
-Local speech defaults to model IDs `parakeet-tdt-0.6b-v3-int8` (STT) and `kokoro-en-v0_19` (TTS, speaker 0 / voice 00). STT language defaults to `en`.
+Local speech defaults to model IDs `parakeet-tdt-0.6b-v2-int8` (STT) and `kokoro-en-v0_19` (TTS, speaker 0 / voice 00). STT language defaults to `en`.
 
 Missing models are downloaded at daemon startup into `$PASEO_HOME/models/local-speech`. Downloads happen only for missing files.
 
@@ -33,11 +33,11 @@ Missing models are downloaded at daemon startup into `$PASEO_HOME/models/local-s
   "version": 1,
   "features": {
     "dictation": {
-      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v3-int8", "language": "en" }
+      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v2-int8", "language": "en" }
     },
     "voiceMode": {
       "llm": { "provider": "claude", "model": "haiku" },
-      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v3-int8", "language": "en" },
+      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v2-int8", "language": "en" },
       "tts": { "provider": "local", "model": "kokoro-en-v0_19", "speakerId": 0 }
     }
   },
