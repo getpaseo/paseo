@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useMemo, type ReactElement } from "react";
 import {
   DndContext,
   closestCenter,
@@ -7,18 +7,16 @@ import {
   type Modifier,
   useSensor,
   useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
   useSortable,
-  arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableRenderItemInfo } from "./draggable-list.types";
+import { useDragReorderState } from "./drag-reorder";
 
 const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
   ...transform,
@@ -138,9 +136,19 @@ export function SortableInlineList<T>({
   activeId?: string | null;
   getItemData?: (item: T, index: number) => Record<string, unknown>;
 }): ReactElement {
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [dragItems, setDragItems] = useState<T[] | null>(null);
-  const items = externalDndContext ? data : (dragItems ?? data);
+  const {
+    activeId: internalActiveId,
+    items: managedItems,
+    handlers,
+  } = useDragReorderState({
+    data,
+    keyExtractor,
+    onDragEnd,
+    onDragBegin,
+    disabled,
+  });
+  const items = externalDndContext ? data : managedItems;
+  const activeId = externalDndContext ? externalActiveId : internalActiveId;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -151,46 +159,6 @@ export function SortableInlineList<T>({
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
-  );
-
-  const handleDragStart = useCallback(
-    (event: DragStartEvent) => {
-      if (disabled) {
-        return;
-      }
-      setDragItems(data);
-      setActiveId(String(event.active.id));
-      onDragBegin?.();
-    },
-    [data, disabled, onDragBegin],
-  );
-
-  const clearDragState = useCallback(() => {
-    setActiveId(null);
-    setDragItems(null);
-  }, []);
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-
-      clearDragState();
-
-      if (disabled) {
-        return;
-      }
-
-      if (over && active.id !== over.id) {
-        const oldIndex = items.findIndex((item, i) => keyExtractor(item, i) === active.id);
-        const newIndex = items.findIndex((item, i) => keyExtractor(item, i) === over.id);
-
-        if (oldIndex >= 0 && newIndex >= 0 && oldIndex !== newIndex) {
-          const newItems = arrayMove(items, oldIndex, newIndex);
-          onDragEnd?.(newItems);
-        }
-      }
-    },
-    [clearDragState, disabled, items, keyExtractor, onDragEnd],
   );
 
   const ids = useMemo(
@@ -209,7 +177,7 @@ export function SortableInlineList<T>({
             item={item}
             index={index}
             renderItem={renderItem}
-            activeId={externalDndContext ? externalActiveId : activeId}
+            activeId={activeId}
             useDragHandle={useDragHandle}
             disabled={disabled}
             itemData={getItemData?.(item, index)}
@@ -229,9 +197,9 @@ export function SortableInlineList<T>({
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={DND_MODIFIERS}
-      onDragStart={handleDragStart}
-      onDragCancel={clearDragState}
-      onDragEnd={handleDragEnd}
+      onDragStart={handlers.onDragStart}
+      onDragCancel={handlers.onDragCancel}
+      onDragEnd={handlers.onDragEnd}
     >
       {renderedItems}
     </DndContext>

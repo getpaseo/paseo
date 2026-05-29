@@ -1,9 +1,21 @@
 import { vi } from "vitest";
 
-import type { ProviderSnapshotEntry } from "../agent/agent-sdk-types.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+
+import type {
+  AgentMode,
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderSnapshotEntry,
+} from "../agent/agent-sdk-types.js";
+import type {
+  AgentManagerProviderState,
+  ProviderDiagnosticResult,
+  ResolvedProviderCreateConfig,
+} from "../agent/provider-snapshot-manager.js";
 import { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "../session.js";
-import type { SessionOutboundMessage } from "../../shared/messages.js";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { asInternals, createStub } from "./class-mocks.js";
 
 // ---------------------------------------------------------------------------
@@ -130,28 +142,88 @@ export function findByType<T extends SessionOutboundMessage["type"]>(
 // ---------------------------------------------------------------------------
 
 export interface ProviderSnapshotManagerSpies {
-  getSnapshot: ReturnType<typeof vi.fn<[], ProviderSnapshotEntry[]>>;
-  refreshSnapshotForCwd: ReturnType<typeof vi.fn<[], Promise<void>>>;
-  refreshSettingsSnapshot: ReturnType<typeof vi.fn<[], Promise<void>>>;
-  warmUpSnapshotForCwd: ReturnType<typeof vi.fn<[], Promise<void>>>;
+  getSnapshot: ReturnType<typeof vi.fn<[cwd?: string], ProviderSnapshotEntry[]>>;
+  refreshSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
+  refreshSettingsSnapshot: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
+  warmUpSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
+  listRegisteredProviderIds: ReturnType<typeof vi.fn<[], AgentProvider[]>>;
+  hasProvider: ReturnType<typeof vi.fn<[AgentProvider], boolean>>;
+  getProviderLabel: ReturnType<typeof vi.fn<[AgentProvider], string>>;
+  getAgentManagerProviderState: ReturnType<typeof vi.fn<[], AgentManagerProviderState>>;
+  listProviders: ReturnType<typeof vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>>;
+  getProvider: ReturnType<typeof vi.fn<[unknown], Promise<ProviderSnapshotEntry>>>;
+  listModels: ReturnType<typeof vi.fn<[unknown], Promise<AgentModelDefinition[]>>>;
+  listModes: ReturnType<typeof vi.fn<[unknown], Promise<AgentMode[]>>>;
+  resolveCreateConfig: ReturnType<typeof vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>>;
+  resolveDefaultModel: ReturnType<typeof vi.fn<[unknown], Promise<string | undefined>>>;
+  getProviderDiagnostic: ReturnType<
+    typeof vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>
+  >;
+  applyMutableProviderConfig: ReturnType<typeof vi.fn<[unknown], AgentManagerProviderState>>;
+  destroy: ReturnType<typeof vi.fn<[], void>>;
 }
 
 export function createProviderSnapshotManagerStub(): {
   manager: ProviderSnapshotManager;
 } & ProviderSnapshotManagerSpies {
-  const getSnapshot = vi.fn<[], ProviderSnapshotEntry[]>(() => []);
-  const refreshSnapshotForCwd = vi.fn<[], Promise<void>>(async () => {});
-  const refreshSettingsSnapshot = vi.fn<[], Promise<void>>(async () => {});
-  const warmUpSnapshotForCwd = vi.fn<[], Promise<void>>(async () => {});
+  const getSnapshot = vi.fn<[cwd?: string], ProviderSnapshotEntry[]>(() => []);
+  const refreshSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
+  const refreshSettingsSnapshot = vi.fn<[unknown], Promise<void>>(async () => {});
+  const warmUpSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
+  const listRegisteredProviderIds = vi.fn<[], AgentProvider[]>(() => []);
+  const hasProvider = vi.fn<[AgentProvider], boolean>(() => false);
+  const getProviderLabel = vi.fn<[AgentProvider], string>((provider) => {
+    try {
+      return getAgentProviderDefinition(provider).label;
+    } catch {
+      return provider;
+    }
+  });
+  const getAgentManagerProviderState = vi.fn<[], AgentManagerProviderState>(() => ({
+    providerDefinitions: {},
+    clients: {},
+  }));
+  const listProviders = vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>(async () => []);
+  const getProvider = vi.fn<[unknown], Promise<ProviderSnapshotEntry>>(async () => {
+    throw new Error("createProviderSnapshotManagerStub: getProvider not stubbed");
+  });
+  const listModels = vi.fn<[unknown], Promise<AgentModelDefinition[]>>(async () => []);
+  const listModes = vi.fn<[unknown], Promise<AgentMode[]>>(async () => []);
+  const resolveCreateConfig = vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>(async () => ({
+    modeId: undefined,
+    featureValues: undefined,
+  }));
+  const resolveDefaultModel = vi.fn<[unknown], Promise<string | undefined>>(async () => undefined);
+  const getProviderDiagnostic = vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>(
+    async (provider) => ({ provider, diagnostic: "No diagnostic available for this provider." }),
+  );
+  const applyMutableProviderConfig = vi.fn<[unknown], AgentManagerProviderState>(() => ({
+    providerDefinitions: {},
+    clients: {},
+  }));
   const on = vi.fn();
   const off = vi.fn();
+  const destroy = vi.fn<[], void>();
   const stub = {
     getSnapshot,
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,
     warmUpSnapshotForCwd,
+    listRegisteredProviderIds,
+    hasProvider,
+    getProviderLabel,
+    getAgentManagerProviderState,
+    listProviders,
+    getProvider,
+    listModels,
+    listModes,
+    resolveCreateConfig,
+    resolveDefaultModel,
+    getProviderDiagnostic,
+    applyMutableProviderConfig,
     on,
     off,
+    destroy,
   };
   on.mockImplementation(() => stub);
   off.mockImplementation(() => stub);
@@ -162,5 +234,18 @@ export function createProviderSnapshotManagerStub(): {
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,
     warmUpSnapshotForCwd,
+    listRegisteredProviderIds,
+    hasProvider,
+    getProviderLabel,
+    getAgentManagerProviderState,
+    listProviders,
+    getProvider,
+    listModels,
+    listModes,
+    resolveCreateConfig,
+    resolveDefaultModel,
+    getProviderDiagnostic,
+    applyMutableProviderConfig,
+    destroy,
   };
 }

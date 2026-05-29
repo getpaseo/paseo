@@ -97,7 +97,6 @@ function createHarness(overrides?: {
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
     emitWorkspaceUpdatesForWorkspaceIds: vi.fn(),
-    emitSessionMessage: vi.fn(),
   };
   const archivePaseoWorktree = vi.fn(
     overrides?.archivePaseoWorktree ?? (async () => undefined),

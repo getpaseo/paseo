@@ -285,6 +285,65 @@ describe("agent MCP end-to-end (offline)", () => {
     }
   }, 30_000);
 
+  test("create_agent injects a loopback MCP URL when the daemon listens on all interfaces", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const port = await getAvailablePort();
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `0.0.0.0:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    let agentId: string | null = null;
+    try {
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "Wildcard MCP",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "reply with done and stop",
+          background: true,
+        },
+      });
+      const payload = getStructuredContent(result);
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
+      expect(agentId).toBeTruthy();
+
+      const injectedAgent = daemon.agentManager.getAgent(agentId!);
+      expect(injectedAgent?.config.mcpServers).toMatchObject({
+        paseo: {
+          type: "http",
+          url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
+        },
+      });
+    } finally {
+      if (agentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test("create_agent with background initialPrompt reflects running state once the first turn starts", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));

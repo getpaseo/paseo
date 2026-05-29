@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
-} from "@server/server/agent/agent-sdk-types";
+} from "@getpaseo/protocol/agent-types";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {

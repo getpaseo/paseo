@@ -2,7 +2,7 @@ import {
   deriveAgentStateBucket,
   type AgentAttentionReason,
   type AgentStateBucketInput,
-} from "@server/shared/agent-state-bucket";
+} from "@getpaseo/protocol/agent-state-bucket";
 
 export type SidebarStateBucket = "needs_input" | "failed" | "running" | "attention" | "done";
 export type SidebarAttentionReason = AgentAttentionReason;

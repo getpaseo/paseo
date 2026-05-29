@@ -48,12 +48,14 @@ import {
   mapCodexToolCallFromThreadItem,
 } from "./codex/tool-call-mapper.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
-  resolveProviderCommandPrefix,
+  resolveProviderLaunch,
   type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
 } from "../provider-launch-config.js";
-import { findExecutable, isCommandAvailable, probeExecutable } from "../../../utils/executable.js";
+import { findExecutable, probeExecutable } from "../../../utils/executable.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
@@ -78,6 +80,7 @@ import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
+  buildBinaryDiagnosticRows,
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
@@ -441,21 +444,41 @@ export async function findDefaultCodexBinary(): Promise<string | null> {
   return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
 }
 
-async function resolveCodexBinary(): Promise<string> {
-  const found = await findDefaultCodexBinary();
-  if (found) {
-    return found;
-  }
-  throw new Error(
-    "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
-  );
-}
-
 async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
   command: string;
   args: string[];
 }> {
-  return resolveProviderCommandPrefix(runtimeSettings?.command, resolveCodexBinary);
+  const launch = await resolveCodexLaunch(runtimeSettings);
+  const availability = await checkCodexLaunchAvailable(launch);
+  if (!availability.available) {
+    throw new Error(
+      "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
+    );
+  }
+  return {
+    command:
+      launch.source === "override" ? launch.command : (availability.resolvedPath ?? launch.command),
+    args: launch.args,
+  };
+}
+
+async function resolveCodexLaunch(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<ResolvedProviderLaunch> {
+  return resolveProviderLaunch({
+    commandConfig: runtimeSettings?.command,
+    defaultBinary: {
+      command: "codex",
+      resolvePath: findDefaultCodexBinary,
+    },
+  });
+}
+
+async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
+  return checkProviderLaunchAvailable(launch, {
+    command: "codex",
+    resolvePath: findDefaultCodexBinary,
+  });
 }
 
 function resolveCodexHomeDir(): string {
@@ -5570,26 +5593,18 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    const command = this.runtimeSettings?.command;
-    if (command?.mode === "replace") {
-      return await isCommandAvailable(command.argv[0]);
-    }
-    return (await findDefaultCodexBinary()) !== null;
+    const launch = await resolveCodexLaunch(this.runtimeSettings);
+    const availability = await checkCodexLaunchAvailable(launch);
+    return availability.available;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const available = await this.isAvailable();
-      const resolvedBinary = await findDefaultCodexBinary();
+      const launch = await resolveCodexLaunch(this.runtimeSettings);
+      const availability = await checkCodexLaunchAvailable(launch);
+      const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
-        {
-          label: "Binary",
-          value: resolvedBinary ?? "not found",
-        },
-        {
-          label: "Version",
-          value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
-        },
+        ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
       let status = formatDiagnosticStatus(available);
 

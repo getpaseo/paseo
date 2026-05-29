@@ -28,11 +28,8 @@ import { useToast } from "@/contexts/toast-context";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { formatAgentModeLabel } from "@/composer/agent-controls/utils";
-import type { AgentMode, AgentProvider } from "@server/server/agent/agent-sdk-types";
-import {
-  getModeVisuals,
-  type AgentProviderDefinition,
-} from "@server/server/agent/provider-manifest";
+import type { AgentMode, AgentProvider } from "@getpaseo/protocol/agent-types";
+import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export type AgentModeControlPlacement = "toolbar" | "footer";
 
@@ -187,13 +184,12 @@ function AgentModeControlView({
     () => ({
       title: "Mode",
       search: {
-        value: searchQuery,
         onChange: setSearchQuery,
         placeholder: "Search modes...",
         testID: "mode-search-input",
       },
     }),
-    [searchQuery],
+    [],
   );
 
   if (!selectedMode) return null;

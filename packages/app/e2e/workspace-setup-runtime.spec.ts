@@ -9,6 +9,7 @@ import {
   findWorktreeWorkspaceForProject,
   navigateToWorkspaceViaSidebar,
   openHomeWithProject,
+  seedProjectForWorkspaceSetup,
 } from "./helpers/workspace-setup";
 
 test.describe("Workspace setup runtime authority", () => {
@@ -21,7 +22,7 @@ test.describe("Workspace setup runtime authority", () => {
     const repo = await createTempGitRepo("workspace-setup-chat-");
 
     try {
-      await client.openProject(repo.path);
+      await seedProjectForWorkspaceSetup(client, repo.path);
       const workspace = await createWorkspaceThroughDaemon(client, {
         cwd: repo.path,
         worktreeSlug: `setup-chat-${Date.now()}`,
@@ -48,7 +49,7 @@ test.describe("Workspace setup runtime authority", () => {
     const repo = await createTempGitRepo("workspace-setup-terminal-");
 
     try {
-      await client.openProject(repo.path);
+      await seedProjectForWorkspaceSetup(client, repo.path);
 
       // Create workspace via daemon API since the new workspace screen
       // no longer has a standalone terminal button

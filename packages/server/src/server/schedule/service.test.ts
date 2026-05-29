@@ -23,7 +23,7 @@ import type {
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleService } from "./service.js";
-import type { StoredSchedule, ScheduleExecutionResult } from "./types.js";
+import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult>;
@@ -959,5 +959,46 @@ describe("ScheduleService", () => {
     await service.tick();
 
     await expect(service.runOnce(created.id)).rejects.toThrow("already completed");
+  });
+
+  test("deleteForAgent removes only schedules targeting that agent", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const targetAgentId = "11111111-1111-4111-8111-111111111111";
+    const otherAgentId = "22222222-2222-4222-8222-222222222222";
+
+    const targeted = await service.create({
+      prompt: "ping the doomed agent",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: targetAgentId },
+    });
+    const otherTargeted = await service.create({
+      prompt: "ping the other agent",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: otherAgentId },
+    });
+    const newAgentSchedule = await service.create({
+      prompt: "spawn a fresh agent",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+    });
+
+    const deleted = await service.deleteForAgent(targetAgentId);
+    expect(deleted).toBe(1);
+
+    const remaining = await service.list();
+    const remainingIds = remaining.map((schedule) => schedule.id).sort();
+    expect(remainingIds).toEqual([otherTargeted.id, newAgentSchedule.id].sort());
+    expect(remainingIds).not.toContain(targeted.id);
   });
 });

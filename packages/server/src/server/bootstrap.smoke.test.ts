@@ -147,8 +147,8 @@ describe("paseo daemon bootstrap", () => {
         local: {
           modelsDir: path.join(os.tmpdir(), `paseo-missing-models-${Date.now()}`),
           models: {
-            dictationStt: "parakeet-tdt-0.6b-v3-int8",
-            voiceStt: "parakeet-tdt-0.6b-v3-int8",
+            dictationStt: "parakeet-tdt-0.6b-v2-int8",
+            voiceStt: "parakeet-tdt-0.6b-v2-int8",
             voiceTts: "kokoro-en-v0_19",
           },
         },

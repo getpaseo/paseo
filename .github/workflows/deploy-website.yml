@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "CHANGELOG.md"
+      - "public-docs/**"
       - "packages/website/**"
       - "package.json"
       - "package-lock.json"

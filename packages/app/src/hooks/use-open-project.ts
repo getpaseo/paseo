@@ -1,57 +1,10 @@
 import { useCallback } from "react";
-import type { DaemonClient } from "@server/client/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import {
-  normalizeWorkspaceDescriptor,
-  type WorkspaceDescriptor,
-  useSessionStore,
-} from "@/stores/session-store";
-import {
-  buildWorkspaceTabPersistenceKey,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
+import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
-
-interface OpenProjectDirectlyInput {
-  serverId: string;
-  projectPath: string;
-  isConnected: boolean;
-  client: Pick<DaemonClient, "openProject"> | null;
-  mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => void;
-  setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
-  openDraftTab: (workspaceKey: string) => string | null;
-  navigateToWorkspace: (serverId: string, workspaceId: string) => void;
-}
-
-export async function openProjectDirectly(input: OpenProjectDirectlyInput): Promise<boolean> {
-  const normalizedServerId = input.serverId.trim();
-  const trimmedPath = input.projectPath.trim();
-  if (!normalizedServerId || !trimmedPath || !input.client || !input.isConnected) {
-    return false;
-  }
-
-  const payload = await input.client.openProject(trimmedPath);
-  if (payload.error || !payload.workspace) {
-    return false;
-  }
-
-  const workspace = normalizeWorkspaceDescriptor(payload.workspace);
-  input.mergeWorkspaces(normalizedServerId, [workspace]);
-  input.setHasHydratedWorkspaces(normalizedServerId, true);
-
-  const workspaceKey = buildWorkspaceTabPersistenceKey({
-    serverId: normalizedServerId,
-    workspaceId: workspace.id,
-  });
-  if (!workspaceKey) {
-    return false;
-  }
-
-  input.openDraftTab(workspaceKey);
-  input.navigateToWorkspace(normalizedServerId, workspace.id);
-  return true;
-}
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { openProjectDirectly } from "@/hooks/open-project";
 
 export function useOpenProject(serverId: string | null): (path: string) => Promise<boolean> {
   const normalizedServerId = serverId?.trim() ?? "";

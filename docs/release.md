@@ -2,6 +2,29 @@
 
 All workspaces share one version and release together.
 
+## Two steps
+
+A release has exactly two steps. The agent does the first, the user authorizes the second.
+
+**Preparation** (local, reversible — agent does this):
+
+- format, lint, typecheck all green
+- draft the changelog, show it to the user, wait for review
+- run the pre-release sanity check, surface findings to the user
+- confirm CI is green
+
+**Go-ahead** (user says "go ahead"):
+
+- commit the approved changelog
+- run the release
+
+Rules that apply to both steps:
+
+- Last-minute changes always need approval. Every time.
+- No code changes bundled into the changelog commit or the release commit. Code shims live in their own commit, reviewed on their own merits.
+- A sanity-check finding is information, not a directive. The agent surfaces it; the user decides.
+- Invoking a release skill is intent to start the flow, not blanket authorization to publish.
+
 ## Two paths
 
 There are two supported ways to ship from `main`:

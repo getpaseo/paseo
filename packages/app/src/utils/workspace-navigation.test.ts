@@ -1,88 +1,96 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const { platformState, routerMock } = vi.hoisted(() => ({
-  platformState: {
-    isWeb: true,
-  },
-  routerMock: {
-    dismissTo: vi.fn(),
-    navigate: vi.fn(),
-    replace: vi.fn(),
-  },
-}));
-
-vi.mock("expo-router", () => ({
-  router: routerMock,
-  useLocalSearchParams: () => ({}),
-  usePathname: () => "/",
-}));
-
-vi.mock("@/constants/platform", () => ({
-  get isWeb() {
-    return platformState.isWeb;
-  },
-}));
-
-vi.mock("@react-native-async-storage/async-storage", () => {
-  const storage = new Map<string, string>();
-  return {
-    default: {
-      getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-      setItem: vi.fn(async (key: string, value: string) => {
-        storage.set(key, value);
-      }),
-      removeItem: vi.fn(async (key: string) => {
-        storage.delete(key);
-      }),
-    },
-  };
-});
-
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { navigateToPreparedWorkspaceTab, prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { describe, expect, it } from "vitest";
+import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import { navigateToPreparedWorkspaceTab, prepareWorkspaceTab } from "@/utils/prepare-workspace-tab";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "/repo/worktree";
 const AGENT_ID = "agent-1";
 
-describe("prepareWorkspaceTab", () => {
-  beforeEach(() => {
-    vi.useRealTimers();
-    platformState.isWeb = true;
-    routerMock.dismissTo.mockReset();
-    routerMock.navigate.mockReset();
-    routerMock.replace.mockReset();
-    useWorkspaceLayoutStore.setState({
-      layoutByWorkspace: {},
-      splitSizesByWorkspace: {},
-      pinnedAgentIdsByWorkspace: {},
-      hiddenAgentIdsByWorkspace: {},
-    });
-  });
+interface RecordedOpenedTab {
+  key: string;
+  target: WorkspaceTabTarget;
+}
 
+interface RecordedPin {
+  key: string;
+  agentId: string;
+}
+
+interface RecordedNavigation {
+  serverId: string;
+  workspaceId: string;
+  currentPathname?: string | null;
+}
+
+function createFakeLayout() {
+  const openedTabs: RecordedOpenedTab[] = [];
+  const pinnedAgents: RecordedPin[] = [];
+  return {
+    openedTabs,
+    pinnedAgents,
+    openTabFocused: (key: string, target: WorkspaceTabTarget) => {
+      openedTabs.push({ key, target });
+      return target.kind === "agent" ? target.agentId : null;
+    },
+    pinAgent: (key: string, agentId: string) => {
+      pinnedAgents.push({ key, agentId });
+    },
+  };
+}
+
+function createFakeNavigator() {
+  const navigations: RecordedNavigation[] = [];
+  return {
+    navigations,
+    navigateToWorkspace: (
+      serverId: string,
+      workspaceId: string,
+      options: { currentPathname?: string | null },
+    ) => {
+      navigations.push({ serverId, workspaceId, currentPathname: options.currentPathname });
+    },
+  };
+}
+
+describe("prepareWorkspaceTab", () => {
   it("opens and focuses an agent tab", () => {
-    const route = prepareWorkspaceTab({
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-      target: { kind: "agent", agentId: AGENT_ID },
-    });
+    const layout = createFakeLayout();
+
+    const route = prepareWorkspaceTab(
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+      },
+      layout,
+    );
 
     expect(route).toBe("/h/server-1/workspace/b64_L3JlcG8vd29ya3RyZWU");
-    const key = "server-1:/repo/worktree";
-    expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(key)).toHaveLength(1);
+    expect(layout.openedTabs).toEqual([
+      { key: "server-1:/repo/worktree", target: { kind: "agent", agentId: AGENT_ID } },
+    ]);
+    expect(layout.pinnedAgents).toEqual([]);
   });
 
   it("prepares a tab and navigates through the workspace navigation helper", () => {
-    const route = navigateToPreparedWorkspaceTab({
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-      target: { kind: "agent", agentId: AGENT_ID },
-    });
+    const layout = createFakeLayout();
+    const navigator = createFakeNavigator();
+
+    const route = navigateToPreparedWorkspaceTab(
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+      },
+      { ...layout, navigateToWorkspace: navigator.navigateToWorkspace },
+    );
 
     expect(route).toBe("/h/server-1/workspace/b64_L3JlcG8vd29ya3RyZWU");
-    expect(routerMock.dismissTo).toHaveBeenCalledWith(
-      "/h/server-1/workspace/b64_L3JlcG8vd29ya3RyZWU",
-    );
-    expect(routerMock.replace).not.toHaveBeenCalled();
+    expect(layout.openedTabs).toEqual([
+      { key: "server-1:/repo/worktree", target: { kind: "agent", agentId: AGENT_ID } },
+    ]);
+    expect(navigator.navigations).toEqual([
+      { serverId: SERVER_ID, workspaceId: WORKSPACE_ID, currentPathname: undefined },
+    ]);
   });
 });

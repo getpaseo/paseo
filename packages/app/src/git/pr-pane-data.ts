@@ -1,7 +1,7 @@
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
-} from "@server/shared/messages";
+} from "@getpaseo/protocol/messages";
 
 export type PrState = "open" | "draft" | "merged" | "closed";
 export type CheckStatus = "success" | "failure" | "pending" | "skipped";

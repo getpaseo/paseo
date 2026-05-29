@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type RewindMode, useRewindCapabilities } from "./use-rewind-capabilities";
-import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
+import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 
 export type { RewindMode };
 
@@ -137,8 +137,8 @@ export const RewindMenu = memo(function RewindMenu({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    width: 24,
-    height: 24,
+    padding: theme.spacing[1],
+    paddingTop: theme.spacing[1],
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
@@ -147,7 +147,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: theme.opacity[50],
   },
   triggerSlot: {
-    alignSelf: "flex-start",
+    alignSelf: "center",
   },
   tooltipText: {
     color: theme.colors.foreground,

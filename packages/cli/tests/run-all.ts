@@ -16,10 +16,11 @@ import { join, dirname, delimiter } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(__dirname, "..", "..", "..");
 
 // npm workspace scripts only add the local node_modules/.bin to PATH; hoisted
 // packages live in the root. Prepend it so `npx paseo` resolves locally.
-const rootNodeModulesBin = join(__dirname, "..", "..", "..", "node_modules", ".bin");
+const rootNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 const args = process.argv.slice(2);
 const testEnvDefaults = {
   PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
@@ -176,9 +177,10 @@ let passed = 0;
 let failed = 0;
 const failures: Failure[] = [];
 
-await runCommand("Building relay", "npm run build --workspace=@getpaseo/relay");
-await runCommand("Building server", "npm run build --workspace=@getpaseo/server");
-await runCommand("Building CLI", "npm run build --workspace=@getpaseo/cli");
+await runCommand(
+  "Building server stack",
+  `npm --prefix ${JSON.stringify(repoRoot)} run build:server`,
+);
 
 type TestOutcome =
   | { status: "passed"; durationMs: number }

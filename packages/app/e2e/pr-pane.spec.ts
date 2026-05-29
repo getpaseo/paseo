@@ -10,6 +10,7 @@ import { gotoWorkspace } from "./helpers/launcher";
 import { hasGithubAuth, createTempGithubRepo, type GhRepoFixture } from "./helpers/github-fixtures";
 import {
   connectWorkspaceSetupClient,
+  openProjectViaDaemon,
   type WorkspaceSetupDaemonClient,
 } from "./helpers/workspace-setup";
 
@@ -50,11 +51,8 @@ test.describe("PR pane", () => {
     });
 
     for (const pr of repoFixture.prs) {
-      const result = await seedClient.openProject(pr.localPath);
-      if (!result.workspace) {
-        throw new Error(result.error ?? `Failed to open project ${pr.localPath}`);
-      }
-      workspaceByTitle.set(pr.title, result.workspace.id);
+      const workspace = await openProjectViaDaemon(seedClient, pr.localPath);
+      workspaceByTitle.set(pr.title, workspace.id);
     }
   });
 

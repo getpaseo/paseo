@@ -50,8 +50,8 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
-} from "@server/server/agent/agent-sdk-types";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+} from "@getpaseo/protocol/agent-types";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import {
   getFeatureHighlightColor,
   getFeatureTooltip,
@@ -93,6 +93,7 @@ interface ControlledAgentControlsProps {
   onModelSelectorOpen?: () => void;
   /** Extra elements rendered inline with the agent controls (desktop only). */
   desktopExtras?: ReactNode;
+  modelSelectorServerId?: string | null;
 }
 
 export interface DraftAgentControlsProps {
@@ -117,6 +118,7 @@ export interface DraftAgentControlsProps {
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   disabled?: boolean;
+  modelSelectorServerId?: string | null;
 }
 
 interface AgentControlsProps {
@@ -410,6 +412,7 @@ function ControlledAgentControls({
   onDropdownClose,
   onModelSelectorOpen,
   desktopExtras,
+  modelSelectorServerId = null,
 }: ControlledAgentControlsProps) {
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
@@ -613,6 +616,7 @@ function ControlledAgentControls({
           handleOpenChange={handleOpenChange}
           renderThinkingOption={renderThinkingOption}
           extras={desktopExtras}
+          modelSelectorServerId={modelSelectorServerId}
         />
       ) : (
         <SheetAgentControlsContent
@@ -641,6 +645,7 @@ function ControlledAgentControls({
           handleSelectThinkingAndClose={handleSelectThinkingAndClose}
           handleOpenChange={handleOpenChange}
           renderThinkingOption={renderThinkingOption}
+          modelSelectorServerId={modelSelectorServerId}
         />
       )}
     </View>
@@ -693,6 +698,7 @@ interface DesktopAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   extras?: ReactNode;
+  modelSelectorServerId: string | null;
 }
 
 const DESKTOP_SEARCH_THRESHOLD = 6;
@@ -739,6 +745,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleOpenChange,
     renderThinkingOption,
     extras,
+    modelSelectorServerId,
   } = props;
 
   return (
@@ -791,6 +798,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 disabled={modelDisabled}
                 onOpen={onModelSelectorOpen}
                 onClose={onDropdownClose}
+                serverId={modelSelectorServerId}
               />
             </View>
           </TooltipTrigger>
@@ -884,6 +892,7 @@ interface SheetAgentControlsContentProps {
     active: boolean;
     onPress: () => void;
   }) => ReactElement;
+  modelSelectorServerId: string | null;
 }
 
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
@@ -914,6 +923,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleSelectThinkingAndClose,
     handleOpenChange,
     renderThinkingOption,
+    modelSelectorServerId,
   } = props;
 
   const thinkingAnchorRef = useRef<View | null>(null);
@@ -983,6 +993,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
           onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
           renderTrigger={renderModelTrigger}
+          serverId={modelSelectorServerId}
         />
       ) : null}
 
@@ -1521,6 +1532,7 @@ export const AgentControls = memo(function AgentControls({
       onDropdownClose={onDropdownClose}
       disabled={!client}
       desktopExtras={modeChip}
+      modelSelectorServerId={serverId}
     />
   );
 });
@@ -1547,6 +1559,7 @@ export function DraftAgentControls({
   onDropdownClose,
   onModelSelectorOpen,
   disabled = false,
+  modelSelectorServerId = null,
 }: DraftAgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const isCompact = useIsCompactFormFactor();
@@ -1614,6 +1627,7 @@ export function DraftAgentControls({
           disabled={disabled}
           onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
+          serverId={modelSelectorServerId}
         />
         {selectedProvider ? (
           <ControlledAgentControls
@@ -1650,6 +1664,7 @@ export function DraftAgentControls({
       onSetFeature={onSetFeature}
       onModelSelectorOpen={onModelSelectorOpen}
       disabled={disabled}
+      modelSelectorServerId={modelSelectorServerId}
     />
   );
 }

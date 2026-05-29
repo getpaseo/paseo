@@ -1,14 +1,12 @@
-import { randomUUID } from "node:crypto";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { expect, type Page } from "@playwright/test";
-import type { DaemonClient as ServerDaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
+import { connectDaemonClient } from "./daemon-client-loader";
+import { daemonWsRoutePattern } from "./daemon-port";
 import { expectWorkspaceHeader, workspaceLabelFromPath } from "./workspace-ui";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 
 type NewWorkspaceDaemonClient = Pick<
-  ServerDaemonClient,
+  InternalDaemonClient,
   | "archivePaseoWorktree"
   | "archiveWorkspace"
   | "close"
@@ -17,13 +15,6 @@ type NewWorkspaceDaemonClient = Pick<
   | "openProject"
 >;
 
-interface NewWorkspaceDaemonClientConfig {
-  url: string;
-  clientId: string;
-  clientType: "cli";
-  webSocketFactory?: NodeWebSocketFactory;
-}
-
 type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
 
 export interface OpenedProject {
@@ -31,34 +22,6 @@ export interface OpenedProject {
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
-}
-
-function getDaemonPort(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  if (daemonPort === "6767") {
-    throw new Error("E2E_DAEMON_PORT must not point at the developer daemon.");
-  }
-  return daemonPort;
-}
-
-function getDaemonWsUrl(): string {
-  return `ws://127.0.0.1:${getDaemonPort()}/ws`;
-}
-
-async function loadDaemonClientConstructor(): Promise<
-  new (config: NewWorkspaceDaemonClientConfig) => NewWorkspaceDaemonClient
-> {
-  const repoRoot = path.resolve(__dirname, "../../../../");
-  const moduleUrl = pathToFileURL(
-    path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
-  ).href;
-  const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: NewWorkspaceDaemonClientConfig) => NewWorkspaceDaemonClient;
-  };
-  return mod.DaemonClient;
 }
 
 function requireWorkspace(payload: OpenProjectPayload) {
@@ -83,16 +46,9 @@ function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | nul
 }
 
 export async function connectNewWorkspaceDaemonClient(): Promise<NewWorkspaceDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `app-e2e-new-workspace-${randomUUID()}`,
-    clientType: "cli",
-    webSocketFactory,
+  return connectDaemonClient<NewWorkspaceDaemonClient>({
+    clientIdPrefix: "app-e2e-new-workspace",
   });
-  await client.connect();
-  return client;
 }
 
 export async function openProjectViaDaemon(
@@ -327,12 +283,7 @@ export interface AgentCreatedDelayControl {
 export async function delayBrowserAgentCreatedStatus(
   page: Page,
 ): Promise<AgentCreatedDelayControl> {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-
-  const daemonPortPattern = new RegExp(`:${daemonPort.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const daemonPortPattern = daemonWsRoutePattern();
   const createRequestIds = new Set<string>();
   const delayedForwards: Array<() => void> = [];
   let releaseRequested = false;

@@ -79,8 +79,8 @@ buildNpmPackage rec {
     # degrade when unavailable.
     npm rebuild node-pty
 
-    # Build all daemon packages in dependency order (defined in package.json)
-    npm run build:daemon
+    # Build all server packages in dependency order (defined in package.json)
+    npm run build:server
 
     runHook postBuild
   '';

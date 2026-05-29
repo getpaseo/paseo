@@ -5,6 +5,7 @@ import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js
 import { ScriptRouteStore } from "./script-proxy.js";
 import { Session, type SessionOptions } from "./session.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
+import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
   WorkspaceGitListener,
@@ -231,6 +232,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     mcpBaseUrl: null,
     stt: null,
     tts: null,
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
     scriptRouteStore: options?.scriptRouteStore,
     scriptRuntimeStore: options?.scriptRuntimeStore,

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { FileReadResult } from "@server/client/daemon-client";
+import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
@@ -172,15 +172,15 @@ const codeLineStyles = StyleSheet.create((theme) => ({
   gutterText: {
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.fontSize.code * 1.45,
     opacity: 0.4,
     userSelect: "none",
   },
   lineText: {
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.fontSize.code * 1.45,
     flex: 1,
   },
 }));
@@ -216,9 +216,9 @@ function FilePreviewBody({
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
-    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.sm);
-  }, [highlightedLines, theme.fontSize.sm]);
-  const lineHeight = theme.fontSize.sm * 1.45;
+    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.code);
+  }, [highlightedLines, theme.fontSize.code]);
+  const lineHeight = theme.fontSize.code * 1.45;
   const lineSelection = useMemo(() => {
     if (!highlightedLines) {
       return null;

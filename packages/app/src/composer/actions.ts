@@ -1,4 +1,4 @@
-import type { GitHubSearchItem } from "@server/shared/messages";
+import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,

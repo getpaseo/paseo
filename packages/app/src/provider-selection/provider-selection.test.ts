@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AgentModelDefinition,
-  ProviderSnapshotEntry,
-} from "@server/server/agent/agent-sdk-types";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import {
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
@@ -68,7 +65,7 @@ describe("combined model selector data", () => {
     ]);
   });
 
-  it("represents ready enabled providers without explicit models as provider-default selection", () => {
+  it("synthesizes a default model row for ready enabled providers without explicit models", () => {
     expect(
       buildSelectableProviderSelectorProviders([
         snapshotEntry({
@@ -81,7 +78,20 @@ describe("combined model selector data", () => {
       {
         id: "deepseek-tui",
         label: "DeepSeek TUI",
-        modelSelection: { kind: "providerDefault", label: "Default" },
+        modelSelection: {
+          kind: "models",
+          rows: [
+            {
+              favoriteKey: "deepseek-tui:",
+              provider: "deepseek-tui",
+              providerLabel: "DeepSeek TUI",
+              modelId: "",
+              modelLabel: "Default",
+              description: undefined,
+              isDefault: true,
+            },
+          ],
+        },
       },
     ]);
   });
@@ -99,14 +109,39 @@ describe("combined model selector data", () => {
     ).toEqual([]);
   });
 
-  it("excludes providers that are not ready", () => {
+  it("surfaces non-ready providers with their state-specific selection", () => {
     expect(
       buildSelectableProviderSelectorProviders([
         snapshotEntry({ provider: "loading-provider", status: "loading", models: [] }),
-        snapshotEntry({ provider: "error-provider", status: "error", models: [] }),
-        snapshotEntry({ provider: "unavailable-provider", status: "unavailable", models: [] }),
+        snapshotEntry({
+          provider: "error-provider",
+          status: "error",
+          error: "boom",
+          models: [],
+        }),
+        snapshotEntry({
+          provider: "unavailable-provider",
+          status: "unavailable",
+          models: [],
+        }),
       ]),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        id: "loading-provider",
+        label: "loading-provider",
+        modelSelection: { kind: "loading" },
+      },
+      {
+        id: "error-provider",
+        label: "error-provider",
+        modelSelection: { kind: "error", message: "boom" },
+      },
+      {
+        id: "unavailable-provider",
+        label: "unavailable-provider",
+        modelSelection: { kind: "error", message: "Unavailable" },
+      },
+    ]);
   });
 
   it("builds selector providers from an already-curated provider list", () => {

@@ -13,7 +13,6 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
-import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
   type WorkspaceSetupSnapshot,
@@ -25,17 +24,12 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import { asUint8Array, decodeTerminalStreamFrame } from "../shared/binary-frames/index.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
-} from "./agent/provider-launch-config.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import { buildProviderRegistry, createClientsFromRegistry } from "./agent/provider-registry.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -49,7 +43,7 @@ import { computeNotificationPlan, type ClientPresenceState } from "./agent-atten
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
-} from "../shared/agent-attention-notification.js";
+} from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import {
   extractWsBearerProtocol,
@@ -373,9 +367,6 @@ export class VoiceAssistantWebSocketServer {
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
-  private agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
-  private providerOverrides: Record<string, ProviderOverride> | undefined;
-  private isDev!: boolean;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
@@ -404,9 +395,6 @@ export class VoiceAssistantWebSocketServer {
     dictation?: {
       finalTimeoutMs?: number;
     },
-    agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
-    providerOverrides?: Record<string, ProviderOverride>,
-    isDev?: boolean,
     daemonVersion?: string,
     onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
     projectRegistry?: ProjectRegistry,
@@ -428,6 +416,7 @@ export class VoiceAssistantWebSocketServer {
     workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
     pushNotificationSender?: PushNotificationSender,
+    providerSnapshotManager?: ProviderSnapshotManager,
     daemonRuntimeConfig?: {
       listen: string | null;
       relay: {
@@ -470,9 +459,6 @@ export class VoiceAssistantWebSocketServer {
       speech,
       terminalManager,
       dictation,
-      agentProviderRuntimeSettings,
-      providerOverrides,
-      isDev,
       onLifecycleIntent,
       scriptRouteStore,
       scriptRuntimeStore,
@@ -481,15 +467,10 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost,
       resolveScriptHealth,
     });
-    const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
-    this.providerSnapshotManager = new ProviderSnapshotManager(
-      buildProviderRegistry(providerSnapshotLogger, {
-        runtimeSettings: this.agentProviderRuntimeSettings,
-        providerOverrides: this.providerOverrides,
-        isDev: this.isDev,
-      }),
-      providerSnapshotLogger,
-    );
+    if (!providerSnapshotManager) {
+      throw new Error("providerSnapshotManager is required");
+    }
+    this.providerSnapshotManager = providerSnapshotManager;
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
@@ -498,18 +479,10 @@ export class VoiceAssistantWebSocketServer {
         this.publishSpeechReadiness(snapshot);
       }) ?? null;
     this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config) => {
-      this.providerOverrides = applyMutableProviderConfigToOverrides(
-        this.providerOverrides,
+      const nextAgentManagerState = this.providerSnapshotManager.applyMutableProviderConfig(
         config.providers,
       );
-      const registry = buildProviderRegistry(providerSnapshotLogger, {
-        runtimeSettings: this.agentProviderRuntimeSettings,
-        providerOverrides: this.providerOverrides,
-        isDev: this.isDev,
-      });
-      const clients = createClientsFromRegistry(registry, providerSnapshotLogger);
-      this.providerSnapshotManager.replaceRegistry(registry);
-      this.agentManager.updateProviderRegistry({ providerDefinitions: registry, clients });
+      this.agentManager.updateProviderRegistry(nextAgentManagerState);
       this.broadcastDaemonConfigChanged(config);
     });
 
@@ -534,9 +507,6 @@ export class VoiceAssistantWebSocketServer {
     speech: SpeechService | null | undefined;
     terminalManager: TerminalManager | null | undefined;
     dictation: { finalTimeoutMs?: number } | undefined;
-    agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
-    providerOverrides: Record<string, ProviderOverride> | undefined;
-    isDev: boolean | undefined;
     onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | undefined;
     scriptRouteStore: ScriptRouteStore | null | undefined;
     scriptRuntimeStore: WorkspaceScriptRuntimeStore | null | undefined;
@@ -550,9 +520,6 @@ export class VoiceAssistantWebSocketServer {
     this.speech = params.speech ?? null;
     this.terminalManager = params.terminalManager ?? null;
     this.dictation = params.dictation ?? null;
-    this.agentProviderRuntimeSettings = params.agentProviderRuntimeSettings;
-    this.providerOverrides = params.providerOverrides;
-    this.isDev = params.isDev === true;
     this.onLifecycleIntent = params.onLifecycleIntent ?? null;
     this.scriptRouteStore = params.scriptRouteStore ?? null;
     this.scriptRuntimeStore = params.scriptRuntimeStore ?? null;
@@ -941,9 +908,6 @@ export class VoiceAssistantWebSocketServer {
               getSpeechReadiness: () => this.speech!.getReadiness(),
             }
           : undefined,
-      agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
-      providerOverrides: this.providerOverrides,
-      isDev: this.isDev,
       serverId: this.serverId,
       daemonVersion: this.daemonVersion,
       daemonRuntimeConfig: this.daemonRuntimeConfig,

@@ -8,7 +8,7 @@ import type { BarcodeScanningResult, BarcodeSettings } from "expo-camera";
 import { useHostMutations } from "@/runtime/host-runtime";
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
-import { ConnectionOfferSchema } from "@server/shared/connection-offer";
+import { ConnectionOfferSchema } from "@getpaseo/protocol/connection-offer";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { isWeb } from "@/constants/platform";
 import { BackHeader } from "@/components/headers/back-header";

@@ -1,6 +1,8 @@
 import { test } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { TEST_HOST_LABEL } from "./helpers/daemon-registry";
+import { getServerId } from "./helpers/server-id";
 import {
   expectSettingsHeader,
   openSettingsHost,
@@ -16,28 +18,12 @@ import {
   expectLocalHostEntryFirst,
 } from "./helpers/settings";
 
-function getSeededServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
-
-function getSeededDaemonPort(): string {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) {
-    throw new Error("E2E_DAEMON_PORT is not set (expected from Playwright globalSetup).");
-  }
-  return port;
-}
-
 test.describe("Settings host page", () => {
   test("host page shows seeded label, connection endpoint, inject MCP toggle, and all action rows", async ({
     page,
   }) => {
-    const serverId = getSeededServerId();
-    const port = getSeededDaemonPort();
+    const serverId = getServerId();
+    const port = getE2EDaemonPort();
 
     await gotoAppShell(page);
     await openSettings(page);
@@ -51,7 +37,7 @@ test.describe("Settings host page", () => {
   });
 
   test("clicking the label pencil reveals the inline editor", async ({ page }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
 
     await gotoAppShell(page);
     await openSettings(page);
@@ -65,7 +51,7 @@ test.describe("Settings host page", () => {
   test("host page does not render pair-device or daemon-lifecycle rows for a remote daemon", async ({
     page,
   }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
 
     await gotoAppShell(page);
     await openSettings(page);
@@ -85,7 +71,7 @@ test.describe("Settings host page", () => {
   test("navigating to /settings/hosts/[serverId] directly renders the host page", async ({
     page,
   }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
 
     await gotoAppShell(page);
     await page.goto(`/settings/hosts/${encodeURIComponent(serverId)}`);
@@ -97,7 +83,7 @@ test.describe("Settings host page", () => {
   });
 
   test("sidebar pins the local daemon host first with a Local marker", async ({ page }) => {
-    const serverId = getSeededServerId();
+    const serverId = getServerId();
 
     // Simulate the Electron desktop bridge so `useIsLocalDaemon` resolves the
     // seeded host to the local daemon. `manageBuiltInDaemon: false` (returned

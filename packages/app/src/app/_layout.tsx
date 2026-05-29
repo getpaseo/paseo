@@ -28,6 +28,7 @@ import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
+import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
@@ -466,6 +467,7 @@ function AppContainer({
       <WorktreeSetupCalloutSource />
       <CommandCenter />
       <ProjectPickerModal />
+      <ProviderSettingsHost />
       <WorkspaceShortcutTargetsSubscriber
         enabled={keyboardShortcutsEnabled}
         serverId={activeServerId}

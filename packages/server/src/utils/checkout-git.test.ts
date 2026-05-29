@@ -17,6 +17,7 @@ import {
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
   getCachedCheckoutShortstat,
+  getCheckoutSnapshotFacts,
   getCurrentBranch,
   getCheckoutDiff,
   getCheckoutShortstat,
@@ -39,6 +40,7 @@ import {
   isDescendantPath,
   warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
   GitHubCommandError,
   GitHubCliMissingError,
@@ -327,6 +329,48 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("reuses checkout snapshot facts across status, shortstat, and PR status reads", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "feature/facts"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature");
+    writeFileSync(join(repoDir, "feature.txt"), "feature\nchanged\n");
+    const github = createGitHubServiceForStatus(createPullRequestStatus());
+
+    const facts = await getCheckoutSnapshotFacts(repoDir, { paseoHome });
+    const status = await getCheckoutStatus(repoDir, { paseoHome, facts });
+    const shortstat = await getCheckoutShortstat(repoDir, { paseoHome, facts }, { force: true });
+    const prStatus = await getPullRequestStatus(
+      repoDir,
+      github,
+      { force: true, reason: "snapshot-equivalence" },
+      { paseoHome, facts },
+    );
+
+    __resetCheckoutShortstatCacheForTests();
+    __resetPullRequestStatusCacheForTests();
+    startGitCommandMetrics();
+    const statusWithFacts = await getCheckoutStatus(repoDir, { paseoHome, facts });
+    const shortstatWithFacts = await getCheckoutShortstat(
+      repoDir,
+      { paseoHome, facts },
+      { force: true },
+    );
+    const prStatusWithFacts = await getPullRequestStatus(
+      repoDir,
+      github,
+      { force: true, reason: "snapshot-equivalence-with-facts" },
+      { paseoHome, facts },
+    );
+    const metrics = stopGitCommandMetrics();
+    const commands = metrics.commands.map((command) => command.args.join(" "));
+
+    expect(statusWithFacts).toEqual(status);
+    expect(shortstatWithFacts).toEqual(shortstat);
+    expect(prStatusWithFacts).toEqual(prStatus);
+    expect(commands).not.toContain("rev-parse --show-toplevel");
+    expect(commands).not.toContain("rev-parse --abbrev-ref HEAD");
   });
 
   it("hides whitespace-only changes when requested", async () => {

@@ -1,7 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { connectTerminalClient } from "./helpers/terminal-perf";
-import { createTempGitRepo } from "./helpers/workspace";
+import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import {
   composerLocator,
   expectComposerEditable,
@@ -9,27 +7,6 @@ import {
   fillComposerDraft,
   submitMessage,
 } from "./helpers/composer";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
-
-async function openAgent(page: Page, input: { cwd: string; agentId: string }): Promise<void> {
-  const agentUrl = `${buildHostWorkspaceRoute(
-    getServerId(),
-    input.cwd,
-  )}?open=${encodeURIComponent(`agent:${input.agentId}`)}`;
-  await page.goto(agentUrl);
-  await page.waitForURL(
-    (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
-    { timeout: 60_000 },
-  );
-  await expectComposerVisible(page);
-}
 
 async function expectUserMessageCount(page: Page, expected: number): Promise<void> {
   await expect(page.getByTestId("user-message")).toHaveCount(expected, { timeout: 15_000 });
@@ -50,8 +27,10 @@ async function expectNoLoadingRegressionAfterIdle(page: Page): Promise<void> {
 
 test.describe("User message UI contract", () => {
   test("dedupes mock provider user_message echoes across multi-turn sends", async ({ page }) => {
-    const repo = await createTempGitRepo("user-message-contract-e2e-");
-    const client = await connectTerminalClient();
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "user-message-contract-e2e-",
+      title: "User message contract e2e",
+    });
     const prompts = [
       "emit 1 coalesced agent stream updates for user message contract turn one.",
       "emit 1 coalesced agent stream updates for user message contract turn two.",
@@ -59,15 +38,8 @@ test.describe("User message UI contract", () => {
     ];
 
     try {
-      await client.openProject(repo.path);
-      const agent = await client.createAgent({
-        provider: "mock",
-        cwd: repo.path,
-        title: "User message contract e2e",
-        modeId: "load-test",
-        model: "ten-second-stream",
-      });
-      await openAgent(page, { cwd: repo.path, agentId: agent.id });
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
 
       for (let index = 0; index < prompts.length; index += 1) {
         const prompt = prompts[index]!;
@@ -85,8 +57,7 @@ test.describe("User message UI contract", () => {
       await expectUserMessageCount(page, 3);
       await expectIdleComposer(page);
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await session.cleanup();
     }
   });
 });

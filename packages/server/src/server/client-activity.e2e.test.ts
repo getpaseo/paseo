@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
-import type { AgentStreamEventPayload } from "../shared/messages.js";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentSnapshotPayload } from "./messages.js";
 import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
 import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";

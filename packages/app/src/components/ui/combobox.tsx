@@ -156,7 +156,6 @@ function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
 
 export interface SearchInputProps {
   placeholder: string;
-  value: string;
   onChangeText: (text: string) => void;
   onSubmitEditing?: () => void;
   autoFocus?: boolean;
@@ -166,7 +165,6 @@ export interface SearchInputProps {
 
 export function SearchInput({
   placeholder,
-  value,
   onChangeText,
   onSubmitEditing,
   autoFocus = false,
@@ -194,9 +192,7 @@ export function SearchInput({
           // @ts-expect-error - outlineStyle is web-only
           style={SEARCH_INPUT_STYLE}
           placeholder={placeholder}
-          initialValue={value}
           resetKey={resetKey}
-          value={value}
           onChangeText={onChangeText}
           autoCapitalize="none"
           autoCorrect={false}
@@ -204,12 +200,12 @@ export function SearchInput({
         />
       ) : (
         <TextInput
+          key={resetKey}
           ref={inputRef}
           // @ts-expect-error - outlineStyle is web-only
           style={SEARCH_INPUT_STYLE}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.foregroundMuted}
-          value={value}
           onChangeText={onChangeText}
           autoCapitalize="none"
           autoCorrect={false}
@@ -1041,7 +1037,6 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
           {!props.hasChildren && props.searchable ? (
             <SearchInput
               placeholder={props.searchPlaceholder}
-              value={props.searchQuery}
               onChangeText={props.setSearchQueryWithCallback}
               onSubmitEditing={props.handleSubmitSearch}
               autoFocus={false}
@@ -1150,7 +1145,6 @@ function DesktopComboboxOptionsBody(props: {
       {props.header || !props.searchable ? null : (
         <SearchInput
           placeholder={props.searchPlaceholder}
-          value={props.searchQuery}
           onChangeText={props.setSearchQueryWithCallback}
           onSubmitEditing={props.handleSubmitSearch}
           autoFocus

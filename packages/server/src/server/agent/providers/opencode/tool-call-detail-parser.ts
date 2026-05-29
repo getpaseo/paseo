@@ -219,6 +219,25 @@ function deriveOpencodeTaskDetail(
   };
 }
 
+const OpencodeEditInputSchema = z.union([
+  z
+    .object({
+      filePath: z.string(),
+      oldString: z.string().optional(),
+      newString: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.filePath,
+      oldString: nonEmptyString(value.oldString),
+      newString: nonEmptyString(value.newString),
+      unifiedDiff: undefined,
+    })),
+  ToolEditInputSchema,
+]);
+
+const OpencodeEditOutputSchema = z.union([z.string().transform(() => null), ToolEditOutputSchema]);
+
 const OpencodeKnownToolDetailSchema = z.union([
   toolDetailBranchByToolName(
     "shell",
@@ -264,11 +283,16 @@ const OpencodeKnownToolDetailSchema = z.union([
     ToolWriteOutputSchema,
     toWriteToolDetail,
   ),
-  toolDetailBranchByToolName("edit", ToolEditInputSchema, ToolEditOutputSchema, toEditToolDetail),
+  toolDetailBranchByToolName(
+    "edit",
+    OpencodeEditInputSchema,
+    OpencodeEditOutputSchema,
+    toEditToolDetail,
+  ),
   toolDetailBranchByToolName(
     "apply_patch",
-    ToolEditInputSchema,
-    ToolEditOutputSchema,
+    OpencodeEditInputSchema,
+    OpencodeEditOutputSchema,
     toEditToolDetail,
   ),
   toolDetailBranchByToolName(
@@ -279,8 +303,8 @@ const OpencodeKnownToolDetailSchema = z.union([
   ),
   toolDetailBranchByToolName(
     "apply_diff",
-    ToolEditInputSchema,
-    ToolEditOutputSchema,
+    OpencodeEditInputSchema,
+    OpencodeEditOutputSchema,
     toEditToolDetail,
   ),
   toolDetailBranchByToolName("search", ToolSearchInputSchema, z.unknown(), (input) =>

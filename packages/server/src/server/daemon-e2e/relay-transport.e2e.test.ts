@@ -18,9 +18,9 @@ import {
   generateKeyPair,
   importPublicKey,
 } from "@getpaseo/relay";
-import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
-import { ConnectionOfferSchema } from "../../shared/connection-offer.js";
-import { WSOutboundMessageSchema } from "../../shared/messages.js";
+import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
+import { ConnectionOfferSchema } from "@getpaseo/protocol/connection-offer";
+import { WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
 const shouldRunRelayE2e = process.env.FORCE_RELAY_E2E === "1" || nodeMajor < 25;

@@ -8,6 +8,10 @@ directories:
   output: release
 files:
   - dist/**/*
+  - "!**/*.map"
+  - "!node_modules/@getpaseo/*/src/**"
+  - "!node_modules/@getpaseo/**/*.test.*"
+  - "!node_modules/@getpaseo/**/*.spec.*"
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*

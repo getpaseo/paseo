@@ -4,9 +4,24 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
+import {
+  addCommentToState,
+  clearReviewInState,
+  deleteCommentFromState,
+  normalizePersistedState,
+  type ReviewDraftComment,
+  type ReviewDraftMode,
+  type ReviewDraftSide,
+  type ReviewDraftStoreState,
+  serializeReviewDraftState,
+  setActiveModeInState,
+  updateCommentInState,
+} from "@/review/state";
 import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
-import type { AgentAttachment } from "@server/shared/messages";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
+
+export type { ReviewDraftComment, ReviewDraftMode, ReviewDraftSide } from "@/review/state";
 
 const STORE_VERSION = 1;
 const CONTEXT_RADIUS = 3;
@@ -15,19 +30,6 @@ const EMPTY_REVIEW_DRAFT_COMMENTS: ReviewDraftComment[] = [];
 type ReviewAttachment = Extract<AgentAttachment, { type: "review" }>;
 type ReviewAttachmentContextLine = ReviewAttachment["comments"][number]["context"]["targetLine"];
 type ReviewComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
-
-export type ReviewDraftMode = "uncommitted" | "base";
-export type ReviewDraftSide = "old" | "new";
-
-export interface ReviewDraftComment {
-  id: string;
-  filePath: string;
-  side: ReviewDraftSide;
-  lineNumber: number;
-  body: string;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface BuildReviewDraftKeyInput {
   serverId: string;
@@ -49,10 +51,8 @@ export interface BuildReviewAttachmentSnapshotInput {
   diffFiles: readonly ParsedDiffFile[];
 }
 
-interface ReviewDraftStoreState {
-  drafts: Record<string, ReviewDraftComment[]>;
-  activeModesByScope: Record<string, ReviewDraftMode>;
-}
+export type ReviewDraftCommentInput = Omit<ReviewDraftComment, "id" | "createdAt" | "updatedAt"> &
+  Partial<Pick<ReviewDraftComment, "id" | "createdAt" | "updatedAt">>;
 
 interface ReviewDraftStoreActions {
   setActiveMode: (input: { scopeKey: string; mode: ReviewDraftMode }) => void;
@@ -66,9 +66,6 @@ interface ReviewDraftStoreActions {
   deleteComment: (input: { key: string; id: string }) => void;
   clearReview: (input: { key: string }) => void;
 }
-
-export type ReviewDraftCommentInput = Omit<ReviewDraftComment, "id" | "createdAt" | "updatedAt"> &
-  Partial<Pick<ReviewDraftComment, "id" | "createdAt" | "updatedAt">>;
 
 type ReviewDraftStore = ReviewDraftStoreState & ReviewDraftStoreActions;
 
@@ -128,158 +125,41 @@ function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment 
   };
 }
 
-function applyCommentUpdates(
-  comment: ReviewDraftComment,
-  targetId: string,
-  updates: Partial<Pick<ReviewDraftComment, "body">>,
-  updatedAt: string,
-): ReviewDraftComment {
-  if (comment.id !== targetId) {
-    return comment;
-  }
-  return {
-    id: comment.id,
-    filePath: comment.filePath,
-    side: comment.side,
-    lineNumber: comment.lineNumber,
-    body: updates.body ?? comment.body,
-    createdAt: comment.createdAt,
-    updatedAt,
-  };
-}
-
-function normalizePersistedState(state: unknown): ReviewDraftStoreState {
-  if (!state || typeof state !== "object") {
-    return { drafts: {}, activeModesByScope: {} };
-  }
-  const persisted = state as { drafts?: unknown; activeModesByScope?: unknown };
-  const drafts = persisted.drafts;
-  if (!drafts || typeof drafts !== "object" || Array.isArray(drafts)) {
-    return { drafts: {}, activeModesByScope: {} };
-  }
-
-  const normalized: Record<string, ReviewDraftComment[]> = {};
-  for (const [key, value] of Object.entries(drafts)) {
-    if (!Array.isArray(value)) {
-      continue;
-    }
-    normalized[key] = value.filter((comment): comment is ReviewDraftComment =>
-      isReviewDraftComment(comment),
-    );
-  }
-
-  const activeModesByScope: Record<string, ReviewDraftMode> = {};
-  const persistedActiveModes = persisted.activeModesByScope;
-  if (
-    persistedActiveModes &&
-    typeof persistedActiveModes === "object" &&
-    !Array.isArray(persistedActiveModes)
-  ) {
-    for (const [key, mode] of Object.entries(persistedActiveModes)) {
-      if (mode === "base" || mode === "uncommitted") {
-        activeModesByScope[key] = mode;
-      }
-    }
-  }
-  return { drafts: normalized, activeModesByScope };
-}
-
-function isReviewDraftComment(value: unknown): value is ReviewDraftComment {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.filePath === "string" &&
-    (record.side === "old" || record.side === "new") &&
-    typeof record.lineNumber === "number" &&
-    Number.isInteger(record.lineNumber) &&
-    record.lineNumber > 0 &&
-    typeof record.body === "string" &&
-    typeof record.createdAt === "string" &&
-    typeof record.updatedAt === "string"
-  );
-}
-
 export const useReviewDraftStore = create<ReviewDraftStore>()(
   persist(
     (set) => ({
       drafts: {},
       activeModesByScope: {},
-      setActiveMode: ({ scopeKey, mode }) => {
-        set((state) => {
-          if (state.activeModesByScope[scopeKey] === mode) {
-            return state;
-          }
-          return {
-            activeModesByScope: {
-              ...state.activeModesByScope,
-              [scopeKey]: mode,
-            },
-          };
-        });
+      setActiveMode: (input) => {
+        set((state) => setActiveModeInState(state, input));
       },
       addComment: ({ key, comment }) => {
         const nextComment = createDraftComment(comment);
-        set((state) => ({
-          drafts: {
-            ...state.drafts,
-            [key]: [...(state.drafts[key] ?? []), nextComment],
-          },
-        }));
+        set((state) => addCommentToState(state, { key, comment: nextComment }));
         return nextComment;
       },
       updateComment: ({ key, id, updates, updatedAt }) => {
-        set((state) => {
-          const comments = state.drafts[key] ?? [];
-          if (!comments.some((comment) => comment.id === id)) {
-            return state;
-          }
-          const nextUpdatedAt = updatedAt ?? new Date().toISOString();
-          return {
-            drafts: {
-              ...state.drafts,
-              [key]: comments.map((comment) =>
-                applyCommentUpdates(comment, id, updates, nextUpdatedAt),
-              ),
-            },
-          };
-        });
+        set((state) =>
+          updateCommentInState(state, {
+            key,
+            id,
+            updates,
+            updatedAt: updatedAt ?? new Date().toISOString(),
+          }),
+        );
       },
-      deleteComment: ({ key, id }) => {
-        set((state) => {
-          const comments = state.drafts[key] ?? [];
-          if (!comments.some((comment) => comment.id === id)) {
-            return state;
-          }
-          return {
-            drafts: {
-              ...state.drafts,
-              [key]: comments.filter((comment) => comment.id !== id),
-            },
-          };
-        });
+      deleteComment: (input) => {
+        set((state) => deleteCommentFromState(state, input));
       },
-      clearReview: ({ key }) => {
-        set((state) => {
-          if (!state.drafts[key]) {
-            return state;
-          }
-          const next = { ...state.drafts };
-          delete next[key];
-          return { drafts: next };
-        });
+      clearReview: (input) => {
+        set((state) => clearReviewInState(state, input));
       },
     }),
     {
       name: "@paseo:review-draft-store",
       version: STORE_VERSION,
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        drafts: state.drafts,
-        activeModesByScope: state.activeModesByScope,
-      }),
+      partialize: (state) => serializeReviewDraftState(state),
       migrate: async (state) => normalizePersistedState(state),
     },
   ),

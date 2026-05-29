@@ -9,7 +9,9 @@ async function createAttachmentStore(): Promise<AttachmentStore> {
     if (isElectronRuntime()) {
       const { createDesktopAttachmentStore } =
         await import("../desktop/attachments/desktop-attachment-store");
-      return createDesktopAttachmentStore();
+      const { createDesktopAttachmentBridge } =
+        await import("../desktop/attachments/desktop-attachment-bridge");
+      return createDesktopAttachmentStore(createDesktopAttachmentBridge());
     }
 
     const { createIndexedDbAttachmentStore } = await import("./web/indexeddb-attachment-store");

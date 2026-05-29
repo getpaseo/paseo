@@ -1,5 +1,5 @@
-import { AlertCircle, RotateCw, Search, Trash2 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { AlertTriangle, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -21,12 +21,12 @@ import { Fonts } from "@/constants/theme";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { formatTimeAgo } from "@/utils/time";
-import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
-import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
+import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
+import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -35,28 +35,45 @@ interface ProviderDiagnosticSheetProps {
   serverId: string;
 }
 
-function ModelRow({ model }: { model: AgentModelDefinition }) {
+function rankModels<T>(items: T[], query: string, fields: (item: T) => string[]): T[] {
+  if (!query.trim()) return items;
+  const scored = items
+    .map((item) => ({ item, score: scoreTextFields(query, fields(item)) }))
+    .filter(
+      (entry): entry is { item: T; score: NonNullable<typeof entry.score> } => entry.score !== null,
+    );
+  scored.sort((a, b) => compareMatchScores(a.score, b.score));
+  return scored.map((entry) => entry.item);
+}
+
+function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
   return (
-    <View style={MODEL_ROW_STYLE}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {model.label}
+    <View style={sheetStyles.modelRow}>
+      <Text style={sheetStyles.modelTitle} numberOfLines={1}>
+        {model.label}
+      </Text>
+      <Text style={sheetStyles.monoHint} numberOfLines={1} selectable>
+        {model.id}
+      </Text>
+      {model.description ? (
+        <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
+          {model.description}
         </Text>
-        <Text style={sheetStyles.monoHint} numberOfLines={1} selectable>
-          {model.id}
-        </Text>
-      </View>
+      ) : null}
     </View>
   );
 }
 
-function CustomModelRow(props: {
+function CustomModelRow({
+  model,
+  deleting,
+  onDelete,
+}: {
   model: ProviderProfileModel;
   deleting: boolean;
   onDelete: (modelId: string) => void;
 }) {
   const { theme } = useUnistyles();
-  const { model, deleting, onDelete } = props;
   const handleDelete = useCallback(() => onDelete(model.id), [model.id, onDelete]);
   const deleteButtonStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -68,15 +85,14 @@ function CustomModelRow(props: {
   );
 
   return (
-    <View style={MODEL_ROW_STYLE}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {model.label}
-        </Text>
-        <Text style={sheetStyles.monoHint} numberOfLines={1} selectable>
-          {model.id}
-        </Text>
-      </View>
+    <View style={sheetStyles.modelRow}>
+      <Text style={sheetStyles.modelTitle} numberOfLines={1}>
+        {model.label}
+      </Text>
+      <Text style={sheetStyles.monoHint} numberOfLines={1} selectable>
+        {model.id}
+      </Text>
+      <View style={sheetStyles.modelRowFiller} />
       <Pressable
         onPress={handleDelete}
         disabled={deleting}
@@ -91,156 +107,325 @@ function CustomModelRow(props: {
   );
 }
 
-function CustomModelsSection(props: {
+function SectionHeader({ title, count, hint }: { title: string; count?: number; hint?: string }) {
+  return (
+    <View style={sheetStyles.sectionHeader}>
+      <Text style={settingsStyles.sectionHeaderTitle}>{title}</Text>
+      <View style={sheetStyles.sectionHeaderMeta}>
+        {count !== undefined ? (
+          <Text style={settingsStyles.sectionHeaderTitle}>{count}</Text>
+        ) : null}
+        {count !== undefined && hint ? (
+          <Text style={settingsStyles.sectionHeaderTitle}>·</Text>
+        ) : null}
+        {hint ? <Text style={settingsStyles.sectionHeaderTitle}>{hint}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function AddCustomModelSubSheet({
+  provider,
+  serverId,
+  visible,
+  onClose,
+  refresh,
+}: {
   provider: string;
   serverId: string;
+  visible: boolean;
+  onClose: () => void;
   refresh: (providers?: AgentProvider[]) => Promise<void>;
 }) {
-  const { provider, serverId, refresh } = props;
   const { theme } = useUnistyles();
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [input, setInput] = useState("");
-  const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
-  const providerConfig = config?.providers?.[provider];
-  const additionalModels = useMemo(
-    () => providerConfig?.additionalModels ?? [],
-    [providerConfig?.additionalModels],
-  );
-  const trimmedInput = input.trim();
-  const canAdd =
-    trimmedInput.length > 0 && !additionalModels.some((model) => model.id === trimmedInput);
 
-  const patchAdditionalModels = useCallback(
-    async (nextModels: ProviderProfileModel[]) => {
-      await patchConfig({
-        providers: {
-          [provider]: {
-            additionalModels: nextModels,
-          },
-        },
-      });
-      await refresh([provider]);
-    },
-    [patchConfig, provider, refresh],
+  const additionalModels = useMemo(
+    () => config?.providers?.[provider]?.additionalModels ?? [],
+    [config?.providers, provider],
   );
+  const trimmed = input.trim();
+  const canAdd = trimmed.length > 0 && !additionalModels.some((model) => model.id === trimmed);
+
+  useEffect(() => {
+    if (!visible) {
+      setInput("");
+      setError(null);
+    }
+  }, [visible]);
 
   const handleAdd = useCallback(() => {
-    if (!canAdd) {
-      return;
-    }
-
+    if (!canAdd) return;
     setError(null);
     setSaving(true);
-    void patchAdditionalModels([
-      ...additionalModels,
-      {
-        id: trimmedInput,
-        label: trimmedInput,
+    void patchConfig({
+      providers: {
+        [provider]: {
+          additionalModels: [...additionalModels, { id: trimmed, label: trimmed }],
+        },
       },
-    ])
-      .then(() => {
-        setInput("");
-        bumpInputResetKey();
-        return undefined;
-      })
+    })
+      .then(() => refresh([provider]))
+      .then(() => onClose())
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to save model");
       })
       .finally(() => setSaving(false));
-  }, [additionalModels, canAdd, patchAdditionalModels, trimmedInput]);
+  }, [additionalModels, canAdd, onClose, patchConfig, provider, refresh, trimmed]);
 
-  const handleDelete = useCallback(
-    (modelId: string) => {
-      setError(null);
-      setDeletingModelId(modelId);
-      void patchAdditionalModels(additionalModels.filter((model) => model.id !== modelId))
-        .catch((err) => {
-          setError(err instanceof Error ? err.message : "Failed to delete model");
-        })
-        .finally(() => {
-          setDeletingModelId((current) => (current === modelId ? null : current));
-        });
-    },
-    [additionalModels, patchAdditionalModels],
-  );
+  const header = useMemo<SheetHeader>(() => ({ title: "Add custom model" }), []);
 
   return (
-    <SettingsSection title="Custom models">
-      <View style={settingsStyles.card}>
-        <View style={INLINE_ROW_STYLE}>
-          <AdaptiveTextInput
-            initialValue={input}
-            resetKey={`custom-model-input-${inputResetKey}`}
-            value={input}
-            onChangeText={setInput}
-            onSubmitEditing={handleAdd}
-            placeholder="Model ID"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-            // @ts-expect-error - outlineStyle is web-only
-            style={DIAGNOSTIC_INLINE_INPUT_STYLE}
-          />
-          <Button
-            variant="default"
-            size="sm"
-            onPress={handleAdd}
-            disabled={!canAdd || saving}
-            accessibilityLabel="Add model"
-          >
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={onClose}
+      desktopMaxWidth={420}
+      snapPoints={ADD_SNAP_POINTS}
+    >
+      <View style={sheetStyles.formGroup}>
+        <Text style={sheetStyles.formLabel}>Model ID</Text>
+        <AdaptiveTextInput
+          initialValue={input}
+          resetKey={`add-custom-${visible}`}
+          value={input}
+          onChangeText={setInput}
+          onSubmitEditing={handleAdd}
+          placeholder="e.g. openai/gpt-5"
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="done"
+          // @ts-expect-error - outlineStyle is web-only
+          style={FORM_INPUT_STYLE}
+        />
+        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+        <View style={sheetStyles.formActions}>
+          <Button variant="secondary" size="sm" onPress={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button variant="default" size="sm" onPress={handleAdd} disabled={!canAdd || saving}>
             {saving ? "Adding…" : "Add"}
           </Button>
         </View>
-        {additionalModels.map((model) => (
-          <CustomModelRow
-            key={model.id}
-            model={model}
-            deleting={deletingModelId === model.id}
-            onDelete={handleDelete}
-          />
-        ))}
       </View>
-      {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
-    </SettingsSection>
+    </AdaptiveModalSheet>
   );
 }
 
-function DiagnosticCodeBlock(props: {
-  loading: boolean;
-  diagnostic: string | null;
-  foregroundMutedColor: string;
+function DiagnosticSubSheet({
+  provider,
+  serverId,
+  visible,
+  onClose,
+}: {
+  provider: string;
+  serverId: string;
+  visible: boolean;
+  onClose: () => void;
 }) {
-  if (props.loading && !props.diagnostic) {
-    return (
+  const { theme } = useUnistyles();
+  const client = useHostRuntimeClient(serverId);
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchDiagnostic = useCallback(async () => {
+    if (!client) return;
+    setLoading(true);
+    try {
+      const result = await client.getProviderDiagnostic(provider);
+      setDiagnostic(result.diagnostic);
+    } catch (err) {
+      setDiagnostic(err instanceof Error ? err.message : "Failed to fetch diagnostic");
+    } finally {
+      setLoading(false);
+    }
+  }, [client, provider]);
+
+  useEffect(() => {
+    if (visible) {
+      void fetchDiagnostic();
+    } else {
+      setDiagnostic(null);
+    }
+  }, [visible, fetchDiagnostic]);
+
+  const refreshButtonStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      sheetStyles.iconButton,
+      (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
+      loading ? sheetStyles.disabled : null,
+    ],
+    [loading],
+  );
+
+  const handleRefreshPress = useCallback(() => {
+    void fetchDiagnostic();
+  }, [fetchDiagnostic]);
+
+  const header = useMemo<SheetHeader>(
+    () => ({
+      title: "Diagnostic",
+      actions: (
+        <Pressable
+          onPress={handleRefreshPress}
+          disabled={loading}
+          hitSlop={8}
+          style={refreshButtonStyle}
+          accessibilityRole="button"
+          accessibilityLabel={loading ? "Refreshing diagnostic" : "Refresh diagnostic"}
+        >
+          {loading ? (
+            <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          ) : (
+            <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          )}
+        </Pressable>
+      ),
+    }),
+    [
+      handleRefreshPress,
+      loading,
+      refreshButtonStyle,
+      theme.colors.foregroundMuted,
+      theme.iconSize.sm,
+    ],
+  );
+
+  let body: React.ReactNode;
+  if (loading && !diagnostic) {
+    body = (
       <View style={sheetStyles.codeBlockLoading}>
-        <ActivityIndicator size="small" color={props.foregroundMutedColor} />
+        <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
         <Text style={sheetStyles.mutedText}>Running diagnostic…</Text>
       </View>
     );
-  }
-  if (props.diagnostic) {
-    return (
-      <ScrollView
-        style={sheetStyles.codeScroll}
-        contentContainerStyle={sheetStyles.codeContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+  } else if (diagnostic) {
+    body = (
+      <ScrollView style={sheetStyles.codeScroll} contentContainerStyle={sheetStyles.codeContent}>
+        <ScrollView horizontal showsHorizontalScrollIndicator>
           <Text style={sheetStyles.codeText} selectable>
-            {props.diagnostic}
+            {diagnostic}
           </Text>
         </ScrollView>
       </ScrollView>
     );
+  } else {
+    body = (
+      <View style={sheetStyles.codeBlockLoading}>
+        <Text style={sheetStyles.mutedText}>No diagnostic available</Text>
+      </View>
+    );
+  }
+
+  return (
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={DIAGNOSTIC_SNAP_POINTS}
+      scrollable={false}
+    >
+      <View style={DIAGNOSTIC_CARD_STYLE}>{body}</View>
+    </AdaptiveModalSheet>
+  );
+}
+
+interface ProviderModalBodyProps {
+  discoveredCount: number;
+  additionalCount: number;
+  providerSnapshotRefreshing: boolean;
+  providerErrorMessage: string | null;
+  modelsRefreshing: boolean;
+  searchActive: boolean;
+  filteredDiscovered: AgentModelDefinition[];
+  filteredCustom: ProviderProfileModel[];
+  deletingModelId: string | null;
+  onRefresh: () => void;
+  onDeleteCustom: (modelId: string) => void;
+  theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
+}
+
+function ProviderModalBody(props: ProviderModalBodyProps) {
+  const {
+    discoveredCount,
+    additionalCount,
+    providerSnapshotRefreshing,
+    providerErrorMessage,
+    modelsRefreshing,
+    searchActive,
+    filteredDiscovered,
+    filteredCustom,
+    deletingModelId,
+    onRefresh,
+    onDeleteCustom,
+    theme,
+  } = props;
+
+  if (discoveredCount === 0 && additionalCount === 0 && providerSnapshotRefreshing) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+        <Text style={sheetStyles.mutedText}>Loading models…</Text>
+      </View>
+    );
+  }
+  if (discoveredCount === 0 && additionalCount === 0 && providerErrorMessage) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <AlertTriangle size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+        <Text style={sheetStyles.mutedText}>{providerErrorMessage}</Text>
+        <Button variant="default" size="sm" onPress={onRefresh} disabled={modelsRefreshing}>
+          {modelsRefreshing ? "Retrying…" : "Retry"}
+        </Button>
+      </View>
+    );
+  }
+  if (filteredDiscovered.length === 0 && filteredCustom.length === 0 && searchActive) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <Text style={sheetStyles.mutedText}>No models match your search</Text>
+      </View>
+    );
+  }
+  if (discoveredCount === 0 && additionalCount === 0) {
+    return (
+      <View style={sheetStyles.emptyState}>
+        <Text style={sheetStyles.mutedText}>No models detected</Text>
+      </View>
+    );
   }
   return (
-    <View style={sheetStyles.codeBlockLoading}>
-      <Text style={sheetStyles.mutedText}>No diagnostic available</Text>
-    </View>
+    <>
+      {filteredDiscovered.length > 0 ? (
+        <View style={sheetStyles.section}>
+          <SectionHeader title="Discovered" count={filteredDiscovered.length} />
+          <View style={settingsStyles.card}>
+            {filteredDiscovered.map((model) => (
+              <DiscoveredModelRow key={model.id} model={model} />
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {filteredCustom.length > 0 ? (
+        <View style={sheetStyles.section}>
+          <SectionHeader title="Custom models" count={filteredCustom.length} />
+          <View style={settingsStyles.card}>
+            {filteredCustom.map((model) => (
+              <CustomModelRow
+                key={model.id}
+                model={model}
+                deleting={deletingModelId === model.id}
+                onDelete={onDeleteCustom}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -251,23 +436,35 @@ export function ProviderDiagnosticSheet({
   serverId,
 }: ProviderDiagnosticSheetProps) {
   const { theme } = useUnistyles();
-  const client = useHostRuntimeClient(serverId);
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
-  const [diagnostic, setDiagnostic] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { config, patchConfig } = useDaemonConfig(serverId);
   const [query, setQuery] = useState("");
-  const [queryResetKey, bumpQueryResetKey] = useReducer((key: number) => key + 1, 0);
+  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [diagSheetOpen, setDiagSheetOpen] = useState(false);
+  const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
     () => snapshotEntries?.find((entry) => entry.provider === provider),
     [snapshotEntries, provider],
   );
-  const models = providerEntry?.models ?? [];
+  const additionalModels = useMemo(
+    () => config?.providers?.[provider]?.additionalModels ?? [],
+    [config?.providers, provider],
+  );
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
   const providerErrorMessage =
     providerEntry?.status === "error" ? (providerEntry.error ?? "Unknown error") : null;
-  const refreshInFlight = isRefreshing || providerSnapshotRefreshing || loading;
+  const modelsRefreshing = isRefreshing || providerSnapshotRefreshing;
+
+  const stableDiscoveredRef = useRef<AgentModelDefinition[]>([]);
+  if (providerEntry?.models && providerEntry.models.length > 0) {
+    stableDiscoveredRef.current = providerEntry.models;
+  }
+  const discoveredModels =
+    providerEntry?.models && providerEntry.models.length > 0
+      ? providerEntry.models
+      : stableDiscoveredRef.current;
 
   const [clockTick, setClockTick] = useState(0);
   useEffect(() => {
@@ -281,199 +478,126 @@ export function ProviderDiagnosticSheet({
     return formatTimeAgo(new Date(providerEntry.fetchedAt));
   }, [providerEntry?.fetchedAt, clockTick]);
 
-  const q = query.trim().toLowerCase();
-  const filteredModels = q
-    ? models.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
-    : models;
-
-  const fetchDiagnostic = useCallback(
-    async (options?: { keepCurrent?: boolean }) => {
-      if (!client || !provider) return;
-
-      setLoading(true);
-      if (!options?.keepCurrent) {
-        setDiagnostic(null);
-      }
-
-      try {
-        const result = await client.getProviderDiagnostic(provider);
-        setDiagnostic(result.diagnostic);
-      } catch (err) {
-        setDiagnostic(err instanceof Error ? err.message : "Failed to fetch diagnostic");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [client, provider],
-  );
-
-  const refreshButtonStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      sheetStyles.iconButton,
-      (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
-      refreshInFlight ? sheetStyles.disabled : null,
-    ],
-    [refreshInFlight],
-  );
-
-  const handleRefresh = useCallback(() => {
-    if (!provider) {
-      return;
-    }
-    void Promise.all([refresh([provider]), fetchDiagnostic()]).catch((err) => {
-      setDiagnostic(err instanceof Error ? err.message : "Failed to refresh provider");
-    });
-  }, [fetchDiagnostic, provider, refresh]);
-
-  const headerActions = useMemo(
-    () => (
-      <Pressable
-        onPress={handleRefresh}
-        disabled={refreshInFlight}
-        hitSlop={8}
-        style={refreshButtonStyle}
-        accessibilityRole="button"
-        accessibilityLabel={
-          refreshInFlight ? `Refreshing ${providerLabel}` : `Refresh ${providerLabel}`
-        }
-      >
-        {refreshInFlight ? (
-          <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        ) : (
-          <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        )}
-      </Pressable>
-    ),
-    [
-      handleRefresh,
-      refreshInFlight,
-      refreshButtonStyle,
-      providerLabel,
-      theme.iconSize.sm,
-      theme.colors.foregroundMuted,
-    ],
-  );
-
   useEffect(() => {
-    if (visible) {
-      fetchDiagnostic();
-    } else {
-      setDiagnostic(null);
+    if (!visible) {
       setQuery("");
-      bumpQueryResetKey();
+      setAddSheetOpen(false);
+      setDiagSheetOpen(false);
     }
-  }, [visible, fetchDiagnostic]);
+  }, [visible]);
 
-  const modelsTrailing = useMemo(() => {
-    if (models.length === 0 && !fetchedAtLabel) return undefined;
-    return (
-      <View style={sheetStyles.modelsTrailing}>
-        {models.length > 0 ? (
-          <Text style={settingsStyles.sectionHeaderTitle}>{models.length}</Text>
-        ) : null}
-        {models.length > 0 && fetchedAtLabel ? (
-          <Text style={settingsStyles.sectionHeaderTitle}>·</Text>
-        ) : null}
-        {fetchedAtLabel ? (
-          <Text style={settingsStyles.sectionHeaderTitle}>Updated {fetchedAtLabel}</Text>
-        ) : null}
-      </View>
-    );
-  }, [models.length, fetchedAtLabel]);
+  const q = query.trim();
+  const filteredDiscovered = useMemo(
+    () => rankModels(discoveredModels, q, (m) => [m.label, m.id, m.description ?? ""]),
+    [discoveredModels, q],
+  );
+  const filteredCustom = useMemo(
+    () => rankModels(additionalModels, q, (m) => [m.label, m.id]),
+    [additionalModels, q],
+  );
 
-  function renderModelsBody() {
-    if (models.length === 0 && providerSnapshotRefreshing) {
-      return (
-        <View style={sheetStyles.emptyRow}>
-          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-          <Text style={sheetStyles.mutedText}>Loading models…</Text>
-        </View>
-      );
-    }
-    if (models.length === 0 && providerErrorMessage) {
-      return (
-        <View style={sheetStyles.emptyRow}>
-          <AlertCircle size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-          <Text style={sheetStyles.mutedText}>{providerErrorMessage}</Text>
-        </View>
-      );
-    }
-    if (models.length === 0) {
-      return (
-        <View style={sheetStyles.emptyRow}>
-          <Text style={sheetStyles.mutedText}>No models detected</Text>
-        </View>
-      );
-    }
-    if (filteredModels.length === 0) {
-      return (
-        <View style={sheetStyles.emptyRow}>
-          <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-          <Text style={sheetStyles.mutedText}>No models match your search</Text>
-        </View>
-      );
-    }
-    return filteredModels.map((model: AgentModelDefinition) => (
-      <ModelRow key={model.id} model={model} />
-    ));
-  }
+  const handleRefreshModels = useCallback(() => {
+    void refresh([provider]);
+  }, [provider, refresh]);
+
+  const handleOpenAddSheet = useCallback(() => setAddSheetOpen(true), []);
+  const handleCloseAddSheet = useCallback(() => setAddSheetOpen(false), []);
+  const handleOpenDiagSheet = useCallback(() => setDiagSheetOpen(true), []);
+  const handleCloseDiagSheet = useCallback(() => setDiagSheetOpen(false), []);
+
+  const handleDeleteCustom = useCallback(
+    (modelId: string) => {
+      setDeletingModelId(modelId);
+      void patchConfig({
+        providers: {
+          [provider]: {
+            additionalModels: additionalModels.filter((model) => model.id !== modelId),
+          },
+        },
+      })
+        .then(() => refresh([provider]))
+        .finally(() => {
+          setDeletingModelId((current) => (current === modelId ? null : current));
+        });
+    },
+    [additionalModels, patchConfig, provider, refresh],
+  );
 
   const sheetHeader = useMemo<SheetHeader>(
-    () => ({ title: providerLabel, actions: headerActions }),
-    [providerLabel, headerActions],
+    () => ({
+      title: providerLabel,
+      search: {
+        onChange: setQuery,
+        placeholder: "Search models",
+        testID: "provider-settings-search",
+      },
+    }),
+    [providerLabel],
+  );
+
+  const footer = (
+    <>
+      <Text style={sheetStyles.footerMeta} numberOfLines={1}>
+        {fetchedAtLabel ? `Updated ${fetchedAtLabel}` : ""}
+      </Text>
+      <View style={sheetStyles.footerActions}>
+        <Button variant="secondary" size="sm" leftIcon={Plus} onPress={handleOpenAddSheet}>
+          Add model
+        </Button>
+        <Button variant="secondary" size="sm" leftIcon={FileText} onPress={handleOpenDiagSheet}>
+          Diagnostic
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          leftIcon={modelsRefreshing ? undefined : RotateCw}
+          onPress={handleRefreshModels}
+          disabled={modelsRefreshing}
+        >
+          {modelsRefreshing ? "Refreshing…" : "Refresh"}
+        </Button>
+      </View>
+    </>
   );
 
   return (
-    <AdaptiveModalSheet
-      header={sheetHeader}
-      visible={visible}
-      onClose={onClose}
-      snapPoints={DIAGNOSTIC_SHEET_SNAP_POINTS}
-    >
-      <SettingsSection title="Diagnostic">
-        <View style={settingsStyles.card}>
-          <DiagnosticCodeBlock
-            loading={loading}
-            diagnostic={diagnostic}
-            foregroundMutedColor={theme.colors.foregroundMuted}
-          />
-        </View>
-      </SettingsSection>
-
-      <CustomModelsSection provider={provider} serverId={serverId} refresh={refresh} />
-
-      <View>
-        <View style={sheetStyles.modelsHeader}>
-          <Text style={settingsStyles.sectionHeaderTitle}>Models</Text>
-          {modelsTrailing}
-        </View>
-        <View style={settingsStyles.card}>
-          <View style={INLINE_ROW_STYLE}>
-            <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            <AdaptiveTextInput
-              initialValue={query}
-              resetKey={`provider-model-search-${queryResetKey}`}
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search models"
-              placeholderTextColor={theme.colors.foregroundMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              // @ts-expect-error - outlineStyle is web-only
-              style={DIAGNOSTIC_SEARCH_INPUT_STYLE}
-            />
-          </View>
-          <ScrollView
-            style={sheetStyles.modelsScroll}
-            contentContainerStyle={sheetStyles.modelsScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {renderModelsBody()}
-          </ScrollView>
-        </View>
-      </View>
-    </AdaptiveModalSheet>
+    <>
+      <AdaptiveModalSheet
+        header={sheetHeader}
+        visible={visible}
+        onClose={onClose}
+        footer={footer}
+        snapPoints={MAIN_SNAP_POINTS}
+      >
+        <ProviderModalBody
+          discoveredCount={discoveredModels.length}
+          additionalCount={additionalModels.length}
+          providerSnapshotRefreshing={providerSnapshotRefreshing}
+          providerErrorMessage={providerErrorMessage}
+          modelsRefreshing={modelsRefreshing}
+          searchActive={Boolean(q)}
+          filteredDiscovered={filteredDiscovered}
+          filteredCustom={filteredCustom}
+          deletingModelId={deletingModelId}
+          onRefresh={handleRefreshModels}
+          onDeleteCustom={handleDeleteCustom}
+          theme={theme}
+        />
+      </AdaptiveModalSheet>
+      <AddCustomModelSubSheet
+        provider={provider}
+        serverId={serverId}
+        visible={addSheetOpen}
+        onClose={handleCloseAddSheet}
+        refresh={refresh}
+      />
+      <DiagnosticSubSheet
+        provider={provider}
+        serverId={serverId}
+        visible={diagSheetOpen}
+        onClose={handleCloseDiagSheet}
+      />
+    </>
   );
 }
 
@@ -484,19 +608,32 @@ const sheetStyles = StyleSheet.create((theme) => ({
   },
   monoHint: {
     fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.code,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 0,
+  },
+  descriptionInline: {
+    flex: 1,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    marginTop: theme.spacing[1],
   },
   errorText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.destructive,
-    marginTop: theme.spacing[2],
-    marginLeft: theme.spacing[1],
+  },
+  formInput: {
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    color: theme.colors.foreground,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    fontSize: theme.fontSize.sm,
   },
   iconButton: {
-    width: 30,
-    height: 30,
+    width: 28,
+    height: 28,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
@@ -507,20 +644,72 @@ const sheetStyles = StyleSheet.create((theme) => ({
   disabled: {
     opacity: 0.5,
   },
-  inlineRow: {
+  section: {
+    marginBottom: theme.spacing[4],
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+    marginLeft: theme.spacing[1],
+  },
+  sectionHeaderMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  modelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    gap: theme.spacing[3],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  modelTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 0,
+  },
+  modelRowFiller: {
+    flex: 1,
+  },
+  emptyState: {
+    paddingVertical: theme.spacing[8],
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  footerMeta: {
+    flex: 1,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  footerActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  inlineInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
-    color: theme.colors.foreground,
+  formGroup: {
+    gap: theme.spacing[3],
+  },
+  formLabel: {
     fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  formActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
+  diagnosticCard: {
+    overflow: "hidden",
   },
   codeScroll: {
-    maxHeight: 200,
+    maxHeight: 480,
   },
   codeContent: {
     paddingVertical: theme.spacing[3],
@@ -528,7 +717,7 @@ const sheetStyles = StyleSheet.create((theme) => ({
   },
   codeText: {
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.code,
     color: theme.colors.foreground,
     lineHeight: 18,
   },
@@ -539,39 +728,11 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  modelsHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[3],
-    marginLeft: theme.spacing[1],
-  },
-  modelsTrailing: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  modelsScroll: {
-    maxHeight: 360,
-  },
-  modelsScrollContent: {
-    paddingBottom: 0,
-  },
-  emptyRow: {
-    paddingVertical: theme.spacing[6],
-    paddingHorizontal: theme.spacing[4],
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
 }));
 
-const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
-const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
-const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
-const MODEL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
-const INLINE_ROW_STYLE = [settingsStyles.row, sheetStyles.inlineRow];
+const FORM_INPUT_STYLE = [sheetStyles.formInput, isWeb && { outlineStyle: "none" }];
+
+const MAIN_SNAP_POINTS = ["65%", "92%"];
+const ADD_SNAP_POINTS = ["40%"];
+const DIAGNOSTIC_SNAP_POINTS = ["50%", "85%"];
+const DIAGNOSTIC_CARD_STYLE = [settingsStyles.card, sheetStyles.diagnosticCard];

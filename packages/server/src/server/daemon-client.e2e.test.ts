@@ -39,35 +39,25 @@ async function readFixture(fileName: string): Promise<Buffer> {
   return readFile(fixturePath(fileName));
 }
 
-function hasSherpaZipformerModels(modelsDir: string): boolean {
+function hasSherpaParakeetModels(modelsDir: string): boolean {
   return (
     existsSync(
-      path.join(
-        modelsDir,
-        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-        "encoder-epoch-99-avg-1.onnx",
-      ),
+      path.join(modelsDir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8", "encoder.int8.onnx"),
     ) &&
-    existsSync(
-      path.join(
-        modelsDir,
-        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-        "tokens.txt",
-      ),
-    )
+    existsSync(path.join(modelsDir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8", "tokens.txt"))
   );
 }
 
-function hasSherpaKittenModels(modelsDir: string): boolean {
+function hasSherpaKokoroModels(modelsDir: string): boolean {
   return (
-    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "model.fp16.onnx")) &&
-    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "voices.bin")) &&
-    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "tokens.txt"))
+    existsSync(path.join(modelsDir, "kokoro-en-v0_19", "model.onnx")) &&
+    existsSync(path.join(modelsDir, "kokoro-en-v0_19", "voices.bin")) &&
+    existsSync(path.join(modelsDir, "kokoro-en-v0_19", "tokens.txt"))
   );
 }
 
 const hasLocalSpeech =
-  hasSherpaZipformerModels(localModelsDir) && hasSherpaKittenModels(localModelsDir);
+  hasSherpaParakeetModels(localModelsDir) && hasSherpaKokoroModels(localModelsDir);
 const hasAnySpeech = hasLocalSpeech || Boolean(openaiApiKey);
 const speechTest = hasAnySpeech ? test : test.skip;
 
@@ -492,11 +482,10 @@ function resolveSpeechConfig() {
       local: {
         modelsDir: localModelsDir,
         models: {
-          dictationStt:
-            process.env.PASEO_DICTATION_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
-          voiceStt:
-            process.env.PASEO_VOICE_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
-          voiceTts: process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+          dictationStt: "parakeet-tdt-0.6b-v2-int8",
+          voiceStt: "parakeet-tdt-0.6b-v2-int8",
+          voiceTts: "kokoro-en-v0_19",
+          voiceTtsSpeakerId: 0,
         },
       },
     };

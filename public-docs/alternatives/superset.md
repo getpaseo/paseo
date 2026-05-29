@@ -1,5 +1,5 @@
 ---
-title: Superset alternative with Linux, Windows, and mobile
+title: Superset Alternative With Linux, Windows, and Mobile
 description: Paseo is open source under an OSI license, has no login wall, ships native mobile, and runs on macOS, Linux, and Windows. Superset is source-available, macOS only, and gates the desktop app on a Superset login.
 nav: Superset
 order: 101

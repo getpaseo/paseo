@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@server/utils/branch-slug";
+import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import {
@@ -27,7 +27,7 @@ import {
   type Ref,
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { type GestureType } from "react-native-gesture-handler";
@@ -99,7 +99,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
-import { type PrHint, useWorkspacePrHint } from "@/git/use-pr-status-query";
+import type { PrHint } from "@/git/use-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -1346,14 +1346,7 @@ function WorkspaceRowInner({
   const _isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
   const isTouchPlatform = platformIsNative;
-  const workspaceDirectory = resolveWorkspaceExecutionDirectory({
-    workspaceDirectory: workspace.workspaceDirectory,
-  });
-  const prHint = useWorkspacePrHint({
-    serverId: workspace.serverId,
-    cwd: workspaceDirectory ?? "",
-    enabled: workspace.projectKind === "git" && Boolean(workspaceDirectory),
-  });
+  const prHint = workspace.prHint;
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,

@@ -1,6 +1,4 @@
-import * as Clipboard from "expo-clipboard";
 import MarkdownIt from "markdown-it";
-import { isWeb } from "@/constants/platform";
 
 const markdownRenderer = new MarkdownIt({
   html: false,
@@ -34,7 +32,7 @@ export function createMarkdownClipboardContent(markdown: string): MarkdownClipbo
 
 export async function writeMarkdownToRichClipboard(
   markdown: string,
-  environment: MarkdownClipboardEnvironment = getDefaultMarkdownClipboardEnvironment(),
+  environment: MarkdownClipboardEnvironment,
 ): Promise<void> {
   if (environment.richWriter?.supportsHtml()) {
     const content = createMarkdownClipboardContent(markdown);
@@ -51,31 +49,4 @@ export async function writeMarkdownToRichClipboard(
   }
 
   await environment.writePlainText(markdown);
-}
-
-function getDefaultMarkdownClipboardEnvironment(): MarkdownClipboardEnvironment {
-  return {
-    richWriter: getWebRichClipboardWriter(),
-    writePlainText: (text) => Clipboard.setStringAsync(text),
-  };
-}
-
-function getWebRichClipboardWriter(): RichClipboardWriter | null {
-  if (!isWeb) {
-    return null;
-  }
-  if (typeof navigator === "undefined" || typeof navigator.clipboard?.write !== "function") {
-    return null;
-  }
-  if (typeof ClipboardItem === "undefined") {
-    return null;
-  }
-
-  return {
-    supportsHtml: () =>
-      typeof ClipboardItem.supports !== "function" || ClipboardItem.supports("text/html"),
-    write: async (data) => {
-      await navigator.clipboard.write([new ClipboardItem(data)]);
-    },
-  };
 }

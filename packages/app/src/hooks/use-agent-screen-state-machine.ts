@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
+import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 
 export interface AgentScreenAgent {
   serverId: string;

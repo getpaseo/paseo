@@ -944,7 +944,7 @@ function DiffFileBody({
             hunk.newStart + hunk.newCount,
           );
         }
-        const gutterWidth = lineNumberGutterWidth(maxLineNo, theme.fontSize.xs);
+        const gutterWidth = lineNumberGutterWidth(maxLineNo, theme.fontSize.code);
 
         if (layout === "split") {
           const rows = buildSplitDiffRows(file);
@@ -2475,7 +2475,7 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
     textAlign: "right",
     paddingRight: theme.spacing[2],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.code,
     lineHeight: theme.lineHeight.diff,
     fontFamily: Fonts.mono,
     color: theme.colors.foregroundMuted,
@@ -2490,7 +2490,7 @@ const styles = StyleSheet.create((theme) => ({
   diffLineText: {
     flex: 1,
     paddingRight: theme.spacing[3],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.code,
     lineHeight: theme.lineHeight.diff,
     fontFamily: Fonts.mono,
     color: theme.colors.foreground,

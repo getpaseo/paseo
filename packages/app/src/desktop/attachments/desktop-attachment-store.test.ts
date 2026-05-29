@@ -1,63 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createDesktopAttachmentStore } from "./desktop-attachment-store";
-
-const {
-  copyDesktopAttachmentFileMock,
-  writeDesktopAttachmentBase64Mock,
-  writeDesktopAttachmentBytesMock,
-  deleteDesktopAttachmentFileMock,
-  garbageCollectDesktopAttachmentFilesMock,
-  readDesktopFileBase64Mock,
-  resolveDesktopPreviewUrlMock,
-  releaseDesktopPreviewUrlMock,
-} = vi.hoisted(() => ({
-  copyDesktopAttachmentFileMock: vi.fn(async () => ({
-    path: "/managed/att_1.png",
-    byteSize: 4,
-  })),
-  writeDesktopAttachmentBase64Mock: vi.fn(async () => ({
-    path: "/managed/att_2.png",
-    byteSize: 4,
-  })),
-  writeDesktopAttachmentBytesMock: vi.fn(async () => ({
-    path: "/managed/att_bytes.png",
-    byteSize: 4,
-  })),
-  deleteDesktopAttachmentFileMock: vi.fn(async () => true),
-  garbageCollectDesktopAttachmentFilesMock: vi.fn(async () => 0),
-  readDesktopFileBase64Mock: vi.fn(async () => "AAECAw=="),
-  resolveDesktopPreviewUrlMock: vi.fn(async () => "blob:test"),
-  releaseDesktopPreviewUrlMock: vi.fn(async () => {}),
-}));
-
-vi.mock("./desktop-file-commands", () => ({
-  copyDesktopAttachmentFile: copyDesktopAttachmentFileMock,
-  writeDesktopAttachmentBase64: writeDesktopAttachmentBase64Mock,
-  writeDesktopAttachmentBytes: writeDesktopAttachmentBytesMock,
-  deleteDesktopAttachmentFile: deleteDesktopAttachmentFileMock,
-  garbageCollectDesktopAttachmentFiles: garbageCollectDesktopAttachmentFilesMock,
-}));
-
-vi.mock("./desktop-preview-url", () => ({
-  readDesktopFileBase64: readDesktopFileBase64Mock,
-  resolveDesktopPreviewUrl: resolveDesktopPreviewUrlMock,
-  releaseDesktopPreviewUrl: releaseDesktopPreviewUrlMock,
-}));
+import { createFakeDesktopAttachmentBridge } from "./test-utils/fake-desktop-attachment-bridge";
 
 describe("desktop attachment store", () => {
-  beforeEach(() => {
-    copyDesktopAttachmentFileMock.mockClear();
-    writeDesktopAttachmentBase64Mock.mockClear();
-    writeDesktopAttachmentBytesMock.mockClear();
-    deleteDesktopAttachmentFileMock.mockClear();
-    garbageCollectDesktopAttachmentFilesMock.mockClear();
-    readDesktopFileBase64Mock.mockClear();
-    resolveDesktopPreviewUrlMock.mockClear();
-    releaseDesktopPreviewUrlMock.mockClear();
-  });
-
   it("saves dropped file paths as desktop-file metadata", async () => {
-    const store = createDesktopAttachmentStore();
+    const fake = createFakeDesktopAttachmentBridge();
+    const store = createDesktopAttachmentStore(fake.bridge);
+
     const attachment = await store.save({
       id: "att_1",
       mimeType: "image/png",
@@ -67,17 +16,25 @@ describe("desktop attachment store", () => {
       },
     });
 
-    expect(copyDesktopAttachmentFileMock).toHaveBeenCalledWith({
-      attachmentId: "att_1",
-      sourcePath: "/Users/test/Desktop/image.png",
-      extension: ".png",
+    expect(fake.savedEntries).toEqual([
+      {
+        attachmentId: "att_1",
+        path: "/managed/att_1.png",
+        byteSize: 4,
+        extension: ".png",
+        source: { kind: "copy", sourcePath: "/Users/test/Desktop/image.png" },
+      },
+    ]);
+    expect(attachment).toMatchObject({
+      storageType: "desktop-file",
+      storageKey: "/managed/att_1.png",
     });
-    expect(attachment.storageType).toBe("desktop-file");
-    expect(attachment.storageKey).toBe("/managed/att_1.png");
   });
 
   it("saves blob/data-url sources via desktop filesystem writes", async () => {
-    const store = createDesktopAttachmentStore();
+    const fake = createFakeDesktopAttachmentBridge();
+    const store = createDesktopAttachmentStore(fake.bridge);
+
     await store.save({
       id: "att_2",
       source: {
@@ -86,16 +43,22 @@ describe("desktop attachment store", () => {
       },
     });
 
-    expect(writeDesktopAttachmentBase64Mock).toHaveBeenCalledWith({
-      attachmentId: "att_2",
-      base64: "AAECAw==",
-      extension: ".png",
-    });
+    expect(fake.savedEntries).toEqual([
+      {
+        attachmentId: "att_2",
+        path: "/managed/att_2.png",
+        byteSize: 4,
+        extension: ".png",
+        source: { kind: "base64", base64: "AAECAw==" },
+      },
+    ]);
   });
 
   it("saves raw byte sources via desktop filesystem writes", async () => {
-    const store = createDesktopAttachmentStore();
+    const fake = createFakeDesktopAttachmentBridge();
+    const store = createDesktopAttachmentStore(fake.bridge);
     const bytes = new Uint8Array([0, 1, 2, 3]);
+
     const attachment = await store.save({
       id: "att_bytes",
       mimeType: "image/png",
@@ -106,12 +69,15 @@ describe("desktop attachment store", () => {
       },
     });
 
-    expect(writeDesktopAttachmentBytesMock).toHaveBeenCalledWith({
-      attachmentId: "att_bytes",
-      bytes,
-      extension: ".png",
-    });
-    expect(writeDesktopAttachmentBase64Mock).not.toHaveBeenCalled();
+    expect(fake.savedEntries).toEqual([
+      {
+        attachmentId: "att_bytes",
+        path: "/managed/att_bytes.png",
+        byteSize: 4,
+        extension: ".png",
+        source: { kind: "bytes", bytes },
+      },
+    ]);
     expect(attachment).toMatchObject({
       id: "att_bytes",
       mimeType: "image/png",
@@ -123,7 +89,8 @@ describe("desktop attachment store", () => {
   });
 
   it("delegates encode/preview/delete/gc to desktop command path", async () => {
-    const store = createDesktopAttachmentStore();
+    const fake = createFakeDesktopAttachmentBridge();
+    const store = createDesktopAttachmentStore(fake.bridge);
     const attachment = {
       id: "att_3",
       mimeType: "image/jpeg",
@@ -138,14 +105,10 @@ describe("desktop attachment store", () => {
     await store.delete({ attachment });
     await store.garbageCollect({ referencedIds: new Set(["att_3"]) });
 
-    expect(readDesktopFileBase64Mock).toHaveBeenCalledWith("/managed/att_3.jpg");
-    expect(resolveDesktopPreviewUrlMock).toHaveBeenCalledWith(attachment);
-    expect(releaseDesktopPreviewUrlMock).toHaveBeenCalledWith({ url: "blob:test" });
-    expect(deleteDesktopAttachmentFileMock).toHaveBeenCalledWith({
-      path: "/managed/att_3.jpg",
-    });
-    expect(garbageCollectDesktopAttachmentFilesMock).toHaveBeenCalledWith({
-      referencedIds: ["att_3"],
-    });
+    expect(fake.readBase64Calls).toEqual(["/managed/att_3.jpg"]);
+    expect(fake.resolvedPreviewUrls).toEqual([attachment]);
+    expect(fake.releasedPreviewUrls).toEqual(["blob:test"]);
+    expect(fake.deletedPaths).toEqual(["/managed/att_3.jpg"]);
+    expect(fake.garbageCollections).toEqual([{ referencedIds: ["att_3"] }]);
   });
 });

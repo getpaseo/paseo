@@ -1,4 +1,4 @@
-import { getDesktopHost } from "@/desktop/host";
+import type { DesktopDialogBridge } from "@/desktop/host";
 import { isAbsolutePath } from "@/utils/path";
 
 export type PickedImageSource = { kind: "file_uri"; uri: string } | { kind: "blob"; blob: Blob };
@@ -79,8 +79,9 @@ function normalizeDesktopDialogSelection(selection: string | string[] | null): s
   return Array.isArray(selection) ? selection : [selection];
 }
 
-export async function openImagePathsWithDesktopDialog(): Promise<string[]> {
-  const desktop = getDesktopHost();
+export async function openImagePathsWithDesktopDialog(
+  dialog: DesktopDialogBridge | null | undefined,
+): Promise<string[]> {
   const options = {
     directory: false,
     multiple: true,
@@ -88,7 +89,7 @@ export async function openImagePathsWithDesktopDialog(): Promise<string[]> {
     title: "Attach images",
   };
 
-  const dialogOpen = desktop?.dialog?.open;
+  const dialogOpen = dialog?.open;
   if (typeof dialogOpen !== "function") {
     throw new Error("Desktop dialog API is not available.");
   }

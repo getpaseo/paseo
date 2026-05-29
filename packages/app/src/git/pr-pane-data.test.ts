@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
-} from "@server/shared/messages";
+} from "@getpaseo/protocol/messages";
 import {
   deriveAvatarColor,
   formatAge,

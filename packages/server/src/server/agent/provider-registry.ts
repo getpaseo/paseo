@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import type {
   AgentClient,
+  AgentCreateConfigUnattendedInput,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -13,7 +14,13 @@ import type {
   ListModesOptions,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
+  ResolveAgentCreateConfigInput,
+  ResolveAgentCreateConfigResult,
 } from "./agent-sdk-types.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "./create-agent-mode.js";
 import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
@@ -28,16 +35,16 @@ import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
-import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
+import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
   DEV_AGENT_PROVIDER_DEFINITIONS,
   getAgentProviderDefinition,
   type AgentProviderDefinition,
-} from "./provider-manifest.js";
+} from "@getpaseo/protocol/provider-manifest";
 
 function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
   return value.length > 0;
@@ -56,11 +63,13 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    */
   derivedFromProviderId: string | null;
   createClient: (logger: Logger) => AgentClient;
+  resolveCreateConfig: (input: ResolveAgentCreateConfigInput) => ResolveAgentCreateConfigResult;
+  isCreateConfigUnattended: (input: AgentCreateConfigUnattendedInput) => boolean;
   fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
 
-export { IMPORTABLE_PROVIDERS } from "../../shared/importable-providers.js";
+export { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
 
 export interface BuildProviderRegistryOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
@@ -126,6 +135,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       runtimeSettings,
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
+  "mock-slow": () => new MockSlowProviderClient(),
 };
 
 function getCursorACPCommand(
@@ -412,6 +422,8 @@ function wrapClientProvider(
         profileModelsAreAdditive,
       }),
     listModes: inner.listModes?.bind(inner),
+    resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
+    isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listPersistedAgents: listPersistedAgents
       ? async (options?: ListPersistedAgentsOptions) =>
           (await listPersistedAgents(options)).map((descriptor) =>
@@ -436,6 +448,9 @@ function createRegistryEntry(
     derivedFromProviderId: resolved.derivedFromProviderId,
     createClient: (providerLogger: Logger) =>
       createResolvedProviderClient(providerLogger, provider, resolved),
+    resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,
+    isCreateConfigUnattended:
+      modelClient.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended,
     fetchModels: async (options: ListModelsOptions) =>
       mergeModels(
         provider,
@@ -671,5 +686,22 @@ export async function shutdownProviders(
   logger: Logger,
   options?: BuildProviderRegistryOptions,
 ): Promise<void> {
-  await OpenCodeServerManager.getInstance(logger, options?.runtimeSettings?.opencode).shutdown();
+  const clients = createAllClients(logger, options);
+  await shutdownAgentClients(Object.values(clients), logger);
+}
+
+export async function shutdownAgentClients(
+  clients: Iterable<AgentClient>,
+  logger: Logger,
+): Promise<void> {
+  await Promise.all(
+    Array.from(clients).map(async (client) => {
+      if (!client.shutdown) return;
+      try {
+        await client.shutdown();
+      } catch (error) {
+        logger.warn({ err: error, provider: client.provider }, "Provider client shutdown failed");
+      }
+    }),
+  );
 }

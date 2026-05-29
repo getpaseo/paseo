@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import type { AgentPermissionRequest } from "@getpaseo/server";
+import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 

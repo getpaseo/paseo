@@ -1,5 +1,5 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentAttachment } from "../../shared/messages.js";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 export type AgentProvider = string;
 
@@ -48,6 +48,7 @@ export interface AgentMode {
   description?: string;
   icon?: string;
   colorTier?: string;
+  isUnattended?: boolean;
 }
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
@@ -91,6 +92,32 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+}
+
+export interface AgentCreateConfigParent {
+  provider: AgentProvider;
+  modeId: string | null;
+  isUnattended: boolean;
+}
+
+export interface ResolveAgentCreateConfigInput {
+  provider: AgentProvider;
+  requestedMode: string | undefined;
+  featureValues: Record<string, unknown> | undefined;
+  parent: AgentCreateConfigParent | null;
+  availableModes: AgentMode[] | undefined;
+}
+
+export interface ResolveAgentCreateConfigResult {
+  modeId: string | undefined;
+  featureValues: Record<string, unknown> | undefined;
+}
+
+export interface AgentCreateConfigUnattendedInput {
+  modeId: string | null;
+  config: AgentSessionConfig;
+  features?: AgentFeature[];
+  availableModes: AgentMode[];
 }
 
 export interface AgentFeatureToggle {
@@ -590,6 +617,8 @@ export interface AgentClient {
   ): Promise<AgentSession>;
   listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listModes?(options: ListModesOptions): Promise<AgentMode[]>;
+  resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
+  isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
   listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
@@ -604,4 +633,10 @@ export interface AgentClient {
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
   archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  /**
+   * Release any provider-owned resources held by this client (background
+   * processes, sockets, cached subprocesses, etc.). Called when the daemon
+   * shuts down. Must be idempotent.
+   */
+  shutdown?(): Promise<void>;
 }

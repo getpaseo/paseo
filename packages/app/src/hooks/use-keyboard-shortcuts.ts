@@ -3,7 +3,7 @@ import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
-import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
   type ChordState,

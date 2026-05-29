@@ -230,6 +230,125 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("marks optional Pi RPC input prompts as skippable", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "comment-1",
+      method: "input",
+      title: "Pick one\n\nSelected option:\n- A",
+      placeholder: "Optional comment (press Enter to skip)...",
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request).toMatchObject({
+      title: "Optional comment",
+      input: {
+        questions: [
+          {
+            question: "Optional comment",
+            header: "Response",
+            options: [],
+            multiSelect: false,
+            placeholder: "Optional comment (press Enter to skip)...",
+            allowEmpty: true,
+            dismissLabel: "Skip",
+          },
+        ],
+      },
+    });
+
+    await session.respondToPermission("comment-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "" } },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "comment-1", response: { value: "" } },
+    ]);
+  });
+
+  test("combines Pi ask_user select and optional comment into one permission", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "ask_user",
+      args: {
+        question: "Pick one",
+        options: ["A", "B"],
+        allowComment: true,
+        allowFreeform: false,
+      },
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "select-1",
+      method: "select",
+      title: "Pick one",
+      options: ["A", "B"],
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request).toMatchObject({
+      id: "select-1",
+      name: "Pi ask_user",
+      kind: "question",
+      title: "Pick one",
+      input: {
+        questions: [
+          {
+            question: "Pick one",
+            header: "Response",
+            options: [{ label: "A" }, { label: "B" }],
+            multiSelect: false,
+          },
+          {
+            question: "Optional comment",
+            header: "Comment",
+            options: [],
+            multiSelect: false,
+            placeholder: "Optional comment (press Enter to skip)...",
+            allowEmpty: true,
+          },
+        ],
+      },
+      metadata: {
+        combinedAskUser: "ask_user_select_optional_comment",
+        answerHeader: "Response",
+        commentHeader: "Comment",
+      },
+    });
+
+    await session.respondToPermission("select-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "B", Comment: "Looks good" } },
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "select-1", response: { value: "B" } },
+    ]);
+    expect(session.getPendingPermissions()).toEqual([]);
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "comment-1",
+      method: "input",
+      title: "Pick one\n\nSelected option:\n- B",
+      placeholder: "Optional comment (press Enter to skip)...",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "select-1", response: { value: "B" } },
+      { id: "comment-1", response: { value: "Looks good" } },
+    ]);
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
   test("cancels Pi RPC extension UI dialogs when question permission is denied", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

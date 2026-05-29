@@ -401,6 +401,8 @@ describe("ClaudeAgentClient.listModels", () => {
     const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-4-8[1m]",
+      "claude-opus-4-8",
       "claude-opus-4-7[1m]",
       "claude-opus-4-7",
       "claude-opus-4-6[1m]",
@@ -416,7 +418,7 @@ describe("ClaudeAgentClient.listModels", () => {
     }
 
     const defaultModel = models.find((m) => m.isDefault);
-    expect(defaultModel?.id).toBe("claude-opus-4-6");
+    expect(defaultModel?.id).toBe("claude-opus-4-8");
   });
 });
 

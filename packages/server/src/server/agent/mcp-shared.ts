@@ -7,7 +7,7 @@ import { curateAgentActivity } from "./activity-curator.js";
 import { selectItemsByProjectedLimit } from "./timeline-projection.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { serializeAgentSnapshot } from "../messages.js";
-import { StoredScheduleSchema } from "../schedule/types.js";
+import { StoredScheduleSchema } from "@getpaseo/protocol/schedule/types";
 import type { AgentProvider } from "./agent-sdk-types.js";
 
 export const AgentProviderEnum = z.string();

@@ -1,5 +1,5 @@
 ---
-title: Open source Conductor alternative with Linux, Windows, and mobile
+title: Open Source Conductor Alternative With Linux, Windows, and Mobile
 description: Paseo is open source, runs on macOS, Linux, and Windows, ships native iOS and Android apps, and supports 30+ agents through the in-app catalog plus any ACP or CLI agent. Conductor is macOS only and Claude Code or Codex only.
 nav: Conductor
 order: 100

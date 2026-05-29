@@ -9,7 +9,7 @@ import {
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
@@ -844,7 +844,7 @@ const styles = StyleSheet.create((theme) => {
     },
     scrollText: {
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
       lineHeight: 18,
       ...(isWeb
@@ -859,7 +859,7 @@ const styles = StyleSheet.create((theme) => {
     },
     subAgentSessionText: {
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       color: theme.colors.foregroundMuted,
       lineHeight: 18,
       marginBottom: theme.spacing[2],
@@ -875,13 +875,13 @@ const styles = StyleSheet.create((theme) => {
     },
     subAgentActionTool: {
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       color: theme.colors.foregroundMuted,
       lineHeight: 18,
     },
     subAgentActionSummary: {
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
       lineHeight: 18,
     },

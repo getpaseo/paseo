@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
 const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
 const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];

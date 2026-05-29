@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { SquarePen } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
@@ -59,7 +59,8 @@ import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
-import { SubagentsTrack, useArchiveSubagent, useSubagentsForParent } from "@/subagents";
+import { useArchiveSubagent, useSubagentsForParent } from "@/subagents";
+import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";

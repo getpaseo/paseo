@@ -1,59 +1,25 @@
 import { realpathSync } from "node:fs";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { pathToFileURL } from "node:url";
 import { expect, type Page } from "@playwright/test";
+import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
-import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { connectDaemonClient } from "./daemon-client-loader";
+import { getServerId } from "./server-id";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
-import type { SessionOutboundMessage } from "@server/shared/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
-interface WorkspaceSetupDaemonClient {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  openProject(cwd: string): Promise<{
-    workspace: {
-      id: string;
-      name: string;
-      workspaceDirectory: string;
-      projectRootPath: string;
-    } | null;
-    error: string | null;
-  }>;
-  createPaseoWorktree(input: { cwd: string; worktreeSlug?: string }): Promise<{
-    workspace: {
-      id: string;
-      name: string;
-      workspaceDirectory: string;
-      projectRootPath: string;
-    } | null;
-    error: string | null;
-  }>;
-  fetchWorkspaces(): Promise<{
-    entries: Array<{
-      id: string;
-      name: string;
-      workspaceDirectory: string;
-      projectRootPath: string;
-    }>;
-  }>;
-  fetchAgents(): Promise<{
-    entries: Array<{
-      agent: { id: string; cwd: string; workspaceId?: string | null };
-    }>;
-  }>;
-  fetchAgent(agentId: string): Promise<{
-    agent: { id: string; cwd: string } | null;
-    project: unknown;
-  } | null>;
-  listTerminals(cwd: string): Promise<{
-    cwd?: string;
-    terminals: Array<{ id: string; cwd: string; name: string }>;
-    error?: string | null;
-  }>;
-  subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void;
-}
+type WorkspaceSetupDaemonClient = Pick<
+  InternalDaemonClient,
+  | "close"
+  | "connect"
+  | "createPaseoWorktree"
+  | "fetchAgent"
+  | "fetchAgents"
+  | "fetchWorkspaces"
+  | "listTerminals"
+  | "openProject"
+  | "subscribeRawMessages"
+>;
 
 export type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
@@ -62,58 +28,30 @@ export type WorkspaceSetupProgressPayload = Extract<
 
 export type { WorkspaceSetupDaemonClient };
 
-function getDaemonWsUrl(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  return `ws://127.0.0.1:${daemonPort}/ws`;
-}
-
-async function loadDaemonClientConstructor(): Promise<
-  new (config: {
-    url: string;
-    clientId: string;
-    clientType: "cli";
-    webSocketFactory?: NodeWebSocketFactory;
-  }) => WorkspaceSetupDaemonClient
-> {
-  const repoRoot = path.resolve(process.cwd(), "../..");
-  const moduleUrl = pathToFileURL(
-    path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
-  ).href;
-  const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: {
-      url: string;
-      clientId: string;
-      clientType: "cli";
-      webSocketFactory?: NodeWebSocketFactory;
-    }) => WorkspaceSetupDaemonClient;
-  };
-  return mod.DaemonClient;
-}
-
 export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemonClient> {
-  const DaemonClient = await loadDaemonClientConstructor();
-  const webSocketFactory = createNodeWebSocketFactory();
-  const client = new DaemonClient({
-    url: getDaemonWsUrl(),
-    clientId: `workspace-setup-${randomUUID()}`,
-    clientType: "cli",
-    webSocketFactory,
-  });
-  await client.connect();
-  return client;
+  return connectDaemonClient<WorkspaceSetupDaemonClient>({ clientIdPrefix: "workspace-setup" });
+}
+
+export async function openProjectViaDaemon(
+  client: WorkspaceSetupDaemonClient,
+  repoPath: string,
+): Promise<{ id: string; name: string; workspaceDirectory: string }> {
+  const result = await client.openProject(repoPath);
+  if (!result.workspace || result.error) {
+    throw new Error(result.error ?? `Failed to open project ${repoPath}`);
+  }
+  return {
+    id: result.workspace.id,
+    name: result.workspace.name,
+    workspaceDirectory: result.workspace.workspaceDirectory,
+  };
 }
 
 export async function seedProjectForWorkspaceSetup(
   client: WorkspaceSetupDaemonClient,
   repoPath: string,
 ): Promise<void> {
-  const result = await client.openProject(repoPath);
-  if (!result.workspace || result.error) {
-    throw new Error(result.error ?? `Failed to open project ${repoPath}`);
-  }
+  await openProjectViaDaemon(client, repoPath);
 }
 
 export function projectNameFromPath(repoPath: string): string {
@@ -320,11 +258,11 @@ export async function navigateToWorkspaceViaSidebar(
   page: Page,
   workspaceId: string,
 ): Promise<void> {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  await switchWorkspaceViaSidebar({ page, serverId, targetWorkspacePath: workspaceId });
+  await switchWorkspaceViaSidebar({
+    page,
+    serverId: getServerId(),
+    targetWorkspacePath: workspaceId,
+  });
 }
 
 export async function openWorkspaceScriptsMenu(page: Page): Promise<void> {

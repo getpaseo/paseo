@@ -31,11 +31,7 @@ function parseArgs(argv: string[]): { modelsDir: string; modelIds: LocalSpeechMo
   }
 
   if (modelIds.length === 0) {
-    const stt = (process.env.PASEO_LOCAL_STT_MODEL ||
-      DEFAULT_LOCAL_STT_MODEL) as LocalSpeechModelId;
-    const tts = (process.env.PASEO_LOCAL_TTS_MODEL ||
-      DEFAULT_LOCAL_TTS_MODEL) as LocalSpeechModelId;
-    modelIds.push(stt, tts);
+    modelIds.push(DEFAULT_LOCAL_STT_MODEL, DEFAULT_LOCAL_TTS_MODEL);
   }
 
   return { modelsDir, modelIds };

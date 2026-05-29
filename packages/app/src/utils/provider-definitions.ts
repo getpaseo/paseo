@@ -1,10 +1,10 @@
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import {
   type AgentModeColorTier,
   type AgentModeIcon,
   type AgentProviderDefinition,
   type AgentProviderModeDefinition,
-} from "@server/server/agent/provider-manifest";
+} from "@getpaseo/protocol/provider-manifest";
 
 function buildProviderModes(entry: ProviderSnapshotEntry): AgentProviderModeDefinition[] {
   const entryModes = entry.modes ?? [];

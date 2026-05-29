@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CheckoutPrStatusSchema } from "@server/shared/messages";
+import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
 
 import { buildGitActions, type BuildGitActionsInput } from "./policy";
 

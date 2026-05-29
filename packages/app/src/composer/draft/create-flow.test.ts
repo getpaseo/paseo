@@ -5,7 +5,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import type { AgentAttachment } from "@server/shared/messages";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow";
 
 describe("useDraftAgentCreateFlow", () => {

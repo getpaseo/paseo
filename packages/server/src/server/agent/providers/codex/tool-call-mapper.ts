@@ -7,7 +7,7 @@ import {
   truncateDiffText,
 } from "../tool-call-mapper-utils.js";
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
-import { isSpeakToolName } from "../../tool-name-normalization.js";
+import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";
 
 interface CodexMapperOptions {
   cwd?: string | null;

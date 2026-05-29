@@ -1,11 +1,12 @@
-import type { DaemonTransport, DaemonTransportFactory } from "@server/client/daemon-client";
+import type {
+  DaemonTransport,
+  DaemonTransportFactory,
+} from "@getpaseo/client/internal/daemon-client";
+import type { LocalTransportTarget } from "./desktop-daemon";
 import {
-  closeLocalTransportSession,
-  listenToLocalTransportEvents,
-  openLocalTransportSession,
-  sendLocalTransportMessage,
-  type LocalTransportTarget,
-} from "./desktop-daemon";
+  defaultLocalDaemonTransportRpc,
+  type LocalDaemonTransportRpc,
+} from "./local-daemon-transport-rpc";
 
 const LOCAL_TRANSPORT_SCHEME = "paseo+local:";
 
@@ -49,7 +50,9 @@ function parseLocalDaemonTransportUrl(url: string): LocalTransportTarget {
   };
 }
 
-export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFactory | null {
+export function createDesktopLocalDaemonTransportFactory(
+  rpc: LocalDaemonTransportRpc = defaultLocalDaemonTransportRpc,
+): DaemonTransportFactory | null {
   return ({ url }) => {
     const target = parseLocalDaemonTransportUrl(url);
     let sessionId: string | null = null;
@@ -87,30 +90,31 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
       }
     };
 
-    void listenToLocalTransportEvents((payload) => {
-      if (disposed || !sessionId || payload.sessionId !== sessionId) {
-        return;
-      }
-      if (payload.kind === "open") {
-        emitOpen();
-        return;
-      }
-      if (payload.kind === "message") {
-        if (payload.text) {
-          emitMessage({ data: payload.text });
+    void rpc
+      .listenToEvents((payload) => {
+        if (disposed || !sessionId || payload.sessionId !== sessionId) {
           return;
         }
-        if (payload.binaryBase64) {
-          emitMessage({ data: decodeBase64ToBytes(payload.binaryBase64) });
+        if (payload.kind === "open") {
+          emitOpen();
+          return;
         }
-        return;
-      }
-      if (payload.kind === "close") {
-        emitClose(payload);
-        return;
-      }
-      emitError(payload.error ?? "Local daemon transport error");
-    })
+        if (payload.kind === "message") {
+          if (payload.text) {
+            emitMessage({ data: payload.text });
+            return;
+          }
+          if (payload.binaryBase64) {
+            emitMessage({ data: decodeBase64ToBytes(payload.binaryBase64) });
+          }
+          return;
+        }
+        if (payload.kind === "close") {
+          emitClose(payload);
+          return;
+        }
+        emitError(payload.error ?? "Local daemon transport error");
+      })
       .then((cleanup) => {
         if (disposed) {
           cleanup();
@@ -123,10 +127,11 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
         emitError(error);
       });
 
-    void openLocalTransportSession(target)
+    void rpc
+      .openSession(target)
       .then((id) => {
         if (disposed) {
-          void closeLocalTransportSession(id).catch((error) => emitError(error));
+          void rpc.closeSession(id).catch((error) => emitError(error));
           return;
         }
         sessionId = id;
@@ -143,24 +148,20 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
           return;
         }
         if (typeof data === "string") {
-          void sendLocalTransportMessage({ sessionId, text: data }).catch((error) =>
-            emitError(error),
-          );
+          void rpc.sendMessage({ sessionId, text: data }).catch((error) => emitError(error));
           return;
         }
         const binaryBase64 = encodeBinaryToBase64(
           data instanceof ArrayBuffer ? data : new Uint8Array(data),
         );
-        void sendLocalTransportMessage({ sessionId, binaryBase64 }).catch((error) =>
-          emitError(error),
-        );
+        void rpc.sendMessage({ sessionId, binaryBase64 }).catch((error) => emitError(error));
       },
       close: () => {
         disposed = true;
         const currentSessionId = sessionId;
         sessionId = null;
         if (currentSessionId) {
-          void closeLocalTransportSession(currentSessionId).catch((error) => emitError(error));
+          void rpc.closeSession(currentSessionId).catch((error) => emitError(error));
         }
         unlisten?.();
         unlisten = null;

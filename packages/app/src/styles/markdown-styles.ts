@@ -170,7 +170,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderRadius: theme.borderRadius.md,
       borderWidth: 0,
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.base - 3,
     },
 
     code_block: {
@@ -180,7 +180,7 @@ export function createMarkdownStyles(theme: Theme) {
       padding: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.code,
       marginVertical: theme.spacing[2],
     },
 
@@ -193,7 +193,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderWidth: 1,
       borderColor: theme.colors.border,
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.code,
       marginVertical: theme.spacing[3],
     },
 
@@ -388,18 +388,18 @@ export function createCompactMarkdownStyles(theme: Theme) {
 
     code_inline: {
       ...baseStyles.code_inline,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.sm - 3,
     },
 
     code_block: {
       ...baseStyles.code_block,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       padding: theme.spacing[2],
     },
 
     fence: {
       ...baseStyles.fence,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       padding: theme.spacing[2],
     },
   };
