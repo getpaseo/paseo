@@ -46,6 +46,10 @@ export function createBottomSheetVisibilityTracker(opts: {
   return {
     attachController(next) {
       controller = next;
+      if (!next) {
+        isPresented = false;
+        return;
+      }
       if (next && visible && isEnabled !== false) {
         present();
       }

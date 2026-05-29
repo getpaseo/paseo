@@ -118,4 +118,18 @@ describe("bottom sheet visibility tracker", () => {
     tracker.handleSheetIndexChange(-1);
     expect(closeCount()).toBe(2);
   });
+
+  it("allows presenting again when the controller detaches during dismissal", () => {
+    const { sheet, tracker } = setup();
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    tracker.handleSheetIndexChange(-1);
+    tracker.attachController(null);
+    tracker.syncDesired({ visible: false });
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "present" }]);
+  });
 });
