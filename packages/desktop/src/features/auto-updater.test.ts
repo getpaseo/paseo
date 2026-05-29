@@ -2,20 +2,29 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { UUID } from "builder-util-runtime";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("electron", () => ({
+const electronMock = vi.hoisted(() => ({
   app: {
     getPath: vi.fn(),
+    isPackaged: false,
   },
 }));
 
+const autoUpdaterMock = vi.hoisted(() => ({
+  checkForUpdates: vi.fn(),
+  on: vi.fn(),
+}));
+
+vi.mock("electron", () => electronMock);
+
 vi.mock("electron-updater", () => ({
-  autoUpdater: {},
+  autoUpdater: autoUpdaterMock,
 }));
 
 import {
   bucketFromStagingUserId,
+  checkForAppUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -185,5 +194,25 @@ describe("shouldAdmitToRollout", () => {
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
+  });
+});
+
+describe("checkForAppUpdate", () => {
+  beforeEach(() => {
+    electronMock.app.isPackaged = true;
+    electronMock.app.getPath.mockReturnValue(os.tmpdir());
+    autoUpdaterMock.checkForUpdates.mockReset();
+    autoUpdaterMock.on.mockReset();
+  });
+
+  it("rejects when the updater check fails", async () => {
+    autoUpdaterMock.checkForUpdates.mockRejectedValueOnce(new Error("manifest unavailable"));
+
+    await expect(
+      checkForAppUpdate({
+        currentVersion: "1.0.0",
+        releaseChannel: "stable",
+      }),
+    ).rejects.toThrow("manifest unavailable");
   });
 });
