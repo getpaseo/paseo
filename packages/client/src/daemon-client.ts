@@ -568,6 +568,7 @@ export interface CreateScheduleOptions {
     | {
         type: "cron";
         expression: string;
+        timeZone?: string;
       };
   target:
     | {
@@ -623,6 +624,7 @@ export interface UpdateScheduleOptions {
     | {
         type: "cron";
         expression: string;
+        timeZone?: string;
       };
   newAgentConfig?: UpdateScheduleNewAgentConfig;
   maxRuns?: number | null;

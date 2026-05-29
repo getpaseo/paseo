@@ -2328,6 +2328,38 @@ describe("create_schedule MCP tool", () => {
     );
   });
 
+  it("passes timeZone through cron create_schedule input", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn(async (scheduleInput: CreateScheduleInput) =>
+      createStoredSchedule(scheduleInput),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await invokeToolWithParsedInput(tool, {
+      prompt: "say hello",
+      cron: "0 9 * * 1-5",
+      timeZone: "  America/New_York  ",
+      provider: "codex",
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cadence: {
+          type: "cron",
+          expression: "0 9 * * 1-5",
+          timeZone: "America/New_York",
+        },
+      }),
+    );
+  });
+
   it("still rejects both real every and cron inputs", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const create = vi.fn();
@@ -2348,6 +2380,30 @@ describe("create_schedule MCP tool", () => {
         provider: "codex",
       }),
     ).rejects.toThrow("Specify exactly one of every or cron");
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects create_schedule timeZone without cron", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        every: "10m",
+        timeZone: "America/New_York",
+        provider: "codex",
+      }),
+    ).rejects.toThrow("timeZone can only be used with cron");
 
     expect(create).not.toHaveBeenCalled();
   });
@@ -2458,6 +2514,35 @@ describe("update_schedule MCP tool", () => {
     });
   });
 
+  it("passes timeZone through cron update_schedule input", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = makeStoredSchedule();
+    const update = vi.fn(async (_input: UpdateScheduleInput) => stored);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await invokeToolWithParsedInput(tool, {
+      id: "schedule-1",
+      cron: "0 9 * * 1-5",
+      timeZone: "Europe/Zurich",
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      id: "schedule-1",
+      cadence: {
+        type: "cron",
+        expression: "0 9 * * 1-5",
+        timeZone: "Europe/Zurich",
+      },
+    });
+  });
+
   it("accepts a blank cron field when updating every cadence", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const stored = makeStoredSchedule();
@@ -2539,6 +2624,29 @@ describe("update_schedule MCP tool", () => {
         cron: "* * * * *",
       }),
     ).rejects.toThrow("Specify at most one of every or cron");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("rejects update_schedule timeZone without cron", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const update = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        id: "schedule-1",
+        every: "10m",
+        timeZone: "Europe/Zurich",
+      }),
+    ).rejects.toThrow("timeZone can only be used with cron");
+
     expect(update).not.toHaveBeenCalled();
   });
 

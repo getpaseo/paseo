@@ -1,5 +1,5 @@
 import type { OutputSchema } from "../../output/index.js";
-import { formatTarget, type ScheduleRow } from "./shared.js";
+import { formatCadence, formatTarget, type ScheduleRow } from "./shared.js";
 import type { ScheduleRecord, ScheduleRunRecord } from "./types.js";
 
 export const scheduleSchema: OutputSchema<ScheduleRow> = {
@@ -73,7 +73,7 @@ export function createScheduleInspectRows(schedule: ScheduleRecord): ScheduleIns
       key: "Cadence",
       value:
         schedule.cadence.type === "cron"
-          ? `cron:${schedule.cadence.expression}`
+          ? formatCadence(schedule.cadence)
           : `every:${schedule.cadence.everyMs}ms`,
     },
     { key: "Target", value: formatTarget(schedule.target) },
