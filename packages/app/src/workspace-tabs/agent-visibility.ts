@@ -40,6 +40,9 @@ export function deriveWorkspaceAgentVisibility(input: {
     if (agent.workspaceId) {
       return agent.workspaceId === normalizedWorkspaceId;
     }
+    if (normalizedWorkspaceId && normalizedWorkspaceId !== normalizedWorkspaceDirectory) {
+      return false;
+    }
     return normalizeWorkspaceId(agent.cwd) === normalizedWorkspaceDirectory;
   };
   for (const agent of sessionAgents?.values() ?? []) {

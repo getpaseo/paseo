@@ -6498,6 +6498,7 @@ export class Session {
       refreshGit: false,
     });
     const shouldReuseDirectoryWorkspace =
+      options?.reuseExisting === false &&
       existingWorkspace?.kind === "directory" &&
       (await this.workspaceGitService.getCheckout(normalizedCwd)).isGit;
     if (
@@ -7077,9 +7078,7 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "open_project_request" }>,
   ): Promise<void> {
     try {
-      const workspace = await this.findOrCreateWorkspaceForDirectory(request.cwd, {
-        reuseExisting: false,
-      });
+      const workspace = await this.findOrCreateWorkspaceForDirectory(request.cwd);
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
       await this.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId]);

@@ -110,6 +110,30 @@ describe("workspace agent visibility", () => {
     expect(result.knownAgentIds).toEqual(new Set(["second-agent"]));
   });
 
+  it("keeps legacy cwd-matched agents out of duplicate same-directory workspaces", () => {
+    const workspaceDirectory = "/repo/worktree";
+    const legacy = makeAgent({
+      id: "legacy-agent",
+      cwd: workspaceDirectory,
+      workspaceId: null,
+    });
+
+    const canonical = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map<string, Agent>([[legacy.id, legacy]]),
+      workspaceId: workspaceDirectory,
+      workspaceDirectory,
+    });
+    const duplicate = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map<string, Agent>([[legacy.id, legacy]]),
+      workspaceId: "workspace-duplicate",
+      workspaceDirectory,
+    });
+
+    expect(canonical.activeAgentIds).toEqual(new Set(["legacy-agent"]));
+    expect(duplicate.activeAgentIds).toEqual(new Set<string>());
+    expect(duplicate.knownAgentIds).toEqual(new Set<string>());
+  });
+
   it("keeps archived subagents known but excludes them from active and auto-open", () => {
     const workspaceDirectory = "/repo/worktree";
     const archivedChild = makeAgent({

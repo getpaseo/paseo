@@ -2794,6 +2794,17 @@ test("open_project_request registers a workspace before any agent exists", async
   const response = findByType(emitted, "open_project_response");
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace?.id).toBe(REPO_CWD);
+
+  await session.handleMessage({
+    type: "open_project_request",
+    cwd: REPO_CWD,
+    requestId: "req-open-repeat",
+  });
+
+  expect(workspaces.size).toBe(1);
+  const repeatedResponse = filterByType(emitted, "open_project_response").at(-1);
+  expect(repeatedResponse?.payload.error).toBeNull();
+  expect(repeatedResponse?.payload.workspace?.id).toBe(REPO_CWD);
 });
 
 test("import_agent_request registers a workspace for a never-seen cwd", async () => {
