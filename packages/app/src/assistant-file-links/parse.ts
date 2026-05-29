@@ -525,7 +525,7 @@ function isAllowedAbsolutePath(pathValue: string, workspaceRoot?: string): boole
 }
 
 function isHomeRelativePath(pathValue: string): boolean {
-  return pathValue === "~" || pathValue.startsWith("~/");
+  return pathValue === "~" || pathValue.startsWith("~/") || pathValue.startsWith("~\\");
 }
 
 function isExternalHref(value: string): boolean {

@@ -370,6 +370,16 @@ describe("parseAssistantFileLink", () => {
       lineStart: 12,
       lineEnd: undefined,
     });
+    expect(
+      parseAssistantFileLink("~\\.paseo\\plans\\file-preview.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "~\\.paseo\\plans\\file-preview.md",
+      path: "~/.paseo/plans/file-preview.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
   });
 
   it("rejects external URLs", () => {

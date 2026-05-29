@@ -336,7 +336,7 @@ function isOutsideWorkspaceError(error: unknown): boolean {
 
 function normalizeRelativePath({ root, targetPath }: { root: string; targetPath: string }): string {
   const normalizedRoot = expandUserPath(root);
-  const normalizedTarget = path.resolve(targetPath);
+  const normalizedTarget = expandUserPath(targetPath);
   const relative = path.relative(normalizedRoot, normalizedTarget);
   return relative === "" ? "." : relative.split(path.sep).join("/");
 }
