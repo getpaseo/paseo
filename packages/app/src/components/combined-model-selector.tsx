@@ -27,6 +27,7 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 const IS_WEB = platformIsWeb;
 
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { shouldAutofocusModelSearch } from "./combined-model-selector.utils";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 
@@ -560,6 +561,7 @@ export function CombinedModelSelector({
   serverId = null,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(platformIsWeb);
@@ -730,7 +732,7 @@ export function CombinedModelSelector({
         onChange: handleSearchQueryChange,
         resetKey: `${view.providerId}:${searchResetKey}`,
         placeholder: "Search models...",
-        autoFocus: platformIsWeb,
+        autoFocus: shouldAutofocusModelSearch({ isWeb: platformIsWeb, isCompact }),
         testID: "model-search-input",
       },
     };
@@ -739,6 +741,7 @@ export function CombinedModelSelector({
     singleProviderView,
     serverId,
     openHeaderProviderSettings,
+    isCompact,
     theme.colors.border,
     theme.colors.foregroundMuted,
     handleBackToAll,

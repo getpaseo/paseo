@@ -6,6 +6,7 @@ import {
   getAgentControlHint,
   formatThinkingOptionLabel,
   normalizeModelId,
+  resolveAgentControlsSurface,
   resolveAgentModelSelection,
 } from "./utils";
 
@@ -39,6 +40,18 @@ describe("feature metadata helpers", () => {
     expect(getFeatureHighlightColor("fast_mode")).toBe("yellow");
     expect(getFeatureHighlightColor("plan_mode")).toBe("blue");
     expect(getFeatureHighlightColor("other")).toBe("default");
+  });
+});
+
+describe("resolveAgentControlsSurface", () => {
+  it("uses inline desktop controls only on non-compact web", () => {
+    expect(resolveAgentControlsSurface({ isWeb: true, isCompact: false })).toBe("desktop");
+  });
+
+  it("uses sheet controls on compact web and native", () => {
+    expect(resolveAgentControlsSurface({ isWeb: true, isCompact: true })).toBe("sheet");
+    expect(resolveAgentControlsSurface({ isWeb: false, isCompact: false })).toBe("sheet");
+    expect(resolveAgentControlsSurface({ isWeb: false, isCompact: true })).toBe("sheet");
   });
 });
 

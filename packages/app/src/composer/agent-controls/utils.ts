@@ -1,6 +1,7 @@
 import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
+export type AgentControlsSurface = "desktop" | "sheet";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
 
 export function getAgentControlHint(selector: ExplainedAgentControl): string {
@@ -14,6 +15,13 @@ export function getAgentControlHint(selector: ExplainedAgentControl): string {
     default:
       throw new Error("unreachable");
   }
+}
+
+export function resolveAgentControlsSurface(input: {
+  isWeb: boolean;
+  isCompact: boolean;
+}): AgentControlsSurface {
+  return input.isWeb && !input.isCompact ? "desktop" : "sheet";
 }
 
 export function normalizeModelId(modelId: string | null | undefined): string | null {

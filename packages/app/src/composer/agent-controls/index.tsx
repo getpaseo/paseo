@@ -57,9 +57,11 @@ import {
   getFeatureTooltip,
   getAgentControlHint,
   formatThinkingOptionLabel,
+  resolveAgentControlsSurface,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 
@@ -572,9 +574,11 @@ function ControlledAgentControls({
     return null;
   }
 
+  const surface = resolveAgentControlsSurface({ isWeb: platformIsWeb, isCompact });
+
   return (
     <View style={styles.container}>
-      {!isCompact ? (
+      {surface === "desktop" ? (
         <DesktopAgentControlsContent
           provider={provider}
           providerOptions={providerOptions}
