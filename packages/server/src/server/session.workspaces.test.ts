@@ -10,6 +10,7 @@ import type {
   EditorTargetDescriptorPayload,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import { WORKSPACE_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import type {
@@ -643,6 +644,118 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
       status: "agent_created",
       agent: { cwd: child },
     });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("create_agent_request without a workspace id creates a separate session for the same directory", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-same-cwd-"));
+  try {
+    const cwd = path.join(workdir, "repo");
+    mkdirSync(cwd, { recursive: true });
+
+    const logger = {
+      child: () => logger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    const agentManager = new AgentManager({
+      clients: { codex: new CreateAgentTestClient() },
+      registry: agentStorage,
+      logger: asSessionLogger(logger),
+      idFactory: (() => {
+        let next = 1;
+        return () => `00000000-0000-4000-8000-${String(next++).padStart(12, "0")}`;
+      })(),
+    });
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    );
+    const emitted: SessionOutboundMessage[] = [];
+    const session = asTestSession(
+      new Session({
+        clientId: "test-client",
+        appVersion: null,
+        onMessage: (message) => emitted.push(message),
+        logger: asSessionLogger(logger),
+        downloadTokenStore: asDownloadTokenStore(),
+        pushTokenStore: asPushTokenStore(),
+        paseoHome: path.join(workdir, "paseo-home"),
+        agentManager,
+        agentStorage,
+        projectRegistry,
+        workspaceRegistry,
+        chatService: asChatService(),
+        scheduleService: asScheduleService(),
+        loopService: asLoopService(),
+        checkoutDiffManager: asCheckoutDiffManager({
+          subscribe: async () => ({
+            initial: { cwd, files: [], error: null },
+            unsubscribe: () => {},
+          }),
+          scheduleRefreshForCwd: () => {},
+          getMetrics: () => ({
+            checkoutDiffTargetCount: 0,
+            checkoutDiffSubscriptionCount: 0,
+            checkoutDiffWatcherCount: 0,
+            checkoutDiffFallbackRefreshTargetCount: 0,
+          }),
+          dispose: () => {},
+        }),
+        workspaceGitService: createNoopWorkspaceGitService({
+          getCheckout: async (inputCwd: string) => ({
+            cwd: inputCwd,
+            isGit: true,
+            currentBranch: "main",
+            remoteUrl: null,
+            worktreeRoot: inputCwd,
+            isPaseoOwnedWorktree: false,
+            mainRepoRoot: null,
+          }),
+        }),
+        daemonConfigStore: asDaemonConfigStore({
+          get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+          onChange: () => () => {},
+        }),
+        mcpBaseUrl: null,
+        stt: null,
+        tts: null,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        terminalManager: null,
+      }),
+    );
+
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-first",
+      config: { provider: "codex", cwd },
+      attachments: [],
+    });
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-second",
+      config: { provider: "codex", cwd },
+      attachments: [],
+    });
+
+    const workspaces = await workspaceRegistry.list();
+    expect(workspaces).toHaveLength(2);
+    expect(new Set(workspaces.map((workspace) => workspace.cwd))).toEqual(new Set([cwd]));
+    expect(new Set(workspaces.map((workspace) => workspace.workspaceId)).size).toBe(2);
+
+    const records = await agentStorage.list();
+    expect(records).toHaveLength(2);
+    expect(new Set(records.map((record) => record.labels[WORKSPACE_ID_LABEL])).size).toBe(2);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

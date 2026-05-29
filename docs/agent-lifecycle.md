@@ -99,11 +99,12 @@ $PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 
 Each agent is a single JSON file. Fields relevant to this doc:
 
-| Field                             | Type          | Meaning                                                       |
-| --------------------------------- | ------------- | ------------------------------------------------------------- |
-| `id`                              | `string`      | Stable identifier                                             |
-| `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                              |
-| `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically by `create_agent` MCP tool |
-| `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`      |
+| Field                             | Type          | Meaning                                                                                                                                      |
+| --------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                              | `string`      | Stable identifier                                                                                                                            |
+| `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                                                                                                             |
+| `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically by `create_agent` MCP tool                                                                                |
+| `labels["paseo.workspace-id"]`    | `string?`     | Workspace identity for routing/visibility; this is distinct from `cwd` so two sessions can use the same directory without merging their tabs |
+| `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                                                                                     |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.

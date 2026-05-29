@@ -13,6 +13,7 @@ export function navigateToAgent(input: NavigateToAgentInput): string {
       return {
         workspaces: session?.workspaces.values(),
         agentCwd: agent?.cwd,
+        agentWorkspaceId: agent?.workspaceId,
       };
     },
     navigateToHostAgent: (route) => {

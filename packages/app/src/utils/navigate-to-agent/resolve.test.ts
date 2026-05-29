@@ -28,6 +28,10 @@ function createWorkspace(): WorkspaceDescriptor {
   };
 }
 
+function createWorkspaceWithId(id: string): WorkspaceDescriptor {
+  return { ...createWorkspace(), id };
+}
+
 interface RecordedHostNav {
   route: string;
 }
@@ -93,5 +97,18 @@ describe("resolveNavigateToAgent", () => {
     expect(route).toBe("/h/server-1/agent/missing-agent");
     expect(hostNavigations).toEqual([{ route: "/h/server-1/agent/missing-agent" }]);
     expect(tabNavigations).toEqual([]);
+  });
+
+  it("prefers the agent workspace id when multiple workspaces share a cwd", () => {
+    const { deps, tabNavigations } = createFakeNavigators({
+      workspaces: [createWorkspaceWithId("workspace-1"), createWorkspaceWithId("workspace-2")],
+      agentCwd: "/repo/worktree",
+      agentWorkspaceId: "workspace-2",
+    });
+
+    const route = resolveNavigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID }, deps);
+
+    expect(route).toBe("/h/server-1/workspace/workspace-2");
+    expect(tabNavigations[0]?.workspaceId).toBe("workspace-2");
   });
 });

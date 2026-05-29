@@ -13,6 +13,7 @@ export interface NavigateToAgentInput {
 export interface AgentNavTarget {
   workspaces: Iterable<WorkspaceDescriptor> | null | undefined;
   agentCwd: string | null | undefined;
+  agentWorkspaceId?: string | null;
 }
 
 export interface NavigateToAgentDeps {
@@ -25,14 +26,16 @@ export function resolveNavigateToAgent(
   input: NavigateToAgentInput,
   deps: NavigateToAgentDeps,
 ): string {
-  const { workspaces, agentCwd } = deps.readAgentNavTarget({
+  const { workspaces, agentCwd, agentWorkspaceId } = deps.readAgentNavTarget({
     serverId: input.serverId,
     agentId: input.agentId,
   });
-  const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-    workspaces,
-    workspaceDirectory: agentCwd,
-  });
+  const workspaceId =
+    agentWorkspaceId?.trim() ||
+    resolveWorkspaceIdByExecutionDirectory({
+      workspaces,
+      workspaceDirectory: agentCwd,
+    });
 
   if (!workspaceId) {
     const route = buildHostAgentDetailRoute(input.serverId, input.agentId);

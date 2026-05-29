@@ -111,6 +111,7 @@ export interface Agent {
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
   parentAgentId: string | null;
+  workspaceId?: string | null;
   labels: Record<string, string>;
   projectPlacement?: ProjectPlacementPayload | null;
 }

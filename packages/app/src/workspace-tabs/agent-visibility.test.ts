@@ -11,6 +11,7 @@ function makeAgent(input: {
   id: string;
   cwd: string;
   parentAgentId?: string | null;
+  workspaceId?: string | null;
   archivedAt?: Date | null;
   createdAt?: Date;
   lastActivityAt?: Date;
@@ -47,6 +48,7 @@ function makeAgent(input: {
     model: null,
     thinkingOptionId: null,
     parentAgentId: input.parentAgentId ?? null,
+    workspaceId: input.workspaceId ?? null,
     labels: {},
     requiresAttention: false,
     attentionReason: null,
@@ -79,6 +81,33 @@ describe("workspace agent visibility", () => {
     expect(result.activeAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
     expect(result.autoOpenAgentIds).toEqual(new Set(["parent-agent"]));
     expect(result.knownAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
+  });
+
+  it("uses explicit workspace identity before cwd when sessions share a directory", () => {
+    const workspaceDirectory = "/repo/worktree";
+    const first = makeAgent({
+      id: "first-agent",
+      cwd: workspaceDirectory,
+      workspaceId: "workspace-1",
+    });
+    const second = makeAgent({
+      id: "second-agent",
+      cwd: workspaceDirectory,
+      workspaceId: "workspace-2",
+    });
+
+    const result = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map<string, Agent>([
+        [first.id, first],
+        [second.id, second],
+      ]),
+      workspaceId: "workspace-2",
+      workspaceDirectory,
+    });
+
+    expect(result.activeAgentIds).toEqual(new Set(["second-agent"]));
+    expect(result.autoOpenAgentIds).toEqual(new Set(["second-agent"]));
+    expect(result.knownAgentIds).toEqual(new Set(["second-agent"]));
   });
 
   it("keeps archived subagents known but excludes them from active and auto-open", () => {

@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { PARENT_AGENT_ID_LABEL, WORKSPACE_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeInput } from "../../paseo-worktree-service.js";
 import { expandUserPath, resolvePathFromBase } from "../../path-utils.js";
@@ -204,7 +204,7 @@ async function resolveSessionCreateAgent(
   return {
     config: sessionConfig,
     createOptions: {
-      labels: input.labels,
+      labels: { ...input.labels, [WORKSPACE_ID_LABEL]: workspace.workspaceId },
       workspaceId: workspace.workspaceId,
       initialPrompt: trimmedPrompt,
       env: input.env,
@@ -256,11 +256,11 @@ async function resolveMcpCreateAgent(
       parent: parentAgent,
     });
 
-  const labels = mergeLabels(
-    input.callerAgentId,
-    input.callerContext?.childAgentDefaultLabels,
-    input.labels,
-  );
+  const inheritedWorkspaceId = parentAgent?.labels[WORKSPACE_ID_LABEL];
+  const labels = mergeLabels(input.callerAgentId, input.callerContext?.childAgentDefaultLabels, {
+    ...input.labels,
+    ...(inheritedWorkspaceId ? { [WORKSPACE_ID_LABEL]: inheritedWorkspaceId } : {}),
+  });
 
   const trimmedPrompt = input.initialPrompt.trim();
   return {

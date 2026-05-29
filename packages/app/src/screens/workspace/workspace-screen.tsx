@@ -1572,6 +1572,7 @@ function WorkspaceScreenContent({
       deriveWorkspaceAgentVisibility({
         sessionAgents: state.sessions[normalizedServerId]?.agents,
         agentDetails: state.sessions[normalizedServerId]?.agentDetails,
+        workspaceId: normalizedWorkspaceId,
         workspaceDirectory,
       }),
     workspaceAgentVisibilityEqual,

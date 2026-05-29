@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { WORKSPACE_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import {
   isLegacyEditorTargetId,
   serializeAgentStreamEvent,
@@ -1675,7 +1676,12 @@ export class Session {
         }
       }
 
-      await this.emitWorkspaceUpdateForCwd(payload.cwd);
+      const labelledWorkspaceId = payload.labels?.[WORKSPACE_ID_LABEL]?.trim();
+      if (labelledWorkspaceId) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds([labelledWorkspaceId]);
+      } else {
+        await this.emitWorkspaceUpdateForCwd(payload.cwd);
+      }
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to emit agent update");
     }
@@ -3185,8 +3191,7 @@ export class Session {
   ): Promise<{ workspaceId: string }> {
     const resolvedWorkspace = workspaceId
       ? await this.workspaceRegistry.get(workspaceId)
-      : ((await this.findWorkspaceByDirectory(cwd)) ??
-        (await this.findOrCreateWorkspaceForDirectory(cwd)));
+      : await this.findOrCreateWorkspaceForDirectory(cwd, { reuseExisting: false });
     if (!resolvedWorkspace) {
       throw new Error(`Workspace not found: ${workspaceId}`);
     }
@@ -6483,13 +6488,24 @@ export class Session {
     }
   }
 
-  private async findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
+  private async findOrCreateWorkspaceForDirectory(
+    cwd: string,
+    options?: { reuseExisting?: boolean },
+  ): Promise<PersistedWorkspaceRecord> {
     const inputCwd = normalizePersistedWorkspaceId(cwd);
     const normalizedCwd = await this.resolveWorkspaceDirectory(cwd);
     const existingWorkspace = await this.findExactWorkspaceByDirectory(normalizedCwd, {
       refreshGit: false,
     });
-    if (existingWorkspace) {
+    const shouldReuseDirectoryWorkspace =
+      existingWorkspace?.kind === "directory" &&
+      (await this.workspaceGitService.getCheckout(normalizedCwd)).isGit;
+    if (
+      existingWorkspace &&
+      (options?.reuseExisting !== false ||
+        existingWorkspace.archivedAt ||
+        shouldReuseDirectoryWorkspace)
+    ) {
       if (existingWorkspace.archivedAt && inputCwd !== normalizedCwd) {
         const timestamp = new Date().toISOString();
         const displayName = basename(inputCwd) || inputCwd;
@@ -6521,10 +6537,15 @@ export class Session {
       });
     }
 
-    return this.createWorkspaceForDirectory(normalizedCwd);
+    return this.createWorkspaceForDirectory(normalizedCwd, {
+      forceDistinct: existingWorkspace !== null,
+    });
   }
 
-  private async createWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
+  private async createWorkspaceForDirectory(
+    cwd: string,
+    options?: { forceDistinct?: boolean },
+  ): Promise<PersistedWorkspaceRecord> {
     const checkout = await this.workspaceGitService.getCheckout(cwd);
     const membership = classifyDirectoryForProjectMembership({ cwd, checkout });
     const timestamp = new Date().toISOString();
@@ -6536,7 +6557,7 @@ export class Session {
     await this.projectRegistry.upsert(projectRecord);
 
     const workspaceRecord = createPersistedWorkspaceRecord({
-      workspaceId: membership.workspaceId,
+      workspaceId: options?.forceDistinct ? `workspace:${uuidv4()}` : membership.workspaceId,
       projectId: projectRecord.projectId,
       cwd,
       kind: membership.workspaceKind,
@@ -7043,7 +7064,7 @@ export class Session {
       const workspace = await this.findOrCreateWorkspaceForDirectory(cwd);
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       await this.describeWorkspaceRecord(workspace);
-      await this.emitWorkspaceUpdateForCwd(workspace.cwd);
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId]);
     } catch (error) {
       this.sessionLogger.warn(
         { err: error, cwd },
@@ -7056,10 +7077,12 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "open_project_request" }>,
   ): Promise<void> {
     try {
-      const workspace = await this.findOrCreateWorkspaceForDirectory(request.cwd);
+      const workspace = await this.findOrCreateWorkspaceForDirectory(request.cwd, {
+        reuseExisting: false,
+      });
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
-      await this.emitWorkspaceUpdateForCwd(workspace.cwd);
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId]);
       this.emit({
         type: "open_project_response",
         payload: {

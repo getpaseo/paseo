@@ -11,6 +11,7 @@ import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
 } from "@getpaseo/protocol/agent-state-bucket";
+import { WORKSPACE_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
@@ -154,11 +155,13 @@ export class WorkspaceDirectory {
     );
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
-    const workspaceIdsByDirectory = new Map(
-      activeRecords.map(
-        (workspace) => [normalizeWorkspaceId(workspace.cwd), workspace.workspaceId] as const,
-      ),
-    );
+    const workspaceIdsByDirectory = new Map<string, string>();
+    for (const workspace of activeRecords) {
+      const directory = normalizeWorkspaceId(workspace.cwd);
+      if (!workspaceIdsByDirectory.has(directory)) {
+        workspaceIdsByDirectory.set(directory, workspace.workspaceId);
+      }
+    }
 
     const includedWorkspaces = activeRecords.filter(
       (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
@@ -188,7 +191,10 @@ export class WorkspaceDirectory {
         continue;
       }
 
-      const workspaceId = workspaceIdsByDirectory.get(normalizeWorkspaceId(agent.cwd));
+      const labelledWorkspaceId = agent.labels?.[WORKSPACE_ID_LABEL]?.trim();
+      const workspaceId = labelledWorkspaceId
+        ? labelledWorkspaceId
+        : workspaceIdsByDirectory.get(normalizeWorkspaceId(agent.cwd));
       if (workspaceId === undefined) {
         continue;
       }
