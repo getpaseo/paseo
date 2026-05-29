@@ -2062,7 +2062,7 @@ export class AgentManager {
     }
 
     return {
-      text: chunks.toReversed().join(""),
+      text: chunks.slice().reverse().join(""),
       startsAtBeginning,
     };
   }

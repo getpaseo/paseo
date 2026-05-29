@@ -271,7 +271,7 @@ export class InMemoryAgentTimelineStore {
       return null;
     }
 
-    return chunks.toReversed().join("");
+    return chunks.slice().reverse().join("");
   }
 
   private requireState(agentId: string): AgentTimelineState {
