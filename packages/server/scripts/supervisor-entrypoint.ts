@@ -13,6 +13,8 @@ import { runSupervisor } from "./supervisor.js";
 import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
+process.title = "Paseo Supervisor";
+
 interface DaemonRunnerConfig {
   devMode: boolean;
   workerArgs: string[];

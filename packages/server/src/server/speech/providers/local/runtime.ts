@@ -5,7 +5,6 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-pr
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
 import {
-  getLocalSpeechModelDir,
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
   LocalSttModelIdSchema,
@@ -14,16 +13,12 @@ import {
   type LocalSttModelId,
   type LocalTtsModelId,
 } from "./models.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
-import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
-import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
-import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
 import {
-  ensureSileroVadModel,
-  SherpaSileroTurnDetectionProvider,
-} from "./sherpa/silero-vad-provider.js";
-
-type LocalSttEngine = SherpaOfflineRecognizerEngine;
+  LocalSpeechWorkerClient,
+  WorkerBackedSpeechToTextProvider,
+  WorkerBackedTextToSpeechProvider,
+  WorkerBackedTurnDetectionProvider,
+} from "./worker-client.js";
 
 interface ResolvedLocalModels {
   dictationLocalSttModel: LocalSttModelId;
@@ -48,10 +43,6 @@ export interface InitializedLocalSpeech {
   } | null;
   availability: LocalSpeechAvailability;
   cleanup: () => void;
-}
-
-function buildModelDownloadHint(modelId: LocalSpeechModelId): string {
-  return `Use 'paseo speech download --model ${modelId}' to download this model.`;
 }
 
 function resolveConfiguredLocalModels(speechConfig: PaseoSpeechConfig | null): ResolvedLocalModels {
@@ -104,131 +95,43 @@ function computeRequiredLocalModelIds(params: {
   return Array.from(ids);
 }
 
-async function createLocalSttEngine(params: {
-  modelId: LocalSttModelId;
-  modelsDir: string;
-  logger: Logger;
-}): Promise<LocalSttEngine> {
-  const { modelId, modelsDir, logger } = params;
-
-  const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-  return new SherpaOfflineRecognizerEngine(
-    {
-      model: {
-        kind: "nemo_transducer",
-        encoder: `${modelDir}/encoder.int8.onnx`,
-        decoder: `${modelDir}/decoder.int8.onnx`,
-        joiner: `${modelDir}/joiner.int8.onnx`,
-        tokens: `${modelDir}/tokens.txt`,
-      },
-      numThreads: 2,
-      debug: 0,
-    },
-    logger,
-  );
-}
-
-type LocalConfig = NonNullable<PaseoSpeechConfig["local"]>;
-
 function isLocalProviderEnabled(provider: { enabled?: boolean; provider: string }): boolean {
   return provider.enabled !== false && provider.provider === "local";
 }
 
-async function initializeLocalTurnDetection(
-  localConfig: LocalConfig | null,
-  logger: Logger,
-): Promise<TurnDetectionProvider> {
-  let vadModelPath: string | undefined;
-  if (localConfig) {
-    try {
-      vadModelPath = await ensureSileroVadModel(localConfig.modelsDir, logger);
-    } catch (err) {
-      logger.warn({ err }, "Failed to provision Silero VAD model, falling back to bundled");
-    }
-  }
-  return new SherpaSileroTurnDetectionProvider({ modelPath: vadModelPath }, logger);
+function warnLocalConfigMissing(logger: Logger, feature: string): void {
+  logger.warn(
+    { configured: false },
+    `Local ${feature} selected but local provider config is missing; ${feature} will be unavailable`,
+  );
 }
 
-async function initializeLocalVoiceStt(params: {
-  localConfig: LocalConfig | null;
-  modelId: LocalSttModelId;
-  logger: Logger;
-  getLocalSttEngine: (modelId: LocalSttModelId) => Promise<LocalSttEngine | null>;
-}): Promise<SpeechToTextProvider | null> {
-  const { localConfig, modelId, logger, getLocalSttEngine } = params;
-  if (!localConfig) {
-    logger.warn(
-      { configured: false },
-      "Local STT selected for voice but local provider config is missing; STT will be unavailable",
-    );
-    return null;
-  }
-  const voiceEngine = await getLocalSttEngine(modelId);
-  return voiceEngine ? new SherpaOnnxParakeetSTT({ engine: voiceEngine }, logger) : null;
+function initializeLocalTurnDetection(params: {
+  client: LocalSpeechWorkerClient;
+}): TurnDetectionProvider {
+  const { client } = params;
+  return new WorkerBackedTurnDetectionProvider(client);
 }
 
-async function initializeLocalDictationStt(params: {
-  localConfig: LocalConfig | null;
-  modelId: LocalSttModelId;
-  logger: Logger;
-  getLocalSttEngine: (modelId: LocalSttModelId) => Promise<LocalSttEngine | null>;
-}): Promise<SpeechToTextProvider | null> {
-  const { localConfig, modelId, logger, getLocalSttEngine } = params;
-  if (!localConfig) {
-    logger.warn(
-      { configured: false },
-      "Local STT selected for dictation but local provider config is missing; dictation STT will be unavailable",
-    );
-    return null;
-  }
-  const dictationEngine = await getLocalSttEngine(modelId);
-  if (dictationEngine) {
-    return {
-      id: "local",
-      createSession: () =>
-        new SherpaParakeetRealtimeTranscriptionSession({ engine: dictationEngine }),
-    };
-  }
-  return null;
+function initializeLocalVoiceStt(params: {
+  client: LocalSpeechWorkerClient;
+}): SpeechToTextProvider {
+  const { client } = params;
+  return new WorkerBackedSpeechToTextProvider(client, "voiceStt");
 }
 
-async function initializeLocalVoiceTts(params: {
-  localConfig: LocalConfig | null;
-  speechConfig: PaseoSpeechConfig | null;
-  localModels: ResolvedLocalModels;
-  logger: Logger;
-}): Promise<TextToSpeechProvider | null> {
-  const { localConfig, speechConfig, localModels, logger } = params;
-  if (!localConfig) {
-    logger.warn(
-      { configured: false },
-      "Local TTS selected for voice but local provider config is missing; TTS will be unavailable",
-    );
-    return null;
-  }
-  try {
-    const modelDir = getLocalSpeechModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
-    return new SherpaOnnxTTS(
-      {
-        preset: localModels.voiceLocalTtsModel,
-        modelDir,
-        speakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
-        speed: speechConfig?.local?.models.voiceTtsSpeed,
-      },
-      logger,
-    );
-  } catch (err) {
-    logger.warn(
-      {
-        err,
-        modelsDir: localConfig.modelsDir,
-        modelId: localModels.voiceLocalTtsModel,
-        hint: buildModelDownloadHint(localModels.voiceLocalTtsModel),
-      },
-      "Local TTS engine unavailable",
-    );
-    return null;
-  }
+function initializeLocalDictationStt(params: {
+  client: LocalSpeechWorkerClient;
+}): SpeechToTextProvider {
+  const { client } = params;
+  return new WorkerBackedSpeechToTextProvider(client, "dictationStt");
+}
+
+function initializeLocalVoiceTts(params: {
+  client: LocalSpeechWorkerClient;
+}): TextToSpeechProvider {
+  const { client } = params;
+  return new WorkerBackedTextToSpeechProvider(client);
 }
 
 export async function initializeLocalSpeechServices(params: {
@@ -251,80 +154,56 @@ export async function initializeLocalSpeechServices(params: {
     models: localModels,
   });
 
-  const localSttEngines = new Map<LocalSttModelId, LocalSttEngine>();
-
-  const getLocalSttEngine = async (modelId: LocalSttModelId): Promise<LocalSttEngine | null> => {
-    const existing = localSttEngines.get(modelId);
-    if (existing) {
-      return existing;
-    }
-    if (!localConfig) {
-      return null;
-    }
-    try {
-      const created = await createLocalSttEngine({
-        modelId,
-        modelsDir: localConfig.modelsDir,
-        logger,
-      });
-      localSttEngines.set(modelId, created);
-      return created;
-    } catch (err) {
-      logger.warn(
-        {
-          err,
+  const workerClient = localConfig
+    ? new LocalSpeechWorkerClient({
+        config: {
           modelsDir: localConfig.modelsDir,
-          modelId,
-          hint: buildModelDownloadHint(modelId),
+          voiceSttModel: localModels.voiceLocalSttModel,
+          dictationSttModel: localModels.dictationLocalSttModel,
+          voiceTtsModel: localModels.voiceLocalTtsModel,
+          voiceTtsSpeakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
+          voiceTtsSpeed: speechConfig?.local?.models.voiceTtsSpeed,
         },
-        "Local STT engine unavailable",
-      );
-      return null;
-    }
-  };
+      })
+    : null;
 
   if (isLocalProviderEnabled(providers.voiceTurnDetection)) {
-    turnDetectionService = await initializeLocalTurnDetection(localConfig, logger);
+    if (workerClient) {
+      turnDetectionService = initializeLocalTurnDetection({ client: workerClient });
+    } else {
+      warnLocalConfigMissing(logger, "turn detection");
+    }
   }
 
   if (isLocalProviderEnabled(providers.voiceStt)) {
-    sttService = await initializeLocalVoiceStt({
-      localConfig,
-      modelId: localModels.voiceLocalSttModel,
-      logger,
-      getLocalSttEngine,
-    });
+    if (workerClient) {
+      sttService = initializeLocalVoiceStt({ client: workerClient });
+    } else {
+      warnLocalConfigMissing(logger, "voice STT");
+    }
   }
 
   if (isLocalProviderEnabled(providers.dictationStt)) {
-    dictationSttService = await initializeLocalDictationStt({
-      localConfig,
-      modelId: localModels.dictationLocalSttModel,
-      logger,
-      getLocalSttEngine,
-    });
+    if (workerClient) {
+      dictationSttService = initializeLocalDictationStt({ client: workerClient });
+    } else {
+      warnLocalConfigMissing(logger, "dictation STT");
+    }
   }
 
   if (isLocalProviderEnabled(providers.voiceTts)) {
-    localVoiceTtsProvider = await initializeLocalVoiceTts({
-      localConfig,
-      speechConfig,
-      localModels,
-      logger,
-    });
+    if (workerClient) {
+      localVoiceTtsProvider = initializeLocalVoiceTts({ client: workerClient });
+    } else {
+      warnLocalConfigMissing(logger, "voice TTS");
+    }
     if (localVoiceTtsProvider) {
       ttsService = localVoiceTtsProvider;
     }
   }
 
   const cleanup = () => {
-    const maybeFreeable = localVoiceTtsProvider as unknown as { free?: () => void } | null;
-    if (typeof maybeFreeable?.free === "function") {
-      maybeFreeable.free();
-    }
-    for (const engine of localSttEngines.values()) {
-      engine.free();
-    }
+    workerClient?.shutdown();
   };
 
   return {
