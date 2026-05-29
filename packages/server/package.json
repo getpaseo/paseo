@@ -1,12 +1,12 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.83",
+  "version": "0.1.85",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
     "dist/src",
     "dist/scripts",
-    "src/server/speech/providers/local/sherpa/assets",
+    "!dist/**/*.map",
     "README.md",
     ".env.example"
   ],
@@ -22,11 +22,6 @@
       "types": "./dist/server/utils/tool-call-parsers.d.ts",
       "source": "./src/utils/tool-call-parsers.ts",
       "default": "./dist/server/utils/tool-call-parsers.js"
-    },
-    "./utils/branch-slug": {
-      "types": "./dist/server/utils/branch-slug.d.ts",
-      "source": "./src/utils/branch-slug.ts",
-      "default": "./dist/server/utils/branch-slug.js"
     }
   },
   "publishConfig": {
@@ -44,7 +39,6 @@
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",
     "speech:download": "tsx scripts/download-speech-models.ts",
-    "speech:tts:matrix": "tsx scripts/generate-sherpa-tts-matrix.ts",
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --exclude \"**/*.e2e.test.ts\"",
@@ -63,12 +57,13 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.133",
-    "@getpaseo/highlight": "0.1.83",
-    "@getpaseo/relay": "0.1.83",
+    "@getpaseo/client": "0.1.85",
+    "@getpaseo/highlight": "0.1.85",
+    "@getpaseo/protocol": "0.1.85",
+    "@getpaseo/relay": "0.1.85",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",
-    "@sctg/sentencepiece-js": "^1.1.0",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
     "ajv": "^8.20.0",
@@ -76,9 +71,9 @@
     "dotenv": "^17.2.3",
     "express": "^4.18.2",
     "fast-deep-equal": "^3.1.3",
+    "lru-cache": "^11.5.1",
     "mnemonic-id": "^3.2.7",
     "node-pty": "1.2.0-beta.11",
-    "onnxruntime-node": "^1.23.0",
     "openai": "^4.20.0",
     "p-limit": "^7.3.0",
     "p-memoize": "^8.0.0",
@@ -86,7 +81,6 @@
     "pino-pretty": "^13.1.3",
     "qrcode": "^1.5.4",
     "rotating-file-stream": "^3.2.9",
-    "sherpa-onnx": "1.12.28",
     "sherpa-onnx-node": "1.12.28",
     "strip-ansi": "^7.1.2",
     "tree-kill": "^1.2.2",

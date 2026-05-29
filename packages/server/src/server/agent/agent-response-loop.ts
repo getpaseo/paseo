@@ -3,7 +3,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
-import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export interface StructuredGenerationLogger {
   info: (obj: object, msg?: string) => void;

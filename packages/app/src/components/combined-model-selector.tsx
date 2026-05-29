@@ -11,9 +11,19 @@ import { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb as platformIsWeb } from "@/constants/platform";
-import { ChevronDown, ChevronRight, Search, Star } from "lucide-react-native";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Search,
+  Settings,
+  Star,
+} from "lucide-react-native";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { SheetHeader } from "@/components/adaptive-modal-sheet";
+import { useProviderSettingsStore } from "@/stores/provider-settings-store";
+import { Button } from "@/components/ui/button";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 const IS_WEB = platformIsWeb;
 
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
@@ -48,7 +58,6 @@ import {
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
   getAllProviderModelRows,
-  getProviderDefaultLabel,
   getProviderModelRows,
   resolveSelectedModelLabel,
   type ProviderSelectionModelRow,
@@ -79,6 +88,7 @@ interface CombinedModelSelectorProps {
   onOpen?: () => void;
   onClose?: () => void;
   disabled?: boolean;
+  serverId?: string | null;
 }
 
 interface SelectorContentProps {
@@ -91,6 +101,7 @@ interface SelectorContentProps {
   onSelect: (provider: string, modelId: string) => void;
   onToggleFavorite?: (provider: string, modelId: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
+  serverId: string | null;
 }
 
 function normalizeSearchQuery(value: string): string {
@@ -268,42 +279,60 @@ function FavoritesSection({
 }
 
 interface GroupProviderButtonProps {
-  providerId: string;
-  providerLabel: string;
-  rowCount: number;
-  defaultLabel: string | null;
+  provider: ProviderSelectorProvider;
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  onSelectDefault: (providerId: string) => void;
 }
 
-function GroupProviderButton({
-  providerId,
-  providerLabel,
-  rowCount,
-  defaultLabel,
-  onDrillDown,
-  onSelectDefault,
-}: GroupProviderButtonProps) {
+function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    styles.rowIconButton,
+    Boolean(hovered) && styles.rowIconButtonHovered,
+    pressed && styles.rowIconButtonPressed,
+  ];
+}
+
+function GroupProviderButton({ provider, onDrillDown }: GroupProviderButtonProps) {
   const { theme } = useUnistyles();
-  const ProvIcon = getProviderIcon(providerId);
+  const ProvIcon = getProviderIcon(provider.id);
+  const selection = provider.modelSelection;
+
   const handlePress = useCallback(() => {
-    if (defaultLabel) {
-      onSelectDefault(providerId);
-      return;
-    }
-    onDrillDown(providerId, providerLabel);
-  }, [defaultLabel, onDrillDown, onSelectDefault, providerId, providerLabel]);
+    onDrillDown(provider.id, provider.label);
+  }, [onDrillDown, provider.id, provider.label]);
+
+  let stateNode: React.ReactNode;
+  if (selection.kind === "models") {
+    const count = selection.rows.length;
+    stateNode = (
+      <Text style={styles.drillDownCount}>{`${count} ${count === 1 ? "model" : "models"}`}</Text>
+    );
+  } else if (selection.kind === "loading") {
+    stateNode = (
+      <View style={styles.rowStateInline}>
+        <ActivityIndicator
+          size="small"
+          color={theme.colors.foregroundMuted}
+          style={styles.rowSpinner}
+        />
+        <Text style={styles.drillDownCount}>Loading</Text>
+      </View>
+    );
+  } else {
+    stateNode = (
+      <View style={styles.rowStateInline}>
+        <AlertTriangle size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        <Text style={styles.drillDownCount}>Error</Text>
+      </View>
+    );
+  }
+
   return (
     <Pressable onPress={handlePress} style={drillDownRowStyle}>
       <ProvIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      <Text style={styles.drillDownText}>{providerLabel}</Text>
+      <Text style={styles.drillDownText}>{provider.label}</Text>
       <View style={styles.drillDownTrailing}>
-        <Text style={styles.drillDownCount}>
-          {defaultLabel ?? `${rowCount} ${rowCount === 1 ? "model" : "models"}`}
-        </Text>
-        {defaultLabel ? null : (
-          <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        )}
+        {stateNode}
+        <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </View>
     </Pressable>
   );
@@ -312,61 +341,19 @@ function GroupProviderButton({
 function GroupedProviderRows({
   providers,
   onDrillDown,
-  onSelectDefault,
 }: {
   providers: ProviderSelectorProvider[];
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  onSelectDefault: (providerId: string) => void;
 }) {
   return (
     <View>
-      {providers.map((provider, index) => {
-        const rows = getProviderModelRows(provider);
-        const defaultLabel = getProviderDefaultLabel(provider);
-        return (
-          <View key={provider.id}>
-            {index > 0 ? <View style={styles.separator} /> : null}
-            <GroupProviderButton
-              providerId={provider.id}
-              providerLabel={provider.label}
-              rowCount={rows.length}
-              defaultLabel={defaultLabel}
-              onDrillDown={onDrillDown}
-              onSelectDefault={onSelectDefault}
-            />
-          </View>
-        );
-      })}
+      {providers.map((provider, index) => (
+        <View key={provider.id}>
+          {index > 0 ? <View style={styles.separator} /> : null}
+          <GroupProviderButton provider={provider} onDrillDown={onDrillDown} />
+        </View>
+      ))}
     </View>
-  );
-}
-
-function DefaultProviderRow({
-  providerId,
-  isSelected,
-  onSelect,
-}: {
-  providerId: string;
-  isSelected: boolean;
-  onSelect: (provider: string, modelId: string) => void;
-}) {
-  const { theme } = useUnistyles();
-  const ProviderIcon = getProviderIcon(providerId);
-  const handlePress = useCallback(() => {
-    onSelect(providerId, "");
-  }, [onSelect, providerId]);
-  const leadingSlot = useMemo(
-    () => <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-    [ProviderIcon, theme.iconSize.sm, theme.colors.foregroundMuted],
-  );
-
-  return (
-    <ComboboxItem
-      label="Default"
-      selected={isSelected}
-      onPress={handlePress}
-      leadingSlot={leadingSlot}
-    />
   );
 }
 
@@ -430,6 +417,31 @@ function ProviderModelRows({
   );
 }
 
+function ProviderErrorEmptyState({
+  serverId,
+  providerId,
+  message,
+}: {
+  serverId: string | null;
+  providerId: string;
+  message: string;
+}) {
+  const { theme } = useUnistyles();
+  const { refresh, isRefreshing } = useProvidersSnapshot(serverId);
+  const handleRetry = useCallback(() => {
+    void refresh([providerId]);
+  }, [refresh, providerId]);
+  return (
+    <View style={styles.emptyState}>
+      <AlertTriangle size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+      <Text style={styles.emptyStateText}>{message}</Text>
+      <Button variant="default" size="sm" onPress={handleRetry} disabled={isRefreshing}>
+        {isRefreshing ? "Retrying…" : "Retry"}
+      </Button>
+    </View>
+  );
+}
+
 function SelectorContent({
   view,
   providers,
@@ -440,6 +452,7 @@ function SelectorContent({
   onSelect,
   onToggleFavorite,
   onDrillDown,
+  serverId,
 }: SelectorContentProps) {
   const { theme } = useUnistyles();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
@@ -461,12 +474,6 @@ function SelectorContent({
     () => getAllProviderModelRows(providers).filter((row) => favoriteKeys.has(row.favoriteKey)),
     [favoriteKeys, providers],
   );
-  const handleSelectDefaultProvider = useCallback(
-    (providerId: string) => {
-      onSelect(providerId, "");
-    },
-    [onSelect],
-  );
   const hasResults = favoriteRows.length > 0 || providers.length > 0;
   const emptyState = (
     <View style={styles.emptyState}>
@@ -479,17 +486,28 @@ function SelectorContent({
     if (!selectedViewProvider) {
       return emptyState;
     }
-
-    if (getProviderDefaultLabel(selectedViewProvider) && !normalizedQuery) {
+    const drillSelection = selectedViewProvider.modelSelection;
+    if (drillSelection.kind === "loading") {
       return (
-        <DefaultProviderRow
+        <View style={styles.emptyState}>
+          <ActivityIndicator
+            size="small"
+            color={theme.colors.foregroundMuted}
+            style={styles.rowSpinner}
+          />
+          <Text style={styles.emptyStateText}>Loading</Text>
+        </View>
+      );
+    }
+    if (drillSelection.kind === "error") {
+      return (
+        <ProviderErrorEmptyState
+          serverId={serverId}
           providerId={view.providerId}
-          isSelected={view.providerId === selectedProvider && !selectedModel}
-          onSelect={onSelect}
+          message={drillSelection.message}
         />
       );
     }
-
     if (visibleRows.length === 0) {
       return emptyState;
     }
@@ -519,11 +537,7 @@ function SelectorContent({
       />
 
       {providers.length > 0 ? (
-        <GroupedProviderRows
-          providers={providers}
-          onDrillDown={onDrillDown}
-          onSelectDefault={handleSelectDefaultProvider}
-        />
+        <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
       ) : null}
 
       {!hasResults ? emptyState : null}
@@ -543,6 +557,7 @@ export function CombinedModelSelector({
   onOpen,
   onClose,
   disabled = false,
+  serverId = null,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
   const anchorRef = useRef<View>(null);
@@ -648,6 +663,10 @@ export function CombinedModelSelector({
     handleOpenChange(!isOpen);
   }, [handleOpenChange, isOpen]);
 
+  const handleClose = useCallback(() => {
+    handleOpenChange(false);
+  }, [handleOpenChange]);
+
   const triggerStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.trigger,
@@ -673,21 +692,42 @@ export function CombinedModelSelector({
     setSearchQuery(value);
   }, []);
 
+  const openHeaderProviderSettings = useCallback(() => {
+    if (!serverId || view.kind !== "provider") return;
+    useProviderSettingsStore.getState().open({ serverId, provider: view.providerId });
+    handleClose();
+  }, [serverId, view, handleClose]);
+
   const sheetHeader = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
       return { title: "Select provider" };
     }
     const ProviderIconForView = getProviderIcon(view.providerId);
+    const headerActions = (
+      <Pressable
+        onPress={openHeaderProviderSettings}
+        disabled={!serverId}
+        hitSlop={8}
+        style={iconButtonStyle}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${view.providerLabel} settings`}
+        testID={`selector-header-settings-${view.providerId}`}
+      >
+        <Settings
+          size={theme.iconSize.sm}
+          color={!serverId ? theme.colors.border : theme.colors.foregroundMuted}
+        />
+      </Pressable>
+    );
     return {
       title: view.providerLabel,
       leading: ProviderIconForView ? (
         <ProviderIconForView size={theme.iconSize.md} color={theme.colors.foreground} />
       ) : undefined,
       back: singleProviderView ? undefined : { onPress: handleBackToAll },
+      actions: headerActions,
       search: {
-        value: searchQuery,
         onChange: handleSearchQueryChange,
-        initialValue: searchQuery,
         resetKey: `${view.providerId}:${searchResetKey}`,
         placeholder: "Search models...",
         autoFocus: platformIsWeb,
@@ -697,11 +737,15 @@ export function CombinedModelSelector({
   }, [
     view,
     singleProviderView,
+    serverId,
+    openHeaderProviderSettings,
+    theme.colors.border,
+    theme.colors.foregroundMuted,
     handleBackToAll,
     handleSearchQueryChange,
-    searchQuery,
     searchResetKey,
     theme.iconSize.md,
+    theme.iconSize.sm,
     theme.colors.foreground,
   ]);
 
@@ -760,6 +804,7 @@ export function CombinedModelSelector({
             onSelect={handleSelect}
             onToggleFavorite={onToggleFavorite}
             onDrillDown={handleDrillDown}
+            serverId={serverId}
           />
         ) : (
           <View style={styles.sheetLoadingState}>
@@ -856,6 +901,34 @@ const styles = StyleSheet.create((theme) => ({
   drillDownCount: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+  },
+  rowStateInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  rowErrorText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    maxWidth: 140,
+  },
+  rowIconButton: {
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowSpinner: {
+    transform: [{ scale: 0.7 }],
+  },
+  rowIconButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  rowIconButtonPressed: {
+    backgroundColor: theme.colors.surface1,
   },
   emptyState: {
     paddingVertical: theme.spacing[4],

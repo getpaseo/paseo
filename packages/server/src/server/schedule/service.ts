@@ -7,7 +7,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
-import { getUnattendedModeId } from "../agent/provider-manifest.js";
+import { getUnattendedModeId } from "@getpaseo/protocol/provider-manifest";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -18,7 +18,7 @@ import type {
   StoredSchedule,
   UpdateScheduleInput,
   UpdateScheduleNewAgentConfig,
-} from "./types.js";
+} from "@getpaseo/protocol/schedule/types";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 
@@ -309,6 +309,28 @@ export class ScheduleService {
 
   async delete(id: string): Promise<void> {
     await this.store.delete(id);
+  }
+
+  async deleteForAgent(agentId: string): Promise<number> {
+    const schedules = await this.store.list();
+    const matches = schedules.filter(
+      (schedule) => schedule.target.type === "agent" && schedule.target.agentId === agentId,
+    );
+    const results = await Promise.allSettled(
+      matches.map((schedule) => this.store.delete(schedule.id)),
+    );
+    let deleted = 0;
+    for (const [index, result] of results.entries()) {
+      if (result.status === "fulfilled") {
+        deleted += 1;
+      } else {
+        this.logger.warn(
+          { err: result.reason, scheduleId: matches[index].id, agentId },
+          "Failed to delete schedule for archived agent; continuing",
+        );
+      }
+    }
+    return deleted;
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {

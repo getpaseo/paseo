@@ -46,6 +46,7 @@ export function buildDraftAgentControls(input: {
     onSetFeature,
     onDropdownClose,
     onModelSelectorOpen: formState.refetchProviderModelsIfStale,
+    modelSelectorServerId: formState.selectedServerId,
   };
 }
 

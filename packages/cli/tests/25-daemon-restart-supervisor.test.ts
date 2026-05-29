@@ -7,7 +7,7 @@
 
 import assert from "node:assert";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "zx";
@@ -92,6 +92,11 @@ async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   } catch {
     return { localDaemon: null, pid: null };
   }
+}
+
+async function readCapturedSupervisorLogs(paseoHome: string, recentLogs: string): Promise<string> {
+  const durableLogs = await readFile(join(paseoHome, "daemon.log"), "utf8").catch(() => "");
+  return `${recentLogs}\n${durableLogs}`;
 }
 
 async function waitFor(
@@ -221,6 +226,11 @@ try {
     statusAfterRestart.pid,
     supervisorPid,
     "supervisor pid should remain stable across restart",
+  );
+  const capturedSupervisorLogs = await readCapturedSupervisorLogs(paseoHome, recentSupervisorLogs);
+  assert(
+    capturedSupervisorLogs.includes("Restart requested by worker. Stopping worker for restart..."),
+    `restart should route through supervisor restart intent, logs:\n${capturedSupervisorLogs}`,
   );
   console.log("✓ app-style restart keeps daemon healthy and restarts worker\n");
 } finally {

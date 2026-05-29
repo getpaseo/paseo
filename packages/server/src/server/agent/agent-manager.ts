@@ -4,8 +4,8 @@ import { stat } from "node:fs/promises";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
-} from "../../shared/agent-lifecycle.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+} from "@getpaseo/protocol/agent-lifecycle";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -53,7 +53,7 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
-import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -154,6 +154,8 @@ export type AgentAttentionCallback = (params: {
   provider: AgentProvider;
   reason: "finished" | "error" | "permission";
 }) => void;
+
+export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
 
 export interface ProviderAvailability {
   provider: AgentProvider;
@@ -427,6 +429,7 @@ export class AgentManager {
   private mcpBaseUrl: string | null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
+  private onAgentArchived?: AgentArchivedCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
 
@@ -487,6 +490,10 @@ export class AgentManager {
     this.onAgentAttention = callback;
   }
 
+  setAgentArchivedCallback(callback: AgentArchivedCallback): void {
+    this.onAgentArchived = callback;
+  }
+
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
   }
@@ -537,6 +544,13 @@ export class AgentManager {
     const next = new Date(nextMs);
     agent.updatedAt = next;
     return next;
+  }
+
+  private nextStoredUpdatedAt(record: StoredAgentRecord): string {
+    const previousMs = Date.parse(record.updatedAt);
+    const nowMs = Date.now();
+    const nextMs = nowMs > previousMs ? nowMs : previousMs + 1;
+    return new Date(nextMs).toISOString();
   }
 
   hasInFlightRun(agentId: string): boolean {
@@ -1112,7 +1126,21 @@ export class AgentManager {
       this.dispatchArchivedStoredAgent(archivedRecord);
     }
 
+    await this.fireAgentArchived(record.id);
+
     return archivedRecord;
+  }
+
+  private async fireAgentArchived(agentId: string): Promise<void> {
+    const callback = this.onAgentArchived;
+    if (!callback) {
+      return;
+    }
+    try {
+      await callback(agentId);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "onAgentArchived callback failed");
+    }
   }
 
   private dispatchArchivedStoredAgent(record: StoredAgentRecord): void {
@@ -1296,6 +1324,14 @@ export class AgentManager {
 
     await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
 
+    if (this.agents.has(agentId)) {
+      this.notifyAgentState(agentId);
+    } else if (!nextRecord.internal) {
+      this.dispatchArchivedStoredAgent(nextRecord);
+    }
+
+    await this.fireAgentArchived(agentId);
+
     return nextRecord;
   }
 
@@ -1360,6 +1396,7 @@ export class AgentManager {
       ...existing,
       ...(updates.title ? { title: updates.title } : {}),
       ...(updates.labels ? { labels: { ...existing.labels, ...updates.labels } } : {}),
+      updatedAt: this.nextStoredUpdatedAt(existing),
     });
   }
 

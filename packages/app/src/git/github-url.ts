@@ -1,4 +1,4 @@
-import { parseGitHubRemoteUrl } from "@server/shared/git-remote";
+import { parseGitHubRemoteUrl } from "@getpaseo/protocol/git-remote";
 
 export function parseGitHubRepoFromRemote(remoteUrl: string | null | undefined): string | null {
   const trimmed = remoteUrl?.trim();

@@ -1,5 +1,5 @@
 import { readPaseoConfigJson } from "./paseo-config-file.js";
-import { PaseoConfigSchema } from "./paseo-config-schema.js";
+import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
 import { wrapWithUserInstructions } from "./wrap-user-instructions.js";
 
 export type MetadataConfigKey = "agentTitle" | "branchName" | "commitMessage" | "pullRequest";

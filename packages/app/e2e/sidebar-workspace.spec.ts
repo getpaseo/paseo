@@ -1,6 +1,3 @@
-import { execSync } from "node:child_process";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
@@ -10,57 +7,15 @@ import {
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
 } from "./helpers/sidebar";
-import { createTempGitRepo } from "./helpers/workspace";
+import { seedWorkspace } from "./helpers/seed-client";
 import { expectWorkspaceHeader } from "./helpers/workspace-ui";
-import { connectWorkspaceSetupClient } from "./helpers/workspace-setup";
+import { getServerId } from "./helpers/server-id";
+import { escapeRegex } from "./helpers/regex";
 
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-  return serverId;
-}
+const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
 
 function getWorkspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function setGitHubRemote(repoPath: string): void {
-  execSync("git remote set-url origin https://github.com/test-owner/test-repo.git", {
-    cwd: repoPath,
-    stdio: "ignore",
-  });
-}
-
-async function createTempDirectory(prefix = "paseo-e2e-dir-") {
-  const tempRoot = process.platform === "win32" ? tmpdir() : await realpath("/tmp");
-  const dirPath = await mkdtemp(path.join(tempRoot, prefix));
-  await writeFile(path.join(dirPath, "README.md"), "# Temp Directory\n");
-  return {
-    path: dirPath,
-    cleanup: async () => {
-      await rm(dirPath, { recursive: true, force: true });
-    },
-  };
-}
-
-async function openProjectViaDaemon(
-  client: Awaited<ReturnType<typeof connectWorkspaceSetupClient>>,
-  cwd: string,
-): Promise<{ id: string; name: string }> {
-  const result = await client.openProject(cwd);
-  if (!result.workspace || result.error) {
-    throw new Error(result.error ?? `Failed to open project ${cwd}`);
-  }
-  return {
-    id: result.workspace.id,
-    name: result.workspace.name,
-  };
 }
 
 async function openWorkspaceFromSidebar(
@@ -92,15 +47,15 @@ async function waitForSidebarWorkspace(page: import("@playwright/test").Page, wo
 
 test.describe("Sidebar workspace list", () => {
   test("project with GitHub remote shows owner/repo name in sidebar", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-remote-", { withRemote: true });
+    const workspace = await seedWorkspace({
+      repoPrefix: "sidebar-remote-",
+      repo: { withRemote: true, originUrl: GITHUB_REMOTE_URL },
+    });
 
     try {
-      setGitHubRemote(repo.path);
-      const workspace = await openProjectViaDaemon(client, repo.path);
       await gotoAppShell(page);
       await waitForSidebarProject(page, "test-owner/test-repo");
-      await waitForSidebarWorkspace(page, workspace.id);
+      await waitForSidebarWorkspace(page, workspace.workspaceId);
 
       const projectRow = page
         .locator('[data-testid^="sidebar-project-row-"]')
@@ -108,81 +63,73 @@ test.describe("Sidebar workspace list", () => {
         .first();
 
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(projectRow).not.toContainText(path.basename(repo.path));
+      await expect(projectRow).not.toContainText(path.basename(workspace.repoPath));
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 
   test("project shows workspace under it", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-workspace-under-project-");
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-workspace-under-project-" });
 
     try {
-      const workspace = await openProjectViaDaemon(client, repo.path);
       await gotoAppShell(page);
 
-      await waitForSidebarProject(page, path.basename(repo.path));
-      await waitForSidebarWorkspace(page, workspace.id);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await waitForSidebarWorkspace(page, workspace.workspaceId);
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 
   test("non-git project shows directory name", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const project = await createTempDirectory("sidebar-directory-");
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-directory-", git: false });
 
     try {
-      await openProjectViaDaemon(client, project.path);
       await gotoAppShell(page);
 
-      const projectRow = await waitForSidebarProject(page, path.basename(project.path));
-      await expect(projectRow).toContainText(path.basename(project.path));
+      const directoryName = path.basename(workspace.repoPath);
+      const projectRow = await waitForSidebarProject(page, directoryName);
+      await expect(projectRow).toContainText(directoryName);
     } finally {
-      await client.close();
-      await project.cleanup();
+      await workspace.cleanup();
     }
   });
 
   test("workspace header shows correct title and subtitle", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-header-", { withRemote: true });
+    const workspace = await seedWorkspace({
+      repoPrefix: "sidebar-header-",
+      repo: { withRemote: true, originUrl: GITHUB_REMOTE_URL },
+    });
 
     try {
-      setGitHubRemote(repo.path);
-      const workspace = await openProjectViaDaemon(client, repo.path);
       await gotoAppShell(page);
       await waitForSidebarProject(page, "test-owner/test-repo");
-      await waitForSidebarWorkspace(page, workspace.id);
-      await openWorkspaceFromSidebar(page, workspace.id);
+      await waitForSidebarWorkspace(page, workspace.workspaceId);
+      await openWorkspaceFromSidebar(page, workspace.workspaceId);
 
       await expectWorkspaceHeader(page, {
-        title: workspace.name,
+        title: workspace.workspaceName,
         subtitle: "test-owner/test-repo",
       });
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 
   test("git project shows branch name in workspace row", async ({ page }) => {
-    const client = await connectWorkspaceSetupClient();
-    const repo = await createTempGitRepo("sidebar-branch-");
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-branch-" });
 
     try {
-      const workspace = await openProjectViaDaemon(client, repo.path);
       await gotoAppShell(page);
-      await waitForSidebarProject(page, path.basename(repo.path));
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
 
-      expect(workspace.name).toBe("main");
-      await expect(await waitForSidebarWorkspace(page, workspace.id)).toContainText("main");
+      expect(workspace.workspaceName).toBe("main");
+      await expect(await waitForSidebarWorkspace(page, workspace.workspaceId)).toContainText(
+        "main",
+      );
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });

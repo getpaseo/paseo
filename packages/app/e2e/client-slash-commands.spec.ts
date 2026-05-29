@@ -1,8 +1,6 @@
 import { expect, test, type Page } from "./fixtures";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { composerLocator, expectComposerVisible, submitMessage } from "./helpers/composer";
-import { connectTerminalClient, type TerminalPerfDaemonClient } from "./helpers/terminal-perf";
-import { createTempGitRepo } from "./helpers/workspace";
+import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import {
   expectSessionRowArchived,
   expectWorkspaceTabHidden,
@@ -11,21 +9,11 @@ import {
 } from "./helpers/archive-tab";
 
 interface SlashCommandScenario {
-  agent: { id: string };
-  client: TerminalPerfDaemonClient;
-  cwd: string;
+  agentId: string;
   title: string;
 }
 
 const REPLACEMENT_PROMPT = "Replacement prompt after slash clear.";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
 
 async function withOpenReadyMockAgent(
   page: Page,
@@ -36,68 +24,23 @@ async function withOpenReadyMockAgent(
   },
   run: (scenario: SlashCommandScenario) => Promise<void>,
 ): Promise<void> {
-  const repo = await createTempGitRepo("client-slash-command-");
-  const client = await connectTerminalClient();
-
-  try {
-    await openProject(client, repo.path);
-    const agent = await createReadyMockAgent(client, {
-      cwd: repo.path,
-      title: input.title,
-      model: input.model,
-      modeId: input.modeId,
-    });
-    await openActiveAgentTab(page, { cwd: repo.path, agentId: agent.id });
-
-    await run({ agent, client, cwd: repo.path, title: input.title });
-  } finally {
-    await client.close();
-    await repo.cleanup();
-  }
-}
-
-async function openProject(client: TerminalPerfDaemonClient, cwd: string): Promise<void> {
-  const opened = await client.openProject(cwd);
-  if (!opened.workspace) {
-    throw new Error(opened.error ?? `Failed to open project ${cwd}`);
-  }
-}
-
-async function createReadyMockAgent(
-  client: TerminalPerfDaemonClient,
-  input: {
-    cwd: string;
-    title: string;
-    model?: string;
-    modeId?: string;
-  },
-): Promise<{ id: string }> {
-  const agent = await client.createAgent({
-    provider: "mock",
-    cwd: input.cwd,
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "client-slash-command-",
     title: input.title,
-    modeId: input.modeId ?? "load-test",
-    model: input.model ?? "ten-second-stream",
+    model: input.model,
+    modeId: input.modeId,
     initialPrompt: "Prepare a client slash command test agent.",
   });
-  return { id: agent.id };
-}
 
-async function openActiveAgentTab(
-  page: Page,
-  input: { cwd: string; agentId: string },
-): Promise<void> {
-  const agentUrl = `${buildHostWorkspaceRoute(
-    getServerId(),
-    input.cwd,
-  )}?open=${encodeURIComponent(`agent:${input.agentId}`)}`;
-  await page.goto(agentUrl);
-  await page.waitForURL(
-    (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
-    { timeout: 60_000 },
-  );
-  await expectWorkspaceTabVisible(page, input.agentId);
-  await expectComposerVisible(page);
+  try {
+    await openAgentRoute(page, session);
+    await expectWorkspaceTabVisible(page, session.agentId);
+    await expectComposerVisible(page);
+
+    await run({ agentId: session.agentId, title: input.title });
+  } finally {
+    await session.cleanup();
+  }
 }
 
 async function runClientSlashCommand(page: Page, command: "/quit" | "/clear"): Promise<void> {
@@ -169,9 +112,9 @@ async function waitForReplacementAgentId(page: Page, oldAgentId: string): Promis
 
 test.describe("Client slash commands", () => {
   test("slash quit archives the active agent and removes its tab", async ({ page }) => {
-    await withOpenReadyMockAgent(page, { title: "Slash quit e2e" }, async ({ agent, title }) => {
+    await withOpenReadyMockAgent(page, { title: "Slash quit e2e" }, async ({ agentId, title }) => {
       await runClientSlashCommand(page, "/quit");
-      await expectWorkspaceTabHidden(page, agent.id);
+      await expectWorkspaceTabHidden(page, agentId);
       await expectAgentArchivedInSessions(page, title);
     });
   });
@@ -180,9 +123,9 @@ test.describe("Client slash commands", () => {
     await withOpenReadyMockAgent(
       page,
       { title: "Slash quit autocomplete e2e" },
-      async ({ agent, title }) => {
+      async ({ agentId, title }) => {
         await selectClientSlashCommand(page, "/qu", "/exit");
-        await expectWorkspaceTabHidden(page, agent.id);
+        await expectWorkspaceTabHidden(page, agentId);
         await expectAgentArchivedInSessions(page, title);
       },
     );
@@ -192,12 +135,12 @@ test.describe("Client slash commands", () => {
     await withOpenReadyMockAgent(
       page,
       { title: "Slash clear e2e", model: "ten-second-stream", modeId: "load-test" },
-      async ({ agent, title }) => {
+      async ({ agentId, title }) => {
         await runClientSlashCommand(page, "/clear");
-        await expectWorkspaceTabHidden(page, agent.id);
+        await expectWorkspaceTabHidden(page, agentId);
         await expectReplacementDraftMatchesPreviousSetup(page);
         await createAgentFromReplacementDraft(page);
-        await waitForReplacementAgentId(page, agent.id);
+        await waitForReplacementAgentId(page, agentId);
         await expectAgentArchivedInSessions(page, title);
       },
     );

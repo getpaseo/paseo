@@ -11,10 +11,12 @@ import {
 } from "../services/github-service.js";
 import {
   getCheckoutDiff as getCheckoutDiffUncached,
+  getCheckoutSnapshotFacts as getCheckoutSnapshotFactsUncached,
   getCheckoutStatus as getCheckoutStatusUncached,
   resolveAbsoluteGitDir as resolveAbsoluteGitDirReal,
   type CheckoutDiffCompare,
   type CheckoutDiffResult,
+  type CheckoutSnapshotFacts,
   type CheckoutStatusGit,
   type PullRequestStatusResult,
 } from "../utils/checkout-git.js";
@@ -54,8 +56,33 @@ function createDeferred<T>() {
 }
 
 async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+function createCheckoutFacts(
+  cwd: string,
+  overrides?: Partial<Extract<CheckoutSnapshotFacts, { isGit: true }>>,
+): CheckoutSnapshotFacts {
+  return {
+    isGit: true,
+    worktreeRoot: cwd,
+    currentBranch: "main",
+    remoteUrl: "https://github.com/acme/repo.git",
+    absoluteGitDir: join(cwd, ".git"),
+    gitCommonDir: join(cwd, ".git"),
+    paseoWorktree: { isPaseoOwnedWorktree: false },
+    storedBaseRef: null,
+    resolvedBaseRef: "main",
+    mainRepoRoot: null,
+    comparisonBaseRef: null,
+    branchRemoteName: null,
+    branchMergeRef: null,
+    trackedOriginBranch: null,
+    pullRequestLookupTarget: { headRef: "main" },
+    ...overrides,
+  };
 }
 
 function createCheckoutStatus(
@@ -200,6 +227,7 @@ function createGitHubServiceStub(): GitHubService {
 }
 
 interface CreateServiceOptions {
+  getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -222,6 +250,7 @@ function buildDefaultServiceDeps() {
   return {
     watch: (() => createWatcher()) as never,
     readdir: vi.fn(async () => []),
+    getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutFacts(cwd)),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
     getCheckoutShortstat: vi.fn(async () => ({
       additions: 1,
@@ -594,10 +623,12 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
-    expect(getPullRequestStatus).toHaveBeenCalledWith(REPO_CWD, expect.anything(), {
-      force: true,
-      reason: "merge-pr-validation",
-    });
+    expect(getPullRequestStatus).toHaveBeenCalledWith(
+      REPO_CWD,
+      expect.anything(),
+      { force: true, reason: "merge-pr-validation" },
+      expect.anything(),
+    );
 
     service.dispose();
   });
@@ -679,10 +710,12 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
-    expect(getPullRequestStatus).toHaveBeenCalledWith(REPO_CWD, expect.anything(), {
-      force: false,
-      reason: "initial",
-    });
+    expect(getPullRequestStatus).toHaveBeenCalledWith(
+      REPO_CWD,
+      expect.anything(),
+      { force: false, reason: "initial" },
+      expect.anything(),
+    );
 
     subscription.unsubscribe();
     service.dispose();
@@ -690,13 +723,13 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("self-heal retries workspace observation setup while a listener remains active", async () => {
     let nowMs = 0;
-    const resolveAbsoluteGitDir = vi
-      .fn<() => Promise<string | null>>()
-      .mockRejectedValueOnce(new Error("git dir temporarily unavailable"))
-      .mockResolvedValue(join(REPO_CWD, ".git"));
+    const getCheckoutSnapshotFacts = vi
+      .fn<(cwd: string) => Promise<CheckoutSnapshotFacts>>()
+      .mockRejectedValueOnce(new Error("git facts temporarily unavailable"))
+      .mockImplementation(async (cwd: string) => createCheckoutFacts(cwd));
     const watch = vi.fn(() => createWatcher() as never);
     const service = createService({
-      resolveAbsoluteGitDir,
+      getCheckoutSnapshotFacts,
       watch,
       now: () => new Date(nowMs),
     });
@@ -704,15 +737,16 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await flushPromises();
 
-    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalled();
     expect(watch).not.toHaveBeenCalled();
+    const factsCallsBeforeSelfHeal = getCheckoutSnapshotFacts.mock.calls.length;
 
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(2);
-    expect(resolveAbsoluteGitDir).toHaveBeenLastCalledWith(REPO_CWD);
+    expect(getCheckoutSnapshotFacts.mock.calls.length).toBeGreaterThan(factsCallsBeforeSelfHeal);
+    expect(getCheckoutSnapshotFacts).toHaveBeenLastCalledWith(REPO_CWD, expect.anything());
 
     subscription.unsubscribe();
     service.dispose();
@@ -1311,6 +1345,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     ];
     const listPaseoWorktrees = vi.fn(async () => worktrees);
     const service = createService({
+      getCheckoutSnapshotFacts: getCheckoutSnapshotFactsUncached as never,
       getCheckoutStatus: getCheckoutStatusUncached as never,
       listPaseoWorktrees,
     });
@@ -1627,6 +1662,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
         watch: watchSpy as never,
         readdir: readdir as never,
         runGitCommand: runGitCommandReal as never,
+        getCheckoutSnapshotFacts: getCheckoutSnapshotFactsUncached as never,
         getCheckoutStatus: getCheckoutStatusUncached as never,
         resolveAbsoluteGitDir: resolveAbsoluteGitDirReal as never,
       });

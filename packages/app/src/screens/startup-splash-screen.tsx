@@ -234,7 +234,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorMessage: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.code,
     lineHeight: 20,
     fontFamily: Fonts.mono,
   },
@@ -258,7 +258,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   logsText: {
     fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.code,
     color: theme.colors.foreground,
     lineHeight: 18,
     ...(isWeb

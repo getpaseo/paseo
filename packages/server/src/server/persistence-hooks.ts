@@ -5,7 +5,6 @@ import type {
   AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import { buildProviderRegistry } from "./agent/provider-registry.js";
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
@@ -22,18 +21,6 @@ type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
 interface BuildSessionConfigOptions {
   validProviders?: Iterable<AgentProvider>;
-}
-
-type RegisteredProviders = ReturnType<typeof buildProviderRegistry> | Iterable<AgentProvider>;
-
-function isProviderRegistry(
-  registeredProviders: RegisteredProviders,
-): registeredProviders is ReturnType<typeof buildProviderRegistry> {
-  return (
-    typeof registeredProviders === "object" &&
-    registeredProviders !== null &&
-    !(Symbol.iterator in registeredProviders)
-  );
 }
 
 /**
@@ -118,29 +105,15 @@ export function extractTimestamps(record: StoredAgentRecord): {
   };
 }
 
-function hasRegisteredProvider(registeredProviders: RegisteredProviders, value: string): boolean {
-  if (isProviderRegistry(registeredProviders)) {
-    return Object.prototype.hasOwnProperty.call(registeredProviders, value);
-  }
-  return new Set(registeredProviders).has(value);
-}
-
-export function isRegisteredProvider(
-  providerRegistry: ReturnType<typeof buildProviderRegistry>,
-  value: string,
-): boolean {
-  return hasRegisteredProvider(providerRegistry, value);
-}
-
 export function toAgentPersistenceHandle(
-  registeredProviders: RegisteredProviders,
+  registeredProviders: Iterable<AgentProvider>,
   handle: StoredAgentRecord["persistence"],
 ): AgentPersistenceHandle | null {
   if (!handle) {
     return null;
   }
   const provider = handle.provider;
-  if (!hasRegisteredProvider(registeredProviders, provider)) {
+  if (!new Set(registeredProviders).has(provider)) {
     return null;
   }
   if (!handle.sessionId) {

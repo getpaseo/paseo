@@ -6,6 +6,11 @@ import {
   SidebarCalloutDescriptionText,
 } from "@/components/sidebar-callout";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
+import {
+  resolveUpdateCalloutDescriptor,
+  type UpdateCalloutActionDescriptor,
+  type UpdateCalloutBody,
+} from "@/desktop/updates/resolve-update-callout";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -13,47 +18,22 @@ import { openExternalUrl } from "@/utils/open-external-url";
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const CHANGELOG_URL = "https://paseo.sh/changelog";
 
-function resolveUpdateCalloutTitle(args: { isInstalling: boolean; isError: boolean }): string {
-  if (args.isInstalling) return "Installing update";
-  if (args.isError) return "Update failed";
-  return "Update available";
+function renderBody(body: UpdateCalloutBody): ReactNode {
+  if (body.kind === "installing") return "Installing and restarting...";
+  if (body.kind === "error") return body.message;
+  return <UpdateAvailableDescription versionLabel={body.versionLabel ?? undefined} />;
 }
 
-function resolveUpdateCalloutDescription(args: {
-  isInstalling: boolean;
-  isError: boolean;
-  errorMessage: string | null;
-  latestVersion: string | undefined;
-}): ReactNode {
-  if (args.isInstalling) return "Installing and restarting...";
-  if (args.isError) return args.errorMessage ?? "Something went wrong.";
-  if (args.latestVersion) {
-    return (
-      <UpdateAvailableDescription versionLabel={`v${args.latestVersion.replace(/^v/i, "")}`} />
-    );
-  }
-  return <UpdateAvailableDescription />;
-}
-
-function buildUpdateCalloutActions(args: {
-  isInstalling: boolean;
-  isError: boolean;
-  openChangelog: () => void;
-  retry: () => void;
-  install: () => void;
-}): SidebarCalloutAction[] {
-  const actions: SidebarCalloutAction[] = [{ label: "What's new", onPress: args.openChangelog }];
-  if (args.isError) {
-    actions.push({ label: "Retry", onPress: args.retry, variant: "primary" });
-  } else {
-    actions.push({
-      label: args.isInstalling ? "Installing..." : "Install & restart",
-      onPress: args.install,
-      variant: "primary",
-      disabled: args.isInstalling,
-    });
-  }
-  return actions;
+function materializeActions(
+  actions: readonly UpdateCalloutActionDescriptor[],
+  handlers: { changelog: () => void; install: () => void; retry: () => void },
+): SidebarCalloutAction[] {
+  return actions.map((action) => ({
+    label: action.label,
+    onPress: handlers[action.role],
+    variant: action.variant,
+    disabled: action.disabled,
+  }));
 }
 
 export function UpdateCalloutSource() {
@@ -96,46 +76,34 @@ export function UpdateCalloutSource() {
   }, [isDesktopApp, checkForUpdates]);
 
   useEffect(() => {
-    if (!isDesktopApp) {
-      return;
-    }
-    if (status !== "available" && status !== "installing" && status !== "error") {
-      return;
-    }
-
-    const isError = status === "error";
-    const isAvailable = !isInstalling && !isError;
-
-    const title = resolveUpdateCalloutTitle({ isInstalling, isError });
-    const description = resolveUpdateCalloutDescription({
+    const descriptor = resolveUpdateCalloutDescriptor({
+      isDesktopApp,
+      status,
       isInstalling,
-      isError,
+      availableUpdate,
       errorMessage,
-      latestVersion: availableUpdate?.latestVersion ?? undefined,
     });
-    const actions = buildUpdateCalloutActions({
-      isInstalling,
-      isError,
-      openChangelog,
-      retry,
-      install,
-    });
+    if (!descriptor) return;
 
     return callouts.show({
-      id: "desktop-update",
-      dismissalKey: `desktop-update:${status}:${availableUpdate?.latestVersion ?? "unknown"}`,
-      priority: 200,
-      title,
-      description,
-      icon: isAvailable ? (
+      id: descriptor.id,
+      dismissalKey: descriptor.dismissalKey,
+      priority: descriptor.priority,
+      title: descriptor.title,
+      description: renderBody(descriptor.body),
+      icon: descriptor.showGiftIcon ? (
         <Gift size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       ) : undefined,
-      variant: isError ? "error" : "default",
-      actions,
-      testID: "update-callout",
+      variant: descriptor.variant,
+      actions: materializeActions(descriptor.actions, {
+        changelog: openChangelog,
+        install,
+        retry,
+      }),
+      testID: descriptor.testID,
     });
   }, [
-    availableUpdate?.latestVersion,
+    availableUpdate,
     callouts,
     errorMessage,
     install,

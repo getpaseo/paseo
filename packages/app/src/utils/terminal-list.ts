@@ -1,4 +1,4 @@
-import type { CreateTerminalResponse, ListTerminalsResponse } from "@server/shared/messages";
+import type { CreateTerminalResponse, ListTerminalsResponse } from "@getpaseo/protocol/messages";
 
 type TerminalListEntry = ListTerminalsResponse["payload"]["terminals"][number];
 type CreatedTerminal = NonNullable<CreateTerminalResponse["payload"]["terminal"]>;

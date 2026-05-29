@@ -321,7 +321,7 @@ function ensureRelayBuildArtifact(repoRoot: string): void {
   }
 
   console.log("[e2e] Building @getpaseo/relay for daemon startup");
-  execSync("npm run build --workspace=@getpaseo/relay", {
+  execSync("npm run build:relay", {
     cwd: repoRoot,
     stdio: "inherit",
   });

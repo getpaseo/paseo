@@ -5,7 +5,7 @@ import { type CheckoutGitActionStatus, useCheckoutGitActionsStore } from "@/git/
 import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-status-query";
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { buildGitActions, narrowPullRequestState, type GitActions } from "@/git/policy";
-import type { CheckoutPrMergeMethod } from "@server/shared/messages";
+import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";

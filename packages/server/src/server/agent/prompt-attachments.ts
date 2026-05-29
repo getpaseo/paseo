@@ -1,4 +1,4 @@
-import type { AgentAttachment } from "../../shared/messages.js";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 const REVIEW_LINE_MARKERS = { add: "+", remove: "-", context: " " } as const;
 

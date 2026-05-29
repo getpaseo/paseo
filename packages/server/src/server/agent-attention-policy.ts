@@ -1,4 +1,4 @@
-import type { AgentAttentionReason } from "../shared/agent-attention-notification.js";
+import type { AgentAttentionReason } from "@getpaseo/protocol/agent-attention-notification";
 
 export const PRESENCE_THRESHOLD_MS = 180_000;
 

@@ -8,8 +8,8 @@ import {
 } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { encodeTerminalKeyInput } from "@server/shared/terminal-key-input";
-import type { TerminalInputModeState } from "@server/shared/terminal-input-mode";
+import { encodeTerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
+import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useAppVisible } from "@/hooks/use-app-visible";

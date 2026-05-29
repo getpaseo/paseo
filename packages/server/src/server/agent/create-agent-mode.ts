@@ -1,4 +1,10 @@
-import type { AgentProvider } from "./agent-sdk-types.js";
+import type {
+  AgentCreateConfigUnattendedInput,
+  AgentMode,
+  AgentProvider,
+  ResolveAgentCreateConfigInput,
+  ResolveAgentCreateConfigResult,
+} from "./agent-sdk-types.js";
 
 interface CreateAgentModeParent {
   provider: AgentProvider;
@@ -54,4 +60,33 @@ export function resolveAndValidateCreateAgentMode(
   throw new Error(
     `cannot inherit mode '${parent.modeId ?? "<none>"}' from caller (provider '${parent.provider}') for new agent (provider '${targetProvider}'). Pass an explicit mode. Available modes for '${targetProvider}': ${listModes(availableModes)}`,
   );
+}
+
+export function resolveDefaultAgentCreateConfig(
+  input: ResolveAgentCreateConfigInput,
+): ResolveAgentCreateConfigResult {
+  const availableModeIds = input.availableModes?.map((mode) => mode.id);
+  return {
+    modeId: resolveAndValidateCreateAgentMode({
+      requestedMode: input.requestedMode,
+      targetProvider: input.provider,
+      parent: input.parent,
+      availableModes: availableModeIds,
+      targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
+    }),
+    featureValues: input.featureValues,
+  };
+}
+
+export function isDefaultAgentCreateConfigUnattended(
+  input: AgentCreateConfigUnattendedInput,
+): boolean {
+  if (input.modeId === null) {
+    return false;
+  }
+  return input.availableModes.some((mode) => mode.id === input.modeId && isUnattendedMode(mode));
+}
+
+function isUnattendedMode(mode: AgentMode): boolean {
+  return mode.isUnattended === true;
 }

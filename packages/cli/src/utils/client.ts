@@ -1,17 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
+import { loadConfig, resolvePaseoHome } from "@getpaseo/server";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
-  loadConfig,
   normalizeHostPort,
   parseConnectionUri,
-  parseConnectionOfferFromUrl,
-  DaemonClient,
-  resolvePaseoHome,
   shouldUseTlsForDefaultHostedRelay,
+} from "@getpaseo/protocol/daemon-endpoints";
+import {
+  parseConnectionOfferFromUrl,
   type ConnectionOffer,
-  type WebSocketLike,
-} from "@getpaseo/server";
+} from "@getpaseo/protocol/connection-offer";
+import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";

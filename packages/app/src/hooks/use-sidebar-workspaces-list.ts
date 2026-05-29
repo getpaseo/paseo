@@ -1,82 +1,35 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
+import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
-import {
-  useWorkspaceStructure,
-  type WorkspaceStructureProject,
-} from "@/stores/session-store-hooks";
+import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
+import { useWorkspaceStructure } from "@/stores/session-store-hooks";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
+import {
+  buildSidebarProjectsFromStructure,
+  computeSidebarOrderUpdates,
+  deriveSidebarLoadingState,
+  type SidebarProjectEntry,
+  type SidebarWorkspaceEntry,
+} from "./sidebar-workspaces-view-model";
 
-const EMPTY_ORDER: string[] = [];
-const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
-
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
-
-export interface SidebarWorkspaceEntry {
-  workspaceKey: string;
-  serverId: string;
-  workspaceId: string;
-  projectKey: string;
-  projectRootPath?: string;
-  workspaceDirectory?: string;
-  projectKind: WorkspaceDescriptor["projectKind"];
-  workspaceKind: WorkspaceDescriptor["workspaceKind"];
-  name: string;
-  statusBucket: SidebarStateBucket;
-  archivingAt: string | null;
-  diffStat: { additions: number; deletions: number } | null;
-  archiveHasUncommittedChanges: boolean | null;
-  archiveUnpushedCommitCount: number | null;
-  scripts: WorkspaceDescriptor["scripts"];
-  hasRunningScripts: boolean;
-}
-
-export interface SidebarProjectEntry {
-  projectKey: string;
-  projectName: string;
-  projectKind: WorkspaceDescriptor["projectKind"];
-  iconWorkingDir: string;
-  workspaces: SidebarWorkspaceEntry[];
-}
-
-export interface SidebarWorkspacesListResult {
-  projects: SidebarProjectEntry[];
-  isLoading: boolean;
-  isInitialLoad: boolean;
-  isRevalidating: boolean;
-  refreshAll: () => void;
-}
-
-function createStructuralWorkspaceEntry(input: {
-  serverId: string;
-  project: WorkspaceStructureProject;
-  workspaceId: string;
-}): SidebarWorkspaceEntry {
-  return {
-    workspaceKey: `${input.serverId}:${input.workspaceId}`,
-    serverId: input.serverId,
-    workspaceId: input.workspaceId,
-    projectKey: input.project.projectKey,
-    projectRootPath: input.project.iconWorkingDir,
-    workspaceDirectory: undefined,
-    projectKind: input.project.projectKind,
-    workspaceKind: "checkout",
-    name: input.workspaceId,
-    statusBucket: "done",
-    archivingAt: null,
-    diffStat: null,
-    archiveHasUncommittedChanges: null,
-    archiveUnpushedCommitCount: null,
-    scripts: [],
-    hasRunningScripts: false,
-  };
-}
+export {
+  appendMissingOrderKeys,
+  applyStoredOrdering,
+  buildSidebarProjectsFromStructure,
+  computeSidebarOrderUpdates,
+  deriveSidebarLoadingState,
+  type SidebarLoadingState,
+  type SidebarOrderUpdates,
+  type SidebarProjectEntry,
+  type SidebarStateBucket,
+  type SidebarWorkspaceEntry,
+} from "./sidebar-workspaces-view-model";
 
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
@@ -95,6 +48,7 @@ export function createSidebarWorkspaceEntry(input: {
     statusBucket: input.workspace.status,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
+    prHint: selectPrHintFromStatus(input.workspace.githubRuntime?.pullRequest),
     archiveHasUncommittedChanges: input.workspace.gitRuntime?.isDirty ?? null,
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
@@ -102,91 +56,15 @@ export function createSidebarWorkspaceEntry(input: {
   };
 }
 
-export function buildSidebarProjectsFromStructure(input: {
-  serverId: string;
-  projects: WorkspaceStructureProject[];
-}): SidebarProjectEntry[] {
-  if (input.projects.length === 0) {
-    return EMPTY_PROJECTS;
-  }
+const EMPTY_ORDER: string[] = [];
+const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-  return input.projects.map((project) => ({
-    projectKey: project.projectKey,
-    projectName: project.projectName,
-    projectKind: project.projectKind,
-    iconWorkingDir: project.iconWorkingDir,
-    workspaces: project.workspaceKeys.map((workspaceId) =>
-      createStructuralWorkspaceEntry({
-        serverId: input.serverId,
-        project,
-        workspaceId,
-      }),
-    ),
-  }));
-}
-
-export function applyStoredOrdering<T>(input: {
-  items: T[];
-  storedOrder: string[];
-  getKey: (item: T) => string;
-}): T[] {
-  if (input.items.length <= 1 || input.storedOrder.length === 0) {
-    return input.items;
-  }
-
-  const itemByKey = new Map<string, T>();
-  for (const item of input.items) {
-    itemByKey.set(input.getKey(item), item);
-  }
-
-  const prunedOrder: string[] = [];
-  const seen = new Set<string>();
-  for (const key of input.storedOrder) {
-    if (!itemByKey.has(key) || seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    prunedOrder.push(key);
-  }
-
-  if (prunedOrder.length === 0) {
-    return input.items;
-  }
-
-  const orderedSet = new Set(prunedOrder);
-  const ordered: T[] = [];
-  let orderedIndex = 0;
-
-  for (const item of input.items) {
-    const key = input.getKey(item);
-    if (!orderedSet.has(key)) {
-      ordered.push(item);
-      continue;
-    }
-
-    const targetKey = prunedOrder[orderedIndex] ?? key;
-    orderedIndex += 1;
-    ordered.push(itemByKey.get(targetKey) ?? item);
-  }
-
-  return ordered;
-}
-
-export function appendMissingOrderKeys(input: {
-  currentOrder: string[];
-  visibleKeys: string[];
-}): string[] {
-  if (input.visibleKeys.length === 0) {
-    return input.currentOrder;
-  }
-
-  const existingKeys = new Set(input.currentOrder);
-  const missingKeys = input.visibleKeys.filter((key) => !existingKeys.has(key));
-  if (missingKeys.length === 0) {
-    return input.currentOrder;
-  }
-
-  return [...input.currentOrder, ...missingKeys];
+export interface SidebarWorkspacesListResult {
+  projects: SidebarProjectEntry[];
+  isLoading: boolean;
+  isInitialLoad: boolean;
+  isRevalidating: boolean;
+  refreshAll: () => void;
 }
 
 function toWorkspaceDescriptor(payload: WorkspaceDescriptorPayload): WorkspaceDescriptor {
@@ -248,31 +126,22 @@ export function useSidebarWorkspacesList(options?: {
   }, [connectionStatus, hasHydratedWorkspaces, projects, serverId]);
 
   useEffect(() => {
-    if (!serverId || projects.length === 0) {
+    if (!serverId) {
       return;
     }
 
-    const nextProjectOrder = appendMissingOrderKeys({
-      currentOrder: persistedProjectOrder,
-      visibleKeys: projects.map((project) => project.projectKey),
+    const orderStore = useSidebarOrderStore.getState();
+    const updates = computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder,
+      getWorkspaceOrder: (projectKey) => orderStore.getWorkspaceOrder(serverId, projectKey),
     });
-    if (nextProjectOrder !== persistedProjectOrder) {
-      useSidebarOrderStore.getState().setProjectOrder(serverId, nextProjectOrder);
-    }
 
-    for (const project of projects) {
-      const persistedWorkspaceOrder = useSidebarOrderStore
-        .getState()
-        .getWorkspaceOrder(serverId, project.projectKey);
-      const nextWorkspaceOrder = appendMissingOrderKeys({
-        currentOrder: persistedWorkspaceOrder,
-        visibleKeys: project.workspaces.map((workspace) => workspace.workspaceKey),
-      });
-      if (nextWorkspaceOrder !== persistedWorkspaceOrder) {
-        useSidebarOrderStore
-          .getState()
-          .setWorkspaceOrder(serverId, project.projectKey, nextWorkspaceOrder);
-      }
+    if (updates.projectOrder) {
+      orderStore.setProjectOrder(serverId, updates.projectOrder);
+    }
+    for (const { projectKey, order } of updates.workspaceOrders) {
+      orderStore.setWorkspaceOrder(serverId, projectKey, order);
     }
   }, [persistedProjectOrder, projects, serverId]);
 
@@ -319,15 +188,16 @@ export function useSidebarWorkspacesList(options?: {
     })();
   }, [connectionStatus, isActive, runtime, serverId]);
 
-  const isLoading = isActive && Boolean(serverId) && !hasHydratedWorkspaces;
-  const isInitialLoad = isLoading && projects.length === 0;
-  const isRevalidating = false;
+  const loadingState = deriveSidebarLoadingState({
+    isActive,
+    serverId,
+    hasHydratedWorkspaces,
+    hasProjects: projects.length > 0,
+  });
 
   return {
     projects,
-    isLoading,
-    isInitialLoad,
-    isRevalidating,
+    ...loadingState,
     refreshAll,
   };
 }

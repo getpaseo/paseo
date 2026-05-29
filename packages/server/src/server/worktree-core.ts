@@ -13,7 +13,7 @@ import {
   type ResolveWorktreeCreationIntentInput,
   type WorktreeCreationIntent,
 } from "./resolve-worktree-creation-intent.js";
-import type { FirstAgentContext } from "../shared/messages.js";
+import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 export interface CreateWorktreeCoreInput {

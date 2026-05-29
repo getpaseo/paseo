@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
@@ -1638,6 +1638,40 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
   expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
 });
 
+test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-metadata-updated-at-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000128",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+  await manager.closeAgent(snapshot.id);
+
+  const before = await storage.get(snapshot.id);
+  expect(before).not.toBeNull();
+  expect(manager.getAgent(snapshot.id)).toBeNull();
+
+  await manager.updateAgentMetadata(snapshot.id, {
+    title: "Stored title",
+    labels: { role: "worker" },
+  });
+
+  const after = await storage.get(snapshot.id);
+  expect(after?.title).toBe("Stored title");
+  expect(after?.labels).toEqual({ role: "worker" });
+  expect(Date.parse(after!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
+});
+
 test("setGeneratedTitle persists generated title when no title exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-empty-"));
   const storagePath = join(workdir, "agents");
@@ -1930,6 +1964,41 @@ test("archiveSnapshot clears persisted attention and normalizes running status",
   expect(persisted?.requiresAttention).toBe(false);
   expect(persisted?.attentionReason).toBeNull();
   expect(persisted?.attentionTimestamp).toBeNull();
+});
+
+test("archiveSnapshot dispatches archived state for stored-only agents", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-snapshot-dispatch-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const created = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Stored archive dispatch",
+  });
+  await manager.closeAgent(created.id);
+
+  const events: ManagedAgent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === created.id) {
+        events.push(event.agent);
+      }
+    },
+    { agentId: created.id, replayState: false },
+  );
+
+  await manager.archiveSnapshot(created.id, new Date().toISOString());
+
+  expect(events.length).toBeGreaterThanOrEqual(1);
+  const last = events[events.length - 1];
+  expect(last.id).toBe(created.id);
+  expect(last.lifecycle).toBe("closed");
 });
 
 test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
@@ -4028,6 +4097,60 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
     Math.abs(new Date(stored!.updatedAt).getTime() - new Date(archivedAt).getTime()),
   ).toBeLessThanOrEqual(5);
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
+});
+
+test("fires onAgentArchived for archived parent and cascaded children", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const archivedIds: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  manager.setAgentArchivedCallback((agentId) => {
+    archivedIds.push(agentId);
+  });
+
+  const liveParent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Parent",
+  });
+  const liveChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Child" },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: liveParent.id } },
+  );
+
+  await manager.archiveAgent(liveParent.id);
+  expect([...archivedIds].sort()).toEqual([liveChild.id, liveParent.id].sort());
+});
+
+test("fires onAgentArchived for stored-only snapshot archives", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-snapshot-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const archivedIds: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  manager.setAgentArchivedCallback((agentId) => {
+    archivedIds.push(agentId);
+  });
+
+  const storedOnly = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Stored only",
+  });
+  await manager.closeAgent(storedOnly.id);
+
+  await manager.archiveSnapshot(storedOnly.id, new Date().toISOString());
+  expect(archivedIds).toEqual([storedOnly.id]);
 });
 
 test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {

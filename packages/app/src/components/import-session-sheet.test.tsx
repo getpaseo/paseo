@@ -4,8 +4,11 @@
 import React, { type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
+import type {
+  DaemonClient,
+  FetchRecentProviderSessionEntry,
+} from "@getpaseo/client/internal/daemon-client";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 

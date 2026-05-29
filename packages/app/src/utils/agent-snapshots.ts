@@ -1,6 +1,6 @@
-import type { AgentSnapshotPayload } from "@server/shared/messages";
-import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
-import { PARENT_AGENT_ID_LABEL } from "@server/shared/agent-labels";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 export function derivePendingPermissionKey(
   agentId: string,

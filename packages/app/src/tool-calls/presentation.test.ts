@@ -1,4 +1,4 @@
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { describe, expect, it } from "vitest";
 
 import { buildToolCallPresentation, type ToolCallPresentationIcon } from "./presentation";

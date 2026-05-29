@@ -1,5 +1,5 @@
 import equal from "fast-deep-equal";
-import type { ScriptStatusUpdateMessage } from "@server/shared/messages";
+import type { ScriptStatusUpdateMessage } from "@getpaseo/protocol/messages";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
 

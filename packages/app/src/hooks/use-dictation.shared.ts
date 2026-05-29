@@ -1,7 +1,7 @@
 export type DictationStatus = "idle" | "recording" | "uploading" | "failed";
 
 export interface UseDictationOptions {
-  client: import("@server/client/daemon-client").DaemonClient | null;
+  client: import("@getpaseo/client/internal/daemon-client").DaemonClient | null;
   onTranscript: (text: string, meta: { requestId: string }) => void;
   onPartialTranscript?: (text: string, meta: { requestId: string }) => void;
   onError?: (error: Error) => void;

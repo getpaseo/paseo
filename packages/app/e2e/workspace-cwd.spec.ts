@@ -1,5 +1,6 @@
-import { expect, type Page, test } from "./fixtures";
+import { expect, test } from "./fixtures";
 import { clickNewChat, clickNewTerminal } from "./helpers/launcher";
+import { captureWsSessionFrames } from "./helpers/rename";
 import {
   expectTerminalSurfaceVisible,
   focusTerminalSurface,
@@ -8,53 +9,13 @@ import {
   waitForTerminalContent,
 } from "./helpers/terminal-perf";
 
-async function installCreateAgentRequestRecorder(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const requests: unknown[] = [];
-    (
-      window as typeof window & {
-        __paseoE2eCreateAgentRequests?: unknown[];
-      }
-    ).__paseoE2eCreateAgentRequests = requests;
-    const originalSend = WebSocket.prototype.send;
-    WebSocket.prototype.send = function (data) {
-      if (typeof data === "string") {
-        try {
-          const parsed = JSON.parse(data) as {
-            type?: unknown;
-            message?: { type?: unknown };
-          };
-          if (parsed.type === "session" && parsed.message?.type === "create_agent_request") {
-            requests.push(parsed.message);
-          }
-        } catch {
-          // Ignore non-JSON frames.
-        }
-      }
-      return originalSend.call(this, data);
-    };
-  });
+interface CreateAgentFrame {
+  initialPrompt: string | null;
+  cwd: string | null;
 }
 
-async function getRecordedCreateAgentCwd(page: Page, message: string): Promise<string | null> {
-  return page.evaluate((expectedMessage) => {
-    const requests =
-      (
-        window as typeof window & {
-          __paseoE2eCreateAgentRequests?: Array<{
-            initialPrompt?: string;
-            config?: { cwd?: string };
-          }>;
-        }
-      ).__paseoE2eCreateAgentRequests ?? [];
-
-    for (const request of requests) {
-      if (request.initialPrompt === expectedMessage) {
-        return request.config?.cwd ?? null;
-      }
-    }
-    return null;
-  }, message);
+function cwdForPrompt(frames: CreateAgentFrame[], prompt: string): string | null {
+  return frames.find((frame) => frame.initialPrompt === prompt)?.cwd ?? null;
 }
 
 test.describe("Workspace cwd correctness", () => {
@@ -78,7 +39,14 @@ test.describe("Workspace cwd correctness", () => {
   test("draft tab creates an agent in the workspace cwd", async ({ page, withWorkspace }) => {
     test.setTimeout(60_000);
 
-    await installCreateAgentRequestRecorder(page);
+    const createAgentFrames = captureWsSessionFrames(page, "create_agent_request", (inner) => {
+      const config = (inner.config ?? {}) as Record<string, unknown>;
+      return {
+        initialPrompt: typeof inner.initialPrompt === "string" ? inner.initialPrompt : null,
+        cwd: typeof config.cwd === "string" ? config.cwd : null,
+      };
+    });
+
     const workspace = await withWorkspace({ prefix: "workspace-cwd-draft-agent-" });
     await workspace.navigateTo();
 
@@ -97,7 +65,7 @@ test.describe("Workspace cwd correctness", () => {
     });
 
     await expect
-      .poll(async () => getRecordedCreateAgentCwd(page, message), { timeout: 30_000 })
+      .poll(() => cwdForPrompt(createAgentFrames, message), { timeout: 30_000 })
       .toBe(workspace.repoPath);
   });
 

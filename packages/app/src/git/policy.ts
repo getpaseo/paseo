@@ -5,7 +5,7 @@ import type {
   CheckoutPrMergeMethod,
   CheckoutPrStatusResponse,
   PullRequestMergeable,
-} from "@server/shared/messages";
+} from "@getpaseo/protocol/messages";
 
 export type GitActionId =
   | "commit"

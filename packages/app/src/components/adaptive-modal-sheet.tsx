@@ -28,9 +28,7 @@ import { isNative, isWeb } from "@/constants/platform";
 export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
 
 export interface SheetHeaderSearch {
-  value: string;
   onChange: (value: string) => void;
-  initialValue?: string;
   resetKey?: string | number;
   placeholder?: string;
   autoFocus?: boolean;
@@ -167,6 +165,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
   },
   inlineTitle: {
+    flex: 1,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
@@ -201,6 +200,16 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
     padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
     gap: theme.spacing[4],
+  },
+  footer: {
+    paddingHorizontal: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    paddingVertical: theme.spacing[3],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.surface2,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
   },
   adaptiveInputOutline: {
     outlineColor: theme.colors.accent,
@@ -352,9 +361,7 @@ export function SheetHeaderView({
             // @ts-expect-error - outlineStyle is web-only
             style={SEARCH_INPUT_STYLE}
             placeholder={search.placeholder ?? "Search"}
-            initialValue={search.initialValue}
             resetKey={search.resetKey}
-            value={search.value}
             onChangeText={handleSearchChange}
             autoCapitalize="none"
             autoCorrect={false}
@@ -371,7 +378,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
   const { theme } = useUnistyles();
   const back = header.back;
   const handleBackPress = back?.onPress;
-  const hasInlineRow = Boolean(handleBackPress || header.leading);
+  const hasInlineRow = Boolean(handleBackPress || header.leading || header.actions);
   if (!hasInlineRow && !header.search) return null;
   return (
     <View>
@@ -398,6 +405,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
           <Text style={styles.inlineTitle} numberOfLines={1}>
             {header.title}
           </Text>
+          {header.actions ? <View style={styles.headerActions}>{header.actions}</View> : null}
         </View>
       ) : null}
       {header.search ? (
@@ -407,9 +415,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
             // @ts-expect-error - outlineStyle is web-only
             style={SEARCH_INPUT_STYLE}
             placeholder={header.search.placeholder ?? "Search"}
-            initialValue={header.search.initialValue}
             resetKey={header.search.resetKey}
-            value={header.search.value}
             onChangeText={header.search.onChange}
             autoCapitalize="none"
             autoCorrect={false}
@@ -427,6 +433,8 @@ export interface AdaptiveModalSheetProps {
   visible: boolean;
   onClose: () => void;
   children: ReactNode;
+  /** Sticky footer rendered below the scrollable content. */
+  footer?: ReactNode;
   snapPoints?: string[];
   testID?: string;
   /** Override the max width of the desktop card. */
@@ -441,6 +449,7 @@ export function AdaptiveModalSheet({
   visible,
   onClose,
   children,
+  footer,
   snapPoints,
   testID,
   desktopMaxWidth,
@@ -506,6 +515,7 @@ export function AdaptiveModalSheet({
         ) : (
           <View style={styles.bottomSheetStaticContent}>{children}</View>
         )}
+        {footer ? <View style={styles.footer}>{footer}</View> : null}
       </IsolatedBottomSheetModal>
     );
   }
@@ -518,13 +528,13 @@ export function AdaptiveModalSheet({
           style={styles.desktopScroll}
           contentContainerStyle={styles.desktopContent}
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
         >
           {children}
         </ScrollView>
       ) : (
         <View style={styles.desktopStaticContent}>{children}</View>
       )}
+      {footer ? <View style={styles.footer}>{footer}</View> : null}
     </>
   );
 

@@ -1,4 +1,4 @@
-import type { AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
+import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 
 export function buildWorkspaceDraftAgentConfig(input: {
   provider: AgentSessionConfig["provider"];

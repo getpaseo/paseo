@@ -9,6 +9,20 @@ interface TempRepo {
   cleanup: () => Promise<void>;
 }
 
+export interface TempDirectory {
+  path: string;
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * The temp root for E2E fixtures. On macOS we resolve symlinks (/tmp →
+ * /private/tmp) so fixture paths match the daemon's resolved paths; on Windows
+ * `/tmp` doesn't exist, so fall back to the OS temp dir.
+ */
+export async function resolveTempRoot(): Promise<string> {
+  return process.platform === "win32" ? tmpdir() : await realpath("/tmp");
+}
+
 async function configureRemote(input: {
   repoPath: string;
   withRemote: boolean;
@@ -22,6 +36,15 @@ async function configureRemote(input: {
     execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
+    if (originUrl) {
+      // Relabel origin to a display URL after the local tracking remote is set
+      // up, so project grouping shows the remote's owner/repo while branch
+      // tracking refs still resolve locally (no fetch from the synthetic URL).
+      execSync(`git remote set-url origin ${JSON.stringify(originUrl)}`, {
+        cwd: repoPath,
+        stdio: "ignore",
+      });
+    }
     return;
   }
   if (originUrl) {
@@ -44,9 +67,7 @@ export const createTempGitRepo = async (
   },
 ): Promise<TempRepo> => {
   // Keep E2E repo paths short so terminal prompt + typed commands stay visible without zsh clipping.
-  // Resolve symlinks (macOS: /tmp → /private/tmp) so paths match the daemon's resolved paths.
-  const tempRoot = process.platform === "win32" ? tmpdir() : await realpath("/tmp");
-  const repoPath = await mkdtemp(path.join(tempRoot, prefix));
+  const repoPath = await mkdtemp(path.join(await resolveTempRoot(), prefix));
   const withRemote = options?.withRemote ?? false;
 
   execSync("git init -b main", { cwd: repoPath, stdio: "ignore" });
@@ -109,6 +130,21 @@ export const createTempGitRepo = async (
     },
   };
 };
+
+/**
+ * A plain (non-git) directory opened as a project. The daemon shows its
+ * basename as the project name, since there's no remote to group under.
+ */
+export async function createTempDirectory(prefix = "paseo-e2e-dir-"): Promise<TempDirectory> {
+  const dirPath = await mkdtemp(path.join(await resolveTempRoot(), prefix));
+  await writeFile(path.join(dirPath, "README.md"), "# Temp Directory\n");
+  return {
+    path: dirPath,
+    cleanup: async () => {
+      await rm(dirPath, { recursive: true, force: true });
+    },
+  };
+}
 
 export async function readWorktreeBranchInfo({ worktreePath }: { worktreePath: string }): Promise<{
   currentBranch: string;

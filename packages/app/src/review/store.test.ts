@@ -1,15 +1,37 @@
-import "@/test/window-local-storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { describe, expect, it } from "vitest";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 import {
   buildReviewAttachmentSnapshot,
   buildReviewDraftKey,
   buildReviewDraftScopeKey,
-  useReviewDraftStore,
 } from "./store";
+import {
+  addCommentToState,
+  clearReviewInState,
+  deleteCommentFromState,
+  normalizePersistedState,
+  type ReviewDraftComment,
+  type ReviewDraftStoreState,
+  setActiveModeInState,
+  updateCommentInState,
+} from "./state";
 
-const STORE_STORAGE_KEY = "@paseo:review-draft-store";
+function emptyState(): ReviewDraftStoreState {
+  return { drafts: {}, activeModesByScope: {} };
+}
+
+function makeComment(overrides: Partial<ReviewDraftComment> = {}): ReviewDraftComment {
+  return {
+    id: "comment-1",
+    filePath: "src/example.ts",
+    side: "new",
+    lineNumber: 41,
+    body: "Please simplify this.",
+    createdAt: "2026-04-21T00:00:00.000Z",
+    updatedAt: "2026-04-21T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 function makeFile(): ParsedDiffFile {
   return {
@@ -89,44 +111,35 @@ describe("buildReviewDraftKey", () => {
   });
 });
 
-describe("review draft store", () => {
-  it("normalizes persisted active review modes with draft comments", async () => {
-    await AsyncStorage.setItem(
-      STORE_STORAGE_KEY,
-      JSON.stringify({
-        version: 0,
-        state: {
-          drafts: {
-            "review:key": [
-              {
-                id: "comment-1",
-                filePath: "src/example.ts",
-                side: "new",
-                lineNumber: 41,
-                body: "Keep me.",
-                createdAt: "2026-04-21T00:00:00.000Z",
-                updatedAt: "2026-04-21T00:00:00.000Z",
-              },
-              { id: "bad", filePath: "src/example.ts" },
-            ],
+describe("normalizePersistedState", () => {
+  it("filters invalid draft comments and drops unknown active modes", () => {
+    const normalized = normalizePersistedState({
+      drafts: {
+        "review:key": [
+          {
+            id: "comment-1",
+            filePath: "src/example.ts",
+            side: "new",
+            lineNumber: 41,
+            body: "Keep me.",
+            createdAt: "2026-04-21T00:00:00.000Z",
+            updatedAt: "2026-04-21T00:00:00.000Z",
           },
-          activeModesByScope: {
-            "review:scope:base": "base",
-            "review:scope:dirty": "uncommitted",
-            "review:scope:bad": "other",
-          },
-        },
-      }),
-    );
+          { id: "bad", filePath: "src/example.ts" },
+        ],
+      },
+      activeModesByScope: {
+        "review:scope:base": "base",
+        "review:scope:dirty": "uncommitted",
+        "review:scope:bad": "other",
+      },
+    });
 
-    await useReviewDraftStore.persist.rehydrate();
-
-    const state = useReviewDraftStore.getState();
-    expect(state.activeModesByScope).toEqual({
+    expect(normalized.activeModesByScope).toEqual({
       "review:scope:base": "base",
       "review:scope:dirty": "uncommitted",
     });
-    expect(state.drafts["review:key"]).toEqual([
+    expect(normalized.drafts["review:key"]).toEqual([
       {
         id: "comment-1",
         filePath: "src/example.ts",
@@ -139,54 +152,68 @@ describe("review draft store", () => {
     ]);
   });
 
-  it("persists compact draft comments separately from workspace attachment wire context", () => {
-    const key = buildReviewDraftKey({
-      serverId: "local",
-      workspaceId: "workspace-1",
-      cwd: "/repo",
-      mode: "uncommitted",
-      baseRef: null,
-      ignoreWhitespace: false,
+  it("returns empty state for null, non-object, or malformed inputs", () => {
+    expect(normalizePersistedState(null)).toEqual({ drafts: {}, activeModesByScope: {} });
+    expect(normalizePersistedState("nope")).toEqual({ drafts: {}, activeModesByScope: {} });
+    expect(normalizePersistedState({ drafts: [] })).toEqual({
+      drafts: {},
+      activeModesByScope: {},
     });
+  });
+});
 
-    useReviewDraftStore.getState().clearReview({ key });
-    useReviewDraftStore.getState().addComment({
-      key,
-      comment: {
-        id: "comment-1",
-        filePath: "src/example.ts",
-        side: "new",
-        lineNumber: 41,
-        body: "Please simplify this.",
-        createdAt: "2026-04-21T00:00:00.000Z",
-        updatedAt: "2026-04-21T00:00:00.000Z",
-      },
-    });
+describe("review draft reducers", () => {
+  it("adds, updates, and deletes draft comments by key", () => {
+    let state = emptyState();
+    const comment = makeComment();
 
-    expect(useReviewDraftStore.getState().drafts[key]).toEqual([
-      {
-        id: "comment-1",
-        filePath: "src/example.ts",
-        side: "new",
-        lineNumber: 41,
-        body: "Please simplify this.",
-        createdAt: "2026-04-21T00:00:00.000Z",
-        updatedAt: "2026-04-21T00:00:00.000Z",
-      },
-    ]);
+    state = addCommentToState(state, { key: "review:key", comment });
+    expect(state.drafts["review:key"]).toEqual([comment]);
 
-    useReviewDraftStore.getState().updateComment({
-      key,
-      id: "comment-1",
+    state = updateCommentInState(state, {
+      key: "review:key",
+      id: comment.id,
       updates: { body: "Please simplify this condition." },
       updatedAt: "2026-04-21T00:01:00.000Z",
     });
-    expect(useReviewDraftStore.getState().drafts[key]?.[0]?.body).toBe(
-      "Please simplify this condition.",
-    );
+    expect(state.drafts["review:key"]?.[0]).toEqual({
+      ...comment,
+      body: "Please simplify this condition.",
+      updatedAt: "2026-04-21T00:01:00.000Z",
+    });
 
-    useReviewDraftStore.getState().deleteComment({ key, id: "comment-1" });
-    expect(useReviewDraftStore.getState().drafts[key]).toEqual([]);
+    state = deleteCommentFromState(state, { key: "review:key", id: comment.id });
+    expect(state.drafts["review:key"]).toEqual([]);
+  });
+
+  it("keeps state identity on no-op updates, deletes, and clears", () => {
+    const state = addCommentToState(emptyState(), {
+      key: "review:key",
+      comment: makeComment(),
+    });
+
+    expect(
+      updateCommentInState(state, {
+        key: "review:key",
+        id: "missing",
+        updates: { body: "x" },
+        updatedAt: "2026-04-21T00:01:00.000Z",
+      }),
+    ).toBe(state);
+    expect(deleteCommentFromState(state, { key: "review:key", id: "missing" })).toBe(state);
+    expect(clearReviewInState(state, { key: "other-key" })).toBe(state);
+  });
+
+  it("keeps state identity when setActiveMode does not change the mode", () => {
+    const state = setActiveModeInState(emptyState(), {
+      scopeKey: "review:scope",
+      mode: "base",
+    });
+
+    expect(setActiveModeInState(state, { scopeKey: "review:scope", mode: "base" })).toBe(state);
+    expect(setActiveModeInState(state, { scopeKey: "review:scope", mode: "uncommitted" })).not.toBe(
+      state,
+    );
   });
 });
 

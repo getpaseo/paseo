@@ -8,7 +8,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { GitHubSearchClient } from "@/git/use-github-search-query";
-import type { GitHubSearchItem, GitHubSearchResponse } from "@server/shared/messages";
+import type { GitHubSearchItem, GitHubSearchResponse } from "@getpaseo/protocol/messages";
 import { useComposerGithubAutoAttach } from "./auto-attach";
 
 type GitHubSearchPayload = GitHubSearchResponse["payload"];

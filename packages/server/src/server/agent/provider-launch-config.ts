@@ -1,119 +1,150 @@
-import { z } from "zod";
-
-import { execFileSync } from "node:child_process";
-import path from "node:path";
-import { isCommandAvailable } from "../../utils/executable.js";
+import { isAbsolute } from "node:path";
+import { executableExists, findExecutable } from "../../utils/executable.js";
 import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
-import type { AgentProvider } from "./agent-sdk-types.js";
-import { AgentProviderSchema } from "./provider-manifest.js";
-
-const ProviderCommandDefaultSchema = z
-  .object({
-    mode: z.literal("default"),
-  })
-  .strict();
-
-const ProviderCommandAppendSchema = z
-  .object({
-    mode: z.literal("append"),
-    args: z.array(z.string()).optional(),
-  })
-  .strict();
-
-const ProviderCommandReplaceSchema = z
-  .object({
-    mode: z.literal("replace"),
-    argv: z.array(z.string().min(1)).min(1),
-  })
-  .strict();
-
-export const ProviderCommandSchema = z.discriminatedUnion("mode", [
-  ProviderCommandDefaultSchema,
-  ProviderCommandAppendSchema,
-  ProviderCommandReplaceSchema,
-]);
-
-export const ProviderRuntimeSettingsSchema = z
-  .object({
-    command: ProviderCommandSchema.optional(),
-    env: z.record(z.string()).optional(),
-    disallowedTools: z.array(z.string()).optional(),
-  })
-  .strict();
-
-const ProviderProfileThinkingOptionSchema = z
-  .object({
-    id: z.string(),
-    label: z.string(),
-    description: z.string().optional(),
-    isDefault: z.boolean().optional(),
-  })
-  .strict();
-
-export const ProviderProfileModelSchema = z
-  .object({
-    id: z.string().min(1),
-    label: z.string().min(1),
-    description: z.string().optional(),
-    isDefault: z.boolean().optional(),
-    thinkingOptions: z.array(ProviderProfileThinkingOptionSchema).optional(),
-  })
-  .strict();
-
-export const ProviderOverrideSchema = z
-  .object({
-    extends: z.string().optional(),
-    label: z.string().optional(),
-    description: z.string().optional(),
-    command: z.array(z.string().min(1)).min(1).optional(),
-    env: z.record(z.string()).optional(),
-    models: z.array(ProviderProfileModelSchema).optional(),
-    additionalModels: z.array(ProviderProfileModelSchema).optional(),
-    disallowedTools: z.array(z.string()).optional(),
-    enabled: z.boolean().optional(),
-    order: z.number().optional(),
-  })
-  .strict();
-
-export const AgentProviderRuntimeSettingsMapSchema = z.record(
-  AgentProviderSchema,
+export {
+  AgentProviderRuntimeSettingsMapSchema,
+  ProviderCommandSchema,
+  ProviderOverrideSchema,
+  ProviderOverridesSchema,
+  ProviderProfileModelSchema,
   ProviderRuntimeSettingsSchema,
-);
-
-export type ProviderCommand = z.infer<typeof ProviderCommandSchema>;
-export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>;
-export type ProviderProfileModel = z.infer<typeof ProviderProfileModelSchema>;
-export type ProviderOverride = z.infer<typeof ProviderOverrideSchema>;
-export type AgentProviderRuntimeSettingsMap = Partial<
-  Record<AgentProvider, ProviderRuntimeSettings>
->;
+  type AgentProviderRuntimeSettingsMap,
+  type ProviderCommand,
+  type ProviderOverride,
+  type ProviderOverrides,
+  type ProviderProfileModel,
+  type ProviderRuntimeSettings,
+} from "@getpaseo/protocol/provider-config";
+import {
+  ProviderOverrideSchema,
+  ProviderOverridesSchema,
+  ProviderRuntimeSettingsSchema,
+  type ProviderCommand,
+  type ProviderOverride,
+  type ProviderOverrides,
+  type ProviderRuntimeSettings,
+} from "@getpaseo/protocol/provider-config";
 
 export interface ProviderCommandPrefix {
   command: string;
   args: string[];
 }
 
+export type ProviderLaunchSource = "default" | "append" | "override";
+
+export interface ResolvedProviderLaunch {
+  command: string;
+  args: string[];
+  source: ProviderLaunchSource;
+}
+
+export interface ProviderLaunchAvailability {
+  available: boolean;
+  resolvedPath: string | null;
+}
+
+export interface ProviderLaunchDefault {
+  command: string;
+  resolvePath?: () => Promise<string | null>;
+}
+
+function normalizeLaunchDefault(
+  defaultBinary: string | ProviderLaunchDefault,
+): ProviderLaunchDefault {
+  if (typeof defaultBinary === "string") {
+    return { command: defaultBinary };
+  }
+  return defaultBinary;
+}
+
+async function resolveLaunchPath(command: string): Promise<string | null> {
+  const found = await findExecutable(command);
+  if (found) {
+    return found;
+  }
+  if (isAbsolute(command)) {
+    return executableExists(command);
+  }
+  return null;
+}
+
+async function resolveDefaultLaunchPath(
+  defaultBinary: ProviderLaunchDefault,
+): Promise<string | null> {
+  return defaultBinary.resolvePath
+    ? await defaultBinary.resolvePath()
+    : await resolveLaunchPath(defaultBinary.command);
+}
+
+export interface ResolveProviderLaunchOptions {
+  commandConfig?: ProviderCommand;
+  defaultBinary?: string | ProviderLaunchDefault;
+}
+
+export async function resolveProviderLaunch({
+  commandConfig,
+  defaultBinary,
+}: ResolveProviderLaunchOptions): Promise<ResolvedProviderLaunch> {
+  if (commandConfig?.mode === "replace") {
+    const command = commandConfig.argv[0];
+    return {
+      command,
+      args: commandConfig.argv.slice(1),
+      source: "override",
+    };
+  }
+
+  if (defaultBinary === undefined) {
+    throw new Error("defaultBinary is required when provider command is not replaced");
+  }
+  const normalizedDefault = normalizeLaunchDefault(defaultBinary);
+  const args = commandConfig?.mode === "append" ? [...(commandConfig.args ?? [])] : [];
+  return {
+    command: normalizedDefault.command,
+    args,
+    source: commandConfig?.mode === "append" ? "append" : "default",
+  };
+}
+
+export async function checkProviderLaunchAvailable(
+  launch: ResolvedProviderLaunch,
+  defaultBinary?: ProviderLaunchDefault,
+): Promise<ProviderLaunchAvailability> {
+  const resolvedPath =
+    defaultBinary && launch.source !== "override"
+      ? await resolveDefaultLaunchPath(defaultBinary)
+      : await resolveLaunchPath(launch.command);
+  return {
+    available: resolvedPath !== null,
+    resolvedPath,
+  };
+}
+
 export async function resolveProviderCommandPrefix(
   commandConfig: ProviderCommand | undefined,
   resolveDefaultCommand: () => string | Promise<string>,
 ): Promise<ProviderCommandPrefix> {
-  if (!commandConfig || commandConfig.mode === "default") {
+  if (commandConfig?.mode === "replace") {
+    const launch = await resolveProviderLaunch({
+      commandConfig,
+    });
     return {
-      command: await resolveDefaultCommand(),
-      args: [],
+      command: launch.command,
+      args: launch.args,
     };
   }
 
-  if (commandConfig.mode === "append") {
-    return {
-      command: await resolveDefaultCommand(),
-      args: [...(commandConfig.args ?? [])],
-    };
-  }
-
+  const defaultCommand = await resolveDefaultCommand();
+  const launch = await resolveProviderLaunch({
+    commandConfig,
+    defaultBinary: {
+      command: defaultCommand,
+      resolvePath: async () => defaultCommand,
+    },
+  });
   return {
-    command: commandConfig.argv[0],
-    args: commandConfig.argv.slice(1),
+    command: launch.command,
+    args: launch.args,
   };
 }
 
@@ -130,7 +161,7 @@ export function resolveShellEnv(): Record<string, string> {
 export function migrateProviderSettings(
   raw: Record<string, unknown>,
   builtinProviderIds: string[],
-): Record<string, ProviderOverride> {
+): ProviderOverrides {
   const migrated: Record<string, ProviderOverride> = {};
   const builtinProviderIdSet = new Set(builtinProviderIds);
 
@@ -163,7 +194,7 @@ export function migrateProviderSettings(
     migrated[providerId] = nextEntry;
   }
 
-  return migrated;
+  return ProviderOverridesSchema.parse(migrated);
 }
 
 // Env vars that indicate a running Claude Code session. If the daemon itself is
@@ -213,39 +244,27 @@ export function createProviderEnv(options: ProviderEnvOptions = {}): NodeJS.Proc
   return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
 }
 
-export function findExecutable(name: string): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
-    try {
-      const { existsSync } = require("node:fs");
-      return existsSync(trimmed) ? trimmed : null;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const cmd = process.platform === "win32" ? "where.exe" : "which";
-    const result = execFileSync(cmd, [trimmed], {
-      encoding: "utf8",
-      env: createProviderEnv({ baseEnv: process.env }),
-      windowsHide: true,
-    }).trim();
-    const lines = result.split(/\r?\n/).filter((l: string) => l.trim());
-    const candidate = lines.at(-1)?.trim() ?? null;
-    return candidate && path.isAbsolute(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function isProviderCommandAvailable(
   commandConfig: ProviderCommand | undefined,
   resolveDefaultCommand: () => string | Promise<string>,
 ): Promise<boolean> {
   try {
-    const prefix = await resolveProviderCommandPrefix(commandConfig, resolveDefaultCommand);
-    return isCommandAvailable(prefix.command);
+    if (commandConfig?.mode === "replace") {
+      const launch = await resolveProviderLaunch({
+        commandConfig,
+      });
+      const availability = await checkProviderLaunchAvailable(launch);
+      return availability.available;
+    }
+
+    const defaultCommand = await resolveDefaultCommand();
+    const defaultBinary = {
+      command: defaultCommand,
+      resolvePath: async () => defaultCommand,
+    };
+    const launch = await resolveProviderLaunch({ commandConfig, defaultBinary });
+    const availability = await checkProviderLaunchAvailable(launch, defaultBinary);
+    return availability.available;
   } catch {
     return false;
   }

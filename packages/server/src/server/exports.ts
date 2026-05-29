@@ -16,28 +16,21 @@ export {
   decodeOfferFragmentPayload,
   parseConnectionOfferFromUrl,
   type ConnectionOffer,
-} from "../shared/connection-offer.js";
-export { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
-export {
-  DaemonClient,
-  type DaemonClientConfig,
-  type ConnectionState,
-  type DaemonEvent,
-} from "../client/daemon-client.js";
-export type { WebSocketFactory, WebSocketLike } from "../client/daemon-client-transport-types.js";
+} from "@getpaseo/protocol/connection-offer";
+export { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 export {
   buildDaemonWebSocketUrl,
   deriveLabelFromEndpoint,
   normalizeHostPort,
   parseConnectionUri,
   shouldUseTlsForDefaultHostedRelay,
-} from "../shared/daemon-endpoints.js";
-export { PARENT_AGENT_ID_LABEL } from "../shared/agent-labels.js";
+} from "@getpaseo/protocol/daemon-endpoints";
+export { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 export {
   DirectTcpHostConnectionSchema,
   type DirectTcpHostConnection,
   type NormalizedDirectTcpHostConnection,
-} from "../shared/host-connection-schema.js";
+} from "@getpaseo/protocol/host-connection-schema";
 export {
   ensureLocalSpeechModels,
   listLocalSpeechModels,
@@ -68,7 +61,7 @@ export {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
   type AgentProviderDefinition,
-} from "./agent/provider-manifest.js";
+} from "@getpaseo/protocol/provider-manifest";
 
 // Agent SDK types for CLI commands
 export type {
@@ -102,4 +95,4 @@ export type {
   AgentSnapshotPayload,
   AgentStreamEventPayload,
   AgentStreamMessage,
-} from "../shared/messages.js";
+} from "@getpaseo/protocol/messages";

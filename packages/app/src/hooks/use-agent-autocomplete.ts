@@ -11,6 +11,7 @@ import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
+import { filterAndRankCommandAutocompleteEntries } from "@/utils/agent-command-autocomplete";
 import {
   applyFileMentionReplacement,
   findActiveFileMention,
@@ -314,7 +315,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     }
 
     if (mode === "command") {
-      const filterLower = commandFilterQuery.toLowerCase();
       const providerCommands = commands.map(
         (command): AvailableCommand => ({ source: "provider", command }),
       );
@@ -326,13 +326,10 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
             ),
             ...providerCommands,
           ];
-      const matches = availableCommands.filter((entry) => {
-        if (entry.source === "provider") {
-          return entry.command.name.toLowerCase().includes(filterLower);
-        }
-        const candidates = [entry.command.name, ...entry.command.aliases];
-        return candidates.some((candidate) => candidate.toLowerCase().includes(filterLower));
-      });
+      const matches = filterAndRankCommandAutocompleteEntries(
+        availableCommands,
+        commandFilterQuery,
+      );
       const orderedMatches = orderAutocompleteOptions(matches);
       return orderedMatches.map(mapCommandToOption);
     }

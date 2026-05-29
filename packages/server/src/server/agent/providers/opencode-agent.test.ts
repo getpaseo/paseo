@@ -753,6 +753,43 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("fails the turn when OpenCode reports MCP add failure in data payload", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.mcpAddResponse = {
+      data: {
+        paseo: {
+          status: "failed",
+          error: "SSE error: Non-200 status code (400)",
+        },
+      },
+    };
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+
+    try {
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd,
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test-agent",
+          },
+        },
+      });
+
+      await expect(collectTurnEvents(streamSession(session, "hello"))).rejects.toThrow(
+        /Failed to add OpenCode MCP server 'paseo': SSE error/,
+      );
+
+      await session.close();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("emits turn_started before live OpenCode timeline items", async () => {
     const eventsGate = createTestDeferred<void>();
     const globalEvents = [

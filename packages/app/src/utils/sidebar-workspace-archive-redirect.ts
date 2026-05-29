@@ -1,26 +1,16 @@
 import { router } from "expo-router";
-import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
-import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
+import {
+  redirectIfArchivingActiveWorkspace as redirectIfArchivingActiveWorkspacePure,
+  type RedirectIfArchivingActiveWorkspaceInput,
+} from "@/utils/workspace-archive-redirect";
 
-export function redirectIfArchivingActiveWorkspace(input: {
-  serverId: string;
-  workspaceId: string;
-  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
-}): boolean {
-  if (
-    input.activeWorkspaceSelection?.serverId !== input.serverId ||
-    input.activeWorkspaceSelection.workspaceId !== input.workspaceId
-  ) {
-    return false;
-  }
-
-  router.replace(
-    buildWorkspaceArchiveRedirectRoute({
-      serverId: input.serverId,
-      archivedWorkspaceId: input.workspaceId,
-      workspaces: useSessionStore.getState().sessions[input.serverId]?.workspaces.values() ?? [],
-    }),
-  );
-  return true;
+export function redirectIfArchivingActiveWorkspace(
+  input: RedirectIfArchivingActiveWorkspaceInput,
+): boolean {
+  return redirectIfArchivingActiveWorkspacePure(input, {
+    navigateToRoute: (route) => router.replace(route),
+    readWorkspaces: (serverId) =>
+      useSessionStore.getState().sessions[serverId]?.workspaces.values() ?? [],
+  });
 }

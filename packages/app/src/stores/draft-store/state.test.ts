@@ -1,0 +1,71 @@
+import { describe, expect, it } from "vitest";
+import { applyClearDraftRecord, pruneFinalizedDraftRecords } from "./state";
+
+describe("draft-store lifecycle", () => {
+  it("prunes finalized tombstones after TTL", () => {
+    const nowMs = 1_000_000;
+    const drafts = {
+      oldSent: {
+        input: { text: "", attachments: [] },
+        lifecycle: "sent" as const,
+        updatedAt: 0,
+        version: 2,
+      },
+      recentAbandoned: {
+        input: { text: "", attachments: [] },
+        lifecycle: "abandoned" as const,
+        updatedAt: nowMs + 2 * 60 * 1000,
+        version: 2,
+      },
+      active: {
+        input: { text: "a", attachments: [] },
+        lifecycle: "active" as const,
+        updatedAt: 0,
+        version: 1,
+      },
+    };
+
+    const pruned = pruneFinalizedDraftRecords({
+      drafts,
+      nowMs: nowMs + 6 * 60 * 1000,
+    });
+
+    expect(pruned.oldSent).toBeUndefined();
+    expect(pruned.recentAbandoned).toBeDefined();
+    expect(pruned.active).toBeDefined();
+  });
+
+  it("normalizes clear-with-lifecycle into a tombstone without attachments", () => {
+    const cleared = applyClearDraftRecord({
+      record: {
+        input: {
+          text: "hello",
+          attachments: [
+            {
+              kind: "image",
+              metadata: {
+                id: "att-1",
+                mimeType: "image/jpeg",
+                storageType: "web-indexeddb",
+                storageKey: "att-1",
+                createdAt: 1,
+              },
+            },
+          ],
+        },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      },
+      lifecycle: "sent",
+      nowMs: 2,
+    });
+
+    expect(cleared).toEqual({
+      input: { text: "", attachments: [] },
+      lifecycle: "sent",
+      updatedAt: 2,
+      version: 2,
+    });
+  });
+});

@@ -4,12 +4,15 @@ import {
   type PersistedConfig,
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
-import { MutableDaemonConfigSchema, MutableDaemonConfigPatchSchema } from "../shared/messages.js";
+import {
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
+} from "@getpaseo/protocol/messages";
 
-export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
+export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
-type MutableDaemonConfig = import("../shared/messages.js").MutableDaemonConfig;
-type MutableDaemonConfigPatch = import("../shared/messages.js").MutableDaemonConfigPatch;
+type MutableDaemonConfig = import("@getpaseo/protocol/messages").MutableDaemonConfig;
+type MutableDaemonConfigPatch = import("@getpaseo/protocol/messages").MutableDaemonConfigPatch;
 type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
 interface LoggerLike {

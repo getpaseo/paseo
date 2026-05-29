@@ -189,7 +189,7 @@ const styles = StyleSheet.create((theme) => {
     },
     lineText: {
       fontFamily: Fonts.mono,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
       ...(isWeb
         ? {

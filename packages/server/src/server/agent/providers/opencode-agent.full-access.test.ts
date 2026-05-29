@@ -125,6 +125,44 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
+  test("resolves legacy full-access for provider-driven child creation", () => {
+    const client = new OpenCodeAgentClient(createTestLogger());
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "opencode",
+        requestedMode: "full-access",
+        featureValues: undefined,
+        parent: null,
+        availableModes: [
+          { id: "build", label: "Build" },
+          { id: "plan", label: "Plan" },
+        ],
+      }),
+    ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
+  });
+
+  test("inherits unattended callers as build plus auto accept", () => {
+    const client = new OpenCodeAgentClient(createTestLogger());
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "opencode",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent: {
+          provider: "claude",
+          modeId: "bypassPermissions",
+          isUnattended: true,
+        },
+        availableModes: [
+          { id: "build", label: "Build" },
+          { id: "plan", label: "Plan" },
+        ],
+      }),
+    ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
+  });
+
   test("auto-approves tool permissions when auto accept is enabled", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [toolPermissionEvent(), idleEvent()],

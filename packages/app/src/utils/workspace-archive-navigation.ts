@@ -1,3 +1,4 @@
+import type { Href } from "expo-router";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostNewWorkspaceRoute, buildHostRootRoute } from "@/utils/host-routes";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-execution";
@@ -6,7 +7,7 @@ export function buildWorkspaceArchiveRedirectRoute(input: {
   serverId: string;
   archivedWorkspaceId: string;
   workspaces: Iterable<WorkspaceDescriptor>;
-}) {
+}): Href {
   const archivedWorkspaceId = resolveWorkspaceRouteId({
     routeWorkspaceId: input.archivedWorkspaceId,
   });

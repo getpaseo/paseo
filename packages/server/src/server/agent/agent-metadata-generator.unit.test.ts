@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createNoopWorkspaceGitService } from "../test-utils/workspace-git-service-stub.js";
-import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import { MAX_AUTO_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import {
   generateAndApplyAgentMetadata,
   type AgentMetadataGeneratorDeps,

@@ -1,4 +1,4 @@
-import type { PaseoConfigRaw } from "@server/shared/messages";
+import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 
 export interface WorktreeSetupWorkspaceInput {

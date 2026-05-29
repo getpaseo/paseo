@@ -1,4 +1,4 @@
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
 export const PROVIDERS_SNAPSHOT_QUERY_ROOT = "providersSnapshot";
 

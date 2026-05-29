@@ -7,7 +7,7 @@ import pino from "pino";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { OpenAITTS } from "./speech/providers/openai/tts.js";
-import type { SessionOutboundMessage } from "../shared/messages.js";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type SessionMessage<T extends SessionOutboundMessage["type"]> = Extract<
   SessionOutboundMessage,

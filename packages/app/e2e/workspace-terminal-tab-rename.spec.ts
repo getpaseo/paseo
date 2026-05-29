@@ -1,50 +1,42 @@
 import { test, expect } from "./fixtures";
-import { createTempGitRepo } from "./helpers/workspace";
-import { connectTerminalClient, navigateToTerminal } from "./helpers/terminal-perf";
+import { TerminalE2EHarness, withTerminalInApp } from "./helpers/terminal-dsl";
 import { captureWsSessionFrames, renameModalInput, renameModalSubmit } from "./helpers/rename";
 
 test.describe("Workspace terminal tab rename", () => {
+  let harness: TerminalE2EHarness;
+
+  test.beforeAll(async () => {
+    harness = await TerminalE2EHarness.create({ tempPrefix: "workspace-terminal-rename-" });
+  });
+
+  test.afterAll(async () => {
+    await harness?.cleanup();
+  });
+
   test("right-click rename sends terminal.rename.request and updates the tab label", async ({
     page,
   }) => {
     test.setTimeout(60_000);
 
-    const client = await connectTerminalClient();
-    const repo = await createTempGitRepo("workspace-terminal-rename-");
+    const renameFrames = captureWsSessionFrames(page, "terminal.rename.request", (inner) => ({
+      terminalId: String(inner.terminalId ?? ""),
+      title: String(inner.title ?? ""),
+      requestId: String(inner.requestId ?? ""),
+    }));
 
-    try {
-      const seeded = await client.openProject(repo.path);
-      if (!seeded.workspace) {
-        throw new Error(seeded.error ?? "Failed to seed workspace");
-      }
-      const workspaceId = seeded.workspace.id;
-
-      const created = await client.createTerminal(repo.path);
-      if (!created.terminal) {
-        throw new Error(created.error ?? "Failed to create terminal");
-      }
-      const terminalId = created.terminal.id;
-
-      const renameFrames = captureWsSessionFrames(page, "terminal.rename.request", (inner) => ({
-        terminalId: String(inner.terminalId ?? ""),
-        title: String(inner.title ?? ""),
-        requestId: String(inner.requestId ?? ""),
-      }));
-
-      await navigateToTerminal(page, { workspaceId, terminalId });
-
-      const tab = page.getByTestId(`workspace-tab-terminal_${terminalId}`).first();
+    await withTerminalInApp(page, harness, { name: "rename-target" }, async (terminal) => {
+      const tab = page.getByTestId(`workspace-tab-terminal_${terminal.id}`).first();
       await expect(tab).toBeVisible({ timeout: 15_000 });
 
       await tab.click({ button: "right" });
-      await expect(page.getByTestId(`workspace-tab-context-terminal_${terminalId}`)).toBeVisible({
+      await expect(page.getByTestId(`workspace-tab-context-terminal_${terminal.id}`)).toBeVisible({
         timeout: 10_000,
       });
-      const renameItem = page.getByTestId(`workspace-tab-context-terminal_${terminalId}-rename`);
+      const renameItem = page.getByTestId(`workspace-tab-context-terminal_${terminal.id}-rename`);
       await expect(renameItem).toBeVisible({ timeout: 10_000 });
       await renameItem.click();
 
-      const modalPrefix = `workspace-tab-rename-modal-terminal-${terminalId}`;
+      const modalPrefix = `workspace-tab-rename-modal-terminal-${terminal.id}`;
       const input = renameModalInput(page, modalPrefix);
       await expect(input).toBeVisible({ timeout: 10_000 });
 
@@ -56,12 +48,9 @@ test.describe("Workspace terminal tab rename", () => {
 
       expect(renameFrames.length).toBeGreaterThan(0);
       const lastFrame = renameFrames.at(-1)!;
-      expect(lastFrame.terminalId).toBe(terminalId);
+      expect(lastFrame.terminalId).toBe(terminal.id);
       expect(lastFrame.title).toBe("My Renamed Terminal");
       expect(lastFrame.requestId.length).toBeGreaterThan(0);
-    } finally {
-      await client.close();
-      await repo.cleanup();
-    }
+    });
   });
 });

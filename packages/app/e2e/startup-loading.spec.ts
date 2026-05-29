@@ -1,21 +1,7 @@
 import { test } from "./fixtures";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
+import { getServerId } from "./helpers/server-id";
 import { startupScenario } from "./helpers/startup-dsl";
-
-function getE2EDaemonPort(): string {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  return port;
-}
-
-function getE2EServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
 
 test.describe("Startup loading presentation", () => {
   test("mobile reconnect keeps connection recovery actions visible", async ({ page }) => {
@@ -49,7 +35,7 @@ test.describe("Startup loading presentation", () => {
   test("host-route refresh does not render route chrome around the bootstrap splash", async ({
     page,
   }) => {
-    const serverId = getE2EServerId();
+    const serverId = getServerId();
     const startup = await startupScenario(page)
       .withPendingDesktopDaemon()
       .withBlockedPort(getE2EDaemonPort())

@@ -3,7 +3,7 @@ import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
 import { agentRunSchema, type AgentRunResult } from "./run.js";
-import type { AgentSnapshotPayload } from "@getpaseo/server";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 
 const IMPORT_PROVIDER_LIST = ["claude", "codex", "opencode", "pi", "acp"] as const;
 const IMPORT_PROVIDERS = new Set<string>(IMPORT_PROVIDER_LIST);

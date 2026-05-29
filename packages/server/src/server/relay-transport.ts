@@ -8,7 +8,7 @@ import {
   type Transport as RelayTransport,
   type KeyPair,
 } from "@getpaseo/relay/e2ee";
-import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
+import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
 interface RelayTransportOptions {
@@ -583,5 +583,3 @@ function bufferFromWsData(data: unknown): Buffer | null {
   }
   return null;
 }
-
-// buildRelayWebSocketUrl + parseHostPort live in ../shared/daemon-endpoints.ts

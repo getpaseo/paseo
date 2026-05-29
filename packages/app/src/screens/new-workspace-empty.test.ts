@@ -1,16 +1,7 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { MessagePayload } from "@/composer/types";
-
-const navigateToWorkspace = vi.hoisted(() => vi.fn());
-vi.mock("@/hooks/use-workspace-navigation", () => ({ navigateToWorkspace }));
-
-let isEmptyWorkspaceSubmission: typeof import("./new-workspace-empty").isEmptyWorkspaceSubmission;
-let runCreateEmptyWorkspace: typeof import("./new-workspace-empty").runCreateEmptyWorkspace;
-
-beforeAll(async () => {
-  ({ isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } = await import("./new-workspace-empty"));
-});
+import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 
 function payload(
   input: { text?: string; attachments?: ComposerAttachment[] } = {},
@@ -18,12 +9,28 @@ function payload(
   return { text: input.text ?? "", attachments: input.attachments ?? [], cwd: "/sample/repo" };
 }
 
+function createRecordingNavigate() {
+  const recorded: Array<{ serverId: string; workspaceId: string }> = [];
+  return {
+    recorded,
+    navigate: (serverId: string, workspaceId: string) => {
+      recorded.push({ serverId, workspaceId });
+    },
+  };
+}
+
 describe("runCreateEmptyWorkspace", () => {
   it("creates a workspace without prompt or attachments and navigates to it", async () => {
     const workspace = { id: "workspace-123" };
     const ensureWorkspace = vi.fn().mockResolvedValue(workspace);
+    const { navigate, recorded } = createRecordingNavigate();
 
-    await runCreateEmptyWorkspace({ payload: payload(), ensureWorkspace, serverId: "server-abc" });
+    await runCreateEmptyWorkspace({
+      payload: payload(),
+      ensureWorkspace,
+      serverId: "server-abc",
+      navigate,
+    });
 
     expect(ensureWorkspace).toHaveBeenCalledOnce();
     expect(ensureWorkspace).toHaveBeenCalledWith({
@@ -31,8 +38,7 @@ describe("runCreateEmptyWorkspace", () => {
       prompt: "",
       attachments: [],
     });
-    expect(navigateToWorkspace).toHaveBeenCalledOnce();
-    expect(navigateToWorkspace).toHaveBeenCalledWith("server-abc", workspace.id);
+    expect(recorded).toEqual([{ serverId: "server-abc", workspaceId: "workspace-123" }]);
   });
 });
 

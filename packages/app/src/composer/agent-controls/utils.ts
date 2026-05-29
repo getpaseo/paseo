@@ -1,4 +1,4 @@
-import type { AgentFeature, AgentModelDefinition } from "@server/server/agent/agent-sdk-types";
+import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";

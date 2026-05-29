@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
-import type { AgentLifecycleStatus } from "../../shared/agent-lifecycle.js";
+import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { getFullAccessConfig } from "./agent-configs.js";

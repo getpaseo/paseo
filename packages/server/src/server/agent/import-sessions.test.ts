@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
-import type { FetchRecentProviderSessionsRequestMessage } from "../../shared/messages.js";
+import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import type { AgentTimelineItem, PersistedAgentDescriptor } from "./agent-sdk-types.js";
 import {
   ImportSessionsRequestError,
@@ -208,7 +208,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
     }),
     agentManager,
     agentStorage,
-    providerRegistry: { codex: { label: "Codex" } },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
   });
 
   expect(listImportablePersistedAgents).toHaveBeenCalledWith({
@@ -274,7 +274,7 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
     agentStorage: {
       list: async () => [],
     } satisfies Pick<AgentStorage, "list">,
-    providerRegistry: { codex: { label: "Codex" } },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
   });
 
   expect(result.entries).toHaveLength(1);
@@ -309,7 +309,7 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
     agentStorage: {
       list: async () => [],
     } satisfies Pick<AgentStorage, "list">,
-    providerRegistry: { pi: { label: "Pi" } },
+    providerSnapshotManager: { getProviderLabel: () => "Pi" },
   });
 
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["pi-handle"]);
@@ -326,7 +326,7 @@ test("listImportableProviderSessions rejects invalid since values", async () => 
       agentStorage: {
         list: async () => [],
       } satisfies Pick<AgentStorage, "list">,
-      providerRegistry: {},
+      providerSnapshotManager: { getProviderLabel: () => "" },
     }),
   ).rejects.toMatchObject(
     new ImportSessionsRequestError("invalid_since", "Invalid recent provider sessions since"),

@@ -7,6 +7,10 @@ import { CopilotIcon } from "@/components/icons/copilot-icon";
 import { OpenCodeIcon } from "@/components/icons/opencode-icon";
 import { PiIcon } from "@/components/icons/pi-icon";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
+import {
+  resolveProviderIconName,
+  type BuiltinProviderIconName,
+} from "@/components/provider-icon-name";
 
 export interface ProviderIconProps {
   size: number;
@@ -15,7 +19,7 @@ export interface ProviderIconProps {
 
 export type ProviderIconComponent = ComponentType<ProviderIconProps>;
 
-const PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
+const BUILTIN_PROVIDER_ICONS: Record<BuiltinProviderIconName, ProviderIconComponent> = {
   claude: ClaudeIcon as unknown as ProviderIconComponent,
   codex: CodexIcon as unknown as ProviderIconComponent,
   copilot: CopilotIcon as unknown as ProviderIconComponent,
@@ -42,22 +46,24 @@ function createCatalogIcon(provider: string, iconSvg: string): ProviderIconCompo
   return CatalogProviderIcon;
 }
 
-function getCatalogProviderIcon(provider: string): ProviderIconComponent | undefined {
+function getCatalogProviderIcon(provider: string): ProviderIconComponent {
   const cached = catalogIconComponents.get(provider);
   if (cached) {
     return cached;
   }
-
-  const iconSvg = CATALOG_ICON_SVGS.get(provider);
-  if (!iconSvg) {
-    return undefined;
-  }
-
+  const iconSvg = CATALOG_ICON_SVGS.get(provider) ?? "";
   const icon = createCatalogIcon(provider, iconSvg);
   catalogIconComponents.set(provider, icon);
   return icon;
 }
 
 export function getProviderIcon(provider: string): ProviderIconComponent {
-  return PROVIDER_ICONS[provider] ?? getCatalogProviderIcon(provider) ?? Bot;
+  const name = resolveProviderIconName(provider);
+  if (name.kind === "builtin") {
+    return BUILTIN_PROVIDER_ICONS[name.id];
+  }
+  if (name.kind === "catalog") {
+    return getCatalogProviderIcon(name.id);
+  }
+  return Bot;
 }

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { ComposerAttachment } from "@/attachments/types";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
 export interface PendingWorkspaceDraftSubmission {
   serverId: string;

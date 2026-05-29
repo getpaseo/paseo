@@ -24,6 +24,7 @@ Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`)
 - [Extending a built-in provider](#extending-a-built-in-provider)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
+- [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
 - [Disabling a provider](#disabling-a-provider)
@@ -59,29 +60,7 @@ Required fields for custom providers:
 - `extends` — which built-in provider to inherit from (or `"acp"`)
 - `label` — display name in the UI
 
-### Codex with an OpenAI-compatible endpoint
-
-Custom providers that extend `"codex"` can point Codex at an OpenAI-compatible API by setting `OPENAI_BASE_URL` and `OPENAI_API_KEY` in the provider `env`. Paseo still passes those variables through to the Codex app-server process, and also maps them into Codex's thread config (`model_provider` / `model_providers`) because Codex reads provider routing from config rather than from `OPENAI_BASE_URL`.
-
-```json
-{
-  "agents": {
-    "providers": {
-      "my-codex": {
-        "extends": "codex",
-        "label": "My Codex",
-        "env": {
-          "OPENAI_API_KEY": "sk-...",
-          "OPENAI_BASE_URL": "https://custom-relay.example.com"
-        },
-        "models": [{ "id": "custom-model", "label": "Custom Model", "isDefault": true }]
-      }
-    }
-  }
-}
-```
-
-If the base URL does not end in `/v1`, Paseo appends `/v1` for Codex's OpenAI-compatible provider config. If it already ends in `/v1`, Paseo leaves it as-is.
+See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
 
 ---
 
@@ -203,6 +182,62 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 - The coding plan is for personal use only in interactive coding tools
 - Web search (`WebSearch` tool) is an Anthropic-only server-side feature — third-party endpoints don't support it. Add `"disallowedTools": ["WebSearch"]` to avoid errors.
 - Official docs: [alibabacloud.com/help/en/model-studio/claude-code-coding-plan](https://www.alibabacloud.com/help/en/model-studio/claude-code-coding-plan)
+
+---
+
+## Codex with a custom OpenAI-compatible endpoint
+
+Codex talks to OpenAI's Responses API by default. Custom providers that extend `"codex"` can point Codex at any OpenAI-compatible endpoint (OpenRouter, LiteLLM, vLLM, llama.cpp server, an internal gateway, etc.) by setting `OPENAI_BASE_URL` and `OPENAI_API_KEY` in the provider `env`.
+
+Paseo passes those variables through to the Codex app-server process **and** maps them into Codex's thread config under `model_provider` / `model_providers`, because Codex reads provider routing from config rather than from `OPENAI_BASE_URL` alone.
+
+### Setup
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-codex": {
+        "extends": "codex",
+        "label": "My Codex",
+        "description": "Codex via custom OpenAI-compatible endpoint",
+        "env": {
+          "OPENAI_API_KEY": "sk-...",
+          "OPENAI_BASE_URL": "https://custom-relay.example.com"
+        },
+        "models": [{ "id": "custom-model", "label": "Custom Model", "isDefault": true }]
+      }
+    }
+  }
+}
+```
+
+### What Paseo wires up
+
+Under the hood, for each custom Codex provider Paseo injects this into Codex's config:
+
+```toml
+model_provider = "my-codex"
+
+[model_providers.my-codex]
+name = "My Codex"
+base_url = "https://custom-relay.example.com/v1"
+wire_api = "responses"
+env_key = "OPENAI_API_KEY"
+requires_openai_auth = false
+```
+
+- `base_url` — taken from `OPENAI_BASE_URL`. If it does not already end in `/v1`, Paseo appends `/v1`. Trailing slashes are stripped.
+- `wire_api` — always `"responses"` (OpenAI Responses API protocol).
+- `env_key` — set to `"OPENAI_API_KEY"` when that env var is present and non-empty, so Codex reads the key from the same env var Paseo passes through.
+- `requires_openai_auth` — forced to `false` when `OPENAI_API_KEY` is provided, so Codex skips its built-in OpenAI login flow.
+
+### Notes
+
+- The endpoint must speak the OpenAI **Responses API**, not just chat completions. Many gateways (OpenRouter, LiteLLM) support both — pick the Responses-compatible route.
+- Set `models` explicitly. Custom endpoints expose their own model IDs (`anthropic/claude-opus-4-7`, `qwen/qwen3-coder`, `local/llama`, etc.), and Paseo does not discover them automatically for Codex.
+- To run multiple endpoints side-by-side, define multiple entries that each extend `"codex"` with different IDs, labels, and env. Each appears as its own provider in the app.
+- If you only want to override the binary (e.g. a nightly Codex build) without changing the endpoint, omit `OPENAI_BASE_URL` and use `command` instead — see [Custom binary for a provider](#custom-binary-for-a-provider).
 
 ---
 

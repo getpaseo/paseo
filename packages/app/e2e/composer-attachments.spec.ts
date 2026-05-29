@@ -23,16 +23,12 @@ import {
   expectGithubAttachmentPill,
   openGithubWorkspace,
 } from "./helpers/composer";
-import {
-  connectNewWorkspaceDaemonClient,
-  delayBrowserAgentCreatedStatus,
-  openNewWorkspaceComposer,
-  openProjectViaDaemon,
-} from "./helpers/new-workspace";
+import { delayBrowserAgentCreatedStatus, openNewWorkspaceComposer } from "./helpers/new-workspace";
 import { gotoAppShell } from "./helpers/app";
 import { waitForSidebarHydration, switchWorkspaceViaSidebar } from "./helpers/workspace-ui";
-import { createTempGitRepo } from "./helpers/workspace";
+import { seedWorkspace } from "./helpers/seed-client";
 import { hasGithubAuth, createTempGithubRepo } from "./helpers/github-fixtures";
+import { getServerId } from "./helpers/server-id";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -237,27 +233,23 @@ test.describe("Composer attachments", () => {
 
   test("composer is locked while new workspace agent is being created", async ({ page }) => {
     test.setTimeout(120_000);
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) throw new Error("E2E_SERVER_ID is not set.");
+    const serverId = getServerId();
 
-    const repo = await createTempGitRepo("attach-lock-");
     const agentCreatedDelay = await delayBrowserAgentCreatedStatus(page);
-    const daemonClient = await connectNewWorkspaceDaemonClient();
+    const workspace = await seedWorkspace({ repoPrefix: "attach-lock-" });
 
     try {
-      const openedProject = await openProjectViaDaemon(daemonClient, repo.path);
-
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: openedProject.workspaceId,
+        targetWorkspacePath: workspace.workspaceId,
       });
 
       await openNewWorkspaceComposer(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
+        projectKey: workspace.projectId,
+        projectDisplayName: workspace.projectDisplayName,
       });
       await fillComposerDraft(page, "lock test prompt");
       const createButton = page
@@ -277,8 +269,7 @@ test.describe("Composer attachments", () => {
       await expectComposerEditable(page);
     } finally {
       agentCreatedDelay.release();
-      await daemonClient.close().catch(() => undefined);
-      await repo.cleanup();
+      await workspace.cleanup();
     }
   });
 });

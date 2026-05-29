@@ -1,5 +1,5 @@
 ---
-title: OpenChamber alternative with Linux, Windows, and mobile
+title: OpenChamber Alternative With Linux, Windows, and Mobile
 description: Paseo ships native iOS and Android apps, runs on macOS, Linux, and Windows, and supports 30+ agents. OpenChamber is macOS only with a PWA and is built around OpenCode.
 nav: OpenChamber
 order: 103

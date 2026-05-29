@@ -73,10 +73,10 @@ buildNpmPackage rec {
     # Native deps (terminal emulation; libuv-linked on Linux)
     npm rebuild node-pty
 
-    # Daemon workspaces (highlight + relay + server + cli)
-    npm run build:daemon
+    # Server workspaces (highlight + relay + protocol + client + server + cli)
+    npm run build:server
 
-    # App workspace deps not covered by build:daemon
+    # App workspace deps not covered by build:server
     npm run build --workspace=@getpaseo/expo-two-way-audio
 
     # Expo web export for the Electron renderer

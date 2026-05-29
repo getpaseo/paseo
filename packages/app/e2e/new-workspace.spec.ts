@@ -26,6 +26,7 @@ import {
   selectPickerOptionByKeyboard,
 } from "./helpers/new-workspace";
 import { createTempGitRepo, readWorktreeBranchInfo } from "./helpers/workspace";
+import { getServerId } from "./helpers/server-id";
 import {
   expectSidebarWorkspaceSelected,
   expectWorkspaceHeader,
@@ -61,10 +62,7 @@ test.describe("New workspace flow", () => {
   });
 
   test("sidebar workspace navigation updates URL and header", async ({ page }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const firstRepo = await createTempGitRepo("workspace-nav-a-");
     const secondRepo = await createTempGitRepo("workspace-nav-b-");
@@ -118,10 +116,7 @@ test.describe("New workspace flow", () => {
   });
 
   test("same-project workspaces switch content without requiring refresh", async ({ page }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const repo = await createTempGitRepo("workspace-nav-same-project-");
 
@@ -201,10 +196,7 @@ test.describe("New workspace flow", () => {
   test("clicking new workspace redirects, renders header, shows sidebar row, and keeps one agent tab", async ({
     page,
   }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const tempRepo = await createTempGitRepo("new-workspace-");
 
@@ -276,10 +268,7 @@ test.describe("New workspace flow", () => {
   });
 
   test("redirects to the optimistic draft tab before agent creation resolves", async ({ page }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const tempRepo = await createTempGitRepo("new-workspace-optimistic-");
     const agentCreatedDelay = await delayBrowserAgentCreatedStatus(page);
@@ -355,10 +344,7 @@ test.describe("New workspace flow", () => {
   });
 
   test("selected branch becomes the base of a new workspace worktree", async ({ page }) => {
-    const serverId = process.env.E2E_SERVER_ID;
-    if (!serverId) {
-      throw new Error("E2E_SERVER_ID is not set.");
-    }
+    const serverId = getServerId();
 
     const tempRepo = await createTempGitRepo("new-workspace-ref-", {
       branches: ["main", "dev"],

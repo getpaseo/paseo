@@ -8,11 +8,11 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { AddProviderModal } from "@/components/add-provider-modal";
 import { getProviderIcon } from "@/components/provider-icons";
-import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
-import { ChevronRight, Plus, RotateCw } from "lucide-react-native";
+import { useProviderSettingsStore } from "@/stores/provider-settings-store";
+import { ChevronRight, Plus } from "lucide-react-native";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -179,22 +179,21 @@ export interface ProvidersSectionProps {
 export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const { entries, isLoading, isRefreshing, refresh } = useProvidersSnapshot(serverId);
+  const { entries, isLoading } = useProvidersSnapshot(serverId);
   const { patchConfig } = useDaemonConfig(serverId);
-  const [diagnosticProvider, setDiagnosticProvider] = useState<string | null>(null);
+  const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
-  const providerRefreshInFlight =
-    isRefreshing || (entries?.some((entry) => entry.status === "loading") ?? false);
   const hasServer = serverId.length > 0;
 
-  const handleRefresh = useCallback(() => {
-    void refresh();
-  }, [refresh]);
-
-  const handleCloseDiagnostic = useCallback(() => setDiagnosticProvider(null), []);
+  const handleOpenProviderSettings = useCallback(
+    (providerId: string) => {
+      openProviderSettings({ serverId, provider: providerId });
+    },
+    [openProviderSettings, serverId],
+  );
   const handleOpenAddProvider = useCallback(() => setIsAddProviderOpen(true), []);
   const handleCloseAddProvider = useCallback(() => setIsAddProviderOpen(false), []);
   const handleToggleEnabled = useCallback(
@@ -229,30 +228,12 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
             <Plus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
             <Text style={settingsStyles.sectionHeaderLinkText}>Add provider</Text>
           </Pressable>
-          <Pressable
-            onPress={handleRefresh}
-            disabled={providerRefreshInFlight}
-            hitSlop={8}
-            style={settingsStyles.sectionHeaderLink}
-            accessibilityRole="button"
-            accessibilityLabel={
-              providerRefreshInFlight ? "Refreshing providers" : "Refresh providers"
-            }
-          >
-            {providerRefreshInFlight ? (
-              <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            ) : (
-              <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            )}
-          </Pressable>
         </View>
       ) : undefined,
     [
       hasServer,
       isConnected,
       handleOpenAddProvider,
-      handleRefresh,
-      providerRefreshInFlight,
       theme.iconSize.sm,
       theme.colors.foregroundMuted,
     ],
@@ -289,7 +270,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
                   isFirst={index === 0}
-                  onPress={setDiagnosticProvider}
+                  onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}
                 />
               );
@@ -298,14 +279,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         ) : null}
       </SettingsSection>
 
-      {diagnosticProvider ? (
-        <ProviderDiagnosticSheet
-          provider={diagnosticProvider}
-          visible
-          onClose={handleCloseDiagnostic}
-          serverId={serverId}
-        />
-      ) : null}
       {hasServer && isConnected && isAddProviderOpen ? (
         <AddProviderModal serverId={serverId} visible onClose={handleCloseAddProvider} />
       ) : null}

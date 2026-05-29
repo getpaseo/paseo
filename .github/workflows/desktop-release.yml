@@ -183,6 +183,14 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
+      - name: Upload desktop artifacts to workflow
+        if: env.SHOULD_PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-${{ matrix.electron_arch }}
+          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*.dmg
+          retention-days: 7
+
       - name: Upload manifest artifact
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
@@ -273,6 +281,14 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
+      - name: Upload desktop artifacts to workflow
+        if: env.SHOULD_PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*
+          retention-days: 7
+
       - name: Upload manifest artifact
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
@@ -359,6 +375,14 @@ jobs:
             exit 1
           fi
           gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+
+      - name: Upload desktop artifacts to workflow
+        if: env.SHOULD_PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*
+          retention-days: 7
 
       - name: Upload manifest artifact
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
