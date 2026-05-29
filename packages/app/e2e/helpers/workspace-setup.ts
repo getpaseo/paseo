@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
+import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
@@ -7,51 +8,18 @@ import { getServerId } from "./server-id";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
-interface WorkspaceSetupDaemonClient {
-  connect(): Promise<void>;
-  close(): Promise<void>;
-  openProject(cwd: string): Promise<{
-    workspace: {
-      id: string;
-      name: string;
-      workspaceDirectory: string;
-      projectRootPath: string;
-    } | null;
-    error: string | null;
-  }>;
-  createPaseoWorktree(input: { cwd: string; worktreeSlug?: string }): Promise<{
-    workspace: {
-      id: string;
-      name: string;
-      workspaceDirectory: string;
-      projectRootPath: string;
-    } | null;
-    error: string | null;
-  }>;
-  fetchWorkspaces(): Promise<{
-    entries: Array<{
-      id: string;
-      name: string;
-      workspaceDirectory: string;
-      projectRootPath: string;
-    }>;
-  }>;
-  fetchAgents(): Promise<{
-    entries: Array<{
-      agent: { id: string; cwd: string; workspaceId?: string | null };
-    }>;
-  }>;
-  fetchAgent(agentId: string): Promise<{
-    agent: { id: string; cwd: string } | null;
-    project: unknown;
-  } | null>;
-  listTerminals(cwd: string): Promise<{
-    cwd?: string;
-    terminals: Array<{ id: string; cwd: string; name: string }>;
-    error?: string | null;
-  }>;
-  subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void;
-}
+type WorkspaceSetupDaemonClient = Pick<
+  InternalDaemonClient,
+  | "close"
+  | "connect"
+  | "createPaseoWorktree"
+  | "fetchAgent"
+  | "fetchAgents"
+  | "fetchWorkspaces"
+  | "listTerminals"
+  | "openProject"
+  | "subscribeRawMessages"
+>;
 
 export type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
