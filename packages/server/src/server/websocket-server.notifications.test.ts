@@ -346,7 +346,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     });
   });
 
-  it("does not run the agent attention hook when the notification plan does not push", async () => {
+  it("runs the agent attention hook when the notification plan does not push", async () => {
     const runHook = vi.fn(async () => undefined);
     const { server } = createServer(
       undefined,
@@ -363,7 +363,20 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
-    expect(runHook).not.toHaveBeenCalled();
+    expect(runHook).toHaveBeenCalledWith({
+      agentId: "agent-no-heartbeat",
+      provider: "claude",
+      reason: "error",
+      notification: {
+        title: "Agent needs attention",
+        body: "Encountered an error.",
+        data: {
+          serverId: "srv-test",
+          agentId: "agent-no-heartbeat",
+          reason: "error",
+        },
+      },
+    });
   });
 
   it("does not block in-app attention delivery when the agent attention hook rejects", async () => {

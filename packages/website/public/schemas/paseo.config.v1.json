@@ -166,6 +166,19 @@
                       "exclusiveMinimum": 0
                     }
                   },
+                  "if": {
+                    "not": {
+                      "properties": {
+                        "enabled": {
+                          "const": false
+                        }
+                      },
+                      "required": ["enabled"]
+                    }
+                  },
+                  "then": {
+                    "required": ["command"]
+                  },
                   "additionalProperties": false
                 }
               },

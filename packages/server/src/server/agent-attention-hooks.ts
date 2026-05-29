@@ -82,6 +82,7 @@ export function createAgentAttentionHookRunner(
         child.stdin.end();
       } catch (err) {
         logger.warn({ err }, "Failed to write agent attention hook payload");
+        child.kill();
         finish();
       }
 

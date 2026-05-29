@@ -1678,17 +1678,17 @@ export class VoiceAssistantWebSocketServer {
       void this.pushNotificationSender.send(notification).catch((err) => {
         this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
       });
-      void this.agentAttentionHookRunner
-        ?.run({
-          agentId: params.agentId,
-          provider: params.provider,
-          reason: params.reason,
-          notification,
-        })
-        .catch((err) => {
-          this.logger.warn({ err, agentId: params.agentId }, "Failed to run agent attention hook");
-        });
     }
+    void this.agentAttentionHookRunner
+      ?.run({
+        agentId: params.agentId,
+        provider: params.provider,
+        reason: params.reason,
+        notification,
+      })
+      .catch((err) => {
+        this.logger.warn({ err, agentId: params.agentId }, "Failed to run agent attention hook");
+      });
 
     for (const [clientIndex, { ws }] of clientEntries.entries()) {
       const shouldNotify = clientIndex === plan.inAppRecipientIndex;

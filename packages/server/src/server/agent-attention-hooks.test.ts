@@ -143,6 +143,28 @@ describe("AgentAttentionHookRunner", () => {
     expect(child.kill).toHaveBeenCalled();
   });
 
+  test("kills the hook process when stdin write throws synchronously", async () => {
+    const logger = createLogger();
+    const child = createChildProcess();
+    vi.mocked(spawn).mockReturnValue(child as never);
+    const runner = createAgentAttentionHookRunner(logger, {
+      command: ["node", "/opt/paseo/attention-hook.mjs"],
+    });
+    const error = new Error("sync write failure");
+    child.stdin.write.mockImplementation(() => {
+      throw error;
+    });
+
+    await runner.run(payload);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: error },
+      "Failed to write agent attention hook payload",
+    );
+    expect(child.kill).toHaveBeenCalled();
+    expect(child.stdin.end).not.toHaveBeenCalled();
+  });
+
   test("uses a 5 second default timeout", async () => {
     vi.useFakeTimers();
     const child = createChildProcess();
