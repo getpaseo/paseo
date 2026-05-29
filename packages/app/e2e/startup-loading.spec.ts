@@ -1,14 +1,7 @@
 import { test } from "./fixtures";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { getServerId } from "./helpers/server-id";
 import { startupScenario } from "./helpers/startup-dsl";
-
-function getE2EDaemonPort(): string {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  return port;
-}
 
 test.describe("Startup loading presentation", () => {
   test("mobile reconnect keeps connection recovery actions visible", async ({ page }) => {

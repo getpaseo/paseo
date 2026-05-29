@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { getE2EDaemonPort } from "./daemon-port";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 
 export async function loadDaemonClientConstructor<ClientConfig, ClientInstance>(): Promise<
@@ -25,14 +26,7 @@ interface E2EDaemonClientConfig {
 }
 
 function resolveDaemonWsUrl(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  if (daemonPort === "6767") {
-    throw new Error("E2E_DAEMON_PORT must not point at the developer daemon.");
-  }
-  return `ws://127.0.0.1:${daemonPort}/ws`;
+  return `ws://127.0.0.1:${getE2EDaemonPort()}/ws`;
 }
 
 export interface ConnectDaemonClientOptions {

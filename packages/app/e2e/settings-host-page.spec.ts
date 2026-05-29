@@ -1,5 +1,6 @@
 import { test } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { TEST_HOST_LABEL } from "./helpers/daemon-registry";
 import { getServerId } from "./helpers/server-id";
 import {
@@ -17,20 +18,12 @@ import {
   expectLocalHostEntryFirst,
 } from "./helpers/settings";
 
-function getSeededDaemonPort(): string {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) {
-    throw new Error("E2E_DAEMON_PORT is not set (expected from Playwright globalSetup).");
-  }
-  return port;
-}
-
 test.describe("Settings host page", () => {
   test("host page shows seeded label, connection endpoint, inject MCP toggle, and all action rows", async ({
     page,
   }) => {
     const serverId = getServerId();
-    const port = getSeededDaemonPort();
+    const port = getE2EDaemonPort();
 
     await gotoAppShell(page);
     await openSettings(page);

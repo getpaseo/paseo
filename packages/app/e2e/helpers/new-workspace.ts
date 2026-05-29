@@ -2,6 +2,8 @@ import { expect, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { connectDaemonClient } from "./daemon-client-loader";
+import { getE2EDaemonPort } from "./daemon-port";
+import { escapeRegex } from "./regex";
 import { expectWorkspaceHeader, workspaceLabelFromPath } from "./workspace-ui";
 
 type NewWorkspaceDaemonClient = Pick<
@@ -282,12 +284,7 @@ export interface AgentCreatedDelayControl {
 export async function delayBrowserAgentCreatedStatus(
   page: Page,
 ): Promise<AgentCreatedDelayControl> {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-
-  const daemonPortPattern = new RegExp(`:${daemonPort.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const daemonPortPattern = new RegExp(`:${escapeRegex(getE2EDaemonPort())}\\b`);
   const createRequestIds = new Set<string>();
   const delayedForwards: Array<() => void> = [];
   let releaseRequested = false;

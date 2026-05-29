@@ -9,6 +9,7 @@ import {
   openWorkspaceWithAgents,
 } from "./helpers/archive-tab";
 import { expectComposerVisible } from "./helpers/composer";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace } from "./helpers/seed-client";
 import {
   getVisibleWorkspaceAgentTabIds,
@@ -158,10 +159,7 @@ test.describe("Workspace navigation regression", () => {
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {
     const serverId = getServerId();
-    const daemonPort = process.env.E2E_DAEMON_PORT;
-    if (!daemonPort) {
-      throw new Error("E2E_DAEMON_PORT is not set.");
-    }
+    const daemonPort = getE2EDaemonPort();
 
     const daemonGate = await installDaemonWebSocketGate(page, daemonPort);
 
@@ -219,10 +217,7 @@ test.describe("Workspace navigation regression", () => {
     page,
   }) => {
     const serverId = getServerId();
-    const daemonPort = process.env.E2E_DAEMON_PORT;
-    if (!daemonPort) {
-      throw new Error("E2E_DAEMON_PORT is not set.");
-    }
+    const daemonPort = getE2EDaemonPort();
 
     await page.routeWebSocket(new RegExp(`:${escapeRegex(daemonPort)}\\b`), async (ws) => {
       await ws.close({ code: 1008, reason: "Blocked cold offline workspace route test." });

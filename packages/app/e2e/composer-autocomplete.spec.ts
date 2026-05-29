@@ -2,6 +2,7 @@ import { expect, test, type Page } from "./fixtures";
 import { composerLocator, expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { escapeRegex } from "./helpers/regex";
 
 const TEST_COMMANDS = [
@@ -98,16 +99,8 @@ async function getTopTestIdAtPoint(page: Page, x: number, y: number) {
   );
 }
 
-function getDaemonPort(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort || daemonPort === "6767") {
-    throw new Error("E2E_DAEMON_PORT must point at the isolated e2e daemon.");
-  }
-  return daemonPort;
-}
-
 async function installListCommandsStub(page: Page): Promise<void> {
-  await page.routeWebSocket(new RegExp(`:${escapeRegex(getDaemonPort())}\\b`), (ws) => {
+  await page.routeWebSocket(new RegExp(`:${escapeRegex(getE2EDaemonPort())}\\b`), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {

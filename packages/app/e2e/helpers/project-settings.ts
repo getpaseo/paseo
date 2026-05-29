@@ -3,6 +3,8 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import type { WebSocketRoute } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
+import { getE2EDaemonPort } from "./daemon-port";
+import { escapeRegex } from "./regex";
 
 // --- Navigation ---
 
@@ -171,9 +173,7 @@ export async function unblockPaseoConfigWrites(repoPath: string): Promise<void> 
 // --- WebSocket helpers ---
 
 function buildDaemonPortPattern(): RegExp {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) throw new Error("E2E_DAEMON_PORT not set — globalSetup must run first");
-  return new RegExp(`:${port.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  return new RegExp(`:${escapeRegex(getE2EDaemonPort())}\\b`);
 }
 
 // Proxies all daemon WS traffic transparently until a read_project_config_request

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
+import { getE2EDaemonPort } from "./daemon-port";
 import { getServerId } from "./server-id";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
@@ -15,23 +16,12 @@ export interface ArchiveTabAgent {
   cwd: string;
 }
 
-function getDaemonPort(): string {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error("E2E_DAEMON_PORT is not set.");
-  }
-  if (daemonPort === "6767") {
-    throw new Error("E2E_DAEMON_PORT must not point at the developer daemon.");
-  }
-  return daemonPort;
-}
-
 function buildSeededStoragePayload() {
   const nowIso = new Date().toISOString();
   return {
     daemon: buildSeededHost({
       serverId: getServerId(),
-      endpoint: `127.0.0.1:${getDaemonPort()}`,
+      endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
       nowIso,
     }),
     preferences: buildCreateAgentPreferences(getServerId()),
