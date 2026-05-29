@@ -112,7 +112,7 @@ describe("file explorer service", () => {
       });
 
       expect(result.kind).toBe("text");
-      expect(result.path).toBe(path.relative(os.homedir(), filePath));
+      expect(result.path).toBe(path.relative(os.homedir(), filePath).split(path.sep).join("/"));
       expect(result.content).toBe("hello from home root\n");
     } finally {
       await rm(root, { recursive: true, force: true });
