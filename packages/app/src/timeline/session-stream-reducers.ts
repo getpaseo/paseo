@@ -167,12 +167,14 @@ function deriveBootstrapTailTimelinePolicy({
 
 function shouldResolveTimelineInit({
   hasActiveInitDeferred,
+  hasNewer,
   isInitializing,
   initRequestDirection,
   responseDirection,
   reset,
 }: {
   hasActiveInitDeferred: boolean;
+  hasNewer: boolean;
   isInitializing: boolean;
   initRequestDirection: InitRequestDirection;
   responseDirection: TimelineDirection;
@@ -183,6 +185,9 @@ function shouldResolveTimelineInit({
   }
   if (reset) {
     return true;
+  }
+  if (responseDirection === "after" && hasNewer) {
+    return false;
   }
   return responseDirection === initRequestDirection;
 }
@@ -652,12 +657,16 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   const shouldResolveDeferredInit = shouldResolveTimelineInit({
     hasActiveInitDeferred,
+    hasNewer: payload.hasNewer,
     isInitializing,
     initRequestDirection,
     responseDirection: payload.direction,
     reset: payload.reset,
   });
-  const clearInitializing = shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred);
+  const timelineResponseComplete = payload.direction !== "after" || !payload.hasNewer;
+  const clearInitializing =
+    (shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred)) &&
+    timelineResponseComplete;
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
 

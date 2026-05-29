@@ -3,7 +3,6 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
-import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export interface StructuredGenerationLogger {
   info: (obj: object, msg?: string) => void;
@@ -99,12 +98,8 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
   runner?: <TResult>(options: StructuredAgentGenerationOptions<TResult>) => Promise<TResult>;
 }
 
-export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerationProvider[] = [
-  { provider: "claude", model: "haiku" },
-  { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
-  { provider: "opencode", model: "opencode/minimax-m2.5-free" },
-  { provider: "opencode", model: "opencode/nemotron-3-super-free" },
-] as const;
+// Re-export from the legacy module path so existing server consumers keep working.
+export { DEFAULT_STRUCTURED_GENERATION_PROVIDERS } from "./structured-generation-providers.js";
 
 interface SchemaValidator<T> {
   jsonSchema: JsonSchema;
@@ -350,13 +345,7 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
-  const modeId =
-    agentConfig.modeId ??
-    getAgentProviderDefinition(agentConfig.provider).defaultModeId ??
-    undefined;
-  const agent = await manager.createAgent({ ...agentConfig, modeId }, agentId, {
-    persistSession,
-  });
+  const agent = await manager.createAgent(agentConfig, agentId, { persistSession });
   try {
     const caller: AgentCaller = async (nextPrompt) => {
       const result = await manager.runAgent(agent.id, nextPrompt);

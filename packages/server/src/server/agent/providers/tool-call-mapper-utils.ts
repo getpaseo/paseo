@@ -148,6 +148,81 @@ export function flattenReadContent<Chunk extends ReadChunkLike>(
   );
 }
 
+export interface StrippedReadContent {
+  content: string;
+  startLine?: number;
+}
+
+// Claude's Read tool returns `cat -n`-style content: each line prefixed with a
+// right-aligned line number and a tab (`␣␣␣1\timport ...`). Other providers
+// return raw source. We strip the gutter here so `read.content` is uniformly
+// raw source across providers, and surface the first line number as `offset`
+// so the client can rebuild the gutter itself. Guarded tightly (first line must
+// match, near-total match ratio, strictly sequential numbering) so real source
+// is never mistaken for a gutter.
+const READ_GUTTER_LINE = /^\s*(\d+)\t(.*)$/;
+
+export function stripReadLineNumberGutter(
+  content: string | undefined,
+): StrippedReadContent | undefined {
+  const text = nonEmptyString(content);
+  if (!text) {
+    return undefined;
+  }
+
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const stripped: string[] = [];
+  let nonEmpty = 0;
+  let matched = 0;
+  let startLine: number | undefined;
+  let prevNumber: number | undefined;
+  let sequential = true;
+  let firstNonEmptyMatched = false;
+  let sawNonEmpty = false;
+
+  for (const line of lines) {
+    if (line.length === 0) {
+      stripped.push(line);
+      continue;
+    }
+    nonEmpty += 1;
+    const match = line.match(READ_GUTTER_LINE);
+    if (!match) {
+      if (!sawNonEmpty) {
+        return undefined;
+      }
+      stripped.push(line);
+      sawNonEmpty = true;
+      continue;
+    }
+    if (!sawNonEmpty) {
+      firstNonEmptyMatched = true;
+    }
+    sawNonEmpty = true;
+    matched += 1;
+    const lineNumber = Number.parseInt(match[1], 10);
+    if (startLine === undefined) {
+      startLine = lineNumber;
+    }
+    if (prevNumber !== undefined && lineNumber !== prevNumber + 1) {
+      sequential = false;
+    }
+    prevNumber = lineNumber;
+    stripped.push(match[2]);
+  }
+
+  if (!firstNonEmptyMatched || !sequential || nonEmpty === 0) {
+    return undefined;
+  }
+  // Sequential numbering from the first line is already a strong signal; the
+  // ratio only rejects source that has a couple of coincidental matches.
+  if (matched / nonEmpty < 0.5) {
+    return undefined;
+  }
+
+  return { content: stripped.join("\n"), startLine };
+}
+
 export function truncateDiffText(
   text: string | undefined,
   maxChars: number = 12_000,

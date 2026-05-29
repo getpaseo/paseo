@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { ToastApi } from "@/components/toast-host";
 import { useSessionStore, type AgentTimelineCursorState } from "@/stores/session-store";
-import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
+import { planTimelineOlderFetch } from "@/timeline/timeline-sync-plan";
 
 export interface LoadOlderAgentHistoryClient {
   fetchAgentTimeline: (
@@ -40,12 +40,10 @@ export async function loadOlderAgentHistory(
 
   setInFlight(true);
   try {
-    await client.fetchAgentTimeline(agentId, {
-      direction: "before",
-      cursor: { epoch: cursor.epoch, seq: cursor.startSeq },
-      limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
-    });
+    await client.fetchAgentTimeline(
+      agentId,
+      planTimelineOlderFetch({ epoch: cursor.epoch, seq: cursor.startSeq }),
+    );
   } catch (error) {
     (logger ?? console).warn("[Timeline] failed to load older agent history", agentId, error);
     toast?.show("Couldn't load older history", {

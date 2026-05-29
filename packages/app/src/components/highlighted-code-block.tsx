@@ -4,10 +4,11 @@ import { StyleSheet } from "react-native-unistyles";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import * as Clipboard from "expo-clipboard";
 import { Check, Copy } from "lucide-react-native";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import type { HighlightToken } from "@getpaseo/highlight";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
 
 interface HighlightedCodeBlockProps {
   code: string;
@@ -44,34 +45,6 @@ function stripTerminalFenceNewline(code: string): string {
   return code.endsWith("\n") ? code.slice(0, -1) : code;
 }
 
-// Cross-instance cache for tokenized code blocks. Tokenization is
-// theme-independent (colors are applied at render time), so the key is just
-// (language, code). Bounded by entry count — 200 is generous for a chat
-// transcript, code blocks rarely repeat beyond a handful of distinct shapes.
-class LRUCache<K, V> {
-  private readonly map = new Map<K, V>();
-  constructor(private readonly max: number) {}
-
-  get(key: K): V | undefined {
-    const value = this.map.get(key);
-    if (value === undefined) return undefined;
-    this.map.delete(key);
-    this.map.set(key, value);
-    return value;
-  }
-
-  set(key: K, value: V): void {
-    if (this.map.has(key)) this.map.delete(key);
-    else if (this.map.size >= this.max) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
-    }
-    this.map.set(key, value);
-  }
-}
-
-const tokenizationCache = new LRUCache<string, KeyedLine[]>(200);
-
 export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   code,
   language,
@@ -87,22 +60,10 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   );
   const renderedCode = useMemo(() => stripTerminalFenceNewline(code), [code]);
 
-  const keyedLines = useMemo<KeyedLine[] | null>(() => {
-    const ext = fenceLanguageToExtension(language);
-    if (!ext) return null;
-    const cacheKey = `${ext}:${renderedCode}`;
-    const cached = tokenizationCache.get(cacheKey);
-    if (cached) return cached;
-    let tokenizedLines: HighlightToken[][];
-    try {
-      tokenizedLines = highlightCode(renderedCode, `x.${ext}`);
-    } catch {
-      return null;
-    }
-    const result = tokenizedLines.map(toKeyedLine);
-    tokenizationCache.set(cacheKey, result);
-    return result;
-  }, [renderedCode, language]);
+  const keyedLines = useMemo<KeyedLine[] | null>(
+    () => highlightToKeyedLines(renderedCode, fenceLanguageToExtension(language)),
+    [renderedCode, language],
+  );
 
   const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
@@ -126,26 +87,6 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
     </View>
   );
 });
-
-interface KeyedToken {
-  key: string;
-  token: HighlightToken;
-}
-
-interface KeyedLine {
-  key: string;
-  tokens: KeyedToken[];
-}
-
-function toKeyedLine(tokens: HighlightToken[], lineIndex: number): KeyedLine {
-  return {
-    key: `line-${lineIndex}`,
-    tokens: tokens.map((token, tokenIndex) => ({
-      key: `${lineIndex}-${tokenIndex}`,
-      token,
-    })),
-  };
-}
 
 function renderCodeSegments(keyedLines: KeyedLine[]): React.ReactNode[] {
   const segments: React.ReactNode[] = [];

@@ -388,6 +388,41 @@ describe("processTimelineResponse", () => {
     expect(getUserTexts(result.tail)).toHaveLength(0);
   });
 
+  it("treats a stale epoch reset as a replacement with the new epoch window", () => {
+    const oldTail: StreamItem[] = [makeAssistantItem("old epoch message", "old-assistant")];
+    const oldHead: StreamItem[] = [makeAssistantItem("old live head", "old-head")];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: oldTail,
+      currentHead: oldHead,
+      currentCursor: { epoch: "old-epoch", startSeq: 1, endSeq: 95 },
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "new-epoch",
+        startCursor: { seq: 101 },
+        endCursor: { seq: 105 },
+        hasOlder: true,
+        entries: [
+          makeTimelineEntry(101, "new one"),
+          makeTimelineEntry(102, "new two"),
+          makeTimelineEntry(103, "new three"),
+          makeTimelineEntry(104, "new four"),
+          makeTimelineEntry(105, "new five"),
+        ],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual(["new onenew twonew threenew fournew five"]);
+    expect(result.head).toEqual([]);
+    expect(result.cursor).toEqual({ epoch: "new-epoch", startSeq: 101, endSeq: 105 });
+    expect(result.sideEffects).not.toContainEqual({
+      type: "catch_up",
+      cursor: { epoch: "old-epoch", endSeq: 95 },
+    });
+  });
+
   it("performs bootstrap tail init with catch-up side effect", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -917,6 +952,24 @@ describe("processTimelineResponse", () => {
 
     expect(result.initResolution).toBe("resolve");
     expect(result.clearInitializing).toBe(true);
+  });
+
+  it("keeps init open while an after catch-up page has newer rows", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "after",
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        hasNewer: true,
+        entries: [],
+      },
+    });
+
+    expect(result.initResolution).toBe(null);
+    expect(result.clearInitializing).toBe(false);
   });
 
   it("does not resolve init when directions differ (before vs after)", () => {

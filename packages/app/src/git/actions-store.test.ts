@@ -170,6 +170,46 @@ describe("checkout-git-actions-store", () => {
     ).toBe("idle");
   });
 
+  it("refreshes git and GitHub state and reports success", async () => {
+    const client = {
+      checkoutRefresh: vi.fn(async () => ({ success: true, error: null })),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await useCheckoutGitActionsStore.getState().refresh({ serverId, cwd });
+
+    expect(client.checkoutRefresh).toHaveBeenCalledWith(cwd);
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "refresh" }),
+    ).toBe("success");
+  });
+
+  it("surfaces a refresh error and returns to idle", async () => {
+    const client = {
+      checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await expect(useCheckoutGitActionsStore.getState().refresh({ serverId, cwd })).rejects.toThrow(
+      "not a git repository",
+    );
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "refresh" }),
+    ).toBe("idle");
+  });
+
   it("enables PR auto-merge when the daemon advertises auto-merge actions", async () => {
     const client = {
       checkoutGithubSetAutoMerge: vi.fn(async () => ({

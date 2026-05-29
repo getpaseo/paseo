@@ -1396,9 +1396,13 @@ function ActiveAgentComposer({
     ],
   );
 
+  const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
+    mode: "translate",
+  });
+
   const inputAreaStyle = useMemo(
-    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
-    [insets.bottom],
+    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }, composerKeyboardStyle],
+    [insets.bottom, composerKeyboardStyle],
   );
 
   const composerFooter = useMemo(
@@ -1410,7 +1414,7 @@ function ActiveAgentComposer({
   );
 
   return (
-    <View style={inputAreaStyle}>
+    <ReanimatedAnimated.View style={inputAreaStyle}>
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
@@ -1419,6 +1423,7 @@ function ActiveAgentComposer({
       <Composer
         agentId={agentId}
         serverId={serverId}
+        externalKeyboardShift
         isPaneFocused={isPaneFocused}
         value={agentInputDraft.text}
         onChangeText={agentInputDraft.setText}
@@ -1438,7 +1443,7 @@ function ActiveAgentComposer({
         onClientSlashCommand={handleClientSlashCommand}
         footer={composerFooter}
       />
-    </View>
+    </ReanimatedAnimated.View>
   );
 }
 
