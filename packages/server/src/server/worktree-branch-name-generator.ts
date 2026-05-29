@@ -2,14 +2,18 @@ import { z } from "zod";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { AgentManager } from "./agent/agent-manager.js";
 import {
-  DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
+import {
+  resolveStructuredGenerationProviders,
+  type StructuredGenerationDaemonConfig,
+} from "./agent/structured-generation-providers.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 
 interface BranchNameGeneratorLogger {
   info: (obj: object, msg?: string) => void;
@@ -21,6 +25,13 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
   agentManager: AgentManager;
   cwd: string;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
+  daemonConfig?: StructuredGenerationDaemonConfig | null;
+  currentSelection?: {
+    provider?: string | null;
+    model?: string | null;
+    thinkingOptionId?: string | null;
+  };
   firstAgentContext: FirstAgentContext | undefined;
   logger: BranchNameGeneratorLogger;
   deps?: {
@@ -66,6 +77,14 @@ export async function generateBranchNameFromFirstAgentContext(
     generateStructuredAgentResponseWithFallback;
 
   try {
+    const providers = options.providerSnapshotManager
+      ? await resolveStructuredGenerationProviders({
+          cwd: options.cwd,
+          providerSnapshotManager: options.providerSnapshotManager,
+          daemonConfig: options.daemonConfig,
+          currentSelection: options.currentSelection,
+        })
+      : [];
     const result = await generator({
       manager: options.agentManager,
       cwd: options.cwd,
@@ -76,7 +95,7 @@ export async function generateBranchNameFromFirstAgentContext(
       schema: BranchNameSchema,
       schemaName: "BranchName",
       maxRetries: 2,
-      providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+      providers,
       persistSession: false,
       logger: options.logger,
       agentConfigOverrides: {

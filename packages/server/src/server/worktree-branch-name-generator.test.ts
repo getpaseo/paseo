@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { AgentManager } from "./agent/agent-manager.js";
+import type { StructuredAgentGenerationWithFallbackOptions } from "./agent/agent-response-loop.js";
 import {
   attemptFirstAgentBranchAutoName,
   type AttemptFirstAgentBranchAutoNameResult,
@@ -32,26 +33,44 @@ afterEach(() => {
 
 function createLogger() {
   return {
+    info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   };
 }
 
+function createStructuredGenerator(result: { branch: string }) {
+  const calls: StructuredAgentGenerationWithFallbackOptions<unknown>[] = [];
+
+  async function generateStructured<T>(
+    options: StructuredAgentGenerationWithFallbackOptions<T>,
+  ): Promise<T> {
+    calls.push(options as StructuredAgentGenerationWithFallbackOptions<unknown>);
+    return result as T;
+  }
+
+  return { generateStructured, calls };
+}
+
 describe("generateBranchNameFromFirstAgentContext", () => {
   test("calls the structured generator with first-agent prompt text", async () => {
-    const generateStructured = vi.fn(async () => ({ branch: "fix-login-flow" }));
+    const structured = createStructuredGenerator({ branch: "fix-login-flow" });
 
     const branch = await generateBranchNameFromFirstAgentContext({
       agentManager: {} as AgentManager,
       cwd: "/tmp/repo",
       firstAgentContext: { prompt: "Fix the login flow" },
       logger: createLogger(),
-      deps: { generateStructuredAgentResponseWithFallback: generateStructured },
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
     });
 
     expect(branch).toBe("fix-login-flow");
-    expect(generateStructured).toHaveBeenCalledTimes(1);
-    expect(generateStructured.mock.calls[0]?.[0]).toMatchObject({
+    expect(structured.calls).toHaveLength(1);
+    const firstCall = structured.calls[0];
+    if (!firstCall) {
+      throw new Error("expected structured generation call");
+    }
+    expect(firstCall).toMatchObject({
       cwd: "/tmp/repo",
       schemaName: "BranchName",
       maxRetries: 2,
@@ -60,11 +79,11 @@ describe("generateBranchNameFromFirstAgentContext", () => {
         internal: true,
       },
     });
-    expect(generateStructured.mock.calls[0]?.[0].prompt).toContain("Fix the login flow");
+    expect(firstCall.prompt).toContain("Fix the login flow");
   });
 
   test("uses attachment-only context", async () => {
-    const generateStructured = vi.fn(async () => ({ branch: "review-flaky-checkout" }));
+    const structured = createStructuredGenerator({ branch: "review-flaky-checkout" });
 
     const branch = await generateBranchNameFromFirstAgentContext({
       agentManager: {} as AgentManager,
@@ -81,11 +100,58 @@ describe("generateBranchNameFromFirstAgentContext", () => {
         ],
       },
       logger: createLogger(),
-      deps: { generateStructuredAgentResponseWithFallback: generateStructured },
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
     });
 
     expect(branch).toBe("review-flaky-checkout");
-    expect(generateStructured.mock.calls[0]?.[0].prompt).toContain("Review flaky checkout");
+    const firstCall = structured.calls[0];
+    if (!firstCall) {
+      throw new Error("expected structured generation call");
+    }
+    expect(firstCall.prompt).toContain("Review flaky checkout");
+  });
+
+  test("uses the current selection as the final provider fallback", async () => {
+    const structured = createStructuredGenerator({ branch: "focused-branch" });
+
+    const branch = await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      providerSnapshotManager: {
+        listProviders: vi.fn(async () => [
+          {
+            provider: "focused-provider",
+            status: "ready" as const,
+            enabled: true,
+            models: [
+              {
+                provider: "focused-provider",
+                id: "selected-model",
+                label: "Selected Model",
+                isDefault: true,
+              },
+            ],
+          },
+        ]),
+      },
+      currentSelection: {
+        provider: "focused-provider",
+        model: "selected-model",
+        thinkingOptionId: "medium",
+      },
+      firstAgentContext: { prompt: "Fix the login flow" },
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+
+    expect(branch).toBe("focused-branch");
+    const firstCall = structured.calls[0];
+    if (!firstCall) {
+      throw new Error("expected structured generation call");
+    }
+    expect(firstCall.providers).toEqual([
+      { provider: "focused-provider", model: "selected-model", thinkingOptionId: "medium" },
+    ]);
   });
 
   test.each([
@@ -152,8 +218,11 @@ describe("generateBranchNameFromFirstAgentContext", () => {
         },
       },
     });
-    const generateStructured = vi.fn(async () => ({ branch: "Invalid Branch Name" }));
-    const renameCurrentBranch = vi.fn(async () => ({ currentBranch: "Invalid Branch Name" }));
+    const structured = createStructuredGenerator({ branch: "Invalid Branch Name" });
+    const renameCurrentBranch = vi.fn(async () => ({
+      previousBranch: "dazzling-yak",
+      currentBranch: "Invalid Branch Name",
+    }));
 
     const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
       cwd: worktreeRoot,
@@ -167,7 +236,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
           }),
           firstAgentContext,
           logger: createLogger(),
-          deps: { generateStructuredAgentResponseWithFallback: generateStructured },
+          deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
         }),
       getCurrentBranch: async () => "dazzling-yak",
       renameCurrentBranch,
@@ -186,7 +255,7 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     writeConfig(repoRoot, config);
   }
 
-  const generateStructured = vi.fn(async () => ({ branch: "fix-login-flow" }));
+  const structured = createStructuredGenerator({ branch: "fix-login-flow" });
 
   await generateBranchNameFromFirstAgentContext({
     agentManager: {} as AgentManager,
@@ -196,11 +265,11 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     }),
     firstAgentContext: { prompt: "Fix the login flow" },
     logger: createLogger(),
-    deps: { generateStructuredAgentResponseWithFallback: generateStructured },
+    deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
   });
 
   return {
-    prompt: String(generateStructured.mock.calls[0]?.[0].prompt),
+    prompt: String(structured.calls[0]?.prompt),
   };
 }
 

@@ -23,6 +23,15 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     description: "NVIDIA Parakeet TDT v2 (offline NeMo transducer, English).",
     defaultFor: "stt",
   },
+  "parakeet-tdt-0.6b-v3-int8": {
+    kind: "stt-offline",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+    extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+    requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+    description:
+      "NVIDIA Parakeet TDT v3 (offline NeMo transducer, 25 European languages, auto-detected).",
+  },
   "kokoro-en-v0_19": {
     kind: "tts",
     archiveUrl:

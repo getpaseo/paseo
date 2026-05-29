@@ -8,7 +8,7 @@ import {
   getInitKey,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
-import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
+import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 
 export const INIT_TIMEOUT_MS = 30_000;
 
@@ -32,19 +32,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
   const session = useSessionStore.getState().sessions[serverId];
   const cursor = session?.agentTimelineCursor.get(agentId);
   const hasAuthoritativeHistory = session?.agentAuthoritativeHistoryApplied.get(agentId) === true;
-  const timelineRequest =
-    hasAuthoritativeHistory && cursor
-      ? {
-          direction: "after" as const,
-          cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
-          limit: TIMELINE_FETCH_PAGE_SIZE,
-          projection: "canonical" as const,
-        }
-      : {
-          direction: "tail" as const,
-          limit: TIMELINE_FETCH_PAGE_SIZE,
-          projection: "canonical" as const,
-        };
+  const timelineRequest = planInitialAgentTimelineSync({ cursor, hasAuthoritativeHistory });
 
   const deferred = createInitDeferred(key, timelineRequest.direction);
   const timeoutId = setTimeout(() => {
@@ -87,11 +75,7 @@ export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
 
   try {
     await client.refreshAgent(agentId);
-    await client.fetchAgentTimeline(agentId, {
-      direction: "tail",
-      limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
-    });
+    await client.fetchAgentTimeline(agentId, planTimelineTailFetch());
   } catch (error) {
     setAgentInitializing(agentId, false);
     throw error;

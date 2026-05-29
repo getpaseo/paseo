@@ -2,7 +2,6 @@ import {
   View,
   Text,
   Pressable,
-  Image,
   Platform,
   ActivityIndicator,
   StatusBar,
@@ -14,6 +13,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
+import { ProjectIconView } from "@/components/project-icon-view";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import {
@@ -57,7 +57,7 @@ import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
+import { projectIconQueryKey, projectIconToDataUri } from "@/hooks/use-project-icon-query";
 import {
   buildHostNewWorkspaceRoute,
   buildProjectSettingsRoute,
@@ -118,13 +118,6 @@ import {
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
-
-function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
-  if (!icon) {
-    return null;
-  }
-  return `data:${icon.mimeType};base64,${icon.data}`;
-}
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspaceEntry) => workspace.workspaceKey;
 
@@ -471,6 +464,7 @@ function ProjectLeadingVisual({
   displayName,
   iconDataUri,
   workspace,
+  projectKey,
   chevron = null,
   showChevron = false,
   isArchiving = false,
@@ -478,6 +472,7 @@ function ProjectLeadingVisual({
   displayName: string;
   iconDataUri: string | null;
   workspace: SidebarWorkspaceEntry | null;
+  projectKey: string;
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
@@ -502,7 +497,11 @@ function ProjectLeadingVisual({
   if (!shouldShowWorkspaceStatus || !activeWorkspace) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
-        <ProjectIcon iconDataUri={iconDataUri} placeholderInitial={placeholderInitial} />
+        <ProjectIcon
+          iconDataUri={iconDataUri}
+          placeholderInitial={placeholderInitial}
+          projectKey={projectKey}
+        />
       </View>
     );
   }
@@ -511,6 +510,7 @@ function ProjectLeadingVisual({
     <ProjectLeadingVisualStatus
       iconDataUri={iconDataUri}
       placeholderInitial={placeholderInitial}
+      projectKey={projectKey}
       isArchiving={isArchiving}
       shouldShowSyncedLoader={shouldShowSyncedLoader}
       activeWorkspace={activeWorkspace}
@@ -789,30 +789,35 @@ function WorkspaceKebabMenu({
 function ProjectIcon({
   iconDataUri,
   placeholderInitial,
+  projectKey,
 }: {
   iconDataUri: string | null;
   placeholderInitial: string;
+  projectKey: string;
 }) {
-  const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
-  if (iconDataUri) {
-    return <Image source={imageSource} style={styles.projectIcon} />;
-  }
   return (
-    <View style={styles.projectIconFallback}>
-      <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-    </View>
+    <ProjectIconView
+      iconDataUri={iconDataUri}
+      initial={placeholderInitial}
+      projectKey={projectKey}
+      imageStyle={styles.projectIcon}
+      fallbackStyle={styles.projectIconFallback}
+      textStyle={styles.projectIconFallbackText}
+    />
   );
 }
 
 function ProjectLeadingVisualStatus({
   iconDataUri,
   placeholderInitial,
+  projectKey,
   isArchiving,
   shouldShowSyncedLoader,
   activeWorkspace,
 }: {
   iconDataUri: string | null;
   placeholderInitial: string;
+  projectKey: string;
   isArchiving: boolean;
   shouldShowSyncedLoader: boolean;
   activeWorkspace: SidebarWorkspaceEntry;
@@ -852,7 +857,11 @@ function ProjectLeadingVisualStatus({
 
   return (
     <View style={styles.projectLeadingVisualSlot}>
-      <ProjectIcon iconDataUri={iconDataUri} placeholderInitial={placeholderInitial} />
+      <ProjectIcon
+        iconDataUri={iconDataUri}
+        placeholderInitial={placeholderInitial}
+        projectKey={projectKey}
+      />
       {dotColorStyle ? (
         <StatusDotOverlay
           dotColorStyle={dotColorStyle}
@@ -1244,6 +1253,7 @@ function ProjectHeaderRow({
           displayName={displayName}
           iconDataUri={iconDataUri}
           workspace={workspace}
+          projectKey={project.projectKey}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
@@ -2350,7 +2360,7 @@ export function SidebarWorkspaceList({
         const result = await client.requestProjectIcon(request.cwd);
         return result.icon;
       },
-      select: toProjectIconDataUri,
+      select: projectIconToDataUri,
       enabled: Boolean(
         getHostRuntimeStore().getClient(request.serverId) &&
         isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)) &&
@@ -2713,13 +2723,10 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
     height: "100%",
     borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     alignItems: "center",
     justifyContent: "center",
   },
   projectIconFallbackText: {
-    color: theme.colors.foregroundMuted,
     fontSize: 9,
   },
   projectTitle: {

@@ -1049,6 +1049,8 @@ export class VoiceAssistantWebSocketServer {
         "terminal-restore-modes": true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
+        // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
+        checkoutRefresh: true,
       },
     };
   }

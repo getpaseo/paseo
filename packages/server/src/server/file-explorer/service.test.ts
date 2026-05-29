@@ -98,6 +98,27 @@ describe("file explorer service", () => {
     }
   });
 
+  it("allows home to be the scoped root for tilde file previews", async () => {
+    const root = await createHomeTempDir(".paseo-file-explorer-home-root-");
+
+    try {
+      const filePath = path.join(root, "sample.txt");
+      await writeFile(filePath, "hello from home root\n", "utf-8");
+
+      const tildePath = `~/${path.relative(os.homedir(), filePath)}`;
+      const result = await readExplorerFile({
+        root: "~",
+        relativePath: tildePath,
+      });
+
+      expect(result.kind).toBe("text");
+      expect(result.path).toBe(path.relative(os.homedir(), filePath).split(path.sep).join("/"));
+      expect(result.content).toBe("hello from home root\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects ~-prefixed paths that resolve outside the workspace", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "paseo-file-explorer-outside-home-"));
 

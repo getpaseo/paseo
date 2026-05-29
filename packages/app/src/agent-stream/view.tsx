@@ -1050,7 +1050,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: 0,
     flexGrow: 1,
     paddingHorizontal: {
-      xs: theme.spacing[2],
+      xs: theme.spacing[3],
       md: theme.spacing[4],
     },
   },

@@ -318,13 +318,14 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       const providerCommands = commands.map(
         (command): AvailableCommand => ({ source: "provider", command }),
       );
+      const clientCommandNames = new Set(CLIENT_SLASH_COMMANDS.map((command) => command.name));
       const availableCommands: AvailableCommand[] = isDraftContext
         ? providerCommands
         : [
             ...CLIENT_SLASH_COMMANDS.map(
               (command): AvailableCommand => ({ source: "client", command }),
             ),
-            ...providerCommands,
+            ...providerCommands.filter((entry) => !clientCommandNames.has(entry.command.name)),
           ];
       const matches = filterAndRankCommandAutocompleteEntries(
         availableCommands,

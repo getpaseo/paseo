@@ -68,19 +68,26 @@ describe("DaemonConfigStore", () => {
     tempDirs.push(paseoHome);
 
     const initial = loadPersistedConfig(paseoHome);
-    initial.agents = {
-      providers: {
-        gemini: {
-          extends: "acp",
-          label: "Gemini",
-          command: ["gemini", "--acp"],
-        },
-      },
-    };
     const configPath = path.join(paseoHome, "config.json");
     // Reuse the validated serializer through the store path by seeding the file directly.
     // This keeps the test focused on the merge behavior.
-    const seeded = JSON.stringify(initial, null, 2) + "\n";
+    const seeded =
+      JSON.stringify(
+        {
+          ...initial,
+          agents: {
+            providers: {
+              gemini: {
+                extends: "acp",
+                label: "Gemini",
+                command: ["gemini", "--acp"],
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n";
     writeFileSync(configPath, seeded);
 
     const store = new DaemonConfigStore(
@@ -88,6 +95,9 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
       },
       undefined,
     );
@@ -116,6 +126,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
       },
       undefined,
@@ -138,6 +150,9 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
       },
       undefined,
     );
@@ -175,6 +190,8 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
       },
       undefined,
@@ -188,6 +205,79 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 
+  test("patch persists metadata generation providers into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({
+      metadataGeneration: {
+        providers: [
+          { provider: "claude", model: "haiku" },
+          { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
+        ],
+      },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration).toEqual({
+      providers: [
+        { provider: "claude", model: "haiku" },
+        { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
+      ],
+    });
+  });
+
+  test("patch persists clearing metadata generation providers into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            metadataGeneration: {
+              providers: [{ provider: "claude", model: "haiku" }],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
+        metadataGeneration: { providers: [{ provider: "claude", model: "haiku" }] },
+      },
+      undefined,
+    );
+
+    store.patch({ metadataGeneration: { providers: [] } });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
+  });
+
   test("patch persists custom ACP provider overrides into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -197,6 +287,9 @@ describe("DaemonConfigStore", () => {
       {
         mcp: { injectIntoAgents: false },
         providers: {},
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
+        metadataGeneration: { providers: [] },
       },
       undefined,
     );
