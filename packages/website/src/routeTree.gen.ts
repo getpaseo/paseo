@@ -25,6 +25,7 @@ import { Route as KimiRouteImport } from "./routes/kimi";
 import { Route as KiloRouteImport } from "./routes/kilo";
 import { Route as JunieRouteImport } from "./routes/junie";
 import { Route as HermesRouteImport } from "./routes/hermes";
+import { Route as GrokRouteImport } from "./routes/grok";
 import { Route as GooseRouteImport } from "./routes/goose";
 import { Route as GlmRouteImport } from "./routes/glm";
 import { Route as GeminiRouteImport } from "./routes/gemini";
@@ -137,6 +138,11 @@ const JunieRoute = JunieRouteImport.update({
 const HermesRoute = HermesRouteImport.update({
   id: "/hermes",
   path: "/hermes",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const GrokRoute = GrokRouteImport.update({
+  id: "/grok",
+  path: "/grok",
   getParentRoute: () => rootRouteImport,
 } as any);
 const GooseRoute = GooseRouteImport.update({
@@ -335,6 +341,7 @@ export interface FileRoutesByFullPath {
   "/gemini": typeof GeminiRoute;
   "/glm": typeof GlmRoute;
   "/goose": typeof GooseRoute;
+  "/grok": typeof GrokRoute;
   "/hermes": typeof HermesRoute;
   "/junie": typeof JunieRoute;
   "/kilo": typeof KiloRoute;
@@ -384,6 +391,7 @@ export interface FileRoutesByTo {
   "/gemini": typeof GeminiRoute;
   "/glm": typeof GlmRoute;
   "/goose": typeof GooseRoute;
+  "/grok": typeof GrokRoute;
   "/hermes": typeof HermesRoute;
   "/junie": typeof JunieRoute;
   "/kilo": typeof KiloRoute;
@@ -436,6 +444,7 @@ export interface FileRoutesById {
   "/gemini": typeof GeminiRoute;
   "/glm": typeof GlmRoute;
   "/goose": typeof GooseRoute;
+  "/grok": typeof GrokRoute;
   "/hermes": typeof HermesRoute;
   "/junie": typeof JunieRoute;
   "/kilo": typeof KiloRoute;
@@ -489,6 +498,7 @@ export interface FileRouteTypes {
     | "/gemini"
     | "/glm"
     | "/goose"
+    | "/grok"
     | "/hermes"
     | "/junie"
     | "/kilo"
@@ -538,6 +548,7 @@ export interface FileRouteTypes {
     | "/gemini"
     | "/glm"
     | "/goose"
+    | "/grok"
     | "/hermes"
     | "/junie"
     | "/kilo"
@@ -589,6 +600,7 @@ export interface FileRouteTypes {
     | "/gemini"
     | "/glm"
     | "/goose"
+    | "/grok"
     | "/hermes"
     | "/junie"
     | "/kilo"
@@ -641,6 +653,7 @@ export interface RootRouteChildren {
   GeminiRoute: typeof GeminiRoute;
   GlmRoute: typeof GlmRoute;
   GooseRoute: typeof GooseRoute;
+  GrokRoute: typeof GrokRoute;
   HermesRoute: typeof HermesRoute;
   JunieRoute: typeof JunieRoute;
   KiloRoute: typeof KiloRoute;
@@ -771,6 +784,13 @@ declare module "@tanstack/react-router" {
       path: "/hermes";
       fullPath: "/hermes";
       preLoaderRoute: typeof HermesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/grok": {
+      id: "/grok";
+      path: "/grok";
+      fullPath: "/grok";
+      preLoaderRoute: typeof GrokRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/goose": {
@@ -1061,6 +1081,7 @@ const rootRouteChildren: RootRouteChildren = {
   GeminiRoute: GeminiRoute,
   GlmRoute: GlmRoute,
   GooseRoute: GooseRoute,
+  GrokRoute: GrokRoute,
   HermesRoute: HermesRoute,
   JunieRoute: JunieRoute,
   KiloRoute: KiloRoute,
