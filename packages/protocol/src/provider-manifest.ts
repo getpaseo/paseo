@@ -161,7 +161,17 @@ const MOCK_SLOW_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const ANTIGRAVITY_MODES: AgentProviderModeDefinition[] = [];
+
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    description:
+      "Google's Antigravity CLI agent with multi-step reasoning, multi-file editing, and MCP support",
+    defaultModeId: null,
+    modes: ANTIGRAVITY_MODES,
+  },
   {
     id: "claude",
     label: "Claude",

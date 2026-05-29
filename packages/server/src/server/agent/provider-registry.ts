@@ -29,6 +29,7 @@ import type {
   ProviderProfileModel,
   ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
+import { AntigravityACPAgentClient } from "./providers/antigravity-acp-agent.js";
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
@@ -107,6 +108,11 @@ interface ResolvedProvider {
 }
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
+  antigravity: (logger, runtimeSettings) =>
+    new AntigravityACPAgentClient({
+      logger,
+      runtimeSettings,
+    }),
   claude: (logger, runtimeSettings) =>
     new ClaudeAgentClient({
       logger,
