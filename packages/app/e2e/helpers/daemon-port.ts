@@ -1,3 +1,5 @@
+import { escapeRegex } from "./regex";
+
 /**
  * Resolves the isolated E2E daemon's port, which Playwright's globalSetup
  * publishes into the environment before any spec runs. Helpers and specs that
@@ -17,4 +19,20 @@ export function getE2EDaemonPort(): string {
     throw new Error("E2E_DAEMON_PORT must not point at the developer daemon (6767).");
   }
   return port;
+}
+
+/**
+ * Playwright `routeWebSocket` matcher for a WebSocket on `port`. Matches the
+ * `:<port>` segment at a word boundary, so it catches the URL regardless of
+ * host or path. Use this when intercepting connections to an arbitrary port
+ * (e.g. blocking an unreachable test host); for the E2E daemon itself, prefer
+ * `daemonWsRoutePattern()`.
+ */
+export function wsRoutePatternForPort(port: string): RegExp {
+  return new RegExp(`:${escapeRegex(port)}\\b`);
+}
+
+/** `routeWebSocket` matcher for the isolated E2E daemon's WebSocket. */
+export function daemonWsRoutePattern(): RegExp {
+  return wsRoutePatternForPort(getE2EDaemonPort());
 }

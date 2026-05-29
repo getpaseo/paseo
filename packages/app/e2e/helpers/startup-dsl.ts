@@ -1,6 +1,6 @@
 import { expect, type Page } from "../fixtures";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
-import { escapeRegex } from "./regex";
+import { wsRoutePatternForPort } from "./daemon-port";
 
 const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -79,7 +79,7 @@ class StartupScenario {
     }
 
     for (const port of this.blockedEndpointPorts) {
-      await this.page.routeWebSocket(new RegExp(`:${escapeRegex(port)}\\b`), async (ws) => {
+      await this.page.routeWebSocket(wsRoutePatternForPort(port), async (ws) => {
         await ws.close({ code: 1008, reason: "Blocked unreachable startup test host." });
       });
     }

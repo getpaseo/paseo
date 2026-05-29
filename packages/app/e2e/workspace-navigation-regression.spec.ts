@@ -9,7 +9,7 @@ import {
   openWorkspaceWithAgents,
 } from "./helpers/archive-tab";
 import { expectComposerVisible } from "./helpers/composer";
-import { getE2EDaemonPort } from "./helpers/daemon-port";
+import { daemonWsRoutePattern } from "./helpers/daemon-port";
 import { seedWorkspace } from "./helpers/seed-client";
 import {
   getVisibleWorkspaceAgentTabIds,
@@ -32,7 +32,6 @@ import {
 } from "./helpers/workspace-ui";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
-import { escapeRegex } from "./helpers/regex";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 
@@ -80,11 +79,11 @@ async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
   await closeButton.first().click();
 }
 
-async function installDaemonWebSocketGate(page: Page, daemonPort: string) {
+async function installDaemonWebSocketGate(page: Page) {
   let acceptingConnections = true;
   const activeSockets = new Set<WebSocketRoute>();
 
-  await page.routeWebSocket(new RegExp(`:${escapeRegex(daemonPort)}\\b`), (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
       void ws.close({ code: 1008, reason: "Blocked by workspace reconnect regression test." });
       return;
@@ -159,9 +158,8 @@ test.describe("Workspace navigation regression", () => {
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {
     const serverId = getServerId();
-    const daemonPort = getE2EDaemonPort();
 
-    const daemonGate = await installDaemonWebSocketGate(page, daemonPort);
+    const daemonGate = await installDaemonWebSocketGate(page);
 
     const workspace = await seedWorkspace({ repoPrefix: "workspace-reconnect-" });
 
@@ -217,9 +215,8 @@ test.describe("Workspace navigation regression", () => {
     page,
   }) => {
     const serverId = getServerId();
-    const daemonPort = getE2EDaemonPort();
 
-    await page.routeWebSocket(new RegExp(`:${escapeRegex(daemonPort)}\\b`), async (ws) => {
+    await page.routeWebSocket(daemonWsRoutePattern(), async (ws) => {
       await ws.close({ code: 1008, reason: "Blocked cold offline workspace route test." });
     });
 

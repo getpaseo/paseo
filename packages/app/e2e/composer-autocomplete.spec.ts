@@ -2,8 +2,7 @@ import { expect, test, type Page } from "./fixtures";
 import { composerLocator, expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
-import { getE2EDaemonPort } from "./helpers/daemon-port";
-import { escapeRegex } from "./helpers/regex";
+import { daemonWsRoutePattern } from "./helpers/daemon-port";
 
 const TEST_COMMANDS = [
   {
@@ -100,7 +99,7 @@ async function getTopTestIdAtPoint(page: Page, x: number, y: number) {
 }
 
 async function installListCommandsStub(page: Page): Promise<void> {
-  await page.routeWebSocket(new RegExp(`:${escapeRegex(getE2EDaemonPort())}\\b`), (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
