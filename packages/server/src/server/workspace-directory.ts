@@ -222,7 +222,7 @@ export class WorkspaceDirectory {
       return exact.workspaceId;
     }
 
-    const userHome = homedir();
+    const userHome = normalizeWorkspaceId(homedir());
     let bestMatch: { workspace: PersistedWorkspaceRecord; normalizedCwd: string } | null = null;
     for (const workspace of workspaces) {
       if (workspace.archivedAt) continue;

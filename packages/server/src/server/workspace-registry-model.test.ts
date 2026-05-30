@@ -219,7 +219,7 @@ describe("normalizeWorkspaceId", () => {
     mkdirSync(realDir, { recursive: true });
     symlinkSync(realDir, linkPath);
 
-    expect(normalizeWorkspaceId(linkPath)).toBe(realPathSync(realDir));
+    expect(normalizeWorkspaceId(linkPath)).toBe(realpathSync(realDir));
   });
 
   test("returns resolved path when no symlink is involved", () => {
