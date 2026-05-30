@@ -162,6 +162,9 @@ export function resolveSelectedModelLabel(input: {
   if (provider.modelSelection.kind === "loading") {
     return "Loading...";
   }
+  if (provider.modelSelection.kind === "error") {
+    return "Error";
+  }
   if (provider.modelSelection.kind !== "models") {
     return "Select model";
   }

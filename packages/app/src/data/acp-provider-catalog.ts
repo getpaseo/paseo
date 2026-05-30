@@ -232,6 +232,16 @@ const CATALOG_DATA = [
     command: ["goose", "acp"],
   },
   {
+    id: "grok",
+    title: "Grok",
+    description:
+      "xAI's Grok Build agentic coding CLI with plan mode and parallel subagents. Requires a SuperGrok or X Premium+ subscription.",
+    version: "0.2.11",
+    iconId: "grok",
+    installLink: "https://docs.x.ai/build/overview",
+    command: ["grok", "agent", "stdio"],
+  },
+  {
     id: "hermes",
     title: "Hermes",
     description: "Nous Research self-improving AI agent",

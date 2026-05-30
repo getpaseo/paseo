@@ -2,7 +2,7 @@
 title: "I was wrong about Electron"
 description: "Why I migrated Paseo from Tauri to Electron after the small-binary story stopped mattering more than rendering, notifications, and bundling a Node daemon."
 date: "2026-05-28"
-draft: "true"
+draft: "false"
 ---
 
 When I started building Paseo, I picked Tauri.

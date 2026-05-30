@@ -378,6 +378,16 @@ export const AGENT_PAGES = [
     metaDescription:
       "Open source mobile and desktop app for Autohand AI's coding agent. Launch sessions on your machine, monitor progress, ship from anywhere.",
   },
+  {
+    slug: "grok",
+    name: "Grok",
+    title: "Open source app for Grok",
+    subtitle:
+      "Run xAI's Grok Build coding agent on your machine, drive it from your phone or desktop.",
+    metaTitle: "Grok Mobile and Desktop App, Open Source",
+    metaDescription:
+      "Open source mobile and desktop app for xAI's Grok Build coding agent. Launch sessions on your machine, monitor progress, and ship from anywhere. Self-hosted.",
+  },
 ] as const satisfies readonly AgentPage[];
 
 export const AGENT_PAGE_SLUGS: readonly string[] = AGENT_PAGES.map((p) => p.slug);
