@@ -8,7 +8,6 @@ import {
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
-import { Fonts } from "@/constants/theme";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
@@ -823,7 +822,7 @@ const styles = StyleSheet.create((theme) => {
       padding: theme.spacing[3],
     },
     plainText: {
-      fontFamily: Fonts.sans,
+      fontFamily: theme.fontFamily.ui,
       fontSize: theme.fontSize.base,
       color: theme.colors.foreground,
       lineHeight: 22,
@@ -876,7 +875,7 @@ const styles = StyleSheet.create((theme) => {
       padding: insets.padding,
     },
     scrollText: {
-      fontFamily: Fonts.mono,
+      fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
       lineHeight: 18,
@@ -891,7 +890,7 @@ const styles = StyleSheet.create((theme) => {
       color: theme.colors.foregroundMuted,
     },
     subAgentSessionText: {
-      fontFamily: Fonts.mono,
+      fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foregroundMuted,
       lineHeight: 18,
@@ -907,13 +906,13 @@ const styles = StyleSheet.create((theme) => {
       gap: theme.spacing[2],
     },
     subAgentActionTool: {
-      fontFamily: Fonts.mono,
+      fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foregroundMuted,
       lineHeight: 18,
     },
     subAgentActionSummary: {
-      fontFamily: Fonts.mono,
+      fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
       lineHeight: 18,

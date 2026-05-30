@@ -1,0 +1,73 @@
+import { describe, it, expect } from "vitest";
+import { darkHighlightColors, lightHighlightColors } from "../colors.js";
+import { SYNTAX_THEME_IDS, isSyntaxThemeId, resolveSyntaxColors } from "../themes.js";
+import type { HighlightStyle } from "../types.js";
+
+const allStyles: HighlightStyle[] = [
+  "keyword",
+  "comment",
+  "string",
+  "number",
+  "literal",
+  "function",
+  "definition",
+  "class",
+  "type",
+  "tag",
+  "attribute",
+  "property",
+  "variable",
+  "operator",
+  "punctuation",
+  "regexp",
+  "escape",
+  "meta",
+  "heading",
+  "link",
+];
+
+const colorSchemes: ("light" | "dark")[] = ["light", "dark"];
+
+describe("resolveSyntaxColors", () => {
+  for (const id of SYNTAX_THEME_IDS) {
+    for (const colorScheme of colorSchemes) {
+      describe(`${id} (${colorScheme})`, () => {
+        const colors = resolveSyntaxColors(id, colorScheme);
+
+        it("covers all HighlightStyle values", () => {
+          for (const style of allStyles) {
+            expect(colors[style]).toBeDefined();
+            expect(typeof colors[style]).toBe("string");
+          }
+        });
+
+        it("has valid hex color values", () => {
+          for (const style of allStyles) {
+            expect(colors[style]).toMatch(/^#[0-9a-fA-F]{6}$/);
+          }
+        });
+      });
+    }
+  }
+
+  it("auto + light deep-equals lightHighlightColors", () => {
+    expect(resolveSyntaxColors("auto", "light")).toEqual(lightHighlightColors);
+  });
+
+  it("auto + dark deep-equals darkHighlightColors", () => {
+    expect(resolveSyntaxColors("auto", "dark")).toEqual(darkHighlightColors);
+  });
+});
+
+describe("isSyntaxThemeId", () => {
+  it("accepts every id in SYNTAX_THEME_IDS", () => {
+    for (const id of SYNTAX_THEME_IDS) {
+      expect(isSyntaxThemeId(id)).toBe(true);
+    }
+  });
+
+  it("rejects unknown ids", () => {
+    expect(isSyntaxThemeId("github")).toBe(false);
+    expect(isSyntaxThemeId("nope")).toBe(false);
+  });
+});

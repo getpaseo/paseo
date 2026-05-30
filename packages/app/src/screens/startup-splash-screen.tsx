@@ -16,7 +16,6 @@ import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
-import { Fonts } from "@/constants/theme";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isNative, isWeb } from "@/constants/platform";
@@ -236,7 +235,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.destructive,
     fontSize: theme.fontSize.code,
     lineHeight: 20,
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
   },
   logsMeta: {
     color: theme.colors.foregroundMuted,
@@ -257,7 +256,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
   logsText: {
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     color: theme.colors.foreground,
     lineHeight: 18,

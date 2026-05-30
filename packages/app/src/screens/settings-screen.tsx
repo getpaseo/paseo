@@ -24,11 +24,9 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Buffer } from "buffer";
 import {
   ArrowLeft,
-  Sun,
-  Moon,
-  Monitor,
   ChevronDown,
   Settings,
+  Palette,
   Server,
   Network,
   Workflow,
@@ -46,6 +44,7 @@ import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import {
   useAppSettings,
   useSettings,
@@ -55,7 +54,6 @@ import {
   type ServiceUrlBehavior,
   type Settings as EffectiveSettings,
 } from "@/hooks/use-settings";
-import { THEME_SWATCHES } from "@/styles/theme";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
@@ -80,7 +78,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
@@ -134,6 +131,7 @@ interface SidebarSectionItem {
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", label: "General", icon: Settings },
+  { id: "appearance", label: "Appearance", icon: Palette },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, desktopOnly: true },
   { id: "integrations", label: "Integrations", icon: Puzzle, desktopOnly: true },
   { id: "permissions", label: "Permissions", icon: Shield, desktopOnly: true },
@@ -155,44 +153,8 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Theme helpers (General section)
+// Trigger + sidebar style helpers
 // ---------------------------------------------------------------------------
-
-function ThemeIcon({
-  theme,
-  size,
-  color,
-}: {
-  theme: AppSettings["theme"];
-  size: number;
-  color: string;
-}) {
-  switch (theme) {
-    case "light":
-      return <Sun size={size} color={color} />;
-    case "dark":
-      return <Moon size={size} color={color} />;
-    case "auto":
-      return <Monitor size={size} color={color} />;
-    default:
-      return <ThemeSwatch color={THEME_SWATCHES[theme]} size={size} />;
-  }
-}
-
-function ThemeSwatch({ color, size }: { color: string; size: number }) {
-  const swatchStyle = useMemo(
-    () => ({
-      width: size,
-      height: size,
-      borderRadius: size / 2,
-      backgroundColor: color,
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.15)",
-    }),
-    [color, size],
-  );
-  return <View style={swatchStyle} />;
-}
 
 function themeTriggerStyle({ pressed }: PressableStateCallbackType) {
   return [styles.themeTrigger, pressed && { opacity: 0.85 }];
@@ -209,16 +171,6 @@ function selectedSidebarItemStyle({ hovered }: PressableStateCallbackType & { ho
     sidebarStyles.itemSelected,
   ];
 }
-
-const THEME_LABELS: Record<AppSettings["theme"], string> = {
-  light: "Light",
-  dark: "Dark",
-  zinc: "Zinc",
-  midnight: "Midnight",
-  claude: "Claude",
-  ghostty: "Ghostty",
-  auto: "System",
-};
 
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 
@@ -247,39 +199,9 @@ const SERVICE_URL_BEHAVIOR_VALUES: ServiceUrlBehavior[] = ["ask", "in-app", "ext
 interface GeneralSectionProps {
   settings: AppSettings;
   isDesktopApp: boolean;
-  handleThemeChange: (theme: AppSettings["theme"]) => void;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
-}
-
-interface ThemeMenuItemProps {
-  themeValue: AppSettings["theme"];
-  selected: boolean;
-  iconSize: number;
-  iconColor: string;
-  onChange: (theme: AppSettings["theme"]) => void;
-}
-
-function ThemeMenuItem({
-  themeValue,
-  selected,
-  iconSize,
-  iconColor,
-  onChange,
-}: ThemeMenuItemProps) {
-  const handleSelect = useCallback(() => {
-    onChange(themeValue);
-  }, [onChange, themeValue]);
-  const leading = useMemo(
-    () => <ThemeIcon theme={themeValue} size={iconSize} color={iconColor} />,
-    [themeValue, iconSize, iconColor],
-  );
-  return (
-    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
-      {THEME_LABELS[themeValue]}
-    </DropdownMenuItem>
-  );
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -306,13 +228,11 @@ function ServiceUrlBehaviorMenuItem({
 function GeneralSection({
   settings,
   isDesktopApp,
-  handleThemeChange,
   handleSendBehaviorChange,
   handleServiceUrlBehaviorChange,
   handleTerminalScrollbackLinesChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
-  const iconSize = theme.iconSize.md;
   const iconColor = theme.colors.foregroundMuted;
   const [terminalScrollbackValue, setTerminalScrollbackValue] = useState(
     String(settings.terminalScrollbackLines),
@@ -343,41 +263,6 @@ function GeneralSection({
     <SettingsSection title="General">
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Theme</Text>
-          </View>
-          <DropdownMenu>
-            <DropdownMenuTrigger style={themeTriggerStyle}>
-              <ThemeIcon theme={settings.theme} size={iconSize} color={iconColor} />
-              <Text style={styles.themeTriggerText}>{THEME_LABELS[settings.theme]}</Text>
-              <ChevronDown size={theme.iconSize.sm} color={iconColor} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="bottom" align="end" width={200}>
-              {(["light", "dark", "auto"] as const).map((t) => (
-                <ThemeMenuItem
-                  key={t}
-                  themeValue={t}
-                  selected={settings.theme === t}
-                  iconSize={iconSize}
-                  iconColor={iconColor}
-                  onChange={handleThemeChange}
-                />
-              ))}
-              <DropdownMenuSeparator />
-              {(["zinc", "midnight", "claude", "ghostty"] as const).map((t) => (
-                <ThemeMenuItem
-                  key={t}
-                  themeValue={t}
-                  selected={settings.theme === t}
-                  iconSize={iconSize}
-                  iconColor={iconColor}
-                  onChange={handleThemeChange}
-                />
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </View>
-        <View style={ROW_WITH_BORDER_STYLE}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>Default send</Text>
             <Text style={settingsStyles.rowHint}>
@@ -1217,13 +1102,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     return localServerId ?? sortedHosts[0]?.serverId ?? null;
   }, [view, localServerId, sortedHosts]);
 
-  const handleThemeChange = useCallback(
-    (nextTheme: AppSettings["theme"]) => {
-      void updateSettings({ theme: nextTheme });
-    },
-    [updateSettings],
-  );
-
   const handleSendBehaviorChange = useCallback(
     (behavior: SendBehavior) => {
       void updateSettings({ sendBehavior: behavior });
@@ -1446,12 +1324,13 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             <GeneralSection
               settings={settings}
               isDesktopApp={isDesktopApp}
-              handleThemeChange={handleThemeChange}
               handleSendBehaviorChange={handleSendBehaviorChange}
               handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
               handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
             />
           );
+        case "appearance":
+          return <AppearanceSection />;
         case "shortcuts":
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
         case "integrations":

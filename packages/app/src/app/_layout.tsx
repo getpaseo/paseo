@@ -73,6 +73,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
+import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
@@ -624,6 +625,27 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
     }
   }, [settingsLoading, settings.theme]);
+
+  // Apply font / size / syntax appearance settings on mount and when they change.
+  // Sibling to the theme effect above; order is irrelevant because both patch all
+  // six registered theme keys, so the active key is always current.
+  useEffect(() => {
+    if (settingsLoading) return;
+    applyAppearance({
+      uiFontFamily: settings.uiFontFamily,
+      monoFontFamily: settings.monoFontFamily,
+      uiFontSize: settings.uiFontSize,
+      codeFontSize: settings.codeFontSize,
+      syntaxTheme: settings.syntaxTheme,
+    });
+  }, [
+    settingsLoading,
+    settings.uiFontFamily,
+    settings.monoFontFamily,
+    settings.uiFontSize,
+    settings.codeFontSize,
+    settings.syntaxTheme,
+  ]);
 
   return (
     <VoiceProvider>

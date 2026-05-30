@@ -1,7 +1,6 @@
 import React from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { Fonts } from "@/constants/theme";
 import { isWeb } from "@/constants/platform";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { KeyedLine, KeyedToken } from "@/utils/highlight-cache";
@@ -81,7 +80,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: CODE_LINE_HEIGHT,
   },
   gutterText: {
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     lineHeight: CODE_LINE_HEIGHT,
     color: theme.colors.foregroundMuted,
@@ -90,7 +89,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   lineText: {
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     color: theme.colors.foreground,
     lineHeight: CODE_LINE_HEIGHT,
