@@ -41,13 +41,25 @@ async function expectBottomSheetOpen(page: Page) {
 }
 
 async function closeBottomSheetWithBackdrop(page: Page) {
-  const box = await bottomSheetBackdrop(page).boundingBox();
-  expect(box).not.toBeNull();
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + 24);
-  await expect(bottomSheetBackdrop(page)).not.toBeVisible({ timeout: 10_000 });
+  const backdrop = bottomSheetBackdrop(page);
+  // A single backdrop tap can be dropped when it lands mid present-animation:
+  // Gorhom ignores backdrop presses until the sheet settles at its snap point,
+  // which a loaded CI runner makes likely (the model selector's sheet animates a
+  // touch longer than the tab switcher's). Re-tap until the sheet dismisses. This
+  // stays a pure backdrop dismissal — no Escape/pan fallback — so it still
+  // exercises the real close path; the post-close guard below is what protects
+  // the regression this test exists for: a sheet that dismisses, then re-presents.
+  await expect(async () => {
+    if (await backdrop.isVisible()) {
+      const box = await backdrop.boundingBox();
+      expect(box).not.toBeNull();
+      await page.mouse.click(box!.x + box!.width / 2, box!.y + 24);
+    }
+    await expect(backdrop).not.toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   // Guard against the regression where the sheet starts dismissing, then re-presents.
   await page.waitForTimeout(500);
-  await expect(bottomSheetBackdrop(page)).not.toBeVisible({ timeout: 1_000 });
+  await expect(backdrop).not.toBeVisible({ timeout: 1_000 });
 }
 
 async function openTabSwitcher(page: Page) {
