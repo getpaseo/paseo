@@ -2408,6 +2408,30 @@ describe("create_schedule MCP tool", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it.each(["", "   "])("rejects create_schedule blank timezone %#", async (timezone) => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        cron: "0 9 * * 1-5",
+        timezone,
+        provider: "codex",
+      }),
+    ).rejects.toThrow();
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       label: "missing both cadence fields",
@@ -2646,6 +2670,29 @@ describe("update_schedule MCP tool", () => {
         timezone: "Europe/Zurich",
       }),
     ).rejects.toThrow("timezone can only be used with cron");
+
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "   "])("rejects update_schedule blank timezone %#", async (timezone) => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const update = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        id: "schedule-1",
+        cron: "0 9 * * 1-5",
+        timezone,
+      }),
+    ).rejects.toThrow();
 
     expect(update).not.toHaveBeenCalled();
   });

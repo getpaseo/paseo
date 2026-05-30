@@ -1598,6 +1598,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cron: z.string().optional(),
         timezone: z
           .string()
+          .trim()
+          .min(1)
           .optional()
           .describe(
             "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
@@ -1821,6 +1823,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cron: z.string().optional().describe("New cron expression."),
         timezone: z
           .string()
+          .trim()
+          .min(1)
           .optional()
           .describe(
             "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
