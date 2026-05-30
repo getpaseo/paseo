@@ -31,12 +31,7 @@ import { isCommandAvailable } from "../../../utils/executable.js";
 
 const ANTIGRAVITY_PROVIDER = "antigravity";
 const ANTIGRAVITY_BINARY = process.env.ANTIGRAVITY_COMMAND ?? "agy";
-const CONVERSATIONS_DIR = join(
-  homedir(),
-  ".gemini",
-  "antigravity-cli",
-  "conversations",
-);
+const CONVERSATIONS_DIR = join(homedir(), ".gemini", "antigravity-cli", "conversations");
 
 export const ANTIGRAVITY_MODE_DEFAULT = "default";
 export const ANTIGRAVITY_MODE_BYPASS = "bypass";
@@ -94,6 +89,7 @@ interface AntigravityAgentSessionOptions {
   conversationId: string | null;
   modeId: string;
   config: AgentSessionConfig;
+  logger: Logger;
 }
 
 class AntigravityAgentSession implements AgentSession {
@@ -103,6 +99,7 @@ class AntigravityAgentSession implements AgentSession {
   private _conversationId: string | null;
   private _modeId: string;
   private _config: AgentSessionConfig;
+  private _logger: Logger;
   private _subscribers: Set<(event: AgentStreamEvent) => void> = new Set();
   private _activeProcess: ChildProcess | null = null;
   private _activeTurnId: string | null = null;
@@ -118,6 +115,7 @@ class AntigravityAgentSession implements AgentSession {
     this._conversationId = options.conversationId;
     this._modeId = options.modeId;
     this._config = options.config;
+    this._logger = options.logger;
   }
 
   get id(): string | null {
@@ -212,16 +210,16 @@ class AntigravityAgentSession implements AgentSession {
         } else if (newIds.length > 1) {
           // Concurrent sessions created multiple .pb files; refuse to bind to avoid
           // associating with the wrong conversation (same guard as openab/agy-acp).
-          console.warn(
-            `[antigravity] Multiple new conversation files appeared (${newIds.join(", ")}); ` +
-              "cannot determine which belongs to this session. Session continuity disabled.",
+          this._logger.warn(
+            { newIds },
+            "antigravity: multiple new conversation files appeared; cannot determine which belongs to this session. Session continuity disabled.",
           );
         }
       }
 
       // Update the accumulated-output baseline for the next turn's delta extraction.
       if (!fullOutput.startsWith(prevOutput)) {
-        console.warn("[antigravity] agy stdout was not append-only; resetting delta baseline.");
+        this._logger.warn("antigravity: agy stdout was not append-only; resetting delta baseline.");
       }
       this._prevOutput = fullOutput;
 
@@ -331,8 +329,11 @@ interface AntigravityAgentClientOptions {
 export class AntigravityAgentClient implements AgentClient {
   readonly provider = ANTIGRAVITY_PROVIDER;
   readonly capabilities = CAPABILITIES;
+  private readonly logger: Logger;
 
-  constructor(_options: AntigravityAgentClientOptions) {}
+  constructor(options: AntigravityAgentClientOptions) {
+    this.logger = options.logger;
+  }
 
   async isAvailable(): Promise<boolean> {
     return isCommandAvailable(ANTIGRAVITY_BINARY);
@@ -372,6 +373,7 @@ export class AntigravityAgentClient implements AgentClient {
       conversationId: null,
       modeId: config.modeId ?? ANTIGRAVITY_MODE_DEFAULT,
       config,
+      logger: this.logger,
     });
   }
 
@@ -389,6 +391,7 @@ export class AntigravityAgentClient implements AgentClient {
       conversationId: handle.nativeHandle ?? null,
       modeId: baseConfig.modeId ?? ANTIGRAVITY_MODE_DEFAULT,
       config: baseConfig,
+      logger: this.logger,
     });
   }
 }
