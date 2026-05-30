@@ -58,7 +58,10 @@ async function withConnectedAntigravityDaemon(
 
 function extractAssistantText(items: AgentTimelineItem[]): string {
   return items
-    .filter((item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> => item.type === "assistant_message")
+    .filter(
+      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+        item.type === "assistant_message",
+    )
     .map((item) => item.text)
     .join("\n");
 }
@@ -165,7 +168,10 @@ test(
         expect(first.status).toBe("idle");
 
         // Second turn: ask for it back — only works if conversation was resumed
-        await client.sendMessage(agent.id, "What token did I ask you to remember? Reply with only the token.");
+        await client.sendMessage(
+          agent.id,
+          "What token did I ask you to remember? Reply with only the token.",
+        );
         const second = await client.waitForFinish(agent.id, ANTIGRAVITY_TEST_TIMEOUT_MS);
         expect(second.status).toBe("idle");
 
@@ -202,7 +208,10 @@ test(
           provider: "antigravity",
         });
 
-        await client.sendMessage(agent.id, "What model or AI system are you? Reply in one short sentence.");
+        await client.sendMessage(
+          agent.id,
+          "What model or AI system are you? Reply in one short sentence.",
+        );
 
         const finish = await client.waitForFinish(agent.id, ANTIGRAVITY_TEST_TIMEOUT_MS);
         expect(finish.status).toBe("idle");

@@ -1,6 +1,13 @@
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 
-export type BuiltinProviderIconName = "antigravity" | "claude" | "codex" | "copilot" | "kiro" | "opencode" | "pi";
+export type BuiltinProviderIconName =
+  | "antigravity"
+  | "claude"
+  | "codex"
+  | "copilot"
+  | "kiro"
+  | "opencode"
+  | "pi";
 
 export type ProviderIconName =
   | { kind: "builtin"; id: BuiltinProviderIconName }
