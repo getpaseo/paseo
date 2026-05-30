@@ -239,15 +239,35 @@ export async function writeCopilotProviderMode(
     if (!isCopilotPermissionServiceUnavailableError(error)) {
       throw error;
     }
+    if (context.hasActiveTurn) {
+      // Issuing a second concurrent prompt on the same ACP session is unsafe; let the caller retry once the turn settles.
+      context.logger.warn(
+        { err: error },
+        "Copilot allow_all config write failed and a foreground turn is active; refusing /allow-all fallback",
+      );
+      throw error;
+    }
     context.logger.warn(
       { err: error },
       "Copilot allow_all config write failed before permission service was ready; falling back to /allow-all",
     );
-    await context.connection.prompt({
+    const fallbackMessageId = randomUUID();
+    context.suppressUserEcho({
+      messageId: fallbackMessageId,
+      text: COPILOT_ALLOW_ALL_COMMAND,
+    });
+    const promptResponse = await context.connection.prompt({
       sessionId: context.sessionId,
-      messageId: randomUUID(),
+      messageId: fallbackMessageId,
       prompt: [{ type: "text", text: COPILOT_ALLOW_ALL_COMMAND }],
     });
+    if (promptResponse.stopReason !== "end_turn") {
+      context.logger.warn(
+        { stopReason: promptResponse.stopReason },
+        "Copilot /allow-all fallback returned an unexpected stop reason; surfacing the original error",
+      );
+      throw error;
+    }
     configOptions = setCopilotAllowAllConfigValue(context.configOptions, COPILOT_ALLOW_ALL_ON);
   }
   return {

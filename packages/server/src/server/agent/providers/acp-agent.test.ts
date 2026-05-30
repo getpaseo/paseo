@@ -1045,6 +1045,63 @@ describe("ACPAgentSession Zed parity", () => {
     await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
   });
 
+  test("refuses Copilot /allow-all fallback while a foreground turn is active", async () => {
+    const permissionError = {
+      code: -32603,
+      message:
+        "Failed to set config option 'allow_all' to 'on': Error: Permission service is unavailable for this session.",
+    };
+    const setSessionConfigOption = vi.fn(async () => {
+      throw permissionError;
+    });
+    const prompt = vi.fn(async () => ({ stopReason: "end_turn" }) as PromptResponse);
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig(COPILOT_ALLOW_ALL_MODE_ID);
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentMode: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("off"),
+      ],
+      connection: { prompt, setSessionConfigOption, setSessionMode },
+    });
+    (internals as unknown as { activeForegroundTurnId: string | null }).activeForegroundTurnId =
+      "turn-in-flight";
+
+    await expect(internals.applyConfiguredOverrides()).rejects.toBe(permissionError);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(setSessionMode).not.toHaveBeenCalled();
+  });
+
+  test("surfaces the original error if Copilot /allow-all fallback ends with a non-end_turn stop reason", async () => {
+    const permissionError = {
+      code: -32603,
+      message:
+        "Failed to set config option 'allow_all' to 'on': Error: Permission service is unavailable for this session.",
+    };
+    const setSessionConfigOption = vi.fn(async () => {
+      throw permissionError;
+    });
+    const prompt = vi.fn(async () => ({ stopReason: "refusal" }) as PromptResponse);
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig(COPILOT_ALLOW_ALL_MODE_ID);
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentMode: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("off"),
+      ],
+      connection: { prompt, setSessionConfigOption, setSessionMode },
+    });
+
+    await expect(internals.applyConfiguredOverrides()).rejects.toBe(permissionError);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(setSessionMode).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.not.toBe(COPILOT_ALLOW_ALL_MODE_ID);
+  });
+
   test("accepts Copilot's legacy autopilot mode ID as Allow All", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
       configOptions: [

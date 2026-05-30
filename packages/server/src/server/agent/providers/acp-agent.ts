@@ -410,6 +410,8 @@ export interface ACPProviderModeWriterContext {
   selection: ACPModeSelection;
   configOptions: SessionConfigOption[];
   logger: Logger;
+  hasActiveTurn: boolean;
+  suppressUserEcho: (params: { messageId: string; text: string }) => void;
 }
 
 export interface ACPProviderModeWriteResult {
@@ -1337,6 +1339,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       selection,
       configOptions: this.configOptions,
       logger: this.logger,
+      hasActiveTurn: this.activeForegroundTurnId !== null,
+      suppressUserEcho: ({ messageId, text }) => {
+        this.suppressUserEchoMessageId = messageId;
+        this.suppressUserEchoText = text;
+      },
     };
   }
 
