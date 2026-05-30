@@ -1954,6 +1954,15 @@ function getOpenCodeSubAgentMaps(state: OpenCodeEventTranslationState): {
   };
 }
 
+function isOpenCodeSessionTrackedByParent(
+  sessionId: string,
+  state: OpenCodeEventTranslationState,
+): boolean {
+  return (
+    sessionId === state.sessionId || state.subAgentCallIdByChildSessionId?.has(sessionId) === true
+  );
+}
+
 function getOpenCodeSubAgentState(
   callId: string,
   state: OpenCodeEventTranslationState,
@@ -2438,7 +2447,7 @@ function appendOpenCodePermissionAsked(
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
 ): void {
-  if (event.properties.sessionID !== state.sessionId) {
+  if (!isOpenCodeSessionTrackedByParent(event.properties.sessionID, state)) {
     return;
   }
   const metadata = readOpenCodeRecord(event.properties.metadata);

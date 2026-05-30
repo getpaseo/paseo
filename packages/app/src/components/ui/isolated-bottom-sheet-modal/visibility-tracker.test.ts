@@ -118,4 +118,44 @@ describe("bottom sheet visibility tracker", () => {
     tracker.handleSheetIndexChange(-1);
     expect(closeCount()).toBe(2);
   });
+
+  it("does not re-present when the controller reattaches before parent state acknowledges a user dismiss", () => {
+    const { sheet, tracker, closeCount } = setup();
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    tracker.handleSheetIndexChange(-1);
+    tracker.attachController(null);
+    tracker.attachController(sheet);
+
+    expect(closeCount()).toBe(1);
+    expect(sheet.events).toEqual([{ type: "present" }]);
+  });
+
+  it("does not re-present when dismiss fires before parent state acknowledges a user dismiss", () => {
+    const { sheet, tracker, closeCount } = setup();
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    tracker.handleSheetDismiss();
+    tracker.attachController(null);
+    tracker.attachController(sheet);
+
+    expect(closeCount()).toBe(1);
+    expect(sheet.events).toEqual([{ type: "present" }]);
+  });
+
+  it("allows a fresh open after parent state acknowledges a dismissed sheet", () => {
+    const { sheet, tracker } = setup();
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    tracker.handleSheetIndexChange(-1);
+    tracker.attachController(null);
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: false });
+    tracker.syncDesired({ visible: true });
+
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "present" }]);
+  });
 });

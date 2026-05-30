@@ -69,10 +69,11 @@ export interface UseAgentFormStateResult {
   allProviderModels: Map<string, AgentModelDefinition[]>;
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
+  isProviderModelsRefreshing: boolean;
   availableThinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   isModelLoading: boolean;
   modelError: string | null;
-  refreshProviderModels: () => void;
+  refreshProviderModels: (provider?: AgentProvider) => void;
   refetchProviderModelsIfStale: () => void;
   setProviderAndModelFromUser: (provider: AgentProvider, modelId: string) => void;
   workingDirIsEmpty: boolean;
@@ -208,6 +209,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const {
     entries: snapshotEntries,
     isLoading: snapshotIsLoading,
+    isRefreshing: snapshotIsRefreshing,
     error: snapshotError,
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
@@ -475,9 +477,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     dispatch({ type: "SET_SERVER_ID", value });
   }, []);
 
-  const refreshProviderModels = useCallback(() => {
-    void refreshSnapshot();
-  }, [refreshSnapshot]);
+  const refreshProviderModels = useCallback(
+    (provider?: AgentProvider) => {
+      void refreshSnapshot(provider ? [provider] : undefined);
+    },
+    [refreshSnapshot],
+  );
 
   const refetchProviderModelsIfStale = useCallback(() => {
     refetchSnapshotIfStale(reducerStateRef.current.form.provider);
@@ -535,6 +540,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       allProviderModels,
       modelSelectorProviders,
       isAllModelsLoading,
+      isProviderModelsRefreshing: snapshotIsRefreshing,
       availableThinkingOptions,
       isModelLoading,
       modelError,
@@ -568,6 +574,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       allProviderModels,
       modelSelectorProviders,
       isAllModelsLoading,
+      snapshotIsRefreshing,
       availableThinkingOptions,
       isModelLoading,
       modelError,

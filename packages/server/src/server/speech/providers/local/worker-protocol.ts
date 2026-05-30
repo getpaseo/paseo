@@ -3,6 +3,7 @@ import type {
   StreamingTranscriptionEvent,
   TranscriptionResult,
 } from "../../speech-provider.js";
+import type { LocalSpeechWorkerBytes } from "./worker-bytes.js";
 
 export interface LocalSpeechWorkerConfig {
   modelsDir: string;
@@ -27,7 +28,7 @@ export type LocalSpeechWorkerRequest =
       requestId: string;
       config: LocalSpeechWorkerConfig;
       model: "voice" | "dictation";
-      audio: Buffer;
+      audio: LocalSpeechWorkerBytes;
       format: string;
     }
   | {
@@ -41,7 +42,7 @@ export type LocalSpeechWorkerRequest =
       type: "session.append";
       requestId: string;
       sessionId: string;
-      audio: Buffer;
+      audio: LocalSpeechWorkerBytes;
     }
   | {
       type: "session.commit";
@@ -115,7 +116,7 @@ export interface LocalSpeechCreateSessionResult {
 }
 
 export interface LocalSpeechTtsResult {
-  audio: Buffer;
+  audio: LocalSpeechWorkerBytes;
   format: string;
 }
 
