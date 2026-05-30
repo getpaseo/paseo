@@ -174,8 +174,8 @@ function createCronDatePartsReader(timeZone: string | undefined): (date: Date) =
 export function validateScheduleCadence(cadence: ScheduleCadence): void {
   if (cadence.type === "cron") {
     parseCronExpression(cadence.expression);
-    if (cadence.timeZone !== undefined) {
-      assertValidTimeZone(cadence.timeZone);
+    if (cadence.timezone !== undefined) {
+      assertValidTimeZone(cadence.timezone);
     }
   }
 }
@@ -186,7 +186,7 @@ export function computeNextRunAt(cadence: ScheduleCadence, after: Date): Date {
   }
 
   const cron = parseCronExpression(cadence.expression);
-  const readDateParts = createCronDatePartsReader(cadence.timeZone);
+  const readDateParts = createCronDatePartsReader(cadence.timezone);
   const limit = 366 * 24 * 60;
   let cursor = startOfNextMinute(after);
 

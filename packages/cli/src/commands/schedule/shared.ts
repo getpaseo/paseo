@@ -49,8 +49,8 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
 
 export function formatCadence(cadence: ScheduleCadence): string {
   if (cadence.type === "cron") {
-    const timeZoneSuffix = cadence.timeZone ? ` (${cadence.timeZone})` : "";
-    return `cron:${cadence.expression}${timeZoneSuffix}`;
+    const timezoneSuffix = cadence.timezone ? ` (${cadence.timezone})` : "";
+    return `cron:${cadence.expression}${timezoneSuffix}`;
   }
   return `every:${formatDurationMs(cadence.everyMs)}`;
 }
@@ -130,7 +130,7 @@ export function parseScheduleCreateInput(options: {
   prompt: string;
   every?: string;
   cron?: string;
-  timeZone?: string;
+  timezone?: string;
   name?: string;
   target?: string;
   provider?: string;
@@ -149,7 +149,7 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
 
-  const cadence = parseCadenceFromFlags(options.every, options.cron, options.timeZone);
+  const cadence = parseCadenceFromFlags(options.every, options.cron, options.timezone);
   if (!cadence) {
     throw {
       code: "INVALID_CADENCE",
@@ -234,7 +234,7 @@ export interface ScheduleUpdateOptionsInput {
   id: string;
   every?: string;
   cron?: string;
-  timeZone?: string;
+  timezone?: string;
   name?: string;
   prompt?: string;
   provider?: string;
@@ -256,7 +256,7 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
     } satisfies CommandError;
   }
 
-  const cadence = parseCadenceFromFlags(options.every, options.cron, options.timeZone);
+  const cadence = parseCadenceFromFlags(options.every, options.cron, options.timezone);
   const newAgentConfig = buildNewAgentConfigPatch(options);
   const maxRuns = parseUpdateMaxRuns(options);
   const expiresAt = parseUpdateExpiresAt(options);
@@ -291,7 +291,7 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
 function parseCadenceFromFlags(
   every: string | undefined,
   cron: string | undefined,
-  timeZone: string | undefined,
+  timezone: string | undefined,
 ): ScheduleCadence | undefined {
   if (every !== undefined && cron !== undefined) {
     throw {
@@ -299,7 +299,7 @@ function parseCadenceFromFlags(
       message: "Specify at most one of --every or --cron",
     } satisfies CommandError;
   }
-  const trimmedTimeZone = parseTimeZoneFlag(timeZone);
+  const trimmedTimeZone = parseTimeZoneFlag(timezone);
   if (trimmedTimeZone !== undefined && cron === undefined) {
     throw {
       code: "INVALID_TIME_ZONE",
@@ -313,7 +313,7 @@ function parseCadenceFromFlags(
     return {
       type: "cron",
       expression: cron.trim(),
-      ...(trimmedTimeZone ? { timeZone: trimmedTimeZone } : {}),
+      ...(trimmedTimeZone ? { timezone: trimmedTimeZone } : {}),
     };
   }
   return undefined;

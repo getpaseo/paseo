@@ -91,13 +91,13 @@ describe("parseScheduleCreateInput first-run timing", () => {
   test("--cron with --timezone stores a timezone-aware cadence", () => {
     const input = parseScheduleCreateInput({
       ...baseCron,
-      timeZone: "  America/New_York  ",
+      timezone: "  America/New_York  ",
     });
 
     expect(input.cadence).toEqual({
       type: "cron",
       expression: "0 9 * * *",
-      timeZone: "America/New_York",
+      timezone: "America/New_York",
     });
   });
 
@@ -120,7 +120,7 @@ describe("parseScheduleCreateInput first-run timing", () => {
   });
 
   test("--timezone without --cron is rejected", () => {
-    expect(() => parseScheduleCreateInput({ ...baseOptions, timeZone: "Europe/Zurich" })).toThrow(
+    expect(() => parseScheduleCreateInput({ ...baseOptions, timezone: "Europe/Zurich" })).toThrow(
       expect.objectContaining({
         code: "INVALID_TIME_ZONE",
         message: "--timezone can only be used with --cron",
@@ -178,11 +178,11 @@ describe("parseScheduleUpdateInput", () => {
       parseScheduleUpdateInput({
         id: "abc",
         cron: "30 9 * * *",
-        timeZone: "Europe/Zurich",
+        timezone: "Europe/Zurich",
       }),
     ).toEqual({
       id: "abc",
-      cadence: { type: "cron", expression: "30 9 * * *", timeZone: "Europe/Zurich" },
+      cadence: { type: "cron", expression: "30 9 * * *", timezone: "Europe/Zurich" },
     });
   });
 
@@ -193,7 +193,7 @@ describe("parseScheduleUpdateInput", () => {
   });
 
   test("rejects --timezone without --cron", () => {
-    expect(() => parseScheduleUpdateInput({ id: "abc", timeZone: "Europe/Zurich" })).toThrow(
+    expect(() => parseScheduleUpdateInput({ id: "abc", timezone: "Europe/Zurich" })).toThrow(
       expect.objectContaining({ code: "INVALID_TIME_ZONE" }),
     );
   });

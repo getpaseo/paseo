@@ -22,11 +22,11 @@ describe("schedule cron cadence", () => {
 
   test("computes timezone cron matches at the requested wall-clock time", () => {
     const winter = computeNextRunAt(
-      { type: "cron", expression: "0 9 * * 1-5", timeZone: "America/New_York" },
+      { type: "cron", expression: "0 9 * * 1-5", timezone: "America/New_York" },
       new Date("2026-01-05T13:59:30.000Z"),
     );
     const summer = computeNextRunAt(
-      { type: "cron", expression: "0 9 * * 1-5", timeZone: "America/New_York" },
+      { type: "cron", expression: "0 9 * * 1-5", timezone: "America/New_York" },
       new Date("2026-07-06T12:59:30.000Z"),
     );
 
@@ -36,11 +36,11 @@ describe("schedule cron cadence", () => {
 
   test("keeps repeated fall-back wall-clock matches distinct", () => {
     const first = computeNextRunAt(
-      { type: "cron", expression: "30 1 1 11 *", timeZone: "America/New_York" },
+      { type: "cron", expression: "30 1 1 11 *", timezone: "America/New_York" },
       new Date("2026-11-01T05:29:30.000Z"),
     );
     const second = computeNextRunAt(
-      { type: "cron", expression: "30 1 1 11 *", timeZone: "America/New_York" },
+      { type: "cron", expression: "30 1 1 11 *", timezone: "America/New_York" },
       first,
     );
 
@@ -59,7 +59,7 @@ describe("schedule cron cadence", () => {
       validateScheduleCadence({
         type: "cron",
         expression: "0 9 * * *",
-        timeZone: "Not/AZone",
+        timezone: "Not/AZone",
       }),
     ).toThrow("Invalid cron time zone: Not/AZone");
   });

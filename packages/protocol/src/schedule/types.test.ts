@@ -15,12 +15,12 @@ describe("ScheduleCadenceSchema", () => {
       ScheduleCadenceSchema.parse({
         type: "cron",
         expression: "0 9 * * *",
-        timeZone: "America/New_York",
+        timezone: "America/New_York",
       }),
     ).toEqual({
       type: "cron",
       expression: "0 9 * * *",
-      timeZone: "America/New_York",
+      timezone: "America/New_York",
     });
   });
 });

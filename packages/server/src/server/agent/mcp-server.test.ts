@@ -2328,7 +2328,7 @@ describe("create_schedule MCP tool", () => {
     );
   });
 
-  it("passes timeZone through cron create_schedule input", async () => {
+  it("passes timezone through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const create = vi.fn(async (scheduleInput: CreateScheduleInput) =>
       createStoredSchedule(scheduleInput),
@@ -2345,7 +2345,7 @@ describe("create_schedule MCP tool", () => {
     await invokeToolWithParsedInput(tool, {
       prompt: "say hello",
       cron: "0 9 * * 1-5",
-      timeZone: "  America/New_York  ",
+      timezone: "  America/New_York  ",
       provider: "codex",
     });
 
@@ -2354,7 +2354,7 @@ describe("create_schedule MCP tool", () => {
         cadence: {
           type: "cron",
           expression: "0 9 * * 1-5",
-          timeZone: "America/New_York",
+          timezone: "America/New_York",
         },
       }),
     );
@@ -2384,7 +2384,7 @@ describe("create_schedule MCP tool", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("rejects create_schedule timeZone without cron", async () => {
+  it("rejects create_schedule timezone without cron", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const create = vi.fn();
     const server = await createAgentMcpServer({
@@ -2400,10 +2400,10 @@ describe("create_schedule MCP tool", () => {
       invokeToolWithParsedInput(tool, {
         prompt: "say hello",
         every: "10m",
-        timeZone: "America/New_York",
+        timezone: "America/New_York",
         provider: "codex",
       }),
-    ).rejects.toThrow("timeZone can only be used with cron");
+    ).rejects.toThrow("timezone can only be used with cron");
 
     expect(create).not.toHaveBeenCalled();
   });
@@ -2514,7 +2514,7 @@ describe("update_schedule MCP tool", () => {
     });
   });
 
-  it("passes timeZone through cron update_schedule input", async () => {
+  it("passes timezone through cron update_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const stored = makeStoredSchedule();
     const update = vi.fn(async (_input: UpdateScheduleInput) => stored);
@@ -2530,7 +2530,7 @@ describe("update_schedule MCP tool", () => {
     await invokeToolWithParsedInput(tool, {
       id: "schedule-1",
       cron: "0 9 * * 1-5",
-      timeZone: "Europe/Zurich",
+      timezone: "Europe/Zurich",
     });
 
     expect(update).toHaveBeenCalledWith({
@@ -2538,7 +2538,7 @@ describe("update_schedule MCP tool", () => {
       cadence: {
         type: "cron",
         expression: "0 9 * * 1-5",
-        timeZone: "Europe/Zurich",
+        timezone: "Europe/Zurich",
       },
     });
   });
@@ -2627,7 +2627,7 @@ describe("update_schedule MCP tool", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("rejects update_schedule timeZone without cron", async () => {
+  it("rejects update_schedule timezone without cron", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const update = vi.fn();
     const server = await createAgentMcpServer({
@@ -2643,9 +2643,9 @@ describe("update_schedule MCP tool", () => {
       invokeToolWithParsedInput(tool, {
         id: "schedule-1",
         every: "10m",
-        timeZone: "Europe/Zurich",
+        timezone: "Europe/Zurich",
       }),
-    ).rejects.toThrow("timeZone can only be used with cron");
+    ).rejects.toThrow("timezone can only be used with cron");
 
     expect(update).not.toHaveBeenCalled();
   });

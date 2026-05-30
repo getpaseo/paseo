@@ -35,7 +35,7 @@ export async function runCreateCommand(
     prompt,
     every: options.every,
     cron: options.cron,
-    timeZone: options.timezone,
+    timezone: options.timezone,
     name: options.name,
     target: options.target,
     provider: options.provider,

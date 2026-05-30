@@ -37,7 +37,7 @@ export async function runUpdateCommand(
     id,
     every: options.every,
     cron: options.cron,
-    timeZone: options.timezone,
+    timezone: options.timezone,
     name: options.name,
     prompt: options.prompt,
     provider: options.provider,

@@ -333,7 +333,7 @@ interface ScheduleUpdateToolInput {
   id: string;
   every?: string;
   cron?: string;
-  timeZone?: string;
+  timezone?: string;
   name?: string | null;
   prompt?: string;
   maxRuns?: number | null;
@@ -365,19 +365,23 @@ function normalizeScheduleTimeZoneArg(value: string | undefined): string | undef
 function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleCadence | undefined {
   const every = normalizeScheduleCadenceArg(input.every);
   const cron = normalizeScheduleCadenceArg(input.cron);
-  const timeZone = normalizeScheduleTimeZoneArg(input.timeZone);
+  const timeZone = normalizeScheduleTimeZoneArg(input.timezone);
 
   if (every !== undefined && cron !== undefined) {
     throw new Error("Specify at most one of every or cron");
   }
   if (timeZone !== undefined && cron === undefined) {
-    throw new Error("timeZone can only be used with cron");
+    throw new Error("timezone can only be used with cron");
   }
   if (every !== undefined) {
     return { type: "every", everyMs: parseDurationString(every) };
   }
   if (cron !== undefined) {
-    return { type: "cron", expression: cron, ...(timeZone !== undefined ? { timeZone } : {}) };
+    return {
+      type: "cron",
+      expression: cron,
+      ...(timeZone !== undefined ? { timezone: timeZone } : {}),
+    };
   }
   return undefined;
 }
@@ -1592,7 +1596,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         prompt: z.string().trim().min(1, "prompt is required"),
         every: z.string().optional(),
         cron: z.string().optional(),
-        timeZone: z
+        timezone: z
           .string()
           .optional()
           .describe(
@@ -1609,21 +1613,21 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, every, cron, timeZone, name, target, provider, cwd, maxRuns, expiresIn }) => {
+    async ({ prompt, every, cron, timezone, name, target, provider, cwd, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
 
       const normalizedEvery = normalizeScheduleCadenceArg(every);
       const normalizedCron = normalizeScheduleCadenceArg(cron);
-      const normalizedTimeZone = normalizeScheduleTimeZoneArg(timeZone);
+      const normalizedTimeZone = normalizeScheduleTimeZoneArg(timezone);
       const cadenceCount =
         Number(normalizedEvery !== undefined) + Number(normalizedCron !== undefined);
       if (cadenceCount !== 1) {
         throw new Error("Specify exactly one of every or cron");
       }
       if (normalizedTimeZone !== undefined && normalizedCron === undefined) {
-        throw new Error("timeZone can only be used with cron");
+        throw new Error("timezone can only be used with cron");
       }
 
       const scheduleTarget =
@@ -1665,7 +1669,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
             : {
                 type: "cron" as const,
                 expression: normalizedCron!,
-                ...(normalizedTimeZone !== undefined ? { timeZone: normalizedTimeZone } : {}),
+                ...(normalizedTimeZone !== undefined ? { timezone: normalizedTimeZone } : {}),
               },
         target: scheduleTarget,
         ...(name?.trim() ? { name: name.trim() } : {}),
@@ -1815,7 +1819,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         id: z.string(),
         every: z.string().optional().describe("New interval duration string (e.g. 5m, 1h)."),
         cron: z.string().optional().describe("New cron expression."),
-        timeZone: z
+        timezone: z
           .string()
           .optional()
           .describe(
