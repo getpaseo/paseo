@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
@@ -43,6 +44,8 @@ export const COPILOT_ALLOW_ALL_MODE_ID = "allow-all";
 const COPILOT_ALLOW_ALL_CONFIG_ID = "allow_all";
 const COPILOT_ALLOW_ALL_ON = "on";
 const COPILOT_ALLOW_ALL_OFF = "off";
+const COPILOT_ALLOW_ALL_COMMAND = "/allow-all";
+const COPILOT_PERMISSION_SERVICE_UNAVAILABLE = "Permission service is unavailable for this session";
 type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
 
 export const COPILOT_MODES: AgentMode[] = [
@@ -224,15 +227,33 @@ export async function writeCopilotProviderMode(
   if (!requestsAllowAll) {
     return { handled: false };
   }
-  const response = await context.connection.setSessionConfigOption({
-    sessionId: context.sessionId,
-    configId: COPILOT_ALLOW_ALL_CONFIG_ID,
-    value: COPILOT_ALLOW_ALL_ON,
-  });
+  let configOptions: SessionConfigOption[] | undefined;
+  try {
+    const response = await context.connection.setSessionConfigOption({
+      sessionId: context.sessionId,
+      configId: COPILOT_ALLOW_ALL_CONFIG_ID,
+      value: COPILOT_ALLOW_ALL_ON,
+    });
+    configOptions = response.configOptions;
+  } catch (error) {
+    if (!isCopilotPermissionServiceUnavailableError(error)) {
+      throw error;
+    }
+    context.logger.warn(
+      { err: error },
+      "Copilot allow_all config write failed before permission service was ready; falling back to /allow-all",
+    );
+    await context.connection.prompt({
+      sessionId: context.sessionId,
+      messageId: randomUUID(),
+      prompt: [{ type: "text", text: COPILOT_ALLOW_ALL_COMMAND }],
+    });
+    configOptions = setCopilotAllowAllConfigValue(context.configOptions, COPILOT_ALLOW_ALL_ON);
+  }
   return {
     handled: true,
     currentModeId: COPILOT_ALLOW_ALL_MODE_ID,
-    configOptions: response.configOptions,
+    configOptions,
   };
 }
 
@@ -260,4 +281,35 @@ function isCopilotAllowAllEnabled(configOptions: SessionConfigOption[]): boolean
       option.id === COPILOT_ALLOW_ALL_CONFIG_ID &&
       option.currentValue === COPILOT_ALLOW_ALL_ON,
   );
+}
+
+function setCopilotAllowAllConfigValue(
+  configOptions: SessionConfigOption[],
+  value: typeof COPILOT_ALLOW_ALL_ON | typeof COPILOT_ALLOW_ALL_OFF,
+): SessionConfigOption[] {
+  return configOptions.map((option) => {
+    if (option.type !== "select" || option.id !== COPILOT_ALLOW_ALL_CONFIG_ID) {
+      return option;
+    }
+    return { ...option, currentValue: value };
+  });
+}
+
+function isCopilotPermissionServiceUnavailableError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return message?.includes(COPILOT_PERMISSION_SERVICE_UNAVAILABLE) ?? false;
+}
+
+function getErrorMessage(error: unknown): string | null {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (!isRecord(error)) {
+    return null;
+  }
+  return typeof error.message === "string" ? error.message : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }

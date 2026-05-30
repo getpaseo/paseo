@@ -65,6 +65,11 @@ interface ACPModelSelectionInternals {
 interface ACPConfiguredOverrideInternals {
   sessionId: string | null;
   connection: {
+    prompt: (input: {
+      sessionId: string;
+      messageId: string;
+      prompt: Array<{ type: "text"; text: string }>;
+    }) => Promise<PromptResponse>;
     setSessionMode: (input: { sessionId: string; modeId: string }) => Promise<void>;
     setSessionConfigOption: (input: {
       sessionId: string;
@@ -253,9 +258,11 @@ function prepareConfiguredOverrideSession(
   const setSessionConfigOption = vi.fn(async () => ({
     configOptions: options.configOptions ?? [],
   }));
+  const prompt = vi.fn(async () => ({ stopReason: "end_turn" }) as PromptResponse);
   const internals = asInternals<ACPConfiguredOverrideInternals>(session);
   internals.sessionId = "session-1";
   internals.connection = {
+    prompt,
     setSessionMode,
     setSessionConfigOption,
     unstable_setSessionModel: unstableSetSessionModel,
@@ -999,6 +1006,43 @@ describe("ACPAgentSession Zed parity", () => {
     expect(setSessionMode).not.toHaveBeenCalled();
     await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
     expect(events.some((event) => event.type === "permission_requested")).toBe(false);
+  });
+
+  test("falls back to Copilot's allow-all slash command when allow_all config is not ready", async () => {
+    const setSessionConfigOption = vi.fn(async () => {
+      throw {
+        code: -32603,
+        message:
+          "Failed to set config option 'allow_all' to 'on': Error: Permission service is unavailable for this session.",
+      };
+    });
+    const prompt = vi.fn(async () => ({ stopReason: "end_turn" }) as PromptResponse);
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig(COPILOT_ALLOW_ALL_MODE_ID);
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentMode: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("off"),
+      ],
+      connection: { prompt, setSessionConfigOption, setSessionMode },
+    });
+
+    await internals.applyConfiguredOverrides();
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "allow_all",
+      value: "on",
+    });
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageId: expect.any(String),
+      prompt: [{ type: "text", text: "/allow-all" }],
+    });
+    expect(setSessionMode).not.toHaveBeenCalled();
+    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
   });
 
   test("accepts Copilot's legacy autopilot mode ID as Allow All", async () => {
