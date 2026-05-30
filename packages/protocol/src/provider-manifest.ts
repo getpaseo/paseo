@@ -183,8 +183,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
     id: "antigravity",
     label: "Antigravity",
-    description:
-      "Google's Antigravity CLI agent with multi-step reasoning, multi-file editing, and MCP support",
+    description: "Google's Antigravity CLI agent with multi-step reasoning and multi-file editing",
     defaultModeId: "default",
     modes: ANTIGRAVITY_MODES,
   },

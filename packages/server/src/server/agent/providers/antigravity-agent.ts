@@ -167,22 +167,35 @@ class AntigravityAgentSession implements AgentSession {
       stdio: ["ignore", "pipe", "pipe"],
     });
     this._activeProcess = proc;
+    // Drain stderr to prevent the OS pipe buffer from filling up and
+    // blocking the child process (64 KB on Linux). We don't surface it
+    // to the user but could log it at trace level in future.
+    proc.stderr?.resume();
 
     let fullOutput = "";
     let deltaText = "";
     const prevOutput = this._prevOutput;
-    const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
+    let mismatchDetected = false;
+    const rl = createInterface({ input: proc.stdout!, crlfDelay: Infinity });
 
     rl.on("line", (line) => {
       if (this._activeTurnId !== turnId) {
         return;
       }
       fullOutput += `${line}\n`;
-      // Strip the prior-turn prefix so only the new response is shown.
-      // agy --conversation replays full history on every invocation.
-      const candidate = fullOutput.startsWith(prevOutput)
-        ? fullOutput.slice(prevOutput.length).trimStart()
-        : fullOutput;
+      // While still buffering the prior-turn replay, don't emit anything.
+      if (fullOutput.length < prevOutput.length) {
+        return;
+      }
+      // Once we have enough output to compare, check the prefix.
+      if (!fullOutput.startsWith(prevOutput)) {
+        // agy output is not append-only — suppress streaming to avoid
+        // broadcasting the full conversation history as the new response.
+        mismatchDetected = true;
+        return;
+      }
+      // Strip the replayed prior turns so only the new response is shown.
+      const candidate = fullOutput.slice(prevOutput.length).trimStart();
       if (candidate === deltaText) {
         return;
       }
@@ -217,10 +230,23 @@ class AntigravityAgentSession implements AgentSession {
         }
       }
 
-      // Update the accumulated-output baseline for the next turn's delta extraction.
-      if (!fullOutput.startsWith(prevOutput)) {
-        this._logger.warn("antigravity: agy stdout was not append-only; resetting delta baseline.");
+      if (mismatchDetected) {
+        // agy stdout was not append-only — delta extraction failed. Fail the
+        // turn so the user gets a clear error rather than seeing replayed history.
+        // Do NOT update _prevOutput: stale baseline is better than a corrupt one.
+        this._logger.warn(
+          "antigravity: agy stdout was not append-only; turn failed to avoid replaying prior conversation.",
+        );
+        this.emit({
+          type: "turn_failed",
+          provider: ANTIGRAVITY_PROVIDER,
+          error: "agy output was not append-only; session continuity may be broken",
+          turnId,
+        });
+        return;
       }
+
+      // Update the accumulated-output baseline for the next turn's delta extraction.
       this._prevOutput = fullOutput;
 
       if (code === 0 || code === null) {
@@ -343,7 +369,7 @@ export class AntigravityAgentClient implements AgentClient {
     const available = await this.isAvailable();
     if (!available) {
       return {
-        diagnostic: `Antigravity: '${ANTIGRAVITY_BINARY}' binary not found. Install with: npm install -g @google/agy-cli`,
+        diagnostic: `Antigravity: '${ANTIGRAVITY_BINARY}' binary not found. Install from https://antigravity.google/cli or run: curl -fsSL https://antigravity.google/cli/install.sh | bash`,
       };
     }
     return { diagnostic: `Antigravity: '${ANTIGRAVITY_BINARY}' binary found and ready.` };
