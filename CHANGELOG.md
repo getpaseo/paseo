@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.87 - 2026-05-30
+
+### Added
+
+- Permission prompts from OpenCode subagents now surface in Paseo so you can approve or deny them
+
+### Fixed
+
+- Fixed an intermittent Android crash while animated views were drawing
+- Fixed mobile bottom sheets not reopening after being dismissed
+
 ## 0.1.86 - 2026-05-29
 
 ### Added
