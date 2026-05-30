@@ -1,19 +1,21 @@
-export const PREVIEW_FILENAME = "preview.ts";
+// A small, syntax-rich TypeScript change rendered side-by-side in the appearance
+// preview. BEFORE and AFTER are aligned 1:1 (5 lines each); only the indices in
+// CHANGED_LINE_INDICES differ, so the diff tints land on matching rows.
 
-export const PREVIEW_BEFORE = [
-  "const themePreview: ThemeConfig = {",
-  '  surface: "sidebar",',
-  '  accent: "#2563eb",',
-  "  contrast: 42,",
-  "};",
+export const PREVIEW_BEFORE: string[] = [
+  "// Format a price for display",
+  "export function formatPrice(cents: number) {",
+  "  const amount = cents / 100;",
+  '  return "$" + amount;',
+  "}",
 ];
 
-export const PREVIEW_AFTER = [
-  "const themePreview: ThemeConfig = {",
-  '  surface: "sidebar-elevated",',
-  '  accent: "#0ea5e9",',
-  "  contrast: 68,",
-  "};",
+export const PREVIEW_AFTER: string[] = [
+  "// Format a price for display",
+  "export function formatPrice(cents: number): string {",
+  "  const amount = cents / 100;",
+  "  return `$${amount.toFixed(2)}`;",
+  "}",
 ];
 
-export const CHANGED_LINE_INDICES: ReadonlySet<number> = new Set([1, 2, 3]);
+export const CHANGED_LINE_INDICES: ReadonlySet<number> = new Set([1, 3]);

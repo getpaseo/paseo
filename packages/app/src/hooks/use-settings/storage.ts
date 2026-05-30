@@ -50,7 +50,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
-  syntaxTheme: "auto",
+  syntaxTheme: "github",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {

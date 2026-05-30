@@ -285,14 +285,9 @@ function FontSizeRow({
 // Syntax highlight theme picker (commits immediately)
 // ---------------------------------------------------------------------------
 
-// The `auto` palette follows the app theme; surface that meaning in the label.
-function syntaxThemeLabel(option: SyntaxThemeOption): string {
-  return option.id === "auto" ? "Match theme" : option.label;
-}
-
 function syntaxLabelForId(id: SyntaxThemeId): string {
   const option = SYNTAX_THEME_OPTIONS.find((entry) => entry.id === id);
-  return option ? syntaxThemeLabel(option) : id;
+  return option ? option.label : id;
 }
 
 interface SyntaxMenuItemProps {
@@ -307,7 +302,7 @@ function SyntaxMenuItem({ option, selected, onChange }: SyntaxMenuItemProps) {
   }, [onChange, option.id]);
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect}>
-      {syntaxThemeLabel(option)}
+      {option.label}
     </DropdownMenuItem>
   );
 }
@@ -448,19 +443,14 @@ export function AppearanceSection() {
   // theme value inside the preview.
   const previewOverrides = useMemo(
     () => ({
-      uiFontFamily: uiFontDraft,
       monoFontFamily: monoFontDraft,
-      uiFontSize: sizeDraftToOverride(uiSizeDraft),
       codeFontSize: sizeDraftToOverride(codeSizeDraft),
     }),
-    [codeSizeDraft, monoFontDraft, uiFontDraft, uiSizeDraft],
+    [codeSizeDraft, monoFontDraft],
   );
 
   return (
     <View>
-      <View style={styles.preview}>
-        <AppearancePreview overrides={previewOverrides} />
-      </View>
       <SettingsSection title="Theme">
         <View style={settingsStyles.card}>
           <ThemeRow value={settings.theme} onChange={handleThemeChange} />
@@ -510,6 +500,9 @@ export function AppearanceSection() {
         <View style={settingsStyles.card}>
           <SyntaxRow value={settings.syntaxTheme} onChange={handleSyntaxThemeChange} />
         </View>
+        <View style={styles.preview}>
+          <AppearancePreview overrides={previewOverrides} />
+        </View>
       </SettingsSection>
     </View>
   );
@@ -517,7 +510,7 @@ export function AppearanceSection() {
 
 const styles = StyleSheet.create((theme) => ({
   preview: {
-    marginBottom: theme.spacing[6],
+    marginTop: theme.spacing[4],
   },
   rowWithBorder: {
     flexDirection: "row",

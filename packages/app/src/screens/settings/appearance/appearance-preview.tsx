@@ -4,15 +4,10 @@ import { StyleSheet } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
-import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
+import { DEFAULT_MONO_FONT_STACK } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { tokenizeToLines } from "@/utils/highlight-cache";
-import {
-  CHANGED_LINE_INDICES,
-  PREVIEW_AFTER,
-  PREVIEW_BEFORE,
-  PREVIEW_FILENAME,
-} from "./preview-snippet";
+import { CHANGED_LINE_INDICES, PREVIEW_AFTER, PREVIEW_BEFORE } from "./preview-snippet";
 
 // Snippets are TypeScript; the cache keys grammar selection off the extension.
 const PREVIEW_EXTENSION = "ts";
@@ -28,16 +23,14 @@ const ADDED_TINT = "rgba(46, 160, 67, 0.15)";
 const ZERO_WIDTH = "​";
 
 interface PreviewOverrides {
-  uiFontFamily?: string;
   monoFontFamily?: string;
-  uiFontSize?: number;
   codeFontSize?: number;
 }
 
 interface AppearancePreviewProps {
-  // Live draft values applied as inline overrides on top of the themed styles
-  // (the while-typing path). Absent/empty fields fall back to the theme value;
-  // an explicitly-empty family resolves to the platform default stack.
+  // Live draft values for the code font applied as inline overrides on top of
+  // the themed styles (the while-typing path). Absent/empty fields fall back to
+  // the theme value; an explicitly-empty family resolves to the default stack.
   overrides?: PreviewOverrides;
 }
 
@@ -65,17 +58,6 @@ function buildCodeOverride(overrides: PreviewOverrides | undefined): TextStyle {
     // doesn't clip while the user is still typing it.
     style.lineHeight = Math.round(fontSize * 1.5);
   }
-  // High-churn draft values bypass the Unistyles CSS registry (docs/unistyles.md).
-  return inlineUnistylesStyle(style);
-}
-
-function buildUiOverride(overrides: PreviewOverrides | undefined): TextStyle {
-  if (!overrides) return {};
-  const style: TextStyle = {};
-  const fontFamily = resolveFamilyOverride(overrides.uiFontFamily, DEFAULT_UI_FONT_STACK);
-  if (fontFamily !== undefined) style.fontFamily = fontFamily;
-  const fontSize = resolveSizeOverride(overrides.uiFontSize);
-  if (fontSize !== undefined) style.fontSize = fontSize;
   // High-churn draft values bypass the Unistyles CSS registry (docs/unistyles.md).
   return inlineUnistylesStyle(style);
 }
@@ -157,28 +139,21 @@ function PreviewColumn({ lineTexts, side, codeOverride }: PreviewColumnProps) {
   );
 }
 
-// Self-contained live preview: a filename chrome strip (UI font) over a
-// side-by-side diff of a fixed TypeScript snippet (mono font + syntax colors).
-// All themed styling flows through StyleSheet.create((theme) => …) so it
-// repaints when UnistylesRuntime.updateTheme commits a setting; the optional
-// `overrides` layer inline styles for live-while-typing feedback.
+// Self-contained live preview: a side-by-side diff of a fixed TypeScript snippet
+// in the code (mono) font with the selected syntax colors. All themed styling
+// flows through StyleSheet.create((theme) => …) so it repaints when
+// UnistylesRuntime.updateTheme commits a setting; the optional `overrides` layer
+// inline styles for live-while-typing feedback on the code font.
 export function AppearancePreview({ overrides }: AppearancePreviewProps) {
   const isCompact = useIsCompactFormFactor();
   const codeOverride = useMemo(() => buildCodeOverride(overrides), [overrides]);
-  const uiOverride = useMemo(() => buildUiOverride(overrides), [overrides]);
-  const filenameStyle = useMemo(() => [styles.filename, uiOverride], [uiOverride]);
 
   return (
     <View
       accessibilityRole="image"
-      accessibilityLabel="Live preview of the selected theme and fonts"
+      accessibilityLabel="Live preview of the syntax theme and code font"
       style={styles.card}
     >
-      <View style={styles.chrome}>
-        <Text style={filenameStyle} numberOfLines={1}>
-          {PREVIEW_FILENAME}
-        </Text>
-      </View>
       <View style={isCompact ? styles.bodyStacked : styles.bodySplit}>
         <PreviewColumn lineTexts={PREVIEW_BEFORE} side="before" codeOverride={codeOverride} />
         <PreviewColumn lineTexts={PREVIEW_AFTER} side="after" codeOverride={codeOverride} />
@@ -194,17 +169,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     overflow: "hidden",
-  },
-  chrome: {
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-  },
-  filename: {
-    fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
   },
   bodySplit: {
     flexDirection: "row",

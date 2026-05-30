@@ -50,12 +50,18 @@ describe("resolveSyntaxColors", () => {
     }
   }
 
-  it("auto + light deep-equals lightHighlightColors", () => {
-    expect(resolveSyntaxColors("auto", "light")).toEqual(lightHighlightColors);
+  it("github + light deep-equals lightHighlightColors", () => {
+    expect(resolveSyntaxColors("github", "light")).toEqual(lightHighlightColors);
   });
 
-  it("auto + dark deep-equals darkHighlightColors", () => {
-    expect(resolveSyntaxColors("auto", "dark")).toEqual(darkHighlightColors);
+  it("github + dark deep-equals darkHighlightColors", () => {
+    expect(resolveSyntaxColors("github", "dark")).toEqual(darkHighlightColors);
+  });
+
+  it("dark-only themes ignore the color scheme", () => {
+    for (const id of ["dracula", "nord"] as const) {
+      expect(resolveSyntaxColors(id, "light")).toEqual(resolveSyntaxColors(id, "dark"));
+    }
   });
 });
 
@@ -67,7 +73,9 @@ describe("isSyntaxThemeId", () => {
   });
 
   it("rejects unknown ids", () => {
-    expect(isSyntaxThemeId("github")).toBe(false);
+    expect(isSyntaxThemeId("auto")).toBe(false);
+    expect(isSyntaxThemeId("github-light")).toBe(false);
+    expect(isSyntaxThemeId("one-dark")).toBe(false);
     expect(isSyntaxThemeId("nope")).toBe(false);
   });
 });

@@ -240,7 +240,7 @@ describe("appearance settings", () => {
     expect(result.monoFontFamily).toBe("");
     expect(result.uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
-    expect(result.syntaxTheme).toBe("auto");
+    expect(result.syntaxTheme).toBe("github");
   });
 
   it("clamps the UI font size into range and rejects non-numeric values", async () => {
@@ -339,24 +339,24 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("dracula");
   });
 
-  it("drops a removed syntax theme id back to auto", async () => {
+  it("drops a removed syntax theme id back to the default", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ syntaxTheme: "github" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ syntaxTheme: "auto" }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("auto");
+    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("github");
   });
 
-  it("drops an unknown syntax theme id back to auto", async () => {
+  it("drops an unknown syntax theme id back to the default", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({ syntaxTheme: "bogus" }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("auto");
+    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("github");
   });
 });
 

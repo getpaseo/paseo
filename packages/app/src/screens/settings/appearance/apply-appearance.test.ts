@@ -68,7 +68,7 @@ function makeInput(overrides: Partial<AppearanceInput> = {}): AppearanceInput {
     monoFontFamily: "",
     uiFontSize: 16,
     codeFontSize: 12,
-    syntaxTheme: "auto",
+    syntaxTheme: "github",
     ...overrides,
   };
 }
@@ -133,11 +133,11 @@ describe("applyAppearance", () => {
     expect(colors.syntax).toEqual(resolveSyntaxColors("dracula", "dark"));
   });
 
-  it("resolves an auto syntax theme using the theme's own color scheme", () => {
-    applyAppearance(makeInput({ syntaxTheme: "auto" }));
+  it("resolves a syntax theme using the theme's own color scheme", () => {
+    applyAppearance(makeInput({ syntaxTheme: "github" }));
 
-    // makeFakeTheme().colorScheme === "dark" -> auto resolves to the dark palette.
+    // makeFakeTheme().colorScheme === "dark" -> github resolves to the dark palette.
     expect(runCapturedUpdater().colors.syntax).toEqual(darkHighlightColors);
-    expect(runCapturedUpdater().colors.syntax).toEqual(resolveSyntaxColors("auto", "dark"));
+    expect(runCapturedUpdater().colors.syntax).toEqual(resolveSyntaxColors("github", "dark"));
   });
 });
