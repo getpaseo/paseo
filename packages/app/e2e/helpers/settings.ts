@@ -5,6 +5,7 @@ import { getServerId } from "./server-id";
 
 const SECTION_LABELS = {
   general: "General",
+  appearance: "Appearance",
   shortcuts: "Shortcuts",
   integrations: "Integrations",
   permissions: "Permissions",
@@ -180,7 +181,11 @@ export async function expectAboutContent(page: Page): Promise<void> {
 }
 
 export async function expectGeneralContent(page: Page): Promise<void> {
-  await expect(page.getByText("Theme", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Default send", { exact: true }).first()).toBeVisible();
+}
+
+export async function expectAppearanceContent(page: Page): Promise<void> {
+  await expect(page.getByText("Highlight theme", { exact: true }).first()).toBeVisible();
 }
 
 export async function expectHostLabelDisplayed(page: Page): Promise<void> {
