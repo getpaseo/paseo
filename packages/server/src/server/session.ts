@@ -1580,7 +1580,11 @@ export class Session {
   ): Promise<PersistedWorkspaceRecord | null> {
     const normalizedCwd = await this.resolveWorkspaceDirectory(cwd, options);
     const workspaces = await this.workspaceRegistry.list();
-    return workspaces.find((workspace) => workspace.cwd === normalizedCwd) ?? null;
+    return (
+      workspaces.find(
+        (workspace) => normalizePersistedWorkspaceId(workspace.cwd) === normalizedCwd,
+      ) ?? null
+    );
   }
 
   private async resolveWorkspaceDirectory(

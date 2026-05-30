@@ -1,3 +1,7 @@
+import { mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, test, vi } from "vitest";
 
 import {
@@ -195,5 +199,39 @@ describe("git worktree grouping", () => {
         mainRepoRoot: "/tmp/repo",
       }),
     ).toBe("worktree");
+  });
+});
+
+describe("normalizeWorkspaceId", () => {
+  const testDir = join(tmpdir(), "paseo-test-normalize");
+
+  afterEach(() => {
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  test("resolves symlinks to their real path", () => {
+    const realDir = join(testDir, "real-dir");
+    const linkPath = join(testDir, "link-to-dir");
+    mkdirSync(realDir, { recursive: true });
+    symlinkSync(realDir, linkPath);
+
+    expect(normalizeWorkspaceId(linkPath)).toBe(realPathSync(realDir));
+  });
+
+  test("returns resolved path when no symlink is involved", () => {
+    expect(normalizeWorkspaceId("/tmp")).toBe(realpathSync("/tmp"));
+  });
+
+  test("returns resolved path for non-existent paths (realpathSync fails gracefully)", () => {
+    const result = normalizeWorkspaceId("/nonexistent/path");
+    expect(result).toBe("/nonexistent/path");
+  });
+
+  test("returns empty string unchanged", () => {
+    expect(normalizeWorkspaceId("")).toBe("");
   });
 });

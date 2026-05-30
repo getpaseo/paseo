@@ -215,26 +215,29 @@ export class WorkspaceDirectory {
 
   resolveRegisteredWorkspaceIdForCwd(cwd: string, workspaces: PersistedWorkspaceRecord[]): string {
     const normalizedCwd = normalizeWorkspaceId(cwd);
-    const exact = workspaces.find((workspace) => workspace.cwd === normalizedCwd);
+    const exact = workspaces.find(
+      (workspace) => normalizeWorkspaceId(workspace.cwd) === normalizedCwd,
+    );
     if (exact) {
       return exact.workspaceId;
     }
 
     const userHome = homedir();
-    let bestMatch: PersistedWorkspaceRecord | null = null;
+    let bestMatch: { workspace: PersistedWorkspaceRecord; normalizedCwd: string } | null = null;
     for (const workspace of workspaces) {
-      if (workspace.cwd === userHome) continue;
       if (workspace.archivedAt) continue;
-      const prefix = workspace.cwd.endsWith(sep) ? workspace.cwd : `${workspace.cwd}${sep}`;
+      const normalizedWsCwd = normalizeWorkspaceId(workspace.cwd);
+      if (normalizedWsCwd === userHome) continue;
+      const prefix = normalizedWsCwd.endsWith(sep) ? normalizedWsCwd : `${normalizedWsCwd}${sep}`;
       if (!normalizedCwd.startsWith(prefix)) {
         continue;
       }
-      if (!bestMatch || workspace.cwd.length > bestMatch.cwd.length) {
-        bestMatch = workspace;
+      if (!bestMatch || normalizedWsCwd.length > bestMatch.normalizedCwd.length) {
+        bestMatch = { workspace, normalizedCwd: normalizedWsCwd };
       }
     }
 
-    return bestMatch?.workspaceId ?? normalizedCwd;
+    return bestMatch?.workspace.workspaceId ?? normalizedCwd;
   }
 
   async listDescriptors(): Promise<WorkspaceDescriptorPayload[]> {

@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
 import type {
@@ -32,7 +33,12 @@ export function normalizeWorkspaceId(cwd: string): string {
   if (!trimmed) {
     return cwd;
   }
-  return resolve(trimmed);
+  const resolved = resolve(trimmed);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
