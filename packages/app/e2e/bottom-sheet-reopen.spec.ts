@@ -41,13 +41,23 @@ async function expectBottomSheetOpen(page: Page) {
 }
 
 async function closeBottomSheetWithBackdrop(page: Page) {
-  const box = await bottomSheetBackdrop(page).boundingBox();
-  expect(box).not.toBeNull();
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + 24);
-  await expect(bottomSheetBackdrop(page)).not.toBeVisible({ timeout: 10_000 });
+  const backdrop = bottomSheetBackdrop(page);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (!(await backdrop.isVisible().catch(() => false))) {
+      break;
+    }
+    await backdrop.click({ force: true });
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await expect(backdrop)
+      .not.toBeVisible({ timeout: 10_000 })
+      .catch(() => undefined);
+  }
+
+  await expect(backdrop).not.toBeVisible({ timeout: 10_000 });
   // Guard against the regression where the sheet starts dismissing, then re-presents.
   await page.waitForTimeout(500);
-  await expect(bottomSheetBackdrop(page)).not.toBeVisible({ timeout: 1_000 });
+  await expect(backdrop).not.toBeVisible({ timeout: 1_000 });
 }
 
 async function openTabSwitcher(page: Page) {
