@@ -54,6 +54,9 @@ export async function expectSettingsHeader(page: Page, title: string): Promise<v
 }
 
 export async function openAddHostFlow(page: Page): Promise<void> {
+  // "Add host" is now an item inside the host picker (a Combobox); open the
+  // picker first, then pick it. The picker renders whenever a host exists.
+  await page.getByTestId("settings-host-picker").click();
   await page.getByTestId("settings-add-host").click();
   await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
 }
