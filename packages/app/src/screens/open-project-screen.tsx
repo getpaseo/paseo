@@ -17,7 +17,7 @@ import {
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
-import { buildHostAgentDetailRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import { buildHostAgentDetailRoute, buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
@@ -62,7 +62,7 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
   );
 
   const handleOpenProviders = useCallback(() => {
-    router.push(buildSettingsHostRoute(serverId));
+    router.push(buildSettingsHostSectionRoute(serverId, "providers"));
   }, [router, serverId]);
 
   return (

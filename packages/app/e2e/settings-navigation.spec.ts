@@ -45,7 +45,7 @@ test.describe("Settings sidebar navigation", () => {
     await expectGeneralContent(page);
   });
 
-  test("/h/[serverId]/settings redirects to /settings/hosts/[serverId]", async ({ page }) => {
+  test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
   });
@@ -132,7 +132,9 @@ test.describe("Settings — compact master-detail", () => {
     await expectSettingsBackButton(page);
   });
 
-  test("tapping a host entry pushes /settings/hosts/[serverId]", async ({ page }) => {
+  test("tapping a host section row pushes /settings/hosts/[serverId]/connections", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
     await openCompactSettings(page);
 

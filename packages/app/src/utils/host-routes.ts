@@ -390,6 +390,14 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
   return (SETTINGS_SECTION_SLUGS as readonly string[]).includes(value);
 }
 
+export const HOST_SECTION_SLUGS = ["connections", "orchestration", "providers", "daemon"] as const;
+
+export type HostSectionSlug = (typeof HOST_SECTION_SLUGS)[number];
+
+export function isHostSectionSlug(value: string): value is HostSectionSlug {
+  return (HOST_SECTION_SLUGS as readonly string[]).includes(value);
+}
+
 export function buildSettingsRoute() {
   return "/settings" as const;
 }
@@ -404,6 +412,14 @@ export function buildSettingsHostRoute(serverId: string) {
     throw new Error("buildSettingsHostRoute requires a non-empty serverId");
   }
   return `/settings/hosts/${encodeSegment(normalized)}` as const;
+}
+
+export function buildSettingsHostSectionRoute(serverId: string, section: HostSectionSlug) {
+  const normalized = trimNonEmpty(serverId);
+  if (!normalized) {
+    throw new Error("buildSettingsHostSectionRoute requires a non-empty serverId");
+  }
+  return `/settings/hosts/${encodeSegment(normalized)}/${section}` as const;
 }
 
 export function buildProjectsSettingsRoute() {
