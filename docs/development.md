@@ -59,6 +59,12 @@ GPU process so Chromium rebuilds the display link. The probe is skipped while
 the screen is locked or the window is hidden or minimized, since a window
 legitimately stops producing frames then.
 
+The watchdog deliberately leaves background throttling **enabled**. Calling
+`webContents.setBackgroundThrottling(false)` would keep the compositor producing
+frames non-stop, pinning ProMotion displays at 120Hz forever and draining the
+battery while the app is idle — so do not re-add it. The probe's visibility
+guards already prevent throttling from causing a false stall.
+
 ### Daemon logs
 
 Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set
