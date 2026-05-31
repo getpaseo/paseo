@@ -380,6 +380,7 @@ describe("workspace-layout-store actions", () => {
           path: "/repo/worktree/a.ts",
           lineStart: 10,
           lineEnd: 12,
+          renderMode: "preview",
         },
         createdAt: expect.any(Number),
       },
@@ -700,7 +701,7 @@ describe("workspace-layout-store actions", () => {
     expect(collectAllTabs(layout.root)).toEqual([
       {
         tabId: draftTabId!,
-        target: { kind: "file", path: "/repo/worktree/retargeted.ts" },
+        target: { kind: "file", path: "/repo/worktree/retargeted.ts", renderMode: "preview" },
         createdAt: expect.any(Number),
       },
     ]);
@@ -832,17 +833,17 @@ describe("workspace-layout-store actions", () => {
       tabs: [
         {
           tabId: thirdTabId,
-          target: { kind: "file", path: "/repo/worktree/c.ts" },
+          target: { kind: "file", path: "/repo/worktree/c.ts", renderMode: "preview" },
           createdAt: expect.any(Number),
         },
         {
           tabId: firstTabId,
-          target: { kind: "file", path: "/repo/worktree/a.ts" },
+          target: { kind: "file", path: "/repo/worktree/a.ts", renderMode: "preview" },
           createdAt: expect.any(Number),
         },
         {
           tabId: secondTabId,
-          target: { kind: "file", path: "/repo/worktree/b.ts" },
+          target: { kind: "file", path: "/repo/worktree/b.ts", renderMode: "preview" },
           createdAt: expect.any(Number),
         },
       ],
@@ -887,12 +888,12 @@ describe("workspace-layout-store actions", () => {
       tabs: [
         {
           tabId: fourthTabId,
-          target: { kind: "file", path: "/repo/worktree/d.ts" },
+          target: { kind: "file", path: "/repo/worktree/d.ts", renderMode: "preview" },
           createdAt: expect.any(Number),
         },
         {
           tabId: thirdTabId,
-          target: { kind: "file", path: "/repo/worktree/c.ts" },
+          target: { kind: "file", path: "/repo/worktree/c.ts", renderMode: "preview" },
           createdAt: expect.any(Number),
         },
       ],
