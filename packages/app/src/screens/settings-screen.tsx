@@ -25,6 +25,7 @@ import { Buffer } from "buffer";
 import {
   ArrowLeft,
   ChevronDown,
+  Monitor,
   Settings,
   Palette,
   Server,
