@@ -29,7 +29,7 @@ function makeFileTab(path: string): WorkspaceTabDescriptor {
     key: `file_${path}`,
     tabId: `file_${path}`,
     kind: "file",
-    target: { kind: "file", path },
+    target: { kind: "file", path, renderMode: "preview" },
   };
 }
 
@@ -47,7 +47,7 @@ describe("workspace bulk close helpers", () => {
       otherTabs: [
         {
           tabId: "file_/repo/README.md",
-          target: { kind: "file", path: "/repo/README.md" },
+          target: { kind: "file", path: "/repo/README.md", renderMode: "preview" },
         },
       ],
     });
@@ -124,7 +124,10 @@ describe("workspace bulk close helpers", () => {
       { tabId: "agent_a1", target: { kind: "agent", agentId: "a1" } },
       { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
       { tabId: "terminal_t2", target: { kind: "terminal", terminalId: "t2" } },
-      { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
+      {
+        tabId: "file_/repo/README.md",
+        target: { kind: "file", path: "/repo/README.md", renderMode: "preview" },
+      },
     ]);
   });
 
@@ -163,7 +166,10 @@ describe("workspace bulk close helpers", () => {
     expect(cleanupCalls).toEqual([
       { tabId: "agent_a1", target: { kind: "agent", agentId: "a1" } },
       { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
-      { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
+      {
+        tabId: "file_/repo/README.md",
+        target: { kind: "file", path: "/repo/README.md", renderMode: "preview" },
+      },
     ]);
   });
 });

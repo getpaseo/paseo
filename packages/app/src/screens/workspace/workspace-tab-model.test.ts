@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveWorkspaceTabModel } from "@/screens/workspace/workspace-tab-model";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import { createWorkspaceFileTabTarget } from "@/workspace/file-open";
 
 describe("deriveWorkspaceTabModel", () => {
   it("keeps normalized tabs in stored order and preserves targets", () => {
@@ -12,7 +13,7 @@ describe("deriveWorkspaceTabModel", () => {
       },
       {
         tabId: "file_/repo/worktree/README.md",
-        target: { kind: "file", path: "/repo/worktree/README.md" },
+        target: createWorkspaceFileTabTarget({ path: "/repo/worktree/README.md" }),
         createdAt: 2,
       },
       {
@@ -36,6 +37,7 @@ describe("deriveWorkspaceTabModel", () => {
     expect(model.tabs[2]?.descriptor.target).toEqual({
       kind: "file",
       path: "/repo/worktree/README.md",
+      renderMode: "preview",
     });
   });
 
@@ -96,7 +98,7 @@ describe("deriveWorkspaceTabModel", () => {
       tabs: [
         {
           tabId: "file_/repo/worktree/README.md",
-          target: { kind: "file", path: "/repo/worktree/README.md" },
+          target: createWorkspaceFileTabTarget({ path: "/repo/worktree/README.md" }),
           createdAt: 1,
         },
         {
@@ -113,6 +115,7 @@ describe("deriveWorkspaceTabModel", () => {
     expect(model.activeTab?.descriptor.target).toEqual({
       kind: "file",
       path: "/repo/worktree/README.md",
+      renderMode: "preview",
     });
   });
 
@@ -138,7 +141,7 @@ describe("deriveWorkspaceTabModel", () => {
       tabs: [
         {
           tabId: "file_path",
-          target: { kind: "file", path: "\\repo\\worktree\\README.md" },
+          target: createWorkspaceFileTabTarget({ path: "\\repo\\worktree\\README.md" }),
           createdAt: 1,
         },
         {
@@ -153,6 +156,7 @@ describe("deriveWorkspaceTabModel", () => {
     expect(model.tabs[0]?.descriptor.target).toEqual({
       kind: "file",
       path: "/repo/worktree/README.md",
+      renderMode: "preview",
     });
   });
 });

@@ -5,7 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   buildWorkspaceTabPersistenceKey,
   type WorkspaceTab,
-  type WorkspaceTabTarget,
+  type WorkspaceTabTargetInput,
 } from "@/stores/workspace-tabs-store";
 import {
   defaultWorkspaceLayoutIds,
@@ -75,16 +75,20 @@ interface WorkspaceLayoutStore {
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
-  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabFocused: (workspaceKey: string, target: WorkspaceTabTargetInput) => string | null;
   openChildTabFocused: (
     workspaceKey: string,
-    target: WorkspaceTabTarget,
+    target: WorkspaceTabTargetInput,
     parentTabId: string,
   ) => string | null;
-  openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabInBackground: (workspaceKey: string, target: WorkspaceTabTargetInput) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
-  retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
+  retargetTab: (
+    workspaceKey: string,
+    tabId: string,
+    target: WorkspaceTabTargetInput,
+  ) => string | null;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;

@@ -1,4 +1,8 @@
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type {
+  WorkspaceTab,
+  WorkspaceTabTarget,
+  WorkspaceTabTargetInput,
+} from "@/stores/workspace-tabs-store";
 import {
   deriveWorkspacePaneState,
   type WorkspaceDerivedTab,
@@ -18,7 +22,7 @@ export function buildWorkspaceTabId(target: WorkspaceTabTarget): string {
 export function deriveWorkspaceTabModel(input: {
   tabs: WorkspaceTab[];
   focusedTabId?: string | null;
-  preferredTarget?: WorkspaceTabTarget | null;
+  preferredTarget?: WorkspaceTabTargetInput | null;
 }): WorkspaceTabModel {
   const paneState = deriveWorkspacePaneState({
     tabs: input.tabs,

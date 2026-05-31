@@ -86,6 +86,7 @@ interface SplitContainerProps {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onToggleMarkdownSource: (tab: WorkspaceTabDescriptor) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
@@ -364,6 +365,7 @@ export function SplitContainer({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onToggleMarkdownSource,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -580,6 +582,7 @@ export function SplitContainer({
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onReloadAgent={onReloadAgent}
+          onToggleMarkdownSource={onToggleMarkdownSource}
           onRenameTab={onRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
@@ -720,6 +723,7 @@ function SplitNodeView({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onToggleMarkdownSource,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -772,6 +776,7 @@ function SplitNodeView({
         onCopyResumeCommand={onCopyResumeCommand}
         onCopyAgentId={onCopyAgentId}
         onReloadAgent={onReloadAgent}
+        onToggleMarkdownSource={onToggleMarkdownSource}
         onRenameTab={onRenameTab}
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
@@ -817,6 +822,7 @@ function SplitNodeView({
               onCopyResumeCommand={onCopyResumeCommand}
               onCopyAgentId={onCopyAgentId}
               onReloadAgent={onReloadAgent}
+              onToggleMarkdownSource={onToggleMarkdownSource}
               onRenameTab={onRenameTab}
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
@@ -868,6 +874,7 @@ function SplitPaneView({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onToggleMarkdownSource,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -1009,6 +1016,7 @@ function SplitPaneView({
             onCopyResumeCommand={onCopyResumeCommand}
             onCopyAgentId={onCopyAgentId}
             onReloadAgent={onReloadAgent}
+            onToggleMarkdownSource={onToggleMarkdownSource}
             onRenameTab={onRenameTab}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}

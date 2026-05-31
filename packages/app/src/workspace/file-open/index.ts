@@ -8,7 +8,17 @@ export interface WorkspaceFileLocation {
   lineEnd?: number;
 }
 
-export type WorkspaceFileTabTarget = { kind: "file" } & WorkspaceFileLocation;
+export type WorkspaceFileRenderMode = "preview" | "source";
+
+export type WorkspaceFileTabTarget = {
+  kind: "file";
+  renderMode: WorkspaceFileRenderMode;
+} & WorkspaceFileLocation;
+
+export type WorkspaceFileTabTargetInput = {
+  kind: "file";
+  renderMode?: WorkspaceFileRenderMode | null;
+} & WorkspaceFileLocation;
 
 export interface WorkspaceFileOpenRequest {
   location: WorkspaceFileLocation;
@@ -36,6 +46,12 @@ export function normalizeWorkspaceFileLocation(
   };
 }
 
+export function normalizeWorkspaceFileRenderMode(
+  value: WorkspaceFileRenderMode | null | undefined,
+): WorkspaceFileRenderMode {
+  return value === "source" ? "source" : "preview";
+}
+
 export function workspaceFileLocationsEqual(
   left: WorkspaceFileLocation,
   right: WorkspaceFileLocation,
@@ -45,12 +61,26 @@ export function workspaceFileLocationsEqual(
   );
 }
 
+export function workspaceFileTabTargetsEqual(
+  left: WorkspaceFileTabTarget | WorkspaceFileTabTargetInput,
+  right: WorkspaceFileTabTarget | WorkspaceFileTabTargetInput,
+): boolean {
+  return (
+    workspaceFileLocationsEqual(left, right) &&
+    normalizeWorkspaceFileRenderMode(left.renderMode) ===
+      normalizeWorkspaceFileRenderMode(right.renderMode)
+  );
+}
+
 export function createWorkspaceFileTabTarget(
-  location: WorkspaceFileLocation,
+  location: WorkspaceFileLocation & { renderMode?: WorkspaceFileRenderMode | null },
 ): WorkspaceFileTabTarget {
+  const renderMode = normalizeWorkspaceFileRenderMode(location.renderMode);
+  const { renderMode: _renderMode, ...fileLocation } = location;
   return {
     kind: "file",
-    ...location,
+    ...fileLocation,
+    renderMode,
   };
 }
 

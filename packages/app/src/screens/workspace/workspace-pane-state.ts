@@ -3,7 +3,7 @@ import {
   type SplitPane,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab, WorkspaceTabTargetInput } from "@/stores/workspace-tabs-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   buildDeterministicWorkspaceTabId,
@@ -112,7 +112,7 @@ function getActiveTabId(input: {
   tabs: WorkspaceDerivedTab[];
   openTabIds: Set<string>;
   focusedTabId?: string | null;
-  preferredTarget?: WorkspaceTabTarget | null;
+  preferredTarget?: WorkspaceTabTargetInput | null;
 }): string | null {
   const focusedTabId = trimNonEmpty(input.focusedTabId);
   const preferredTarget = normalizeWorkspaceTabTarget(input.preferredTarget ?? null);
@@ -163,7 +163,7 @@ export function deriveWorkspacePaneState(input: {
   paneId?: string | null;
   tabs: WorkspaceTab[];
   focusedTabId?: string | null;
-  preferredTarget?: WorkspaceTabTarget | null;
+  preferredTarget?: WorkspaceTabTargetInput | null;
 }): WorkspacePaneState {
   const pane = getPane({
     layout: input.layout ?? null,
@@ -207,11 +207,15 @@ export function resolveSideFileOpenPlacement(input: {
   layout?: WorkspaceLayout | null;
   sourcePaneId?: string | null;
   tabs: WorkspaceTab[];
-  target: WorkspaceTabTarget;
+  target: WorkspaceTabTargetInput;
 }): WorkspaceSideFileOpenPlacement {
-  const targetTabId = buildDeterministicWorkspaceTabId(input.target);
+  const target = normalizeWorkspaceTabTarget(input.target);
+  if (!target) {
+    return { kind: "split-side-pane", paneId: trimNonEmpty(input.sourcePaneId) ?? "" };
+  }
+  const targetTabId = buildDeterministicWorkspaceTabId(target);
   const existingTab = input.tabs.find(
-    (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, input.target),
+    (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, target),
   );
   if (existingTab) {
     return { kind: "open-in-source" };

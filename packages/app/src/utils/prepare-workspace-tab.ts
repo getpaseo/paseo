@@ -1,14 +1,14 @@
 import { generateDraftId } from "@/stores/draft-keys";
 import {
   buildWorkspaceTabPersistenceKey,
-  type WorkspaceTabTarget,
+  type WorkspaceTabTargetInput,
 } from "@/stores/workspace-tabs-store";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 export interface PrepareWorkspaceTabInput {
   serverId: string;
   workspaceId: string;
-  target: WorkspaceTabTarget;
+  target: WorkspaceTabTargetInput;
   pin?: boolean;
 }
 
@@ -17,7 +17,7 @@ export interface NavigateToPreparedWorkspaceTabInput extends PrepareWorkspaceTab
 }
 
 export interface PrepareWorkspaceTabDeps {
-  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabFocused: (workspaceKey: string, target: WorkspaceTabTargetInput) => string | null;
   pinAgent: (workspaceKey: string, agentId: string) => void;
 }
 
@@ -29,7 +29,7 @@ export interface NavigateToPreparedWorkspaceTabDeps extends PrepareWorkspaceTabD
   ) => void;
 }
 
-function getPreparedTarget(target: WorkspaceTabTarget): WorkspaceTabTarget {
+function getPreparedTarget(target: WorkspaceTabTargetInput): WorkspaceTabTargetInput {
   if (target.kind !== "draft" || target.draftId.trim() !== "new") {
     return target;
   }

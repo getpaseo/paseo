@@ -6,6 +6,7 @@ import {
 } from "@/screens/workspace/workspace-pane-state";
 import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
+import { createWorkspaceFileTabTarget } from "@/workspace/file-open";
 
 function createTab(tabId: string, target: WorkspaceTab["target"]): WorkspaceTab {
   return {
@@ -15,11 +16,15 @@ function createTab(tabId: string, target: WorkspaceTab["target"]): WorkspaceTab 
   };
 }
 
+function fileTarget(path: string) {
+  return createWorkspaceFileTabTarget({ path });
+}
+
 describe("workspace-pane-state", () => {
   it("selects the focused pane and keeps its tab order", () => {
     const tabs: WorkspaceTab[] = [
       createTab("agent_agent-a", { kind: "agent", agentId: "agent-a" }),
-      createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" }),
+      createTab("file_/repo/README.md", fileTarget("/repo/README.md")),
       createTab("terminal_term-1", { kind: "terminal", terminalId: "term-1" }),
     ];
     const layout: WorkspaceLayout = {
@@ -90,7 +95,7 @@ describe("workspace-pane-state", () => {
     };
     const tabs: WorkspaceTab[] = [
       createTab("agent_agent-a", { kind: "agent", agentId: "agent-a" }),
-      createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" }),
+      createTab("file_/repo/README.md", fileTarget("/repo/README.md")),
     ];
 
     const state = deriveWorkspacePaneState({
@@ -103,6 +108,7 @@ describe("workspace-pane-state", () => {
     expect(state.activeTab?.descriptor.target).toEqual({
       kind: "file",
       path: "/repo/README.md",
+      renderMode: "preview",
     });
   });
 
@@ -118,7 +124,7 @@ describe("workspace-pane-state", () => {
       },
       focusedPaneId: "main",
     };
-    const tabs = [createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" })];
+    const tabs = [createTab("file_/repo/README.md", fileTarget("/repo/README.md"))];
 
     expect(
       resolveSideFileOpenPlacement({
@@ -142,7 +148,7 @@ describe("workspace-pane-state", () => {
       },
       focusedPaneId: "main",
     };
-    const tabs = [createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" })];
+    const tabs = [createTab("file_/repo/README.md", fileTarget("/repo/README.md"))];
 
     expect(
       resolveSideFileOpenPlacement({

@@ -11,6 +11,21 @@ function createAgentTab(): WorkspaceTabDescriptor {
   };
 }
 
+function createMarkdownFileTab(
+  renderMode: "preview" | "source" = "preview",
+): WorkspaceTabDescriptor {
+  return {
+    key: "file_README.md",
+    tabId: "file_README.md",
+    kind: "file",
+    target: {
+      kind: "file",
+      path: "README.md",
+      renderMode,
+    },
+  };
+}
+
 describe("buildWorkspaceTabMenuEntries", () => {
   it("uses desktop tab ordering labels for desktop menus", () => {
     const onCopyResumeCommand = vi.fn();
@@ -77,6 +92,87 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Reload agent",
       "Close",
     ]);
+  });
+
+  it("adds source toggle for markdown file tabs", () => {
+    const onToggleMarkdownSource = vi.fn();
+    const tab = createMarkdownFileTab();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_README.md",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onToggleMarkdownSource,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const toggleEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "toggle-markdown-source",
+    );
+    if (!toggleEntry || toggleEntry.kind !== "item") {
+      throw new Error("Markdown source toggle missing");
+    }
+
+    expect(toggleEntry.label).toBe("Show source");
+    expect(toggleEntry.testID).toBe("workspace-tab-context-file_README.md-show-source");
+
+    toggleEntry.onSelect();
+    expect(onToggleMarkdownSource).toHaveBeenCalledWith(tab);
+  });
+
+  it("uses preview copy when a markdown file tab is in source mode", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createMarkdownFileTab("source"),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_README.md",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(
+      entries.find((entry) => entry.kind === "item" && entry.key === "toggle-markdown-source"),
+    ).toEqual(expect.objectContaining({ label: "Show preview" }));
+  });
+
+  it("does not add source toggle for line-targeted markdown file tabs", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: {
+        ...createMarkdownFileTab(),
+        target: { kind: "file", path: "README.md", lineStart: 12, renderMode: "preview" },
+      },
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_README.md",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(
+      entries.some((entry) => entry.kind === "item" && entry.key === "toggle-markdown-source"),
+    ).toBe(false);
   });
 
   it("omits agent copy actions and rename for draft tabs", () => {

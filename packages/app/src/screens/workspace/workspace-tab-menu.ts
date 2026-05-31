@@ -1,4 +1,5 @@
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { encodeFilePathForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 
@@ -11,6 +12,7 @@ export type WorkspaceTabMenuEntry =
       label: string;
       icon?:
         | "copy"
+        | "code"
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
@@ -38,6 +40,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onToggleMarkdownSource?: (tab: WorkspaceTabDescriptor) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
@@ -52,6 +55,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onToggleMarkdownSource?: (tab: WorkspaceTabDescriptor) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -112,6 +116,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyResumeCommand,
     onCopyAgentId,
     onReloadAgent,
+    onToggleMarkdownSource,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore,
@@ -162,6 +167,28 @@ export function buildWorkspaceTabMenuEntries(
     entries.push({
       kind: "separator",
       key: "rename-separator",
+    });
+  }
+
+  if (
+    tab.target.kind === "file" &&
+    isRenderedMarkdownFile(tab.target.path) &&
+    !tab.target.lineStart
+  ) {
+    const isSourceMode = tab.target.renderMode === "source";
+    entries.push({
+      kind: "item",
+      key: "toggle-markdown-source",
+      label: isSourceMode ? "Show preview" : "Show source",
+      icon: "code",
+      testID: `${menuTestIDBase}-${isSourceMode ? "show-preview" : "show-source"}`,
+      onSelect: () => {
+        onToggleMarkdownSource?.(tab);
+      },
+    });
+    entries.push({
+      kind: "separator",
+      key: "toggle-markdown-source-separator",
     });
   }
 
@@ -241,6 +268,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onReloadAgent: input.onReloadAgent,
+      onToggleMarkdownSource: input.onToggleMarkdownSource,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,

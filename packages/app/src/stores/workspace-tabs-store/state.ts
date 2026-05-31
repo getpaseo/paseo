@@ -5,7 +5,7 @@ import {
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
 } from "@/workspace-tabs/identity";
-import type { WorkspaceFileTabTarget } from "@/workspace/file-open";
+import type { WorkspaceFileTabTarget, WorkspaceFileTabTargetInput } from "@/workspace/file-open";
 
 export interface WorkspaceDraftTabSetup {
   provider: AgentProvider;
@@ -23,6 +23,10 @@ export type WorkspaceTabTarget =
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
   | { kind: "setup"; workspaceId: string };
+
+export type WorkspaceTabTargetInput =
+  | Exclude<WorkspaceTabTarget, WorkspaceFileTabTarget>
+  | WorkspaceFileTabTargetInput;
 
 export interface WorkspaceTab {
   tabId: string;
@@ -126,7 +130,7 @@ function buildNextTabsForEnsure(args: {
 export interface EnsureTabInput {
   serverId: string;
   workspaceId: string;
-  target: WorkspaceTabTarget;
+  target: WorkspaceTabTargetInput;
   now: number;
 }
 
@@ -331,7 +335,7 @@ export interface RetargetTabInput {
   serverId: string;
   workspaceId: string;
   tabId: string;
-  target: WorkspaceTabTarget;
+  target: WorkspaceTabTargetInput;
 }
 
 export function applyRetargetTab(
@@ -519,6 +523,7 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
       path: raw.path,
       lineStart: typeof raw.lineStart === "number" ? raw.lineStart : undefined,
       lineEnd: typeof raw.lineEnd === "number" ? raw.lineEnd : undefined,
+      renderMode: raw.renderMode === "source" ? "source" : "preview",
     });
   }
   if (kind === "setup" && typeof raw.workspaceId === "string") {

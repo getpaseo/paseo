@@ -7,7 +7,7 @@ import {
   type ActiveWorkspaceSelection,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTabTargetInput } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
 import {
@@ -29,7 +29,7 @@ function getParamValue(value: string | string[] | undefined): string {
   return "";
 }
 
-function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTarget {
+function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTargetInput {
   if (openIntent.kind === "agent") {
     return { kind: "agent", agentId: openIntent.agentId };
   }

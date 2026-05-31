@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTabTargetInput } from "@/stores/workspace-tabs-store";
 import { navigateToPreparedWorkspaceTab, prepareWorkspaceTab } from "@/utils/prepare-workspace-tab";
 
 const SERVER_ID = "server-1";
@@ -8,7 +8,7 @@ const AGENT_ID = "agent-1";
 
 interface RecordedOpenedTab {
   key: string;
-  target: WorkspaceTabTarget;
+  target: WorkspaceTabTargetInput;
 }
 
 interface RecordedPin {
@@ -28,7 +28,7 @@ function createFakeLayout() {
   return {
     openedTabs,
     pinnedAgents,
-    openTabFocused: (key: string, target: WorkspaceTabTarget) => {
+    openTabFocused: (key: string, target: WorkspaceTabTargetInput) => {
       openedTabs.push({ key, target });
       return target.kind === "agent" ? target.agentId : null;
     },

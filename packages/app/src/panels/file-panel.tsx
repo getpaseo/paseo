@@ -4,6 +4,7 @@ import invariant from "tiny-invariant";
 import { FilePane } from "@/components/file-pane";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelRegistration } from "@/panels/panel-registry";
+import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 
 const CENTERED_PADDED_STYLE = {
@@ -13,7 +14,9 @@ const CENTERED_PADDED_STYLE = {
   padding: 16,
 } as const;
 
-function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
+type FilePanelTarget = Extract<WorkspaceTabTarget, { kind: "file" }>;
+
+function useFilePanelDescriptor(target: FilePanelTarget) {
   const fileName = target.path.split("/").findLast(Boolean) ?? target.path;
   return {
     label: fileName,

@@ -17,10 +17,16 @@ import {
   type WorkspaceTab,
   type WorkspaceTabsCoreState,
   type WorkspaceTabTarget,
+  type WorkspaceTabTargetInput,
 } from "./state";
 
 export { buildWorkspaceTabPersistenceKey } from "./state";
-export type { WorkspaceDraftTabSetup, WorkspaceTab, WorkspaceTabTarget } from "./state";
+export type {
+  WorkspaceDraftTabSetup,
+  WorkspaceTab,
+  WorkspaceTabTarget,
+  WorkspaceTabTargetInput,
+} from "./state";
 
 interface WorkspaceTabsState extends WorkspaceTabsCoreState {
   openDraftTab: (input: {
@@ -31,12 +37,12 @@ interface WorkspaceTabsState extends WorkspaceTabsCoreState {
   ensureTab: (input: {
     serverId: string;
     workspaceId: string;
-    target: WorkspaceTabTarget;
+    target: WorkspaceTabTargetInput;
   }) => string | null;
   openOrFocusTab: (input: {
     serverId: string;
     workspaceId: string;
-    target: WorkspaceTabTarget;
+    target: WorkspaceTabTargetInput;
   }) => string | null;
   focusTab: (input: { serverId: string; workspaceId: string; tabId: string }) => void;
   closeTab: (input: { serverId: string; workspaceId: string; tabId: string }) => void;
@@ -44,7 +50,7 @@ interface WorkspaceTabsState extends WorkspaceTabsCoreState {
     serverId: string;
     workspaceId: string;
     tabId: string;
-    target: WorkspaceTabTarget;
+    target: WorkspaceTabTargetInput;
   }) => string | null;
   reorderTabs: (input: { serverId: string; workspaceId: string; tabIds: string[] }) => void;
   getWorkspaceTabs: (input: { serverId: string; workspaceId: string }) => WorkspaceTab[];

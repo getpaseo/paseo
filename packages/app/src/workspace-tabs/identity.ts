@@ -1,10 +1,14 @@
-import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
-import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
+import type { WorkspaceTabTarget, WorkspaceTabTargetInput } from "@/stores/workspace-tabs-store";
+import {
+  normalizeWorkspaceFileLocation,
+  normalizeWorkspaceFileRenderMode,
+  workspaceFileTabTargetsEqual,
+} from "@/workspace/file-open";
 
 type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
 
 export function normalizeWorkspaceTabTarget(
-  value: WorkspaceTabTarget | null | undefined,
+  value: WorkspaceTabTarget | WorkspaceTabTargetInput | null | undefined,
 ): WorkspaceTabTarget | null {
   if (!value || typeof value !== "object" || typeof value.kind !== "string") {
     return null;
@@ -83,7 +87,7 @@ export function workspaceTabTargetsEqual(
     return left.browserId === right.browserId;
   }
   if (left.kind === "file" && right.kind === "file") {
-    return workspaceFileLocationsEqual(left, right);
+    return workspaceFileTabTargetsEqual(left, right);
   }
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
@@ -152,10 +156,11 @@ function trimNonEmpty(value: string | null | undefined): string | null {
 }
 
 function normalizeFileTabTarget(
-  value: Extract<WorkspaceTabTarget, { kind: "file" }>,
+  value: Extract<WorkspaceTabTarget | WorkspaceTabTargetInput, { kind: "file" }>,
 ): WorkspaceTabTarget | null {
   const location = normalizeWorkspaceFileLocation(value);
-  return location ? { kind: "file", ...location } : null;
+  const renderMode = normalizeWorkspaceFileRenderMode(value.renderMode);
+  return location ? { kind: "file", ...location, renderMode } : null;
 }
 
 function trimOptionalString(value: string | null | undefined): string | null {
