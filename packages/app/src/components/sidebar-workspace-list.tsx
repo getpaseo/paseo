@@ -27,7 +27,12 @@ import {
   type Ref,
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  getActiveWorkspaceSelection,
+  navigateToWorkspace,
+  useIsActiveWorkspaceInSet,
+  useIsActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { type GestureType } from "react-native-gesture-handler";
@@ -101,7 +106,6 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
-import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -171,6 +175,17 @@ function getPrIconUniMapping(state: PrHint["state"]) {
     case "closed":
       return redColorMapping;
   }
+}
+
+function useStableProjectIconData(
+  data: (string | null)[],
+  signature: string,
+): readonly (string | null)[] {
+  const stableRef = useRef<{ signature: string; data: (string | null)[] } | null>(null);
+  if (stableRef.current?.signature !== signature) {
+    stableRef.current = { signature, data };
+  }
+  return stableRef.current.data;
 }
 
 interface SidebarWorkspaceListProps {
@@ -1493,7 +1508,6 @@ function WorkspaceRowWithMenu({
   isCreating?: boolean;
 }) {
   const toast = useToast();
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
   const queryClient = useQueryClient();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
@@ -1516,9 +1530,9 @@ function WorkspaceRowWithMenu({
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
-      activeWorkspaceSelection,
+      activeWorkspaceSelection: getActiveWorkspaceSelection(),
     });
-  }, [activeWorkspaceSelection, workspace.serverId, workspace.workspaceId]);
+  }, [workspace.serverId, workspace.workspaceId]);
 
   const archiveWorktreeAfterConfirmation = useCallback(async () => {
     if (isArchiving) {
@@ -1755,15 +1769,14 @@ function NonGitProjectRowWithMenuContent({
 }) {
   const toast = useToast();
   const contextMenu = useContextMenu();
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
-      activeWorkspaceSelection,
+      activeWorkspaceSelection: getActiveWorkspaceSelection(),
     });
-  }, [activeWorkspaceSelection, workspace.serverId, workspace.workspaceId]);
+  }, [workspace.serverId, workspace.workspaceId]);
 
   const handleArchiveWorkspace = useCallback(() => {
     if (isArchivingWorkspace) {
@@ -1903,11 +1916,11 @@ function FlattenedProjectRow({
   selectionEnabled: boolean;
 }) {
   const workspace = useSidebarWorkspaceEntry(serverId, rowModel.workspace.workspaceId);
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const selected =
-    selectionEnabled &&
-    activeWorkspaceSelection?.serverId === serverId &&
-    activeWorkspaceSelection.workspaceId === rowModel.workspace.workspaceId;
+  const selected = useIsActiveWorkspaceSelection(
+    serverId,
+    rowModel.workspace.workspaceId,
+    selectionEnabled,
+  );
 
   if (!workspace) {
     return null;
@@ -1965,7 +1978,6 @@ interface WorkspaceRowItemProps {
   isCreating?: boolean;
   selectionEnabled: boolean;
   serverId: string | null;
-  currentPathname: string | null;
   onWorkspacePress?: () => void;
   drag?: () => void;
   isDragging?: boolean;
@@ -1980,7 +1992,6 @@ function WorkspaceRowItem({
   isCreating = false,
   selectionEnabled,
   serverId,
-  currentPathname,
   onWorkspacePress,
   drag,
   isDragging = false,
@@ -1991,8 +2002,8 @@ function WorkspaceRowItem({
       return;
     }
     onWorkspacePress?.();
-    navigateToWorkspace(serverId, workspace.workspaceId, { currentPathname });
-  }, [serverId, onWorkspacePress, workspace.workspaceId, currentPathname]);
+    navigateToWorkspace(serverId, workspace.workspaceId);
+  }, [serverId, onWorkspacePress, workspace.workspaceId]);
 
   return (
     <WorkspaceRow
@@ -2034,11 +2045,11 @@ function WorkspaceRow({
   selectionEnabled: boolean;
 }) {
   const hydratedWorkspace = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const selected =
-    selectionEnabled &&
-    activeWorkspaceSelection?.serverId === workspace.serverId &&
-    activeWorkspaceSelection.workspaceId === workspace.workspaceId;
+  const selected = useIsActiveWorkspaceSelection(
+    workspace.serverId,
+    workspace.workspaceId,
+    selectionEnabled,
+  );
 
   if (!hydratedWorkspace) {
     return null;
@@ -2074,7 +2085,6 @@ function ProjectBlock({
   onWorkspacePress,
   onWorkspaceReorder,
   onWorktreeCreated,
-  currentPathname,
   drag,
   isDragging,
   dragHandleProps,
@@ -2094,7 +2104,6 @@ function ProjectBlock({
   onWorkspacePress?: () => void;
   onWorkspaceReorder: (projectKey: string, workspaces: SidebarWorkspaceEntry[]) => void;
   onWorktreeCreated?: (workspaceId: string) => void;
-  currentPathname: string | null;
   drag: () => void;
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
@@ -2111,14 +2120,14 @@ function ProjectBlock({
   );
 
   const projectWorkspaceIds = useMemo(
-    () => project.workspaces.map((workspace) => workspace.workspaceId),
+    () => new Set(project.workspaces.map((workspace) => workspace.workspaceId)),
     [project.workspaces],
   );
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const isProjectActive =
-    selectionEnabled &&
-    activeWorkspaceSelection?.serverId === serverId &&
-    projectWorkspaceIds.includes(activeWorkspaceSelection.workspaceId);
+  const isProjectActive = useIsActiveWorkspaceInSet(
+    serverId,
+    projectWorkspaceIds,
+    selectionEnabled,
+  );
 
   const renderWorkspaceRow = useCallback(
     (
@@ -2138,7 +2147,6 @@ function ProjectBlock({
           isCreating={creatingWorkspaceIds.has(item.workspaceId)}
           selectionEnabled={selectionEnabled}
           serverId={serverId}
-          currentPathname={currentPathname}
           onWorkspacePress={onWorkspacePress}
           drag={input?.drag}
           isDragging={input?.isDragging}
@@ -2149,7 +2157,6 @@ function ProjectBlock({
     [
       project.projectKind,
       creatingWorkspaceIds,
-      currentPathname,
       onWorkspacePress,
       serverId,
       selectionEnabled,
@@ -2228,10 +2235,8 @@ function ProjectBlock({
       return;
     }
     onWorkspacePress?.();
-    navigateToWorkspace(serverId, flattenedRowWorkspaceId, {
-      currentPathname,
-    });
-  }, [serverId, flattenedRowWorkspaceId, onWorkspacePress, currentPathname]);
+    navigateToWorkspace(serverId, flattenedRowWorkspaceId);
+  }, [serverId, flattenedRowWorkspaceId, onWorkspacePress]);
 
   const handleToggleCollapsed = useCallback(() => {
     onToggleCollapsed(project.projectKey);
@@ -2374,6 +2379,12 @@ export function SidebarWorkspaceList({
     })),
   });
 
+  const projectIconSignature = projectIconQueries.map((query) => query.data ?? "").join("\u0000");
+  const projectIconData = useStableProjectIconData(
+    projectIconQueries.map((query) => query.data ?? null),
+    projectIconSignature,
+  );
+
   const projectIconByProjectKey = useMemo(() => {
     const iconByServerAndCwd = new Map<string, string | null>();
     for (let index = 0; index < projectIconRequests.length; index += 1) {
@@ -2381,10 +2392,7 @@ export function SidebarWorkspaceList({
       if (!request) {
         continue;
       }
-      iconByServerAndCwd.set(
-        `${request.serverId}:${request.cwd}`,
-        projectIconQueries[index]?.data ?? null,
-      );
+      iconByServerAndCwd.set(`${request.serverId}:${request.cwd}`, projectIconData[index] ?? null);
     }
 
     const byProject = new Map<string, string | null>();
@@ -2398,7 +2406,7 @@ export function SidebarWorkspaceList({
     }
 
     return byProject;
-  }, [projectIconQueries, projectIconRequests, projects, serverId]);
+  }, [projectIconData, projectIconRequests, projects, serverId]);
 
   useEffect(() => {
     const timeouts = creatingWorkspaceTimeoutsRef.current;
@@ -2546,7 +2554,6 @@ export function SidebarWorkspaceList({
           onWorkspacePress={onWorkspacePress}
           onWorkspaceReorder={handleWorkspaceReorder}
           onWorktreeCreated={handleWorktreeCreated}
-          currentPathname={pathname}
           drag={drag}
           isDragging={isActive}
           dragHandleProps={dragHandleProps}
@@ -2562,7 +2569,6 @@ export function SidebarWorkspaceList({
       onWorkspacePress,
       onToggleProjectCollapsed,
       parentGestureRef,
-      pathname,
       projectIconByProjectKey,
       selectionEnabled,
       serverId,
