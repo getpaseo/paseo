@@ -99,6 +99,19 @@ function todoTimeline(items: { text: string; completed: boolean }[]): AgentStrea
   };
 }
 
+function planTimeline(): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "codex",
+    item: {
+      type: "plan",
+      planId: "plan-1",
+      text: "# Plan\n\n- Implement it",
+      actions: [{ id: "implement", label: "Implement", variant: "primary" }],
+    },
+  };
+}
+
 function findToolByCallId(state: StreamItem[], callId: string): AgentToolCallItem | undefined {
   return state.find(
     (item): item is AgentToolCallItem =>
@@ -691,6 +704,26 @@ describe("stream reducer canonical tool calls", () => {
     assert.ok(todos);
     assert.strictEqual(todos.items.length, 2);
     assert.strictEqual(todos.items[1]?.completed, true);
+  });
+
+  it("converts plan timeline updates to plan items", () => {
+    const state = hydrateStreamState([
+      {
+        event: planTimeline(),
+        timestamp: new Date("2025-01-01T10:55:00Z"),
+      },
+    ]);
+
+    const plan = state.find(
+      (item): item is Extract<StreamItem, { kind: "plan" }> => item.kind === "plan",
+    );
+
+    assert.ok(plan);
+    assert.strictEqual(plan.planId, "plan-1");
+    assert.strictEqual(plan.text, "# Plan\n\n- Implement it");
+    assert.deepStrictEqual(plan.actions, [
+      { id: "implement", label: "Implement", variant: "primary" },
+    ]);
   });
 
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {

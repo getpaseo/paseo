@@ -63,6 +63,49 @@ describe("serializeAgentStreamEvent", () => {
     expect(serialized.item.messageId).toBe("m1");
   });
 
+  test("accepts normalized plan timeline items", () => {
+    const event: AgentStreamEvent = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "plan",
+        planId: "plan-1",
+        text: "# Plan\n\n- Ship it",
+        actions: [{ id: "implement", label: "Implement", variant: "primary" }],
+      },
+    };
+
+    const serialized = serializeAgentStreamEvent(event);
+
+    expect(serialized).toMatchObject({
+      type: "timeline",
+      item: {
+        type: "plan",
+        planId: "plan-1",
+        text: "# Plan\n\n- Ship it",
+        actions: [{ id: "implement", label: "Implement", variant: "primary" }],
+      },
+    });
+  });
+
+  test("accepts plan response requests", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "agent.plan.respond.request",
+      agentId: "agent-1",
+      planId: "plan-1",
+      actionId: "implement",
+      requestId: "req-plan-1",
+    });
+
+    expect(parsed).toMatchObject({
+      type: "agent.plan.respond.request",
+      agentId: "agent-1",
+      planId: "plan-1",
+      actionId: "implement",
+      requestId: "req-plan-1",
+    });
+  });
+
   test("passes canonical tool_call payloads through unchanged", () => {
     const event: AgentStreamEvent = {
       type: "timeline",

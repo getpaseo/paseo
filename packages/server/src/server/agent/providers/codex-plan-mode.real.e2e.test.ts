@@ -24,7 +24,7 @@ describe("Codex app-server provider (real) plan mode", () => {
     }
   });
 
-  test("maps gpt-5.4 markdown plans to a plan tool call instead of todo items", async () => {
+  test("maps gpt-5.4 markdown plans to a normalized plan item instead of todo items", async () => {
     const cwd = tmpCwd();
     const client = new CodexAppServerAgentClient(createTestLogger());
 
@@ -50,18 +50,16 @@ describe("Codex app-server provider (real) plan mode", () => {
           }),
         );
 
-        const planCall = result.timeline.find(
-          (item) => item.type === "tool_call" && item.detail.type === "plan",
-        );
+        const planItem = result.timeline.find((item) => item.type === "plan");
 
-        expect(planCall).toBeDefined();
-        if (!planCall || planCall.type !== "tool_call" || planCall.detail.type !== "plan") {
-          throw new Error("Expected a plan tool call");
+        expect(planItem).toBeDefined();
+        if (!planItem || planItem.type !== "plan") {
+          throw new Error("Expected a normalized plan item");
         }
 
-        expect(planCall.detail.text).toContain("Login");
-        expect(planCall.detail.text).toContain("- ");
-        expect(result.finalText).toBe(planCall.detail.text);
+        expect(planItem.text).toContain("Login");
+        expect(planItem.text).toContain("- ");
+        expect(planItem.actions?.some((action) => action.id === "implement")).toBe(true);
       } finally {
         await session.close();
       }

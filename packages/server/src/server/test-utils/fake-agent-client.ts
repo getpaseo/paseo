@@ -10,6 +10,8 @@ import type {
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
+  AgentPlanResponse,
+  AgentPlanResult,
   AgentPersistenceHandle,
   AgentPromptInput,
   AgentRunOptions,
@@ -304,6 +306,7 @@ class FakeAgentSession implements AgentSession {
   private memoryMarker: string | null = null;
   private pendingPermissions: AgentPermissionRequest[] = [];
   private permissionGate: Deferred<AgentPermissionResponse> | null = null;
+  private pendingPlans = new Map<string, { text: string }>();
   private readonly historyPath: string;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
@@ -522,6 +525,55 @@ class FakeAgentSession implements AgentSession {
     this.notifySubscribers(completed);
   }
 
+  private async emitActionablePlanTurn(text: string): Promise<void> {
+    const planId = `fake-plan-${randomUUID()}`;
+    const planText = text.includes("custom plan body") ? "custom plan body" : "# Plan\n\n- Test it";
+    this.pendingPlans.set(planId, { text: planText });
+
+    const planEvent: AgentStreamEvent = {
+      type: "timeline",
+      provider: this.providerName,
+      item: {
+        type: "plan",
+        planId,
+        text: planText,
+        actions: [{ id: "implement", label: "Implement", variant: "primary" }],
+      },
+    };
+    await this.appendHistoryEvent(planEvent);
+    this.notifySubscribers(planEvent);
+
+    const completed: AgentStreamEvent = {
+      type: "turn_completed",
+      provider: this.providerName,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+    await this.appendHistoryEvent(completed);
+    this.notifySubscribers(completed);
+  }
+
+  private async emitPlanFileTurn(): Promise<void> {
+    const planEvent: AgentStreamEvent = {
+      type: "timeline",
+      provider: this.providerName,
+      item: {
+        type: "plan",
+        planId: "plan-file:.paseo/plans/fake.md",
+        text: "# File plan\n\n- From disk",
+      },
+    };
+    await this.appendHistoryEvent(planEvent);
+    this.notifySubscribers(planEvent);
+
+    const completed: AgentStreamEvent = {
+      type: "turn_completed",
+      provider: this.providerName,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+    await this.appendHistoryEvent(completed);
+    this.notifySubscribers(completed);
+  }
+
   private async resolveToolPermission(tool: {
     name: string;
     input?: Record<string, unknown>;
@@ -729,6 +781,16 @@ class FakeAgentSession implements AgentSession {
         return;
       }
 
+      if (textPrompt.toLowerCase().includes("emit an actionable plan")) {
+        await this.emitActionablePlanTurn(textPrompt);
+        return;
+      }
+
+      if (textPrompt.toLowerCase().includes("emit a plan file")) {
+        await this.emitPlanFileTurn();
+        return;
+      }
+
       const tool = buildToolCallForPrompt(this.providerName, textPrompt);
       if (tool) {
         const returnedEarly = await this.emitToolCallTurn(tool, textPrompt);
@@ -832,6 +894,20 @@ class FakeAgentSession implements AgentSession {
     }
     this.permissionGate.resolve(response);
     this.permissionGate = null;
+  }
+
+  async respondToPlan(
+    planId: string,
+    response: AgentPlanResponse,
+  ): Promise<AgentPlanResult | void> {
+    const pending = this.pendingPlans.get(planId);
+    if (!pending) {
+      throw new Error(`No pending fake plan with id '${planId}'`);
+    }
+    this.pendingPlans.delete(planId);
+    if (response.actionId === "implement") {
+      return { followUpPrompt: `Implement fake plan:\n${pending.text}` };
+    }
   }
 
   describePersistence(): AgentPersistenceHandle | null {

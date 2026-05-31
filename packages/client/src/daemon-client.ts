@@ -84,6 +84,7 @@ import type {
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
+  AgentPlanResponse,
   AgentPersistenceHandle,
   AgentProvider,
   AgentSessionConfig,
@@ -363,6 +364,10 @@ type DictationFinishAcceptedPayload = Extract<
   { type: "dictation_stream_finish_accepted" }
 >["payload"];
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
+type AgentPlanRespondPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.plan.respond.response" }
+>["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
 export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
@@ -3613,6 +3618,38 @@ export class DaemonClient {
     });
   }
 
+  async respondToPlan(
+    agentId: string,
+    planId: string,
+    response: AgentPlanResponse,
+    requestId = `plan-response-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    timeout = 15000,
+  ): Promise<AgentPlanRespondPayload> {
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.plan.respond.request",
+      agentId,
+      planId,
+      actionId: response.actionId,
+      ...(response.feedback !== undefined ? { feedback: response.feedback } : {}),
+      requestId,
+    });
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.plan.respond.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
   // ============================================================================
   // Waiting / Streaming Helpers
   // ============================================================================
@@ -4278,6 +4315,7 @@ export class DaemonClient {
           protocolVersion: 1,
           capabilities: {
             [CLIENT_CAPS.customModeIcons]: true,
+            [CLIENT_CAPS.firstClassPlans]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

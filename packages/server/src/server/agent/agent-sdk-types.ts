@@ -342,12 +342,27 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+export interface AgentPlanAction {
+  id: string;
+  label: string;
+  variant?: "primary" | "secondary" | "danger";
+}
+
+export interface PlanTimelineItem {
+  [key: string]: unknown;
+  type: "plan";
+  planId: string;
+  text: string;
+  actions?: AgentPlanAction[];
+}
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: { text: string; completed: boolean }[] }
+  | PlanTimelineItem
   | { type: "error"; message: string }
   | CompactionTimelineItem;
 
@@ -551,6 +566,15 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface AgentPlanResponse {
+  actionId: string;
+  feedback?: string;
+}
+
+export interface AgentPlanResult {
+  followUpPrompt?: AgentPromptInput;
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -569,6 +593,7 @@ export interface AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
+  respondToPlan?(planId: string, response: AgentPlanResponse): Promise<AgentPlanResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   close(): Promise<void>;

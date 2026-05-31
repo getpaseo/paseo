@@ -255,6 +255,7 @@ test("advertises client capabilities in hello", async () => {
     protocolVersion: 1,
     capabilities: {
       custom_mode_icons: true,
+      first_class_plans: true,
       reasoning_merge_enum: true,
     },
   });

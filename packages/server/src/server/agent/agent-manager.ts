@@ -19,6 +19,8 @@ import {
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
+  type AgentPlanResponse,
+  type AgentPlanResult,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
@@ -1834,6 +1836,31 @@ export class AgentManager {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
     }
+  }
+
+  async respondToPlan(
+    agentId: string,
+    planId: string,
+    response: AgentPlanResponse,
+  ): Promise<AgentPlanResult | void> {
+    const agent = this.requireAgent(agentId);
+    if (!agent.session.respondToPlan) {
+      throw new Error(`Agent provider '${agent.provider}' does not support plan responses`);
+    }
+
+    const result = await agent.session.respondToPlan(planId, response);
+
+    try {
+      await this.refreshSessionState(agent);
+    } catch {
+      // Ignore refresh errors - state sync after plan response is best effort.
+    }
+
+    this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent);
+    this.emitState(agent);
+
+    return result;
   }
 
   async cancelAgentRun(agentId: string): Promise<boolean> {

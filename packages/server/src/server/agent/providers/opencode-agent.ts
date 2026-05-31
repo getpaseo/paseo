@@ -57,6 +57,7 @@ import {
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import { isPlanFilePath, planItemFromToolCall } from "../plan-files.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
@@ -2154,6 +2155,22 @@ function appendOpenCodeToolCallTimelineItem(
     provider: "opencode",
     item: timelineItem,
   });
+  if (
+    timelineItem.status === "completed" &&
+    timelineItem.detail.type === "write" &&
+    timelineItem.detail.content?.trim() &&
+    isPlanFilePath(timelineItem.detail.filePath)
+  ) {
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: {
+        type: "plan",
+        planId: `plan-file:${timelineItem.detail.filePath}`,
+        text: timelineItem.detail.content.trim(),
+      },
+    });
+  }
   if (timelineItem.detail.type === "sub_agent" && timelineItem.detail.childSessionId) {
     flushOpenCodeSubAgentChildToolParts(timelineItem.detail.childSessionId, state, events);
   }
@@ -3213,7 +3230,26 @@ class OpenCodeAgentSession implements AgentSession {
         return;
       }
       this.notifySubscribers(e, turnId);
+      if (e.type === "timeline" && e.item.type === "tool_call") {
+        this.emitPlanFileItemFromToolCall(e.item, turnId);
+      }
     }
+  }
+
+  private emitPlanFileItemFromToolCall(item: ToolCallTimelineItem, turnId: string): void {
+    void planItemFromToolCall({ item, cwd: this.config.cwd, homeDir: homedir() })
+      .then((planItem) => {
+        if (planItem) {
+          this.notifySubscribers(
+            { type: "timeline", provider: "opencode", item: planItem },
+            turnId,
+          );
+        }
+        return undefined;
+      })
+      .catch((error) => {
+        this.logger.debug({ error, callId: item.callId }, "Failed to emit plan file item");
+      });
   }
 
   private finishForegroundTurn(

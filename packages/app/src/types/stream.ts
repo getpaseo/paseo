@@ -1,4 +1,8 @@
-import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentPlanAction,
+  AgentProvider,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
@@ -48,6 +52,7 @@ export type StreamItem =
   | AssistantMessageItem
   | ThoughtItem
   | ToolCallItem
+  | PlanItem
   | TodoListItem
   | ActivityLogItem
   | CompactionItem;
@@ -166,6 +171,16 @@ export interface TodoListItem {
   timestamp: Date;
   provider: AgentProvider;
   items: TodoEntry[];
+}
+
+export interface PlanItem {
+  kind: "plan";
+  id: string;
+  timestamp: Date;
+  provider: AgentProvider;
+  planId: string;
+  text: string;
+  actions?: AgentPlanAction[];
 }
 
 export type StreamUpdateSource = "live" | "canonical";
@@ -653,6 +668,34 @@ function appendTodoList(
   return [...state, entry];
 }
 
+function appendPlan(
+  state: StreamItem[],
+  provider: AgentProvider,
+  plan: { planId: string; text: string; actions?: AgentPlanAction[] },
+  timestamp: Date,
+): StreamItem[] {
+  const existingIndex = state.findIndex(
+    (item) => item.kind === "plan" && item.provider === provider && item.planId === plan.planId,
+  );
+  const entry: PlanItem = {
+    kind: "plan",
+    id: `plan_${plan.planId}`,
+    timestamp,
+    provider,
+    planId: plan.planId,
+    text: plan.text,
+    actions: plan.actions,
+  };
+
+  if (existingIndex >= 0) {
+    const next = [...state];
+    next[existingIndex] = entry;
+    return next;
+  }
+
+  return [...state, entry];
+}
+
 function reduceTimelineToolCall(
   state: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
@@ -774,6 +817,8 @@ function reduceTimelineEvent(
       }));
       return finalizeActiveThoughts(appendTodoList(state, event.provider, items, timestamp));
     }
+    case "plan":
+      return finalizeActiveThoughts(appendPlan(state, event.provider, item, timestamp));
     case "error": {
       const activity: ActivityLogItem = {
         kind: "activity_log",

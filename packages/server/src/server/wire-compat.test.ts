@@ -73,6 +73,18 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
 
+const LegacyPlanToolCallSchema = z.object({
+  type: z.literal("tool_call"),
+  callId: z.string(),
+  name: z.string(),
+  status: z.enum(["running", "completed", "failed", "canceled"]),
+  error: z.unknown().nullable(),
+  detail: z.object({
+    type: z.literal("plan"),
+    text: z.string(),
+  }),
+});
+
 interface SessionInternals {
   handleFetchAgentTimelineRequest: (
     message: Extract<
@@ -232,6 +244,16 @@ function createSessionForWireCompatTest(options?: {
       timestamp: "2026-05-02T00:00:00.200Z",
       item: { type: "assistant_message", text: "done" },
     },
+    {
+      seq: 4,
+      timestamp: "2026-05-02T00:00:00.300Z",
+      item: {
+        type: "plan",
+        planId: "plan-1",
+        text: "# Plan\n\n- Do the thing",
+        actions: [{ id: "implement", label: "Implement", variant: "primary" }],
+      },
+    },
   ];
 
   const session = new Session({
@@ -365,6 +387,38 @@ describe("wire compatibility", () => {
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
+  });
+
+  test("downgrades plan timeline items for clients that do not declare the capability", async () => {
+    const response = await emitTimelineResponse();
+
+    const entry = response.payload.entries.find((item) => item.seqStart === 4);
+    expect(entry?.item).toEqual({
+      type: "tool_call",
+      callId: "plan-1",
+      name: "Plan",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plan",
+        text: "# Plan\n\n- Do the thing",
+      },
+    });
+    expect(() => LegacyPlanToolCallSchema.parse(entry?.item)).not.toThrow();
+  });
+
+  test("preserves plan timeline items for clients that declare the capability", async () => {
+    const response = await emitTimelineResponse({
+      [CLIENT_CAPS.firstClassPlans]: true,
+    });
+
+    const entry = response.payload.entries.find((item) => item.seqStart === 4);
+    expect(entry?.item).toEqual({
+      type: "plan",
+      planId: "plan-1",
+      text: "# Plan\n\n- Do the thing",
+      actions: [{ id: "implement", label: "Implement", variant: "primary" }],
+    });
   });
 
   test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {

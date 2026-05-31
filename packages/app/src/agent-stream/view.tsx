@@ -41,6 +41,7 @@ import { PlanCard } from "@/components/plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
 import type {
+  AgentPlanAction,
   AgentPermissionAction,
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
@@ -110,6 +111,86 @@ function renderPendingPermissionsNode(input: {
         <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
       ))}
     </View>
+  );
+}
+
+function PlanTimelineCard({
+  item,
+  agentId,
+  client,
+}: {
+  item: Extract<StreamItem, { kind: "plan" }>;
+  agentId: string;
+  client: DaemonClient | null;
+}) {
+  const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
+  const respondToPlan = useMutation({
+    mutationFn: async (action: AgentPlanAction) => {
+      if (!client) {
+        throw new Error("No daemon connection");
+      }
+      setRespondingActionId(action.id);
+      const result = await client.respondToPlan(agentId, item.planId, { actionId: action.id });
+      if (!result.ok) {
+        throw new Error(result.error ?? "Failed to respond to plan");
+      }
+    },
+    onSettled: () => setRespondingActionId(null),
+  });
+
+  const actions = item.actions ?? [];
+
+  return (
+    <View>
+      <PlanCard title="Plan" text={item.text} testID="timeline-plan-card" />
+      {actions.length > 0 ? (
+        <View style={permissionStyles.optionsContainer}>
+          {actions.map((action) => (
+            <PlanActionButton
+              key={action.id}
+              action={action}
+              respondingActionId={respondingActionId}
+              isResponding={respondToPlan.isPending}
+              onRespond={respondToPlan.mutate}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function PlanActionButton({
+  action,
+  respondingActionId,
+  isResponding,
+  onRespond,
+}: {
+  action: AgentPlanAction;
+  respondingActionId: string | null;
+  isResponding: boolean;
+  onRespond: (action: AgentPlanAction) => void;
+}) {
+  const Icon = action.variant === "danger" ? ThemedXIcon : ThemedCheckIcon;
+  const permissionAction = useMemo<AgentPermissionAction>(
+    () => ({
+      ...action,
+      behavior: action.variant === "danger" ? "deny" : "allow",
+    }),
+    [action],
+  );
+  const handlePress = useCallback(() => onRespond(action), [action, onRespond]);
+
+  return (
+    <PermissionActionButton
+      action={permissionAction}
+      isRespondingAction={respondingActionId === action.id}
+      isResponding={isResponding}
+      isPrimary={action.variant === "primary"}
+      Icon={Icon}
+      testID={`plan-action-${action.id}`}
+      onPress={handlePress}
+    />
   );
 }
 
@@ -549,6 +630,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           case "todo_list":
             return <TodoListCard items={item.items} />;
 
+          case "plan":
+            return <PlanTimelineCard item={item} agentId={agentId} client={client} />;
+
           case "compaction":
             return (
               <CompactionMarker
@@ -562,7 +646,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return null;
         }
       },
-      [renderUserMessageItem, renderAssistantMessageItem, renderThoughtItem, renderToolCallItem],
+      [
+        agentId,
+        client,
+        renderUserMessageItem,
+        renderAssistantMessageItem,
+        renderThoughtItem,
+        renderToolCallItem,
+      ],
     );
 
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;

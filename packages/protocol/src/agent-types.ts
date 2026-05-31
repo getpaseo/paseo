@@ -313,12 +313,32 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+export interface AgentPlanAction {
+  id: string;
+  label: string;
+  variant?: "primary" | "secondary" | "danger";
+}
+
+export interface PlanTimelineItem {
+  [key: string]: unknown;
+  type: "plan";
+  planId: string;
+  text: string;
+  actions?: AgentPlanAction[];
+}
+
+export interface AgentPlanResponse {
+  actionId: string;
+  feedback?: string;
+}
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: { text: string; completed: boolean }[] }
+  | PlanTimelineItem
   | { type: "error"; message: string }
   | CompactionTimelineItem;
 

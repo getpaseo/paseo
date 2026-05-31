@@ -1989,7 +1989,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("emits a synthetic plan approval permission after a successful Codex plan turn", () => {
+  test("emits an actionable plan item after a successful Codex plan turn", () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
@@ -2018,27 +2018,20 @@ describe("Codex app-server provider", () => {
       ),
     ).toBe(false);
     expect(events.at(-2)).toEqual({
-      type: "permission_requested",
+      type: "timeline",
       provider: "codex",
       turnId: "test-turn",
-      request: expect.objectContaining({
-        provider: "codex",
-        name: "CodexPlanApproval",
-        kind: "plan",
-        title: "Plan",
-        input: {
-          plan: "- Inspect the existing auth flow\n- Implement the button behavior",
-        },
+      item: expect.objectContaining({
+        type: "plan",
+        text: "- Inspect the existing auth flow\n- Implement the button behavior",
         actions: [
           expect.objectContaining({
             id: "reject",
             label: "Reject",
-            behavior: "deny",
           }),
           expect.objectContaining({
             id: "implement",
             label: "Implement",
-            behavior: "allow",
           }),
         ],
       }),
@@ -2082,16 +2075,12 @@ describe("Codex app-server provider", () => {
       }),
     );
     expect(events.at(-2)).toEqual({
-      type: "permission_requested",
+      type: "timeline",
       provider: "codex",
       turnId: "test-turn",
-      request: expect.objectContaining({
-        provider: "codex",
-        name: "CodexPlanApproval",
-        kind: "plan",
-        input: {
-          plan: "- Inspect README\n- Add a short note",
-        },
+      item: expect.objectContaining({
+        type: "plan",
+        text: "- Inspect README\n- Add a short note",
       }),
     });
   });
@@ -2469,7 +2458,7 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
+  test("responding to a Codex plan item disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
@@ -2486,19 +2475,16 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed", error: null },
     });
 
-    const request = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
+    const plan = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" && event.item.type === "plan",
     );
-    expect(request).toBeDefined();
-    if (!request) {
-      throw new Error("Expected synthetic plan approval permission");
+    expect(plan).toBeDefined();
+    if (!plan || plan.item.type !== "plan") {
+      throw new Error("Expected plan item");
     }
 
-    const result = await session.respondToPermission(request.request.id, {
-      behavior: "allow",
-      selectedActionId: "implement",
-    });
+    const result = await session.respondToPlan?.(plan.item.planId, { actionId: "implement" });
 
     expect(asInternals(session).serviceTier).toBe("fast");
     expect(asInternals(session).planModeEnabled).toBe(false);
@@ -2512,18 +2498,10 @@ describe("Codex app-server provider", () => {
     expect(result!.followUpPrompt).toEqual(
       expect.stringContaining("The user approved the plan. Implement it now."),
     );
-    expect(events.at(-1)).toEqual({
-      type: "permission_resolved",
-      provider: "codex",
-      requestId: request.request.id,
-      resolution: {
-        behavior: "allow",
-        selectedActionId: "implement",
-      },
-    });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "permission_resolved" }));
   });
 
-  test("approving a synthetic Codex plan permission keeps fast mode disabled when it started disabled", async () => {
+  test("responding to a Codex plan item keeps fast mode disabled when it started disabled", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: false },
     });
@@ -2540,19 +2518,16 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed", error: null },
     });
 
-    const request = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
+    const plan = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" && event.item.type === "plan",
     );
-    expect(request).toBeDefined();
-    if (!request) {
-      throw new Error("Expected synthetic plan approval permission");
+    expect(plan).toBeDefined();
+    if (!plan || plan.item.type !== "plan") {
+      throw new Error("Expected plan item");
     }
 
-    const result = await session.respondToPermission(request.request.id, {
-      behavior: "allow",
-      selectedActionId: "implement",
-    });
+    const result = await session.respondToPlan?.(plan.item.planId, { actionId: "implement" });
 
     expect(asInternals(session).serviceTier).toBeNull();
     expect(asInternals(session).planModeEnabled).toBe(false);
@@ -2608,19 +2583,16 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed", error: null },
     });
 
-    const permissionRequest = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
+    const plan = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" && event.item.type === "plan",
     );
-    expect(permissionRequest).toBeDefined();
-    if (!permissionRequest) {
-      throw new Error("Expected synthetic plan approval permission");
+    expect(plan).toBeDefined();
+    if (!plan || plan.item.type !== "plan") {
+      throw new Error("Expected plan item");
     }
 
-    const result = await session.respondToPermission(permissionRequest.request.id, {
-      behavior: "allow",
-      selectedActionId: "implement",
-    });
+    const result = await session.respondToPlan?.(plan.item.planId, { actionId: "implement" });
     expect(result?.followUpPrompt).toEqual(expect.any(String));
 
     await session.startTurn(result!.followUpPrompt!);

@@ -179,11 +179,13 @@ describe("checkout PR schemas", () => {
         features: {
           providersSnapshot: true,
           checkoutGithubSetAutoMerge: true,
+          firstClassPlans: true,
         },
       }).features,
     ).toEqual({
       providersSnapshot: true,
       checkoutGithubSetAutoMerge: true,
+      firstClassPlans: true,
     });
   });
 });

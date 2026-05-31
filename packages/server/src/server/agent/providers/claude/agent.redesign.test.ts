@@ -997,7 +997,7 @@ test("preserves bypass capability across query restarts triggered by thinking ch
   }
 });
 
-test("plan approval exposes a resume-bypass action and can return to bypassPermissions", async () => {
+test("plan item exposes a resume-bypass action and can return to bypassPermissions", async () => {
   const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
   sdkQueryFactory.mockImplementation(() => queryMock);
 
@@ -1023,44 +1023,36 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
       {},
     );
 
-    const requestEvent = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
+    const planEvent = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" && event.item.type === "plan",
     );
 
-    expect(requestEvent).toBeDefined();
-    expect(requestEvent?.request.actions).toEqual([
+    expect(planEvent).toBeDefined();
+    expect(planEvent?.item.type === "plan" ? planEvent.item.actions : undefined).toEqual([
       {
         id: "reject",
         label: "Reject",
-        behavior: "deny",
         variant: "danger",
-        intent: "dismiss",
       },
       {
         id: "implement",
         label: "Implement",
-        behavior: "allow",
         variant: "primary",
-        intent: "implement",
       },
       {
         id: "implement_resume",
         label: "Implement with Bypass",
-        behavior: "allow",
         variant: "secondary",
-        intent: "implement_resume",
       },
     ]);
 
-    if (!requestEvent) {
-      throw new Error("Expected plan permission request");
+    if (!planEvent || planEvent.item.type !== "plan") {
+      throw new Error("Expected plan item");
     }
+    expect(session.getPendingPermissions()).toEqual([]);
 
-    await session.respondToPermission(requestEvent.request.id, {
-      behavior: "allow",
-      selectedActionId: "implement_resume",
-    });
+    await session.respondToPlan?.(planEvent.item.planId, { actionId: "implement_resume" });
 
     await expect(pendingResolution).resolves.toMatchObject({
       behavior: "allow",

@@ -8,6 +8,9 @@ import {
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
+  type AgentPlanAction,
+  type AgentPlanResponse,
+  type AgentPlanResult,
   type McpServerConfig,
   type AgentPersistenceHandle,
   type AgentPermissionRequest,
@@ -41,6 +44,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { planItemFromToolCall } from "../plan-files.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
 import {
@@ -939,6 +943,10 @@ function buildPlanPermissionActions(options?: {
   }
 
   return actions;
+}
+
+function buildPlanActions(): AgentPlanAction[] {
+  return buildPlanPermissionActions().map(({ id, label, variant }) => ({ id, label, variant }));
 }
 
 function buildCodexPlanImplementationPrompt(planText: string): string {
@@ -2925,6 +2933,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
   private readonly userMessageTurnIndexes = new Map<string, number>();
   private readonly userMessageTurnIds: string[] = [];
+  private pendingPlans = new Map<string, { text: string }>();
   private pendingManualCompactionStarts = 0;
   private compactionTriggerByItemId = new Map<string, "auto" | "manual">();
   // Codex can report one completed compaction through both channels:
@@ -3187,30 +3196,36 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
-  private emitSyntheticPlanApprovalRequest(planText: string): void {
-    const requestId = `permission-${randomUUID()}`;
-    const request: AgentPermissionRequest = {
-      id: requestId,
-      provider: CODEX_PROVIDER,
-      name: "CodexPlanApproval",
-      kind: "plan",
-      title: "Plan",
-      description: "Review the proposed plan before implementation starts.",
-      input: { plan: planText },
-      actions: buildPlanPermissionActions(),
-      metadata: {
-        planText,
-        source: "codex_plan_approval",
-      },
-    };
+  private emitPlanFileItemFromToolCall(item: ToolCallTimelineItem): void {
+    void planItemFromToolCall({ item, cwd: this.config.cwd, homeDir: homedir() })
+      .then((planItem) => {
+        if (planItem) {
+          this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: planItem });
+        }
+        return undefined;
+      })
+      .catch((error) => {
+        this.logger.debug({ error, callId: item.callId }, "Failed to emit plan file item");
+      });
+  }
 
-    this.pendingPermissions.set(requestId, request);
-    this.pendingPermissionHandlers.set(requestId, {
-      resolve: () => undefined,
-      kind: "plan",
-      planText,
+  private emitPlanApprovalItem(planText: string): void {
+    const text = normalizePlanMarkdown(planText);
+    if (!text) {
+      return;
+    }
+    const planId = `plan-${randomUUID()}`;
+    this.pendingPlans.set(planId, { text });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: {
+        type: "plan",
+        planId,
+        text,
+        actions: buildPlanActions(),
+      },
     });
-    this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
   }
 
   /**
@@ -3768,6 +3783,29 @@ export class CodexAppServerAgentSession implements AgentSession {
       }),
     });
     pending.resolve({ answers: {} });
+  }
+
+  async respondToPlan(
+    planId: string,
+    response: AgentPlanResponse,
+  ): Promise<AgentPlanResult | void> {
+    const pending = this.pendingPlans.get(planId);
+    if (!pending) {
+      throw new Error(`No pending Codex app-server plan with id '${planId}'`);
+    }
+    this.pendingPlans.delete(planId);
+
+    if (response.actionId === "implement" || response.actionId === "implement_resume") {
+      return {
+        followUpPrompt: this.preparePlanImplementation({ planText: pending.text }),
+      };
+    }
+
+    if (response.actionId === "reject") {
+      return;
+    }
+
+    throw new Error(`Unknown Codex plan action '${response.actionId}'`);
   }
 
   private handlePlanPermissionResponse(params: {
@@ -4569,7 +4607,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
-        this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
+        this.emitPlanApprovalItem(this.latestPlanResult.text);
       }
       this.emitEvent({
         type: "turn_completed",
@@ -4883,6 +4921,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    if (timelineItem.type === "tool_call") {
+      this.emitPlanFileItemFromToolCall(timelineItem);
+    }
     if (timelineItem.type === "assistant_message") {
       this.pendingAssistantMessageBoundary = true;
     }

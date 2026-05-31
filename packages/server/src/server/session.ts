@@ -68,6 +68,7 @@ import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
   sendPromptToAgent,
+  startAgentRun,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
@@ -142,6 +143,8 @@ import {
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentSessionConfig,
+  type AgentStreamEvent,
+  type AgentTimelineItem,
   type ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
@@ -714,6 +717,45 @@ function parseClientCapabilities(
     }
   }
   return new Set(result);
+}
+
+function projectTimelineItemForClient(
+  item: AgentTimelineItem,
+  capabilities: ReadonlySet<ClientCapability>,
+): AgentTimelineItem {
+  if (item.type !== "plan" || capabilities.has(CLIENT_CAPS.firstClassPlans)) {
+    return item;
+  }
+
+  // COMPAT(firstClassPlans): added in v0.1.82, remove shim after 2026-11-28.
+  return {
+    type: "tool_call",
+    callId: item.planId,
+    name: "Plan",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "plan",
+      text: item.text,
+    },
+  };
+}
+
+function projectAgentStreamEventForClient(
+  event: AgentStreamEvent,
+  capabilities: ReadonlySet<ClientCapability>,
+): AgentStreamEvent {
+  if (event.type !== "timeline") {
+    return event;
+  }
+  const item = projectTimelineItemForClient(event.item, capabilities);
+  if (item === event.item) {
+    return event;
+  }
+  return {
+    ...event,
+    item,
+  };
 }
 
 /**
@@ -1335,7 +1377,11 @@ export class Session {
             });
         }
 
-        const serializedEvent = serializeAgentStreamEvent(event.event);
+        const projectedEvent = projectAgentStreamEventForClient(
+          event.event,
+          this.clientCapabilities,
+        );
+        const serializedEvent = serializeAgentStreamEvent(projectedEvent);
         if (!serializedEvent) {
           return;
         }
@@ -1740,6 +1786,7 @@ export class Session {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg) ??
+      this.dispatchAgentPlanMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
@@ -1749,6 +1796,13 @@ export class Session {
       this.dispatchChatScheduleLoopMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchAgentPlanMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "agent.plan.respond.request") {
+      return this.handleAgentPlanRespondRequest(msg);
+    }
+    return undefined;
   }
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -4558,6 +4612,47 @@ export class Session {
         },
       });
       throw error;
+    }
+  }
+
+  private async handleAgentPlanRespondRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.plan.respond.request" }>,
+  ): Promise<void> {
+    const { agentId, planId, actionId, feedback, requestId } = msg;
+    try {
+      const result = await this.agentManager.respondToPlan(agentId, planId, { actionId, feedback });
+      this.emit({
+        type: "agent.plan.respond.response",
+        payload: {
+          requestId,
+          agentId,
+          planId,
+          ok: true,
+          error: null,
+        },
+      });
+
+      if (result?.followUpPrompt) {
+        startAgentRun(this.agentManager, agentId, result.followUpPrompt, this.sessionLogger, {
+          replaceRunning: true,
+        });
+      }
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.sessionLogger.error(
+        { err: error, agentId, planId, actionId },
+        "Failed to respond to plan",
+      );
+      this.emit({
+        type: "agent.plan.respond.response",
+        payload: {
+          requestId,
+          agentId,
+          planId,
+          ok: false,
+          error: message,
+        },
+      });
     }
   }
 
@@ -7565,7 +7660,7 @@ export class Session {
           hasNewer,
           entries: entries.map((entry) => ({
             provider: snapshot.provider,
-            item: entry.item,
+            item: projectTimelineItemForClient(entry.item, this.clientCapabilities),
             timestamp: entry.timestamp,
             seqStart: entry.seqStart,
             seqEnd: entry.seqEnd,
