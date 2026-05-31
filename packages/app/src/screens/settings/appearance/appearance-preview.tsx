@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { Text, View, type TextStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import type { HighlightToken } from "@getpaseo/highlight";
 import { isWeb } from "@/constants/platform";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { DEFAULT_MONO_FONT_STACK } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -18,9 +18,10 @@ const PREVIEW_EXTENSION = "ts";
 const REMOVED_TINT = "rgba(248, 81, 73, 0.1)";
 const ADDED_TINT = "rgba(46, 160, 67, 0.15)";
 
-// Zero-width space keeps blank lines at full line height, like the canonical
-// highlighted-content renderer.
+// Zero-width space keeps blank lines at full line height.
 const ZERO_WIDTH = "​";
+
+type RowType = "context" | "add" | "remove";
 
 interface PreviewOverrides {
   monoFontFamily?: string;
@@ -28,14 +29,12 @@ interface PreviewOverrides {
 }
 
 interface AppearancePreviewProps {
-  // Live draft values for the code font applied as inline overrides on top of
-  // the themed styles (the while-typing path). Absent/empty fields fall back to
-  // the theme value; an explicitly-empty family resolves to the default stack.
+  // Live draft values for the code font applied as inline overrides on top of the
+  // themed styles (the while-typing path). Absent/empty fields fall back to the
+  // theme value; an explicitly-empty family resolves to the default stack.
   overrides?: PreviewOverrides;
 }
 
-// A family override is present when the field exists; "" means "platform
-// default", so it resolves to the stack rather than falling through to theme.
 function resolveFamilyOverride(value: string | undefined, fallback: string): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -68,85 +67,83 @@ interface KeyedToken {
   text: string;
 }
 
-interface KeyedLine {
+interface UnifiedRow {
   key: string;
-  lineNumber: number;
-  isChanged: boolean;
+  type: RowType;
+  marker: string;
   tokens: KeyedToken[] | null;
   fallbackText: string;
 }
 
-// Tokenize the whole column once, then precompute stable keys and the plain-text
-// fallback per line. Keys are computed here (not at the JSX map index) so the
-// renderer reads `.key` rather than the array index.
-function buildKeyedLines(lineTexts: string[], side: "before" | "after"): KeyedLine[] {
-  const tokenLines = tokenizeToLines(lineTexts.join("\n"), PREVIEW_EXTENSION);
-  return lineTexts.map((lineText, index) => {
-    const raw = tokenLines?.[index] ?? null;
-    const tokens =
-      raw && raw.length > 0
-        ? raw.map((token, tokenIndex) => ({
-            key: `${side}-${index}-${tokenIndex}`,
-            style: token.style,
-            text: token.text,
-          }))
-        : null;
-    return {
-      key: `${side}-${index}`,
-      lineNumber: index + 1,
-      isChanged: CHANGED_LINE_INDICES.has(index),
-      tokens,
-      fallbackText: lineText.length > 0 ? lineText : ZERO_WIDTH,
-    };
-  });
+function makeRow(
+  key: string,
+  type: RowType,
+  marker: string,
+  text: string,
+  raw: HighlightToken[] | null,
+): UnifiedRow {
+  const tokens =
+    raw && raw.length > 0
+      ? raw.map((token, index) => ({
+          key: `${key}-${index}`,
+          style: token.style,
+          text: token.text,
+        }))
+      : null;
+  return { key, type, marker, tokens, fallbackText: text.length > 0 ? text : ZERO_WIDTH };
 }
 
-interface PreviewColumnProps {
-  lineTexts: string[];
-  side: "before" | "after";
-  codeOverride: TextStyle;
+// Interleave the before/after snippet into a single unified diff: unchanged lines
+// appear once as context; a changed line emits a "-" removed row (from BEFORE)
+// followed by a "+" added row (from AFTER). Tokens are precomputed with stable
+// keys so the renderer never keys off an array index.
+function buildUnifiedRows(): UnifiedRow[] {
+  const beforeLines = tokenizeToLines(PREVIEW_BEFORE.join("\n"), PREVIEW_EXTENSION);
+  const afterLines = tokenizeToLines(PREVIEW_AFTER.join("\n"), PREVIEW_EXTENSION);
+  const rows: UnifiedRow[] = [];
+  for (let index = 0; index < PREVIEW_BEFORE.length; index += 1) {
+    if (CHANGED_LINE_INDICES.has(index)) {
+      rows.push(
+        makeRow(`r-${index}`, "remove", "- ", PREVIEW_BEFORE[index], beforeLines?.[index] ?? null),
+      );
+      rows.push(
+        makeRow(`a-${index}`, "add", "+ ", PREVIEW_AFTER[index], afterLines?.[index] ?? null),
+      );
+    } else {
+      rows.push(
+        makeRow(`c-${index}`, "context", "  ", PREVIEW_BEFORE[index], beforeLines?.[index] ?? null),
+      );
+    }
+  }
+  return rows;
 }
 
-function PreviewColumn({ lineTexts, side, codeOverride }: PreviewColumnProps) {
-  const lines = useMemo(() => buildKeyedLines(lineTexts, side), [lineTexts, side]);
-  const changedRowStyle = useMemo(
-    () => [styles.lineRow, side === "before" ? styles.removedLine : styles.addedLine],
-    [side],
-  );
-  const gutterStyle = useMemo(() => [styles.gutterText, codeOverride], [codeOverride]);
-  const codeStyle = useMemo(() => [styles.codeLine, codeOverride], [codeOverride]);
-
-  return (
-    <View style={styles.column}>
-      {lines.map((line) => (
-        <View key={line.key} style={line.isChanged ? changedRowStyle : styles.lineRow}>
-          <Text style={gutterStyle}>{String(line.lineNumber)}</Text>
-          <Text style={codeStyle}>
-            {line.tokens
-              ? line.tokens.map((token) => (
-                  <Text
-                    key={token.key}
-                    style={token.style ? syntaxTokenStyleFor(token.style) : undefined}
-                  >
-                    {token.text}
-                  </Text>
-                ))
-              : line.fallbackText}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
+// Marker color follows the diff stat tokens; a single style ref per type keeps it
+// off the new-array-as-prop path. The marker is a child of the code <Text>, so it
+// inherits the mono font + (draft) size and only overrides its color.
+function markerStyle(type: RowType) {
+  if (type === "add") return styles.markerAdd;
+  if (type === "remove") return styles.markerRemove;
+  return styles.markerContext;
 }
 
-// Self-contained live preview: a side-by-side diff of a fixed TypeScript snippet
-// in the code (mono) font with the selected syntax colors. All themed styling
-// flows through StyleSheet.create((theme) => …) so it repaints when
+// Self-contained live preview: a unified diff of a fixed TypeScript snippet in the
+// code (mono) font with the selected syntax colors. All themed styling flows
+// through StyleSheet.create((theme) => …) so it repaints when
 // UnistylesRuntime.updateTheme commits a setting; the optional `overrides` layer
 // inline styles for live-while-typing feedback on the code font.
 export function AppearancePreview({ overrides }: AppearancePreviewProps) {
-  const isCompact = useIsCompactFormFactor();
+  const rows = useMemo(() => buildUnifiedRows(), []);
   const codeOverride = useMemo(() => buildCodeOverride(overrides), [overrides]);
+  const codeStyle = useMemo(() => [styles.codeLine, codeOverride], [codeOverride]);
+  const addRowStyle = useMemo(() => [styles.row, styles.addRow], []);
+  const removeRowStyle = useMemo(() => [styles.row, styles.removeRow], []);
+
+  function rowStyle(type: RowType) {
+    if (type === "add") return addRowStyle;
+    if (type === "remove") return removeRowStyle;
+    return styles.row;
+  }
 
   return (
     <View
@@ -154,10 +151,23 @@ export function AppearancePreview({ overrides }: AppearancePreviewProps) {
       accessibilityLabel="Live preview of the syntax theme and code font"
       style={styles.card}
     >
-      <View style={isCompact ? styles.bodyStacked : styles.bodySplit}>
-        <PreviewColumn lineTexts={PREVIEW_BEFORE} side="before" codeOverride={codeOverride} />
-        <PreviewColumn lineTexts={PREVIEW_AFTER} side="after" codeOverride={codeOverride} />
-      </View>
+      {rows.map((row) => (
+        <View key={row.key} style={rowStyle(row.type)}>
+          <Text style={codeStyle}>
+            <Text style={markerStyle(row.type)}>{row.marker}</Text>
+            {row.tokens
+              ? row.tokens.map((token) => (
+                  <Text
+                    key={token.key}
+                    style={token.style ? syntaxTokenStyleFor(token.style) : undefined}
+                  >
+                    {token.text}
+                  </Text>
+                ))
+              : row.fallbackText}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -169,45 +179,31 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     overflow: "hidden",
-  },
-  bodySplit: {
-    flexDirection: "row",
-  },
-  bodyStacked: {
-    flexDirection: "column",
-  },
-  column: {
-    flex: 1,
     paddingVertical: theme.spacing[2],
   },
-  lineRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+  row: {
+    paddingHorizontal: theme.spacing[3],
   },
-  gutterText: {
-    width: theme.spacing[8],
-    paddingRight: theme.spacing[2],
-    textAlign: "right",
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.code,
-    lineHeight: theme.lineHeight.diff,
-    color: theme.colors.foregroundMuted,
-    userSelect: "none",
-    flexShrink: 0,
+  addRow: {
+    backgroundColor: ADDED_TINT,
+  },
+  removeRow: {
+    backgroundColor: REMOVED_TINT,
   },
   codeLine: {
-    flex: 1,
-    paddingRight: theme.spacing[3],
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     lineHeight: theme.lineHeight.diff,
     color: theme.colors.foreground,
     ...(isWeb ? { whiteSpace: "pre", overflowWrap: "normal" } : null),
   },
-  removedLine: {
-    backgroundColor: REMOVED_TINT,
+  markerContext: {
+    color: theme.colors.foregroundMuted,
   },
-  addedLine: {
-    backgroundColor: ADDED_TINT,
+  markerAdd: {
+    color: theme.colors.diffAddition,
+  },
+  markerRemove: {
+    color: theme.colors.diffDeletion,
   },
 }));
