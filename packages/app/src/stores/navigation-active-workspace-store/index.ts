@@ -32,83 +32,6 @@ const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
   lastWorkspaceSelectionStorage,
 );
 
-let activeWorkspaceSelection: ActiveWorkspaceSelection | null = null;
-const activeWorkspaceSelectionListeners = new Set<() => void>();
-
-function activeWorkspaceSelectionsEqual(
-  left: ActiveWorkspaceSelection | null,
-  right: ActiveWorkspaceSelection | null,
-): boolean {
-  return left?.serverId === right?.serverId && left?.workspaceId === right?.workspaceId;
-}
-
-function publishActiveWorkspaceSelection(selection: ActiveWorkspaceSelection | null): void {
-  if (activeWorkspaceSelectionsEqual(activeWorkspaceSelection, selection)) {
-    return;
-  }
-  activeWorkspaceSelection = selection;
-  for (const listener of activeWorkspaceSelectionListeners) {
-    listener();
-  }
-}
-
-function subscribeActiveWorkspaceSelection(listener: () => void): () => void {
-  activeWorkspaceSelectionListeners.add(listener);
-  return () => activeWorkspaceSelectionListeners.delete(listener);
-}
-
-export function getActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
-  return activeWorkspaceSelection;
-}
-
-function selectIsActiveWorkspace(
-  serverId: string | null,
-  workspaceId: string,
-  enabled: boolean,
-): boolean {
-  return (
-    enabled &&
-    activeWorkspaceSelection?.serverId === serverId &&
-    activeWorkspaceSelection.workspaceId === workspaceId
-  );
-}
-
-export function useIsActiveWorkspaceSelection(
-  serverId: string | null,
-  workspaceId: string,
-  enabled: boolean,
-): boolean {
-  return useSyncExternalStore(
-    subscribeActiveWorkspaceSelection,
-    () => selectIsActiveWorkspace(serverId, workspaceId, enabled),
-    () => selectIsActiveWorkspace(serverId, workspaceId, enabled),
-  );
-}
-
-function selectIsActiveWorkspaceInSet(
-  serverId: string | null,
-  workspaceIds: ReadonlySet<string>,
-  enabled: boolean,
-): boolean {
-  return (
-    enabled &&
-    activeWorkspaceSelection?.serverId === serverId &&
-    workspaceIds.has(activeWorkspaceSelection.workspaceId)
-  );
-}
-
-export function useIsActiveWorkspaceInSet(
-  serverId: string | null,
-  workspaceIds: ReadonlySet<string>,
-  enabled: boolean,
-): boolean {
-  return useSyncExternalStore(
-    subscribeActiveWorkspaceSelection,
-    () => selectIsActiveWorkspaceInSet(serverId, workspaceIds, enabled),
-    () => selectIsActiveWorkspaceInSet(serverId, workspaceIds, enabled),
-  );
-}
-
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
@@ -158,7 +81,6 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
   const serverId = selection?.serverId ?? null;
   const workspaceId = selection?.workspaceId ?? null;
   useEffect(() => {
-    publishActiveWorkspaceSelection(serverId && workspaceId ? { serverId, workspaceId } : null);
     if (!serverId || !workspaceId) {
       return;
     }

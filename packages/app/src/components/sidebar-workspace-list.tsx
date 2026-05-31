@@ -17,6 +17,7 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import {
+  memo,
   useCallback,
   useMemo,
   useState,
@@ -28,10 +29,9 @@ import {
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
 import {
-  getActiveWorkspaceSelection,
   navigateToWorkspace,
-  useIsActiveWorkspaceInSet,
-  useIsActiveWorkspaceSelection,
+  useActiveWorkspaceSelection,
+  type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -186,6 +186,41 @@ function useStableProjectIconData(
     stableRef.current = { signature, data };
   }
   return stableRef.current.data;
+}
+
+function isWorkspaceSelected(input: {
+  selection: ActiveWorkspaceSelection | null;
+  serverId: string | null;
+  workspaceId: string;
+  enabled: boolean;
+}): boolean {
+  return (
+    input.enabled &&
+    input.selection?.serverId === input.serverId &&
+    input.selection.workspaceId === input.workspaceId
+  );
+}
+
+function isProjectSelectedByRoute(input: {
+  selection: ActiveWorkspaceSelection | null;
+  project: SidebarProjectEntry;
+  serverId: string | null;
+  enabled: boolean;
+}): boolean {
+  return (
+    input.enabled &&
+    input.selection?.serverId === input.serverId &&
+    input.project.workspaces.some(
+      (workspace) => workspace.workspaceId === input.selection?.workspaceId,
+    )
+  );
+}
+
+function selectionForSelectedWorkspace(
+  selected: boolean,
+  workspace: SidebarWorkspaceEntry,
+): ActiveWorkspaceSelection | null {
+  return selected ? { serverId: workspace.serverId, workspaceId: workspace.workspaceId } : null;
 }
 
 interface SidebarWorkspaceListProps {
@@ -1530,9 +1565,9 @@ function WorkspaceRowWithMenu({
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
-      activeWorkspaceSelection: getActiveWorkspaceSelection(),
+      activeWorkspaceSelection: selectionForSelectedWorkspace(selected, workspace),
     });
-  }, [workspace.serverId, workspace.workspaceId]);
+  }, [selected, workspace]);
 
   const archiveWorktreeAfterConfirmation = useCallback(async () => {
     if (isArchiving) {
@@ -1774,9 +1809,9 @@ function NonGitProjectRowWithMenuContent({
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
-      activeWorkspaceSelection: getActiveWorkspaceSelection(),
+      activeWorkspaceSelection: selectionForSelectedWorkspace(selected, workspace),
     });
-  }, [workspace.serverId, workspace.workspaceId]);
+  }, [selected, workspace]);
 
   const handleArchiveWorkspace = useCallback(() => {
     if (isArchivingWorkspace) {
@@ -1896,6 +1931,7 @@ function FlattenedProjectRow({
   onRemoveProject,
   removeProjectStatus,
   selectionEnabled,
+  activeWorkspaceSelection,
 }: {
   project: SidebarProjectEntry;
   displayName: string;
@@ -1914,13 +1950,15 @@ function FlattenedProjectRow({
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
   selectionEnabled: boolean;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
 }) {
   const workspace = useSidebarWorkspaceEntry(serverId, rowModel.workspace.workspaceId);
-  const selected = useIsActiveWorkspaceSelection(
+  const selected = isWorkspaceSelected({
+    selection: activeWorkspaceSelection,
     serverId,
-    rowModel.workspace.workspaceId,
-    selectionEnabled,
-  );
+    workspaceId: rowModel.workspace.workspaceId,
+    enabled: selectionEnabled,
+  });
 
   if (!workspace) {
     return null;
@@ -1978,6 +2016,7 @@ interface WorkspaceRowItemProps {
   isCreating?: boolean;
   selectionEnabled: boolean;
   serverId: string | null;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   onWorkspacePress?: () => void;
   drag?: () => void;
   isDragging?: boolean;
@@ -1992,6 +2031,7 @@ function WorkspaceRowItem({
   isCreating = false,
   selectionEnabled,
   serverId,
+  activeWorkspaceSelection,
   onWorkspacePress,
   drag,
   isDragging = false,
@@ -2012,7 +2052,12 @@ function WorkspaceRowItem({
       showShortcutBadge={showShortcutBadge}
       canCopyBranchName={canCopyBranchName}
       isCreating={isCreating}
-      selectionEnabled={selectionEnabled}
+      selected={isWorkspaceSelected({
+        selection: activeWorkspaceSelection,
+        serverId: workspace.serverId,
+        workspaceId: workspace.workspaceId,
+        enabled: selectionEnabled,
+      })}
       onPress={handlePress}
       drag={drag ?? noop}
       isDragging={isDragging}
@@ -2020,6 +2065,39 @@ function WorkspaceRowItem({
     />
   );
 }
+
+function areWorkspaceRowItemPropsEqual(
+  previous: WorkspaceRowItemProps,
+  next: WorkspaceRowItemProps,
+): boolean {
+  const previousSelected = isWorkspaceSelected({
+    selection: previous.activeWorkspaceSelection,
+    serverId: previous.workspace.serverId,
+    workspaceId: previous.workspace.workspaceId,
+    enabled: previous.selectionEnabled,
+  });
+  const nextSelected = isWorkspaceSelected({
+    selection: next.activeWorkspaceSelection,
+    serverId: next.workspace.serverId,
+    workspaceId: next.workspace.workspaceId,
+    enabled: next.selectionEnabled,
+  });
+  return (
+    previous.workspace === next.workspace &&
+    previous.shortcutNumber === next.shortcutNumber &&
+    previous.showShortcutBadge === next.showShortcutBadge &&
+    previous.canCopyBranchName === next.canCopyBranchName &&
+    previous.isCreating === next.isCreating &&
+    previous.serverId === next.serverId &&
+    previous.onWorkspacePress === next.onWorkspacePress &&
+    previous.drag === next.drag &&
+    previous.isDragging === next.isDragging &&
+    previous.dragHandleProps === next.dragHandleProps &&
+    previousSelected === nextSelected
+  );
+}
+
+const MemoWorkspaceRowItem = memo(WorkspaceRowItem, areWorkspaceRowItemPropsEqual);
 
 function WorkspaceRow({
   workspace,
@@ -2031,7 +2109,7 @@ function WorkspaceRow({
   dragHandleProps,
   canCopyBranchName,
   isCreating = false,
-  selectionEnabled,
+  selected,
 }: {
   workspace: SidebarWorkspaceEntry;
   shortcutNumber: number | null;
@@ -2042,14 +2120,9 @@ function WorkspaceRow({
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
   isCreating?: boolean;
-  selectionEnabled: boolean;
+  selected: boolean;
 }) {
   const hydratedWorkspace = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
-  const selected = useIsActiveWorkspaceSelection(
-    workspace.serverId,
-    workspace.workspaceId,
-    selectionEnabled,
-  );
 
   if (!hydratedWorkspace) {
     return null;
@@ -2090,6 +2163,7 @@ function ProjectBlock({
   dragHandleProps,
   useNestable,
   creatingWorkspaceIds,
+  activeWorkspaceSelection,
 }: {
   project: SidebarProjectEntry;
   collapsed: boolean;
@@ -2109,6 +2183,7 @@ function ProjectBlock({
   dragHandleProps?: DraggableListDragHandleProps;
   useNestable: boolean;
   creatingWorkspaceIds: ReadonlySet<string>;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
 }) {
   const rowModel = useMemo(
     () =>
@@ -2119,15 +2194,12 @@ function ProjectBlock({
     [collapsed, project],
   );
 
-  const projectWorkspaceIds = useMemo(
-    () => new Set(project.workspaces.map((workspace) => workspace.workspaceId)),
-    [project.workspaces],
-  );
-  const isProjectActive = useIsActiveWorkspaceInSet(
+  const active = isProjectSelectedByRoute({
+    selection: activeWorkspaceSelection,
     serverId,
-    projectWorkspaceIds,
-    selectionEnabled,
-  );
+    project,
+    enabled: selectionEnabled,
+  });
 
   const renderWorkspaceRow = useCallback(
     (
@@ -2139,7 +2211,7 @@ function ProjectBlock({
       },
     ) => {
       return (
-        <WorkspaceRowItem
+        <MemoWorkspaceRowItem
           workspace={item}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
@@ -2147,6 +2219,7 @@ function ProjectBlock({
           isCreating={creatingWorkspaceIds.has(item.workspaceId)}
           selectionEnabled={selectionEnabled}
           serverId={serverId}
+          activeWorkspaceSelection={activeWorkspaceSelection}
           onWorkspacePress={onWorkspacePress}
           drag={input?.drag}
           isDragging={input?.isDragging}
@@ -2156,6 +2229,7 @@ function ProjectBlock({
     },
     [
       project.projectKind,
+      activeWorkspaceSelection,
       creatingWorkspaceIds,
       onWorkspacePress,
       serverId,
@@ -2259,10 +2333,11 @@ function ProjectBlock({
           drag={drag}
           isDragging={isDragging}
           dragHandleProps={dragHandleProps}
-          isProjectActive={isProjectActive}
+          isProjectActive={active}
           onRemoveProject={handleRemoveProject}
           removeProjectStatus={isRemovingProject ? "pending" : "idle"}
           selectionEnabled={selectionEnabled}
+          activeWorkspaceSelection={activeWorkspaceSelection}
         />
       ) : (
         <>
@@ -2276,7 +2351,7 @@ function ProjectBlock({
             onPress={handleToggleCollapsed}
             serverId={serverId}
             canCreateWorktree={rowModel.trailingAction === "new_worktree"}
-            isProjectActive={isProjectActive}
+            isProjectActive={active}
             onWorkspacePress={onWorkspacePress}
             onWorktreeCreated={onWorktreeCreated}
             drag={drag}
@@ -2308,6 +2383,46 @@ function ProjectBlock({
   );
 }
 
+type ProjectBlockProps = Parameters<typeof ProjectBlock>[0];
+
+function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlockProps): boolean {
+  const previousActive = isProjectSelectedByRoute({
+    selection: previous.activeWorkspaceSelection,
+    project: previous.project,
+    serverId: previous.serverId,
+    enabled: previous.selectionEnabled,
+  });
+  const nextActive = isProjectSelectedByRoute({
+    selection: next.activeWorkspaceSelection,
+    project: next.project,
+    serverId: next.serverId,
+    enabled: next.selectionEnabled,
+  });
+  return (
+    previous.project === next.project &&
+    previous.collapsed === next.collapsed &&
+    previous.displayName === next.displayName &&
+    previous.iconDataUri === next.iconDataUri &&
+    previous.serverId === next.serverId &&
+    previous.selectionEnabled === next.selectionEnabled &&
+    previous.showShortcutBadges === next.showShortcutBadges &&
+    previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
+    previous.parentGestureRef === next.parentGestureRef &&
+    previous.onToggleCollapsed === next.onToggleCollapsed &&
+    previous.onWorkspacePress === next.onWorkspacePress &&
+    previous.onWorkspaceReorder === next.onWorkspaceReorder &&
+    previous.onWorktreeCreated === next.onWorktreeCreated &&
+    previous.drag === next.drag &&
+    previous.isDragging === next.isDragging &&
+    previous.dragHandleProps === next.dragHandleProps &&
+    previous.useNestable === next.useNestable &&
+    previous.creatingWorkspaceIds === next.creatingWorkspaceIds &&
+    previousActive === nextActive
+  );
+}
+
+const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
+
 export function SidebarWorkspaceList({
   projects,
   serverId,
@@ -2338,6 +2453,7 @@ export function SidebarWorkspaceList({
     [pathname],
   );
   const selectionEnabled = isWorkspaceRoute;
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
 
   const projectIconRequests = useMemo(() => {
     if (!serverId) {
@@ -2540,7 +2656,7 @@ export function SidebarWorkspaceList({
   const renderProject = useCallback(
     ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<SidebarProjectEntry>) => {
       return (
-        <ProjectBlock
+        <MemoProjectBlock
           project={item}
           collapsed={collapsedProjectKeys.has(item.projectKey)}
           displayName={item.projectName}
@@ -2559,11 +2675,13 @@ export function SidebarWorkspaceList({
           dragHandleProps={dragHandleProps}
           useNestable={platformIsNative}
           creatingWorkspaceIds={creatingWorkspaceIds}
+          activeWorkspaceSelection={activeWorkspaceSelection}
         />
       );
     },
     [
       collapsedProjectKeys,
+      activeWorkspaceSelection,
       handleWorktreeCreated,
       handleWorkspaceReorder,
       onWorkspacePress,
