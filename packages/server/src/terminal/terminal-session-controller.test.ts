@@ -10,7 +10,8 @@ import {
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import type { ServerMessage, TerminalSession, TerminalStateSnapshot } from "./terminal.js";
 import { TerminalSessionController } from "./terminal-session-controller.js";
-import type { TerminalManager } from "./terminal-manager.js";
+import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
+import { isSameOrDescendantPath } from "../server/path-utils.js";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -138,5 +139,99 @@ describe("terminal-session-controller restore", () => {
     ]);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
     expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe("restore-after\n");
+  });
+});
+
+function listSession(input: { id: string; name: string; cwd: string }): TerminalSession {
+  return {
+    id: input.id,
+    name: input.name,
+    cwd: input.cwd,
+    send: vi.fn(),
+    subscribe: () => vi.fn(),
+    onExit: () => vi.fn(),
+    onCommandFinished: () => vi.fn(),
+    onTitleChange: () => vi.fn(),
+    getSize: () => ({ rows: 1, cols: 80 }),
+    getState: () => terminalState(""),
+    getStateSnapshot: () => ({ state: terminalState(""), revision: 0 }),
+    getReplayPreamble: () => "",
+    getTitle: () => undefined,
+    setTitle: vi.fn(),
+    getExitInfo: () => null,
+    kill: vi.fn(),
+    killAndWait: vi.fn(),
+  };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe("terminal-session-controller subdirectory aggregation", () => {
+  test("delivers a subdirectory change to a root subscriber as an aggregated, root-keyed snapshot", async () => {
+    const rootCwd = "/work/repo";
+    const subdirCwd = "/work/repo/apps/mobile";
+    // Aggregating subdirectory buckets into the root query is the manager's
+    // contract, covered by terminal-manager.test.ts. Here we only assert the
+    // controller re-fetches by root and keys the snapshot by root, so the fake
+    // returns a fixed aggregated list for the root and nothing otherwise.
+    const aggregatedRootTerminals = [
+      listSession({ id: "root-term", name: "Terminal 1", cwd: rootCwd }),
+      listSession({ id: "subdir-term", name: "Mobile", cwd: subdirCwd }),
+    ];
+
+    let changedListener: ((event: TerminalsChangedEvent) => void) | null = null;
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(async (cwd: string) => (cwd === rootCwd ? aggregatedRootTerminals : [])),
+      createTerminal: vi.fn(),
+      registerCwdEnv: vi.fn(),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => [rootCwd, subdirCwd]),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn((listener) => {
+        changedListener = listener;
+        return vi.fn();
+      }),
+    };
+
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+    });
+    controller.start();
+
+    controller.dispatch({ type: "subscribe_terminals_request", cwd: rootCwd });
+    await flushMicrotasks();
+    outboundMessages.length = 0;
+
+    changedListener?.({
+      cwd: subdirCwd,
+      terminals: [{ id: "subdir-term", name: "Mobile", cwd: subdirCwd }],
+    });
+    await flushMicrotasks();
+
+    expect(outboundMessages).toEqual([
+      {
+        type: "terminals_changed",
+        payload: {
+          cwd: rootCwd,
+          terminals: [
+            { id: "root-term", name: "Terminal 1" },
+            { id: "subdir-term", name: "Mobile" },
+          ],
+        },
+      },
+    ]);
   });
 });

@@ -125,9 +125,9 @@ export class TerminalSessionController {
     if (!this.terminalManager) {
       return;
     }
-    this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) =>
-      this.handleTerminalsChanged(event),
-    );
+    this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) => {
+      void this.handleTerminalsChanged(event);
+    });
   }
 
   getMetrics(): TerminalSessionControllerMetrics {
@@ -293,31 +293,30 @@ export class TerminalSessionController {
     };
   }
 
-  private handleTerminalsChanged(event: TerminalsChangedEvent): void {
-    if (!this.subscribedDirectories.has(event.cwd)) {
-      return;
+  private async handleTerminalsChanged(event: TerminalsChangedEvent): Promise<void> {
+    // A terminal can live in a subdirectory of a subscribed workspace root (an
+    // agent can open one there). Deliver the change to every subscribed root at
+    // or above the terminal's cwd, keyed by that root, carrying the full
+    // aggregated list — so the client's cache replacement doesn't drop the
+    // terminals that live directly at the root.
+    const matchingRoots = Array.from(this.subscribedDirectories).filter((root) =>
+      this.isPathWithinRoot(root, event.cwd),
+    );
+    for (const root of matchingRoots) {
+      await this.emitTerminalsSnapshotForRoot(root);
     }
-    this.emitTerminalsChangedSnapshot({
-      cwd: event.cwd,
-      terminals: event.terminals.map((terminal) =>
-        Object.assign(
-          { id: terminal.id, name: terminal.name },
-          terminal.title ? { title: terminal.title } : {},
-        ),
-      ),
-    });
   }
 
   private handleSubscribeTerminalsRequest(msg: SubscribeTerminalsRequest): void {
     this.subscribedDirectories.add(msg.cwd);
-    void this.emitInitialTerminalsChangedSnapshot(msg.cwd);
+    void this.emitTerminalsSnapshotForRoot(msg.cwd);
   }
 
   private handleUnsubscribeTerminalsRequest(msg: UnsubscribeTerminalsRequest): void {
     this.subscribedDirectories.delete(msg.cwd);
   }
 
-  private async emitInitialTerminalsChangedSnapshot(cwd: string): Promise<void> {
+  private async emitTerminalsSnapshotForRoot(cwd: string): Promise<void> {
     if (!this.terminalManager || !this.subscribedDirectories.has(cwd)) {
       return;
     }

@@ -96,6 +96,19 @@ it("creates separate terminals for different cwds", async () => {
   expect(tmpTerminals[0].id).not.toBe(homeTerminals[0].id);
 });
 
+it("lists subdirectory terminals when querying the workspace root", async () => {
+  manager = createTerminalManager();
+  const rootCwd = mkdtempSync(join(tmpdir(), "terminal-manager-subdir-root-"));
+  const subdirCwd = join(rootCwd, "apps", "mobile");
+  mkdirSync(subdirCwd, { recursive: true });
+  temporaryDirs.push(rootCwd);
+
+  const created = await manager.createTerminal({ cwd: subdirCwd, name: "Mobile" });
+
+  const rootTerminals = await manager.getTerminals(rootCwd);
+  expect(rootTerminals.map((terminal) => terminal.id)).toEqual([created.id]);
+});
+
 it("creates additional terminal with auto-incrementing name", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
