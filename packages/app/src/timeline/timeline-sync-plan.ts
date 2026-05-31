@@ -11,39 +11,39 @@ export interface AgentTimelineCursorRange {
   endSeq: number;
 }
 
-export interface CanonicalTimelineTailFetchPlan {
+export interface ProjectedTimelineTailFetchPlan {
   direction: "tail";
   limit: number;
-  projection: "canonical";
+  projection: "projected";
 }
 
-export interface CanonicalTimelineAfterFetchPlan {
+export interface ProjectedTimelineAfterFetchPlan {
   direction: "after";
   cursor: TimelineSyncCursor;
   limit: number;
-  projection: "canonical";
+  projection: "projected";
 }
 
-export interface CanonicalTimelineBeforeFetchPlan {
+export interface ProjectedTimelineBeforeFetchPlan {
   direction: "before";
   cursor: TimelineSyncCursor;
   limit: number;
-  projection: "canonical";
+  projection: "projected";
 }
 
-export type CanonicalTimelineFetchPlan =
-  | CanonicalTimelineTailFetchPlan
-  | CanonicalTimelineAfterFetchPlan
-  | CanonicalTimelineBeforeFetchPlan;
+export type ProjectedTimelineFetchPlan =
+  | ProjectedTimelineTailFetchPlan
+  | ProjectedTimelineAfterFetchPlan
+  | ProjectedTimelineBeforeFetchPlan;
 
-export type CanonicalTimelineForwardFetchPlan =
-  | CanonicalTimelineTailFetchPlan
-  | CanonicalTimelineAfterFetchPlan;
+export type ProjectedTimelineForwardFetchPlan =
+  | ProjectedTimelineTailFetchPlan
+  | ProjectedTimelineAfterFetchPlan;
 
 export function planInitialAgentTimelineSync(input: {
   cursor: AgentTimelineCursorRange | undefined;
   hasAuthoritativeHistory: boolean;
-}): CanonicalTimelineForwardFetchPlan {
+}): ProjectedTimelineForwardFetchPlan {
   if (input.hasAuthoritativeHistory && input.cursor) {
     return planTimelineCatchUpAfter({ epoch: input.cursor.epoch, seq: input.cursor.endSeq });
   }
@@ -53,7 +53,7 @@ export function planInitialAgentTimelineSync(input: {
 
 export function planResumeTimelineSync(input: {
   cursor: AgentTimelineCursorRange | undefined;
-}): CanonicalTimelineForwardFetchPlan {
+}): ProjectedTimelineForwardFetchPlan {
   if (input.cursor) {
     return planTimelineCatchUpAfter({ epoch: input.cursor.epoch, seq: input.cursor.endSeq });
   }
@@ -66,7 +66,7 @@ export function planTimelineCatchUpAfter(cursor: TimelineSyncCursor) {
     direction: "after",
     cursor,
     limit: TIMELINE_FETCH_PAGE_SIZE,
-    projection: "canonical",
+    projection: "projected",
   } as const;
 }
 
@@ -74,7 +74,7 @@ export function planTimelineTailFetch() {
   return {
     direction: "tail",
     limit: TIMELINE_FETCH_PAGE_SIZE,
-    projection: "canonical",
+    projection: "projected",
   } as const;
 }
 
@@ -83,7 +83,7 @@ export function planTimelineOlderFetch(cursor: TimelineSyncCursor) {
     direction: "before",
     cursor,
     limit: TIMELINE_FETCH_PAGE_SIZE,
-    projection: "canonical",
+    projection: "projected",
   } as const;
 }
 
@@ -92,7 +92,7 @@ export function planTimelineCatchUpFollowUp(input: {
   hasNewer: boolean;
   endCursor: TimelineSyncCursor | null;
   error: string | null;
-}): CanonicalTimelineAfterFetchPlan | null {
+}): ProjectedTimelineAfterFetchPlan | null {
   if (input.error || input.direction !== "after" || !input.hasNewer || !input.endCursor) {
     return null;
   }

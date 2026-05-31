@@ -2465,7 +2465,7 @@ function WorkspaceScreenContent({
         const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
         await client.fetchAgentTimeline(agentId, {
           direction: "tail",
-          projection: "canonical",
+          projection: "projected",
           ...(currentCursor
             ? { cursor: { epoch: currentCursor.epoch, seq: currentCursor.endSeq } }
             : {}),
