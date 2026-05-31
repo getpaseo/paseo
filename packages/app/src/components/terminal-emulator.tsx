@@ -139,7 +139,8 @@ interface TerminalEmulatorProps {
   onSwipeRight?: () => void;
   initialSnapshot?: TerminalState | null;
   onInput?: (data: string) => Promise<void> | void;
-  onResize?: (input: { rows: number; cols: number }) => Promise<void> | void;
+  onFocus?: () => Promise<void> | void;
+  onResize?: (input: { rows: number; cols: number; shouldClaim: boolean }) => Promise<void> | void;
   onTerminalKey?: (input: {
     key: string;
     ctrl: boolean;
@@ -219,6 +220,7 @@ export default function TerminalEmulator({
   onSwipeRight,
   initialSnapshot = null,
   onInput,
+  onFocus,
   onResize,
   onTerminalKey,
   onPendingModifiersConsumed,
@@ -527,7 +529,7 @@ export default function TerminalEmulator({
     if (focusRequestToken <= 0) {
       return () => {};
     }
-    runtimeRef.current?.resize({ force: true });
+    runtimeRef.current?.resize({ force: true, shouldClaim: true });
     return focusWithRetries({
       focus: () => {
         runtimeRef.current?.focus();
@@ -547,7 +549,7 @@ export default function TerminalEmulator({
     if (resizeRequestToken <= 0) {
       return;
     }
-    runtimeRef.current?.resize({ force: true });
+    runtimeRef.current?.resize({ force: true, shouldClaim: true });
   }, [resizeRequestToken]);
 
   useEffect(() => {
@@ -742,8 +744,9 @@ export default function TerminalEmulator({
   }, []);
 
   const handleRootPointerDown = useCallback(() => {
+    onFocus?.();
     runtimeRef.current?.focus();
-  }, []);
+  }, [onFocus]);
 
   const handleRootContextMenu = useCallback(
     (event: ReactMouseEvent) => {

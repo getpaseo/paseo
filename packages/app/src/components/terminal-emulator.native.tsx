@@ -50,7 +50,8 @@ interface TerminalEmulatorProps {
   onSwipeRight?: () => void;
   initialSnapshot?: TerminalState | null;
   onInput?: (data: string) => Promise<void> | void;
-  onResize?: (input: { rows: number; cols: number }) => Promise<void> | void;
+  onFocus?: () => Promise<void> | void;
+  onResize?: (input: { rows: number; cols: number; shouldClaim: boolean }) => Promise<void> | void;
   onTerminalKey?: (input: {
     key: string;
     ctrl: boolean;
@@ -89,7 +90,7 @@ type BridgeInboundMessage =
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
-  | { type: "resize"; streamKey: string }
+  | { type: "resize"; streamKey: string; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
@@ -105,7 +106,7 @@ type BridgeOutboundMessage =
   | { type: "bridgeReady" }
   | { type: "rendererReady"; streamKey: string; isReady: boolean }
   | { type: "input"; streamKey: string; data: string }
-  | { type: "resize"; streamKey: string; rows: number; cols: number }
+  | { type: "resize"; streamKey: string; rows: number; cols: number; shouldClaim?: boolean }
   | {
       type: "terminalKey";
       streamKey: string;
@@ -188,6 +189,7 @@ export default function TerminalEmulator({
   onSwipeRight,
   initialSnapshot = null,
   onInput,
+  onFocus,
   onResize,
   onTerminalKey,
   onPendingModifiersConsumed,
@@ -229,6 +231,7 @@ export default function TerminalEmulator({
   };
   const callbacksRef = useRef({
     onInput,
+    onFocus,
     onResize,
     onTerminalKey,
     onPendingModifiersConsumed,
@@ -241,6 +244,7 @@ export default function TerminalEmulator({
   });
   callbacksRef.current = {
     onInput,
+    onFocus,
     onResize,
     onTerminalKey,
     onPendingModifiersConsumed,
@@ -401,14 +405,14 @@ export default function TerminalEmulator({
 
   useEffect(() => {
     if (focusRequestToken <= 0) return;
-    sendToWebView({ type: "resize", streamKey });
+    sendToWebView({ type: "resize", streamKey, shouldClaim: true });
     sendToWebView({ type: "focus", streamKey });
     webViewRef.current?.requestFocus();
   }, [focusRequestToken, sendToWebView, streamKey]);
 
   useEffect(() => {
     if (resizeRequestToken <= 0) return;
-    sendToWebView({ type: "resize", streamKey });
+    sendToWebView({ type: "resize", streamKey, shouldClaim: true });
   }, [resizeRequestToken, sendToWebView, streamKey]);
 
   useEffect(() => {
@@ -495,7 +499,11 @@ export default function TerminalEmulator({
           callbacksRef.current.onInput?.(message.data);
           break;
         case "resize":
-          callbacksRef.current.onResize?.({ rows: message.rows, cols: message.cols });
+          callbacksRef.current.onResize?.({
+            rows: message.rows,
+            cols: message.cols,
+            shouldClaim: message.shouldClaim !== false,
+          });
           break;
         case "terminalKey":
           callbacksRef.current.onTerminalKey?.({
@@ -592,6 +600,7 @@ export default function TerminalEmulator({
       return;
     }
     webViewRef.current?.requestFocus();
+    callbacksRef.current.onFocus?.();
     sendToWebView({ type: "focus", streamKey, forceRefocus: true });
   }, [sendToWebView, streamKey]);
 

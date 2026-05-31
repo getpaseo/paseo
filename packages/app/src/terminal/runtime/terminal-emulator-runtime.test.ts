@@ -91,6 +91,10 @@ interface StubTerminal {
   cols?: number;
 }
 
+interface RuntimeFitProbe {
+  fitAndEmitResize: (input?: { force?: boolean; shouldClaim?: boolean }) => void;
+}
+
 function createRuntimeWithTerminal(): {
   runtime: TerminalEmulatorRuntime;
   terminal: StubTerminal & {
@@ -328,14 +332,13 @@ describe("terminal-emulator-runtime", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
 
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
 
     runtime.resize();
     runtime.resize({ force: true });
 
-    expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, false);
-    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, true);
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, undefined);
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, { force: true });
   });
 
   it("updates terminal theme without remounting", () => {
@@ -381,12 +384,11 @@ describe("terminal-emulator-runtime", () => {
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
-  it("forces a refit when the page becomes visible again", () => {
+  it("passively refits when the page becomes visible again", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
 
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
     (globalThis as { document?: { visibilityState?: string } }).document = {
       visibilityState: "visible",
     };
@@ -397,15 +399,14 @@ describe("terminal-emulator-runtime", () => {
       }
     ).handleVisibilityRestore();
 
-    expect(fitAndEmitResize).toHaveBeenCalledWith(true);
+    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true, shouldClaim: false });
   });
 
   it("does not refit while the page is still hidden", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
 
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
     (globalThis as { document?: { visibilityState?: string } }).document = {
       visibilityState: "hidden",
     };

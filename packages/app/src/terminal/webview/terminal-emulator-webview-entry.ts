@@ -30,7 +30,7 @@ type InboundMessage =
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
-  | { type: "resize"; streamKey: string }
+  | { type: "resize"; streamKey: string; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
@@ -46,7 +46,7 @@ type OutboundMessage =
   | { type: "bridgeReady" }
   | { type: "rendererReady"; streamKey: string; isReady: boolean }
   | { type: "input"; streamKey: string; data: string }
-  | { type: "resize"; streamKey: string; rows: number; cols: number }
+  | { type: "resize"; streamKey: string; rows: number; cols: number; shouldClaim?: boolean }
   | {
       type: "terminalKey";
       streamKey: string;
@@ -244,7 +244,7 @@ class TerminalWebViewBridge {
         this.runtime?.focus({ forceRefocus: message.forceRefocus });
         break;
       case "resize":
-        this.runtime?.resize({ force: true });
+        this.runtime?.resize({ force: true, shouldClaim: message.shouldClaim !== false });
         break;
       case "setTheme":
         this.applyThemeBackground(message.theme);
@@ -273,8 +273,8 @@ class TerminalWebViewBridge {
     runtime.setCallbacks({
       callbacks: {
         onInput: (data) => sendToNative({ type: "input", streamKey: message.streamKey, data }),
-        onResize: ({ rows, cols }) =>
-          sendToNative({ type: "resize", streamKey: message.streamKey, rows, cols }),
+        onResize: ({ rows, cols, shouldClaim }) =>
+          sendToNative({ type: "resize", streamKey: message.streamKey, rows, cols, shouldClaim }),
         onTerminalKey: (input) =>
           sendToNative({ type: "terminalKey", streamKey: message.streamKey, ...input }),
         onPendingModifiersConsumed: () =>
