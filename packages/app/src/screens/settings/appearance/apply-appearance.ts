@@ -31,26 +31,25 @@ export interface AppearanceInput {
 }
 
 /**
- * Scale the entire UI ramp proportionally by `uiSize / 16`, rounding each step,
- * so the type hierarchy is preserved at non-default sizes. `code` is set
- * absolutely to `codeSize` and is never scaled by the UI factor — it is a
- * separate control on a separate semantic axis (mono/diff text).
+ * Build the font-size ramp from the canonical `FONT_SIZE` ramp, scaled
+ * proportionally by `uiSize / 16` so the type hierarchy is preserved at non-default
+ * sizes. Deriving from the authored ramp — NOT the live (possibly already-scaled)
+ * theme — makes `applyAppearance` idempotent: repeated applies never compound, and a
+ * code-size change (uiSize unchanged) leaves the UI ramp at its authored values.
+ * `code` is set absolutely to `codeSize`, never scaled by the UI factor — a separate
+ * control on a separate semantic axis (mono/diff text).
  */
-function scaleFontSize(
-  base: Theme["fontSize"],
-  uiSize: number,
-  codeSize: number,
-): Theme["fontSize"] {
+function scaleFontSize(uiSize: number, codeSize: number): Theme["fontSize"] {
   const r = uiSize / BASE_UI_REFERENCE;
   return {
-    xs: Math.round(base.xs * r),
-    sm: Math.round(base.sm * r),
-    base: Math.round(base.base * r),
-    lg: Math.round(base.lg * r),
-    xl: Math.round(base.xl * r),
-    "2xl": Math.round(base["2xl"] * r),
-    "3xl": Math.round(base["3xl"] * r),
-    "4xl": Math.round(base["4xl"] * r),
+    xs: Math.round(FONT_SIZE.xs * r),
+    sm: Math.round(FONT_SIZE.sm * r),
+    base: Math.round(FONT_SIZE.base * r),
+    lg: Math.round(FONT_SIZE.lg * r),
+    xl: Math.round(FONT_SIZE.xl * r),
+    "2xl": Math.round(FONT_SIZE["2xl"] * r),
+    "3xl": Math.round(FONT_SIZE["3xl"] * r),
+    "4xl": Math.round(FONT_SIZE["4xl"] * r),
     code: codeSize, // absolute, NOT scaled
   };
 }
@@ -78,7 +77,7 @@ export function applyAppearance(input: AppearanceInput): void {
     // a single narrowed theme type.
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, mono };
-      const fontSize = scaleFontSize(t.fontSize, input.uiFontSize, input.codeFontSize);
+      const fontSize = scaleFontSize(input.uiFontSize, input.codeFontSize);
       const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
       if (t.colorScheme === "light") {
         return {
