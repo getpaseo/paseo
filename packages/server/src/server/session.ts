@@ -99,6 +99,7 @@ import type {
   AgentManagerEvent,
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
+  AgentTimelineFetchResult,
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
@@ -7414,6 +7415,26 @@ export class Session {
     });
   }
 
+  private shouldUseFullTimelineForProjectedPage(input: {
+    timeline: AgentTimelineFetchResult;
+  }): boolean {
+    const { timeline } = input;
+    if (timeline.reset || timeline.rows.length === 0 || !timeline.hasOlder) {
+      return false;
+    }
+
+    const firstRow = timeline.rows[0];
+    if (
+      firstRow?.item.type === "assistant_message" ||
+      firstRow?.item.type === "reasoning" ||
+      firstRow?.item.type === "tool_call"
+    ) {
+      return true;
+    }
+
+    return timeline.rows.some((row) => row.item.type === "tool_call");
+  }
+
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
   ): Promise<void> {
@@ -7439,12 +7460,16 @@ export class Session {
       const controlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
+        limit: pageLimit,
       });
-      const timeline = controlTimeline.reset
-        ? controlTimeline
-        : this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 0 });
+      const timeline = this.shouldUseFullTimelineForProjectedPage({
+        timeline: controlTimeline,
+      })
+        ? this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 0 })
+        : controlTimeline;
       const projectedPage = selectProjectedTimelinePage({
         rows: timeline.rows,
+        bounds: timeline.window,
         direction: controlTimeline.reset ? "tail" : direction,
         ...(cursor ? { cursorSeq: cursor.seq } : {}),
         limit: pageLimit,

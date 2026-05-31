@@ -378,12 +378,13 @@ function selectEntriesOverlappingSeqRange(input: {
 
 export function selectProjectedTimelinePage(input: {
   rows: readonly AgentTimelineRow[];
+  bounds?: { minSeq: number; maxSeq: number };
   direction: TimelineLimitDirection;
   cursorSeq?: number;
   limit?: number;
 }): ProjectedTimelinePageSelection {
   const limit = input.limit === undefined ? 0 : Math.max(0, Math.floor(input.limit));
-  const bounds = getTimelineBounds(input.rows);
+  const bounds = input.bounds ?? getTimelineBounds(input.rows);
   const projectedAll = projectTimelineRows({ rows: input.rows, mode: "projected" });
   if (projectedAll.length === 0 || !bounds) {
     return {

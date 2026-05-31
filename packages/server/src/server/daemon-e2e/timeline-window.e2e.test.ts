@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,6 +17,7 @@ describe("daemon E2E - timeline window", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await ctx.cleanup();
   }, 60_000);
 
@@ -235,6 +236,124 @@ describe("daemon E2E - timeline window", () => {
       expect(timeline.staleCursor).toBe(true);
       expect(timeline.startCursor?.seq).toBeGreaterThan(timeline.window.minSeq);
       expect(timeline.hasOlder).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("tail fetch does not re-fetch full plain chat history", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Timeline Tail Bounded Fetch Test",
+        modeId: "full-access",
+      });
+      for (let seq = 1; seq <= 600; seq += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `row ${seq}`,
+        });
+      }
+
+      const fetchSpy = vi.spyOn(ctx.daemon.daemon.agentManager, "fetchTimeline");
+      const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        limit: 100,
+      });
+
+      expect(timeline.entries).toHaveLength(100);
+      expect(timeline.startCursor?.seq).toBe(501);
+      expect(timeline.endCursor?.seq).toBe(600);
+      expect(timeline.hasOlder).toBe(true);
+      expect(
+        fetchSpy.mock.calls.some(
+          ([, options]) => options?.direction === "tail" && options.limit === 0,
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("after fetch does not re-fetch full plain chat history", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Timeline After Bounded Fetch Test",
+        modeId: "full-access",
+      });
+      for (let seq = 1; seq <= 600; seq += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `row ${seq}`,
+        });
+      }
+      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
+        direction: "tail",
+        limit: 1,
+      }).epoch;
+
+      const fetchSpy = vi.spyOn(ctx.daemon.daemon.agentManager, "fetchTimeline");
+      const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch, seq: 300 },
+        limit: 100,
+      });
+
+      expect(timeline.entries).toHaveLength(100);
+      expect(timeline.startCursor?.seq).toBe(301);
+      expect(timeline.endCursor?.seq).toBe(400);
+      expect(timeline.hasNewer).toBe(true);
+      expect(
+        fetchSpy.mock.calls.some(
+          ([, options]) => options?.direction === "tail" && options.limit === 0,
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("before fetch does not re-fetch full plain chat history", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Timeline Before Bounded Fetch Test",
+        modeId: "full-access",
+      });
+      for (let seq = 1; seq <= 600; seq += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `row ${seq}`,
+        });
+      }
+      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
+        direction: "tail",
+        limit: 1,
+      }).epoch;
+
+      const fetchSpy = vi.spyOn(ctx.daemon.daemon.agentManager, "fetchTimeline");
+      const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "before",
+        cursor: { epoch, seq: 501 },
+        limit: 100,
+      });
+
+      expect(timeline.entries).toHaveLength(100);
+      expect(timeline.startCursor?.seq).toBe(401);
+      expect(timeline.endCursor?.seq).toBe(500);
+      expect(timeline.hasOlder).toBe(true);
+      expect(
+        fetchSpy.mock.calls.some(
+          ([, options]) => options?.direction === "tail" && options.limit === 0,
+        ),
+      ).toBe(false);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
