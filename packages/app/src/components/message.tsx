@@ -1674,6 +1674,15 @@ export const AssistantMessage = memo(function AssistantMessage({
           {children}
         </MarkdownInheritedText>
       ),
+      // hardbreak/softbreak fall back to react-native-markdown-display's
+      // default, a plain RN <Text>{"\n"}. Inside the paragraph UITextView that
+      // plain <Text> is not hoisted into a UITextViewChild and is dropped (same
+      // root cause as strong/em/s) — so on iOS a hard line break vanished, and
+      // a softbreak between words jammed them together ("one\ntwo" -> "onetwo").
+      // Emit the break through MarkdownTextSpan so it composes on iOS; web and
+      // Android keep the same "\n" they rendered before.
+      hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
+      softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
       code_block: (
         node: ASTNode,
         _children: ReactNode[],
