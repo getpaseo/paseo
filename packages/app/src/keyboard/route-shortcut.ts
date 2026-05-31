@@ -37,7 +37,8 @@ export type ShortcutAction =
   | { kind: "open-project-picker" }
   | { kind: "callback"; name: ShortcutCallbackName }
   | { kind: "command-center-toggle"; nextOpen: boolean }
-  | { kind: "shortcuts-dialog-toggle"; nextOpen: boolean };
+  | { kind: "shortcuts-dialog-toggle"; nextOpen: boolean }
+  | { kind: "pane-find-open" };
 
 const NONE: ShortcutAction = { kind: "none" };
 
@@ -201,6 +202,8 @@ export function routeKeyboardShortcut(
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
     case "shortcuts.dialog.toggle":
       return { kind: "shortcuts-dialog-toggle", nextOpen: !ctx.shortcutsDialogOpen };
+    case "workspace.find.open":
+      return { kind: "pane-find-open" };
     default:
       return NONE;
   }

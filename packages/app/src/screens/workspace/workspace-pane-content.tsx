@@ -1,4 +1,4 @@
-import React, { useMemo, type ComponentType } from "react";
+import React, { useEffect, useMemo, type ComponentType } from "react";
 import invariant from "tiny-invariant";
 import {
   createPaneFocusContextValue,
@@ -10,6 +10,11 @@ import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
+import {
+  clearActivePaneFindPaneId,
+  createPaneFindPaneId,
+  setActivePaneFindPaneId,
+} from "@/panels/pane-find-registry";
 
 export interface WorkspacePaneContentModel {
   key: string;
@@ -19,6 +24,7 @@ export interface WorkspacePaneContentModel {
 
 export interface BuildWorkspacePaneContentModelInput {
   tab: WorkspaceTabDescriptor;
+  paneId?: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
@@ -30,6 +36,7 @@ export interface BuildWorkspacePaneContentModelInput {
 
 export function buildWorkspacePaneContentModel({
   tab,
+  paneId,
   normalizedServerId,
   normalizedWorkspaceId,
   onOpenTab,
@@ -41,12 +48,20 @@ export function buildWorkspacePaneContentModel({
   ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.kind);
   invariant(registration, `No panel registration for kind: ${tab.kind}`);
+  const paneInstanceId = paneId
+    ? createPaneFindPaneId({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+        paneId,
+      })
+    : null;
   return {
     key: `${normalizedServerId}:${normalizedWorkspaceId}:${tab.tabId}`,
     Component: registration.component,
     paneContextValue: {
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
+      paneInstanceId,
       tabId: tab.tabId,
       target: tab.target,
       openTab: onOpenTab,
@@ -81,6 +96,16 @@ export function WorkspacePaneContent({
       }),
     [isPaneFocused, isWorkspaceFocused, onFocusPane],
   );
+  useEffect(() => {
+    if (!paneContextValue.paneInstanceId || !isWorkspaceFocused || !isPaneFocused) {
+      return;
+    }
+    const paneInstanceId = paneContextValue.paneInstanceId;
+    setActivePaneFindPaneId(paneInstanceId);
+    return () => {
+      clearActivePaneFindPaneId(paneInstanceId);
+    };
+  }, [isPaneFocused, isWorkspaceFocused, paneContextValue.paneInstanceId]);
 
   return (
     <PaneProvider value={paneContextValue}>

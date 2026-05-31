@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 type EventHandler = (payload: unknown) => void;
+type BrowserFindAction = "clearSelection" | "keepSelection" | "activateSelection";
+
+interface BrowserFoundInPageResult {
+  requestId: number;
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+}
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
@@ -69,5 +77,31 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
     clearPartition: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:clear-partition", browserId),
+    findInPage: (
+      browserId: string,
+      text: string,
+      options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean },
+    ) => ipcRenderer.invoke("paseo:browser:find-in-page", browserId, text, options),
+    stopFindInPage: (browserId: string, action: BrowserFindAction) =>
+      ipcRenderer.invoke("paseo:browser:stop-find-in-page", browserId, action),
+    onFoundInPage: (
+      browserId: string,
+      listener: (result: BrowserFoundInPageResult) => void,
+    ): (() => void) => {
+      const ipcListener = (
+        _ipcEvent: Electron.IpcRendererEvent,
+        payload: BrowserFoundInPageResult & { browserId?: unknown },
+      ) => {
+        if (payload?.browserId !== browserId) {
+          return;
+        }
+        const { browserId: _browserId, ...result } = payload;
+        listener(result);
+      };
+      ipcRenderer.on("paseo:event:browser-found-in-page", ipcListener);
+      return () => {
+        ipcRenderer.removeListener("paseo:event:browser-found-in-page", ipcListener);
+      };
+    },
   },
 });

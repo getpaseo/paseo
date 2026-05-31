@@ -20,6 +20,7 @@ export type KeyboardActionId =
   | "agent.new"
   | "workspace.tab.new"
   | "workspace.tab.close.current"
+  | "workspace.find.open"
   | "workspace.tab.navigate.index"
   | "workspace.tab.navigate.relative"
   | "workspace.pane.split.right"

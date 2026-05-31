@@ -6,6 +6,7 @@ import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 export interface PaneContextValue {
   serverId: string;
   workspaceId: string;
+  paneInstanceId: string | null;
   tabId: string;
   target: WorkspaceTabTarget;
   openTab: (target: WorkspaceTabTarget) => void;

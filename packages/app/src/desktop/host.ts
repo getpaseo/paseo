@@ -92,10 +92,35 @@ export interface DesktopBrowserShortcutEvent {
   action: "focus-url";
 }
 
+export interface DesktopBrowserFindOptions {
+  forward?: boolean;
+  findNext?: boolean;
+  matchCase?: boolean;
+}
+
+export type DesktopBrowserFindAction = "clearSelection" | "keepSelection" | "activateSelection";
+
+export interface DesktopBrowserFoundInPageResult {
+  requestId?: number;
+  activeMatchOrdinal?: number;
+  matches?: number;
+  finalUpdate?: boolean;
+}
+
 export interface DesktopBrowserBridge {
   setWorkspaceActiveBrowser?: (browserId: string | null) => Promise<void>;
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearPartition?: (browserId: string) => Promise<void>;
+  findInPage: (
+    browserId: string,
+    text: string,
+    options?: DesktopBrowserFindOptions,
+  ) => Promise<number | null> | number | null;
+  stopFindInPage: (browserId: string, action: DesktopBrowserFindAction) => Promise<void> | void;
+  onFoundInPage: (
+    browserId: string,
+    listener: (result: DesktopBrowserFoundInPageResult) => void,
+  ) => Promise<() => void> | (() => void);
 }
 
 export interface DesktopInvokeBridge {
