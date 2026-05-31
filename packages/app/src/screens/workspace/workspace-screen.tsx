@@ -795,7 +795,11 @@ function useStableTabDescriptorMap(tabDescriptors: WorkspaceTabDescriptor[]) {
   return tabDescriptorMap;
 }
 
-export function WorkspaceScreen({ serverId, workspaceId, isRouteFocused }: WorkspaceScreenProps) {
+export const WorkspaceScreen = memo(function WorkspaceScreen({
+  serverId,
+  workspaceId,
+  isRouteFocused,
+}: WorkspaceScreenProps) {
   const navigationFocused = useIsFocused();
   const effectiveRouteFocused = isRouteFocused ?? navigationFocused;
 
@@ -808,7 +812,7 @@ export function WorkspaceScreen({ serverId, workspaceId, isRouteFocused }: Works
       />
     </ExplorerSidebarAnimationProvider>
   );
-}
+});
 
 interface UseCloseTabsResult {
   closingTabIds: Set<string>;
