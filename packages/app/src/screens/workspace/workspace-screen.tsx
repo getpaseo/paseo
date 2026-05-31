@@ -744,6 +744,31 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
   );
 });
 
+interface MobileExplorerOpenGestureSurfaceProps {
+  children: ReactNode;
+  onOpenExplorer: () => void;
+}
+
+function MobileExplorerOpenGestureSurface({
+  children,
+  onOpenExplorer,
+}: MobileExplorerOpenGestureSurfaceProps) {
+  const canOpenExplorerFromAgentView = usePanelStore(
+    (state) =>
+      state.mobileView === "agent" && !selectIsFileExplorerOpen(state, { isCompact: true }),
+  );
+  const explorerOpenGesture = useExplorerOpenGesture({
+    enabled: canOpenExplorerFromAgentView,
+    onOpen: onOpenExplorer,
+  });
+
+  return (
+    <GestureDetector gesture={explorerOpenGesture} touchAction={COMPACT_WEB_GESTURE_TOUCH_ACTION}>
+      <View style={styles.content}>{children}</View>
+    </GestureDetector>
+  );
+}
+
 function useStableTabDescriptorMap(tabDescriptors: WorkspaceTabDescriptor[]) {
   const cacheRef = useRef(new Map<string, WorkspaceTabDescriptor>());
   const tabDescriptorMap = useMemo(() => {
@@ -1657,10 +1682,6 @@ function WorkspaceScreenContent({
   const isExplorerOpen = usePanelStore((state) =>
     selectIsFileExplorerOpen(state, { isCompact: isMobile }),
   );
-  const canOpenExplorerFromAgentView = usePanelStore(
-    (state) =>
-      state.mobileView === "agent" && !selectIsFileExplorerOpen(state, { isCompact: true }),
-  );
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const toggleFileExplorerForCheckout = usePanelStore(
     (state) => state.toggleFileExplorerForCheckout,
@@ -1711,11 +1732,6 @@ function WorkspaceScreenContent({
     () => ({ expanded: isExplorerOpen }),
     [isExplorerOpen],
   );
-
-  const explorerOpenGesture = useExplorerOpenGesture({
-    enabled: isMobile && canOpenExplorerFromAgentView,
-    onOpen: openExplorerForWorkspace,
-  });
 
   useEffect(() => {
     if (!isRouteFocused || isWeb || !isExplorerOpen) {
@@ -3369,12 +3385,9 @@ function WorkspaceScreenContent({
 
       <View style={styles.centerContent}>
         {isMobile ? (
-          <GestureDetector
-            gesture={explorerOpenGesture}
-            touchAction={COMPACT_WEB_GESTURE_TOUCH_ACTION}
-          >
-            <View style={styles.content}>{content}</View>
-          </GestureDetector>
+          <MobileExplorerOpenGestureSurface onOpenExplorer={openExplorerForWorkspace}>
+            {content}
+          </MobileExplorerOpenGestureSurface>
         ) : (
           <View style={styles.content}>{desktopContent}</View>
         )}
