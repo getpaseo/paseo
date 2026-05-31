@@ -1,19 +1,11 @@
 import type { Logger } from "pino";
 
 import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { AgentManager, ManagedAgent, StartAgentRunOptions } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 
-export type AgentRunController = Pick<
-  AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
->;
-
-export interface StartAgentRunOptions {
-  replaceRunning?: boolean;
-  runOptions?: AgentRunOptions;
-}
+export type AgentRunController = Pick<AgentManager, "getAgent" | "startAgentRun">;
 
 export function startAgentRun(
   agentManager: AgentRunController,
@@ -35,23 +27,17 @@ export function startAgentRun(
     },
     "agent.session.start_stream.request",
   );
-  // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
-  // in-flight turn — replaceAgentRun would interrupt the running turn. The
-  // intercept lives at this layer so it covers every prompt entrypoint.
-  if (agentManager.tryRunOutOfBand(agentId, prompt)) {
+
+  const result = agentManager.startAgentRun(agentId, prompt, options);
+  if (result.outOfBand) {
     return { outOfBand: true };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const runOptions = options?.runOptions;
-  const iterator = shouldReplace
-    ? agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
+  const iterator = result.events;
   logger.trace(
     {
       agentId,
       provider: snapshot?.provider,
       providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-      shouldReplace,
     },
     "agent.session.start_stream.iterator_returned",
   );

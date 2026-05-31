@@ -1700,6 +1700,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       attachments?: AgentAttachment[],
     ) => {
       const messageId = generateMessageId();
+      const targetAgent = useSessionStore.getState().sessions[serverId]?.agents?.get(agentId);
+      const isSteering =
+        targetAgent?.status === "running" && targetAgent.capabilities.supportsSteering === true;
       const userMessage: StreamItem = {
         kind: "user_message",
         id: messageId,
@@ -1708,6 +1711,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         optimistic: true,
         ...(images && images.length > 0 ? { images } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(isSteering ? { deliveryHint: "steering" as const } : {}),
       };
 
       // Append to head if streaming (keeps the user message with the current

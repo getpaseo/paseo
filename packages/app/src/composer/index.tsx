@@ -1070,6 +1070,9 @@ export function Composer({
         setHead: (updater) => setAgentStreamHead(serverId, updater),
         setTail: (updater) => setAgentStreamTail(serverId, updater),
       };
+      const targetAgent = useSessionStore.getState().sessions[serverId]?.agents?.get(targetAgentId);
+      const isSteering =
+        targetAgent?.status === "running" && targetAgent.capabilities.supportsSteering === true;
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
@@ -1077,6 +1080,7 @@ export function Composer({
         attachments: sendAttachments,
         encodeImages,
         stream,
+        ...(isSteering ? { deliveryHint: "steering" as const } : {}),
       });
       onAttentionPromptSend?.();
     };

@@ -63,6 +63,7 @@ type CodexTestSession = AgentSession & {
   connected: boolean;
   currentThreadId: string | null;
   activeForegroundTurnId: string | null;
+  activeAppServerTurnId: string | null;
   client: CodexClientLike | null;
 };
 
@@ -99,6 +100,7 @@ function createSession(
   session.connected = true;
   session.currentThreadId = "test-thread";
   session.activeForegroundTurnId = "test-turn";
+  session.activeAppServerTurnId = "test-turn";
   return session;
 }
 
@@ -393,6 +395,12 @@ describe("Codex app-server provider", () => {
         approvalsReviewer: "auto_review",
       }),
     );
+  });
+
+  test("advertises steering support for app-server sessions", () => {
+    const session = createSession();
+
+    expect(session.capabilities.supportsSteering).toBe(true);
   });
 
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
@@ -877,6 +885,161 @@ describe("Codex app-server provider", () => {
           additionalProperties: false,
         },
       }),
+    );
+  });
+
+  test("steers against the app-server turn id returned by turn/start", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return { turn: { id: "app-server-turn-from-start" } };
+      }
+      if (method === "turn/steer") {
+        return { turnId: "app-server-turn-from-start" };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    const started = await session.startTurn("Start the turn");
+    expect(started.turnId).not.toBe("app-server-turn-from-start");
+
+    await session.steerTurn!("Steer the active turn");
+
+    expect(request).toHaveBeenCalledWith(
+      "turn/steer",
+      expect.objectContaining({
+        expectedTurnId: "app-server-turn-from-start",
+      }),
+    );
+  });
+
+  test("waits for the app-server turn id before steering Codex", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      if (method === "turn/steer") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Start the turn");
+    await expect(session.steerTurn!("Too early")).rejects.toThrow(
+      "Cannot steer Codex turn without an active app-server turn",
+    );
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "app-server-turn-from-notification" },
+    });
+
+    await session.steerTurn!("Steer after notification");
+
+    expect(request).toHaveBeenCalledWith(
+      "turn/steer",
+      expect.objectContaining({
+        expectedTurnId: "app-server-turn-from-notification",
+      }),
+    );
+  });
+
+  test("sends turn/steer with thread id, built input, and active foreground turn id", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "turn/steer") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = createStub<CodexClientLike>({ request });
+    session.currentThreadId = "thread-for-steer";
+    session.activeForegroundTurnId = "paseo-foreground-turn-for-steer";
+    session.activeAppServerTurnId = "app-server-turn-for-steer";
+
+    await session.steerTurn!("Use this guidance next.");
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith("turn/steer", {
+      threadId: "thread-for-steer",
+      expectedTurnId: "app-server-turn-for-steer",
+      input: [
+        {
+          type: "text",
+          text: "Use this guidance next.",
+          text_elements: [],
+        },
+      ],
+    });
+  });
+
+  test("does not start a new turn when steering Codex", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "turn/steer") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.steerTurn!("Keep going with this constraint.");
+
+    expect(request.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+  });
+
+  test("fails Codex steering without an initialized client", async () => {
+    const session = createSession();
+    session.client = null;
+    session.connected = true;
+
+    await expect(session.steerTurn!("hello")).rejects.toThrow("Codex client not initialized");
+  });
+
+  test("fails Codex steering without a current thread", async () => {
+    const session = createSession();
+    session.currentThreadId = null;
+    session.client = createStub<CodexClientLike>({
+      request: vi.fn(async () => ({})),
+    });
+
+    await expect(session.steerTurn!("hello")).rejects.toThrow(
+      "Cannot steer Codex turn without an active thread",
+    );
+  });
+
+  test("fails Codex steering without an active foreground turn", async () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: vi.fn(async () => ({})),
+    });
+
+    await expect(session.steerTurn!("hello")).rejects.toThrow(
+      "Cannot steer Codex turn without an active foreground turn",
+    );
+  });
+
+  test("fails Codex steering without an active app-server turn id", async () => {
+    const session = createSession();
+    session.activeAppServerTurnId = null;
+    session.client = createStub<CodexClientLike>({
+      request: vi.fn(async () => ({})),
+    });
+
+    await expect(session.steerTurn!("hello")).rejects.toThrow(
+      "Cannot steer Codex turn without an active app-server turn",
     );
   });
 

@@ -417,6 +417,44 @@ describe("dispatchComposerAgentMessage", () => {
     expect(client.calls[0]?.options.images).toEqual([]);
   });
 
+  it("attaches a steering deliveryHint to the optimistic user_message when provided", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "steer this",
+      attachments: [],
+      encodeImages: passthroughEncodeImages,
+      stream,
+      deliveryHint: "steering",
+    });
+
+    const tail = stream.tail.get("agent");
+    expect(tail).toHaveLength(1);
+    const userMessage = tail?.[0] as Extract<StreamItem, { kind: "user_message" }>;
+    expect(userMessage.deliveryHint).toBe("steering");
+  });
+
+  it("omits deliveryHint when none is supplied (no marker for non-steering sends)", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "no steering",
+      attachments: [],
+      encodeImages: passthroughEncodeImages,
+      stream,
+    });
+
+    const tail = stream.tail.get("agent");
+    const userMessage = tail?.[0] as Extract<StreamItem, { kind: "user_message" }>;
+    expect(userMessage.deliveryHint).toBeUndefined();
+  });
+
   it("serializes browser_element workspace attachments as text attachments at the wire boundary", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();

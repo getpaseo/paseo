@@ -8,6 +8,7 @@ import type {
   AgentPermissionResponse,
 } from "./agent-sdk-types.js";
 import type { AgentStreamEvent } from "../messages.js";
+import type { StartAgentRunOptions, StartAgentRunResult } from "./agent-manager.js";
 import { respondToAgentPermission } from "./permission-response.js";
 
 class FakePermissionAgentManager {
@@ -60,6 +61,21 @@ class FakePermissionAgentManager {
   ): AsyncGenerator<AgentStreamEvent> {
     this.replacementRuns.push({ agentId, prompt, options });
     return emptyAgentStream();
+  }
+
+  startAgentRun(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: StartAgentRunOptions,
+  ): StartAgentRunResult {
+    if (this.tryRunOutOfBand()) {
+      return { outOfBand: true };
+    }
+    const shouldReplace = Boolean(options?.replaceRunning && this.hasInFlightRun());
+    const events = shouldReplace
+      ? this.replaceAgentRun(agentId, prompt, options?.runOptions)
+      : this.streamAgent(agentId, prompt, options?.runOptions);
+    return { outOfBand: false, events };
   }
 }
 

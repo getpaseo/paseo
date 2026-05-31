@@ -18,6 +18,7 @@ import type {
   AgentLaunchContext,
   AgentProvider,
   AgentPersistenceHandle,
+  AgentPromptInput,
   AgentRunResult,
   AgentSession,
   AgentSessionConfig,
@@ -3008,6 +3009,314 @@ test("replaceAgentRun does not emit idle or resolve waiters between interrupted 
   await firstRunDrain;
   await secondRunDrain;
   unsubscribe();
+});
+
+test("startAgentRun applies the replace-vs-stream policy in AgentManager", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-policy-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000126",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  const replacementEvents = (async function* replacementEvents() {})();
+  const streamEvents = (async function* streamEvents() {})();
+  const hasInFlightRunSpy = vi.spyOn(manager, "hasInFlightRun").mockReturnValue(true);
+  const replaceAgentRunSpy = vi
+    .spyOn(manager, "replaceAgentRun")
+    .mockReturnValue(replacementEvents);
+  const streamAgentSpy = vi.spyOn(manager, "streamAgent").mockReturnValue(streamEvents);
+
+  const replacement = manager.startAgentRun(snapshot.id, "replace me", {
+    replaceRunning: true,
+  });
+
+  expect(replacement).toEqual({ outOfBand: false, events: replacementEvents });
+  expect(hasInFlightRunSpy).toHaveBeenCalledWith(snapshot.id);
+  expect(replaceAgentRunSpy).toHaveBeenCalledWith(snapshot.id, "replace me", undefined);
+  expect(streamAgentSpy).not.toHaveBeenCalled();
+
+  replaceAgentRunSpy.mockClear();
+  streamAgentSpy.mockClear();
+
+  const streamed = manager.startAgentRun(snapshot.id, "stream me", {
+    replaceRunning: false,
+  });
+
+  expect(streamed).toEqual({ outOfBand: false, events: streamEvents });
+  expect(streamAgentSpy).toHaveBeenCalledWith(snapshot.id, "stream me", undefined);
+  expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+});
+
+test("startAgentRun steers a running foreground turn when the provider supports steering", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-run-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const allowFirstRunToEnd = deferred<void>();
+  const steeredPrompts: AgentPromptInput[] = [];
+  let capturedSession: SteerableSession | null = null;
+
+  const steeringCapabilities = {
+    ...TEST_CAPABILITIES,
+    supportsSteering: true,
+  } as const;
+
+  class SteerableSession implements AgentSession {
+    readonly provider = "codex" as const;
+    readonly capabilities = steeringCapabilities;
+    readonly id = randomUUID();
+    readonly interrupt = vi.fn(async () => undefined);
+    private subscribers = new Set<(event: AgentStreamEvent) => void>();
+    private turnIdCounter = 0;
+
+    async run(): Promise<AgentRunResult> {
+      return {
+        sessionId: this.id,
+        finalText: "",
+        timeline: [],
+      };
+    }
+
+    async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `turn-${++this.turnIdCounter}`;
+      void (async () => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        await allowFirstRunToEnd.promise;
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      })();
+      return { turnId };
+    }
+
+    async steerTurn(prompt: AgentPromptInput): Promise<void> {
+      steeredPrompts.push(prompt);
+    }
+
+    subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+      this.subscribers.add(callback);
+      return () => {
+        this.subscribers.delete(callback);
+      };
+    }
+
+    private pushEvent(event: AgentStreamEvent): void {
+      for (const callback of this.subscribers) {
+        callback(event);
+      }
+    }
+
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+    async getRuntimeInfo() {
+      return { provider: this.provider, sessionId: this.id, model: null, modeId: null };
+    }
+    async getAvailableModes() {
+      return [];
+    }
+    async getCurrentMode() {
+      return null;
+    }
+    async setMode(): Promise<void> {}
+    getPendingPermissions() {
+      return [];
+    }
+    async respondToPermission(): Promise<void> {}
+    describePersistence() {
+      return { provider: this.provider, sessionId: this.id };
+    }
+    async close(): Promise<void> {}
+  }
+
+  class SteerableClient extends TestAgentClient {
+    readonly capabilities = steeringCapabilities;
+
+    override async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new SteerableSession();
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new SteerableClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000127",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  const firstRun = manager.streamAgent(snapshot.id, "first run");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // Drain the original foreground run.
+    }
+  })();
+
+  await manager.waitForAgentRunStart(snapshot.id);
+
+  const steered = manager.startAgentRun(snapshot.id, "steer this", {
+    replaceRunning: true,
+  });
+  expect(steered.outOfBand).toBe(false);
+  if (!steered.outOfBand) {
+    for await (const _event of steered.events) {
+      // Steering produces no foreground stream events.
+    }
+  }
+
+  expect(steeredPrompts).toEqual(["steer this"]);
+  expect(capturedSession?.interrupt).not.toHaveBeenCalled();
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("running");
+
+  allowFirstRunToEnd.resolve();
+  await firstRunDrain;
+});
+
+test("startAgentRun replaces a running foreground turn when steering is unsupported", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unsupported-steer-run-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const allowFirstRunToCancel = deferred<void>();
+  const allowSecondRunToEnd = deferred<void>();
+  let startTurnCount = 0;
+  let interruptCount = 0;
+
+  class UnsupportedSteeringSession implements AgentSession {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+    readonly id = randomUUID();
+    private subscribers = new Set<(event: AgentStreamEvent) => void>();
+
+    async run(): Promise<AgentRunResult> {
+      return {
+        sessionId: this.id,
+        finalText: "",
+        timeline: [],
+      };
+    }
+
+    async startTurn(): Promise<{ turnId: string }> {
+      startTurnCount += 1;
+      const turnId = `turn-${startTurnCount}`;
+      const turnNumber = startTurnCount;
+      void (async () => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        if (turnNumber === 1) {
+          await allowFirstRunToCancel.promise;
+          this.pushEvent({
+            type: "turn_canceled",
+            provider: this.provider,
+            reason: "interrupted",
+            turnId,
+          });
+          return;
+        }
+        await allowSecondRunToEnd.promise;
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      })();
+      return { turnId };
+    }
+
+    subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+      this.subscribers.add(callback);
+      return () => {
+        this.subscribers.delete(callback);
+      };
+    }
+
+    private pushEvent(event: AgentStreamEvent): void {
+      for (const callback of this.subscribers) {
+        callback(event);
+      }
+    }
+
+    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+    async getRuntimeInfo() {
+      return { provider: this.provider, sessionId: this.id, model: null, modeId: null };
+    }
+    async getAvailableModes() {
+      return [];
+    }
+    async getCurrentMode() {
+      return null;
+    }
+    async setMode(): Promise<void> {}
+    getPendingPermissions() {
+      return [];
+    }
+    async respondToPermission(): Promise<void> {}
+    describePersistence() {
+      return { provider: this.provider, sessionId: this.id };
+    }
+    async interrupt(): Promise<void> {
+      interruptCount += 1;
+      allowFirstRunToCancel.resolve();
+    }
+    async close(): Promise<void> {}
+  }
+
+  class UnsupportedSteeringClient extends TestAgentClient {
+    override async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+      return new UnsupportedSteeringSession();
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new UnsupportedSteeringClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000128",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  const firstRun = manager.streamAgent(snapshot.id, "first run");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // Drain the original foreground run.
+    }
+  })();
+
+  await manager.waitForAgentRunStart(snapshot.id);
+
+  const replacement = manager.startAgentRun(snapshot.id, "replace this", {
+    replaceRunning: true,
+  });
+  expect(replacement.outOfBand).toBe(false);
+  const replacementDrain =
+    replacement.outOfBand === false
+      ? (async () => {
+          for await (const _event of replacement.events) {
+            // Drain the replacement foreground run.
+          }
+        })()
+      : Promise.resolve();
+
+  await manager.waitForAgentRunStart(snapshot.id);
+  expect(interruptCount).toBe(1);
+  expect(startTurnCount).toBe(2);
+
+  allowSecondRunToEnd.resolve();
+  await firstRunDrain;
+  await replacementDrain;
 });
 
 test("replaceAgentRun stays running when a stale old terminal arrives before the replacement turn is current", async () => {

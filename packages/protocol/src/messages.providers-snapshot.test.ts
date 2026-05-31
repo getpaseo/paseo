@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  AgentSnapshotPayloadSchema,
   GetProvidersSnapshotResponseMessageSchema,
   ProviderSnapshotEntrySchema,
   ProvidersSnapshotUpdateMessageSchema,
@@ -14,6 +15,34 @@ describe("provider snapshot message schemas", () => {
     });
 
     expect(parsed.enabled).toBe(true);
+  });
+
+  test("defaults missing agent capability steering support to false", () => {
+    const parsed = AgentSnapshotPayloadSchema.parse({
+      id: "agent-1",
+      provider: "codex",
+      cwd: "/tmp/repo",
+      model: null,
+      createdAt: "2026-04-24T00:00:00.000Z",
+      updatedAt: "2026-04-24T00:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: false,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+    });
+
+    expect(parsed.capabilities.supportsSteering).toBe(false);
   });
 
   test("preserves disabled provider snapshot entries", () => {

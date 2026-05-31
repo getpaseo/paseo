@@ -205,6 +205,15 @@ export interface WaitForAgentStartOptions {
   signal?: AbortSignal;
 }
 
+export interface StartAgentRunOptions {
+  replaceRunning?: boolean;
+  runOptions?: AgentRunOptions;
+}
+
+export type StartAgentRunResult =
+  | { outOfBand: true }
+  | { outOfBand: false; events: AsyncGenerator<AgentStreamEvent> };
+
 type AttentionState =
   | { requiresAttention: false }
   | {
@@ -1480,6 +1489,55 @@ export class AgentManager {
       }
     })();
     return true;
+  }
+
+  startAgentRun(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: StartAgentRunOptions,
+  ): StartAgentRunResult {
+    // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
+    // in-flight turn. Keeping this policy here makes every send surface share
+    // the same replace-vs-stream decision.
+    if (this.tryRunOutOfBand(agentId, prompt)) {
+      return { outOfBand: true };
+    }
+
+    const shouldReplace = Boolean(options?.replaceRunning && this.hasInFlightRun(agentId));
+    const runOptions = options?.runOptions;
+    if (shouldReplace && this.canSteerActiveForegroundRun(agentId)) {
+      const events = this.steerAgentRun(agentId, prompt, runOptions);
+      return { outOfBand: false, events };
+    }
+
+    const events = shouldReplace
+      ? this.replaceAgentRun(agentId, prompt, runOptions)
+      : this.streamAgent(agentId, prompt, runOptions);
+    return { outOfBand: false, events };
+  }
+
+  private canSteerActiveForegroundRun(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    return Boolean(
+      agent?.activeForegroundTurnId &&
+      agent.capabilities.supportsSteering === true &&
+      agent.session.steerTurn,
+    );
+  }
+
+  private async *steerAgentRun(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (!agent.session.steerTurn) {
+      throw new Error(`Agent ${agentId} does not support steering`);
+    }
+    await agent.session.steerTurn(prompt, options);
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+    yield* [];
   }
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {

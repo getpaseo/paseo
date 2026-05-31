@@ -765,6 +765,52 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(message.timestamp.getTime(), optimisticTimestamp.getTime());
   });
 
+  it("preserves optimistic steering deliveryHint when authoritative user message arrives", () => {
+    const messageId = "msg-user-steering";
+    const initialState: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: messageId,
+        text: "Steer to a different approach",
+        timestamp: new Date("2025-01-01T11:10:00Z"),
+        deliveryHint: "steering",
+      },
+    ];
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "user_message",
+        text: "Steer to a different approach",
+        messageId,
+      },
+    };
+
+    const state = reduceStreamUpdate(initialState, event, new Date("2025-01-01T11:10:01Z"));
+    const message = state.find((item) => item.kind === "user_message");
+
+    assert.ok(message);
+    assert.strictEqual(message.deliveryHint, "steering");
+  });
+
+  it("does not invent a deliveryHint for canonical user messages without prior optimistic state", () => {
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "user_message",
+        text: "Hello there",
+        messageId: "canonical-only",
+      },
+    };
+
+    const state = reduceStreamUpdate([], event, new Date("2025-01-01T11:11:00Z"));
+    const message = state.find((item) => item.kind === "user_message");
+
+    assert.ok(message);
+    assert.strictEqual(message.deliveryHint, undefined);
+  });
+
   it("keeps canonical assistant/user/assistant order during replay", () => {
     const state: StreamItem[] = [
       {

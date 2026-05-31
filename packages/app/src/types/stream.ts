@@ -54,6 +54,8 @@ export type StreamItem =
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
+export type UserMessageDeliveryHint = "steering";
+
 export interface UserMessageItem {
   kind: "user_message";
   id: string;
@@ -62,6 +64,13 @@ export interface UserMessageItem {
   optimistic?: true;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
+  /**
+   * Local-only marker set when this user message was sent optimistically
+   * while the agent was running and the provider supports steering. Never
+   * sent or received over the wire — preserved across canonical replays so
+   * the UI can keep showing the marker.
+   */
+  deliveryHint?: UserMessageDeliveryHint;
 }
 
 export interface OptimisticUserMessageInput {
@@ -70,6 +79,7 @@ export interface OptimisticUserMessageInput {
   timestamp: Date;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
+  deliveryHint?: UserMessageDeliveryHint;
 }
 
 export type OptimisticUserMessagePlacement = "tail" | "active-head";
@@ -213,6 +223,7 @@ function buildUserMessageItem(input: {
       ...(input.optimistic.attachments && input.optimistic.attachments.length > 0
         ? { attachments: input.optimistic.attachments }
         : {}),
+      ...(input.optimistic.deliveryHint ? { deliveryHint: input.optimistic.deliveryHint } : {}),
     };
   }
 
@@ -235,6 +246,7 @@ export function buildOptimisticUserMessage(input: OptimisticUserMessageInput): U
     ...(input.attachments && input.attachments.length > 0
       ? { attachments: input.attachments }
       : {}),
+    ...(input.deliveryHint ? { deliveryHint: input.deliveryHint } : {}),
   };
 }
 
