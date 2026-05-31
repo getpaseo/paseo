@@ -3,6 +3,7 @@ import { Text, View, type TextStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
 import { isWeb } from "@/constants/platform";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { DEFAULT_MONO_FONT_STACK } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -149,6 +150,7 @@ export function AppearancePreview({ overrides }: AppearancePreviewProps) {
     <View
       accessibilityRole="image"
       accessibilityLabel="Live preview of the syntax theme and code font"
+      dataSet={CODE_SURFACE_DATASET}
       style={styles.card}
     >
       {rows.map((row) => (
