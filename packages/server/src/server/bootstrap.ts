@@ -9,6 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
+import { PASEO_HEALTH_HEADER, PASEO_HEALTH_HEADER_VALUE } from "./daemon-port-conflict.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -420,6 +421,7 @@ export async function createPaseoDaemon(
 
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
+    res.setHeader(PASEO_HEALTH_HEADER, PASEO_HEALTH_HEADER_VALUE);
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 

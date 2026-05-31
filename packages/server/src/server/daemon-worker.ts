@@ -1,5 +1,6 @@
-import { createPaseoDaemon } from "./bootstrap.js";
+import { createPaseoDaemon, parseListenString } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
+import { isAddressInUseError, isHealthyPaseoDaemonAt } from "./daemon-port-conflict.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
@@ -163,6 +164,26 @@ async function main() {
     throw err;
   }
 
+  // When the listen address is already taken by a healthy Paseo daemon, yield
+  // to it instead of treating EADDRINUSE as a crash. Exiting 0 lets the
+  // supervisor stop cleanly (no restart) while the existing daemon keeps serving.
+  const yieldToHealthyDaemonOnPort = async (): Promise<boolean> => {
+    const target = parseListenString(config.listen);
+    if (target.type !== "tcp") {
+      return false;
+    }
+    const probeHost = target.host === "0.0.0.0" || target.host === "::" ? "127.0.0.1" : target.host;
+    if (!(await isHealthyPaseoDaemonAt(probeHost, target.port))) {
+      return false;
+    }
+    logger.warn(
+      { listen: config.listen },
+      "Listen address already owned by a healthy Paseo daemon; exiting without restart so the existing daemon keeps serving",
+    );
+    exitAfterPinoFlush(0);
+    return true;
+  };
+
   try {
     await daemon.start();
     const listenTarget = daemon.getListenTarget();
@@ -175,6 +196,9 @@ async function main() {
     }
     sendSupervisorLifecycleMessage({ type: "paseo:ready", listen });
   } catch (err) {
+    if (isAddressInUseError(err) && (await yieldToHealthyDaemonOnPort())) {
+      return;
+    }
     logger.fatal({ err }, "Daemon failed to start listening");
     throw err;
   }
@@ -196,8 +220,8 @@ async function main() {
 // Give pino async streams a moment to flush the fatal log entry to daemon.log
 // before the process exits. Without this, the last few entries that explain
 // why the daemon crashed can be lost.
-function exitAfterPinoFlush(): void {
-  setTimeout(() => process.exit(1), 200);
+function exitAfterPinoFlush(code = 1): void {
+  setTimeout(() => process.exit(code), 200);
 }
 
 main().catch((err) => {
