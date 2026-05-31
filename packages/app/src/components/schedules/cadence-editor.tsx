@@ -178,6 +178,7 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
         value={mode}
         onValueChange={handleModeChange}
         options={MODE_OPTIONS}
+        style={styles.modeControl}
         testID="cadence-mode"
       />
 
@@ -298,6 +299,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   intervalInput: {
     width: 88,
+    minHeight: 44,
     backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[4],
@@ -306,9 +308,15 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     fontSize: theme.fontSize.base,
   },
+  // Both cadence segmented controls hug their options and stand at the form's
+  // field height, so the interval row reads as input + toggle rather than a
+  // full-width track with the controls floating inside it.
+  modeControl: {
+    alignSelf: "flex-start",
+    height: 44,
+  },
   unitControl: {
-    flex: 1,
-    minWidth: 0,
+    height: 44,
   },
   presetRow: {
     flexDirection: "row",
@@ -316,9 +324,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   chip: {
+    minHeight: 32,
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.full,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
@@ -339,6 +350,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.accentForeground,
   },
   cronInput: {
+    minHeight: 44,
     backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[4],

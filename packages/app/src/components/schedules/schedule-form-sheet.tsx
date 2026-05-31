@@ -18,7 +18,7 @@ import {
   AdaptiveTextInput,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -100,16 +100,43 @@ export function ScheduleFormSheet({
     selectedMode,
     selectedThinkingOptionId,
     workingDir,
-    setProviderFromUser,
     setProviderAndModelFromUser,
     setModeFromUser,
     setWorkingDirFromUser,
-    providerDefinitions,
     modeOptions,
     modelSelectorProviders,
     isAllModelsLoading,
     persistFormPreferences,
   } = form;
+
+  // One nested control selects provider → model (the draft screen's selector).
+  // Render it as a full-width field that leads with the provider glyph and mutes
+  // its placeholder, matching the working-directory field.
+  const renderModelTrigger = useCallback(
+    ({
+      selectedModelLabel,
+      disabled,
+      isOpen,
+      hovered,
+      pressed,
+    }: {
+      selectedModelLabel: string;
+      onPress: () => void;
+      disabled: boolean;
+      isOpen: boolean;
+      hovered: boolean;
+      pressed: boolean;
+    }): ReactNode => (
+      <ModelTrigger
+        label={selectedModelLabel}
+        provider={selectedProvider}
+        disabled={disabled}
+        active={hovered || pressed || isOpen}
+        isPlaceholder={selectedModelLabel === "Select model"}
+      />
+    ),
+    [selectedProvider],
+  );
 
   const { createSchedule, updateSchedule, isCreating, isUpdating } = useScheduleMutations({
     serverId,
@@ -262,6 +289,7 @@ export function ScheduleFormSheet({
       visible={visible}
       onClose={onClose}
       footer={footer}
+      webScrollbar
       testID="schedule-form-sheet"
     >
       <View style={styles.field}>
@@ -297,12 +325,6 @@ export function ScheduleFormSheet({
         />
       </View>
 
-      <ProviderField
-        providerDefinitions={providerDefinitions}
-        selectedProvider={selectedProvider}
-        onSelect={setProviderFromUser}
-      />
-
       <View style={styles.field}>
         <Text style={styles.label}>Model</Text>
         <CombinedModelSelector
@@ -312,6 +334,7 @@ export function ScheduleFormSheet({
           onSelect={setProviderAndModelFromUser}
           isLoading={isAllModelsLoading}
           renderTrigger={renderModelTrigger}
+          triggerFill
           serverId={serverId}
         />
       </View>
@@ -354,121 +377,6 @@ export function ScheduleFormSheet({
 
       {submitError ? <Text style={styles.error}>{submitError}</Text> : null}
     </AdaptiveModalSheet>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Provider field — Combobox over providerDefinitions, each option led by its
-// provider glyph. Trigger mirrors the desktop badge pattern from the composer.
-// ---------------------------------------------------------------------------
-
-function ProviderField({
-  providerDefinitions,
-  selectedProvider,
-  onSelect,
-}: {
-  providerDefinitions: { id: string; label: string }[];
-  selectedProvider: AgentProvider | null;
-  onSelect: (provider: AgentProvider) => void;
-}): ReactElement {
-  const anchorRef = useRef<View>(null);
-  const [open, setOpen] = useState(false);
-
-  const options = useMemo<ComboboxOption[]>(
-    () => providerDefinitions.map((definition) => ({ id: definition.id, label: definition.label })),
-    [providerDefinitions],
-  );
-
-  const selectedLabel =
-    providerDefinitions.find((definition) => definition.id === selectedProvider)?.label ??
-    "Select provider";
-
-  const handleSelect = useCallback(
-    (id: string) => {
-      onSelect(id as AgentProvider);
-      setOpen(false);
-    },
-    [onSelect],
-  );
-
-  const handlePress = useCallback(() => {
-    setOpen((current) => !current);
-  }, []);
-
-  const renderProviderOption = useCallback(
-    (args: { option: ComboboxOption; selected: boolean; active: boolean; onPress: () => void }) => (
-      <ProviderComboboxOption
-        option={args.option}
-        selected={args.selected}
-        active={args.active}
-        onPress={args.onPress}
-      />
-    ),
-    [],
-  );
-
-  const triggerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.selectTrigger,
-      (Boolean(hovered) || pressed || open) && styles.selectTriggerActive,
-    ],
-    [open],
-  );
-
-  return (
-    <View style={styles.field}>
-      <Text style={styles.label}>Provider</Text>
-      <View ref={anchorRef} collapsable={false}>
-        <Pressable
-          onPress={handlePress}
-          style={triggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={`Select provider (${selectedLabel})`}
-          testID="schedule-provider-trigger"
-        >
-          <ProviderGlyph provider={selectedProvider} />
-          <Text style={styles.selectTriggerText} numberOfLines={1}>
-            {selectedLabel}
-          </Text>
-          <ChevronDown size={16} color={styles.chevron.color} />
-        </Pressable>
-      </View>
-      <Combobox
-        options={options}
-        value={selectedProvider ?? ""}
-        onSelect={handleSelect}
-        searchable={options.length > 6}
-        title="Select provider"
-        open={open}
-        onOpenChange={setOpen}
-        anchorRef={anchorRef}
-        renderOption={renderProviderOption}
-        desktopPlacement="bottom-start"
-      />
-    </View>
-  );
-}
-
-function ProviderComboboxOption({
-  option,
-  selected,
-  active,
-  onPress,
-}: {
-  option: ComboboxOption;
-  selected: boolean;
-  active: boolean;
-  onPress: () => void;
-}): ReactElement {
-  const leadingSlot = useMemo(() => <ProviderGlyph provider={option.id} />, [option.id]);
-  return (
-    <ComboboxItem
-      label={option.label}
-      selected={selected}
-      active={active}
-      onPress={onPress}
-      leadingSlot={leadingSlot}
-    />
   );
 }
 
@@ -676,50 +584,41 @@ function ProviderGlyph({ provider }: { provider: string | null }): ReactElement 
   return <Icon size={16} color={styles.providerIcon.color} />;
 }
 
-function renderModelTrigger({
-  selectedModelLabel,
-  onPress,
-  disabled,
-}: {
-  selectedModelLabel: string;
-  onPress: () => void;
-  disabled: boolean;
-  isOpen: boolean;
-}): ReactNode {
-  return <ModelTrigger label={selectedModelLabel} onPress={onPress} disabled={disabled} />;
-}
-
+// Non-interactive field rendered inside CombinedModelSelector's trigger (with
+// triggerFill). The selector's outer Pressable owns press/hover; this leaf just
+// paints the field and reads `active` for the focus border.
 function ModelTrigger({
   label,
-  onPress,
+  provider,
   disabled,
+  active,
+  isPlaceholder,
 }: {
   label: string;
-  onPress: () => void;
+  provider: string | null;
   disabled: boolean;
+  active: boolean;
+  isPlaceholder: boolean;
 }): ReactElement {
-  const triggerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+  const containerStyle = useMemo(
+    () => [
       styles.selectTrigger,
-      (Boolean(hovered) || pressed) && styles.selectTriggerActive,
+      active && styles.selectTriggerActive,
       disabled && styles.selectTriggerDisabled,
     ],
-    [disabled],
+    [active, disabled],
   );
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={triggerStyle}
-      accessibilityRole="button"
-      accessibilityLabel={`Select model (${label})`}
-      testID="schedule-model-trigger"
-    >
-      <Text style={styles.selectTriggerText} numberOfLines={1}>
+    <View pointerEvents="none" style={containerStyle} testID="schedule-model-trigger">
+      <ProviderGlyph provider={provider} />
+      <Text
+        style={isPlaceholder ? styles.selectTriggerPlaceholder : styles.selectTriggerText}
+        numberOfLines={1}
+      >
         {label}
       </Text>
       <ChevronDown size={16} color={styles.chevron.color} />
-    </Pressable>
+    </View>
   );
 }
 
