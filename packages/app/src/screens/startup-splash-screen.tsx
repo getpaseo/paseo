@@ -20,6 +20,7 @@ import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/d
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isNative, isWeb } from "@/constants/platform";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 
 interface StartupSplashScreenProps {
   bootstrapState?: {
@@ -416,7 +417,9 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
             GitHub and include the logs below.
           </Text>
 
-          <Text style={styles.errorMessage}>{bootstrapState.splashError}</Text>
+          <Text dataSet={CODE_SURFACE_DATASET} style={styles.errorMessage}>
+            {bootstrapState.splashError}
+          </Text>
 
           {daemonLogs?.logPath ? <Text style={styles.logsMeta}>{daemonLogs.logPath}</Text> : null}
 
@@ -426,7 +429,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
               contentContainerStyle={styles.logsContent}
               showsVerticalScrollIndicator
             >
-              <Text selectable style={styles.logsText}>
+              <Text dataSet={CODE_SURFACE_DATASET} selectable style={styles.logsText}>
                 {logsText}
               </Text>
             </ScrollView>

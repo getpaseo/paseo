@@ -8,6 +8,7 @@ import type { HighlightToken } from "@getpaseo/highlight";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
 
 interface HighlightedCodeBlockProps {
@@ -75,6 +76,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   return (
     <View
       style={containerStyle}
+      dataSet={CODE_SURFACE_DATASET}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >

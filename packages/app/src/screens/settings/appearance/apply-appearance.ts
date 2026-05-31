@@ -6,6 +6,7 @@ import {
   FONT_SIZE,
   type Theme,
 } from "@/styles/theme";
+import { applyRootUiFont } from "./apply-root-font";
 
 // All six registered Unistyles keys — pinned literal (greppable, type-checked).
 // The `as const` element types are exactly `keyof UnistylesThemes`, so each key
@@ -97,4 +98,8 @@ export function applyAppearance(input: AppearanceInput): void {
       };
     });
   }
+
+  // Web: apply the UI font app-wide (RN-web stamps a default font on every text
+  // element, so it can't be done through the theme alone). No-op on native.
+  applyRootUiFont(ui);
 }

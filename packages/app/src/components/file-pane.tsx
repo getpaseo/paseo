@@ -18,6 +18,7 @@ import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
@@ -295,7 +296,7 @@ function FilePreviewBody({
       lineNumber: index + 1,
     }));
     const codeLines = (
-      <View>
+      <View dataSet={CODE_SURFACE_DATASET}>
         {keyedLines.map(({ key, tokens, lineNumber }) => (
           <CodeLine
             key={key}

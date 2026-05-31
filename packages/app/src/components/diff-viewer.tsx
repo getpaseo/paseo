@@ -8,6 +8,7 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isWeb } from "@/constants/platform";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
@@ -164,7 +165,7 @@ export function DiffViewer({
   }
 
   const lines = (
-    <View style={linesContainerStyle}>
+    <View style={linesContainerStyle} dataSet={CODE_SURFACE_DATASET}>
       {keyedDiffLines.map(({ key, line }) => (
         <DiffLineRow key={key} line={line} />
       ))}

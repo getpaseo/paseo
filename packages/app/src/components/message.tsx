@@ -62,6 +62,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -2071,7 +2072,7 @@ export const ActivityLog = memo(function ActivityLog({
           </View>
         </View>
         {isExpanded && metadata && (
-          <View style={activityLogStylesheet.metadataContainer}>
+          <View style={activityLogStylesheet.metadataContainer} dataSet={CODE_SURFACE_DATASET}>
             <Text style={activityLogStylesheet.metadataText}>
               {JSON.stringify(metadata, null, 2)}
             </Text>

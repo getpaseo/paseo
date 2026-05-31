@@ -57,6 +57,7 @@ import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { DiffScroll } from "@/components/diff-scroll";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { shouldAnchorHeaderBeforeCollapse } from "@/git/diff-scroll";
 import {
@@ -954,7 +955,7 @@ function DiffFileBody({
         if (layout === "split") {
           const rows = buildSplitDiffRows(file);
           return (
-            <View style={DIFF_CONTENT_SPLIT_ROW_STYLE}>
+            <View style={DIFF_CONTENT_SPLIT_ROW_STYLE} dataSet={CODE_SURFACE_DATASET}>
               <SplitDiffColumn
                 rows={rows}
                 side="left"
@@ -978,7 +979,7 @@ function DiffFileBody({
 
         if (wrapLines) {
           return (
-            <View style={styles.diffContent}>
+            <View style={styles.diffContent} dataSet={CODE_SURFACE_DATASET}>
               <View style={styles.linesContainer}>
                 {computedLines.map(({ line, lineNumber, key, reviewTarget }) => (
                   <View key={key}>
@@ -1005,7 +1006,7 @@ function DiffFileBody({
         const textViewportWidth =
           scrollViewWidth > 0 ? scrollViewWidth : Math.max(0, bodyWidth - gutterWidth);
         return (
-          <View style={DIFF_CONTENT_ROW_STYLE}>
+          <View style={DIFF_CONTENT_ROW_STYLE} dataSet={CODE_SURFACE_DATASET}>
             <View style={styles.gutterColumn}>
               {computedLines.map(({ line, lineNumber, key, reviewTarget }) => (
                 <View key={key}>

@@ -13,6 +13,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import type { Theme } from "@/styles/theme";
 import {
   useWorkspaceSetupStore,
@@ -349,7 +350,7 @@ function SetupCommandRow({
               accessible
               accessibilityLabel="Workspace setup log"
             >
-              <Text selectable style={styles.logText}>
+              <Text selectable dataSet={CODE_SURFACE_DATASET} style={styles.logText}>
                 {processedLog}
               </Text>
             </ScrollView>
@@ -403,7 +404,7 @@ function StandaloneLogView({ commands, log }: { commands: SetupCommand[]; log: s
       accessible
       accessibilityLabel="Workspace setup log"
     >
-      <Text selectable style={styles.logText}>
+      <Text selectable dataSet={CODE_SURFACE_DATASET} style={styles.logText}>
         {log}
       </Text>
     </ScrollView>

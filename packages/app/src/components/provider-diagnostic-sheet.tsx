@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -51,7 +52,12 @@ function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
       <Text style={sheetStyles.modelTitle} numberOfLines={1}>
         {model.label}
       </Text>
-      <Text style={sheetStyles.monoHint} numberOfLines={1} selectable>
+      <Text
+        style={sheetStyles.monoHint}
+        numberOfLines={1}
+        selectable
+        dataSet={CODE_SURFACE_DATASET}
+      >
         {model.id}
       </Text>
       {model.description ? (
@@ -88,7 +94,12 @@ function CustomModelRow({
       <Text style={sheetStyles.modelTitle} numberOfLines={1}>
         {model.label}
       </Text>
-      <Text style={sheetStyles.monoHint} numberOfLines={1} selectable>
+      <Text
+        style={sheetStyles.monoHint}
+        numberOfLines={1}
+        selectable
+        dataSet={CODE_SURFACE_DATASET}
+      >
         {model.id}
       </Text>
       <View style={sheetStyles.modelRowFiller} />
@@ -306,7 +317,7 @@ function DiagnosticSubSheet({
     body = (
       <ScrollView style={sheetStyles.codeScroll} contentContainerStyle={sheetStyles.codeContent}>
         <ScrollView horizontal showsHorizontalScrollIndicator>
-          <Text style={sheetStyles.codeText} selectable>
+          <Text style={sheetStyles.codeText} selectable dataSet={CODE_SURFACE_DATASET}>
             {diagnostic}
           </Text>
         </ScrollView>
