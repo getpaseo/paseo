@@ -144,7 +144,7 @@ describe("terminal resize reflow repro (Paseo terminal)", () => {
   it("snapshot-restored rows stay frozen at the snapshot width after the terminal grows", async () => {
     await page.viewport(1600, 700);
     const m = mount(560, 360); // ~70 cols
-    await waitFor(() => m.terminal.cols > 0);
+    await waitFor(() => m.terminal.cols > 40);
     const narrowCols = m.terminal.cols;
 
     // 1) Mid-stream snapshot arrives (server overflowed 256KB). It carries the
