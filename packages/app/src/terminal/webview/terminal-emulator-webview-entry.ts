@@ -18,6 +18,8 @@ interface MountMessage {
   initialSnapshot: TerminalState | null;
   scrollbackLines: number;
   theme: ITheme;
+  fontFamily?: string;
+  fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
   swipeGesturesEnabled: boolean;
 }
@@ -33,6 +35,7 @@ type InboundMessage =
   | { type: "resize"; streamKey: string; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
+  | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
@@ -227,6 +230,8 @@ class TerminalWebViewBridge {
       MountMessage | { type: "unmount" } | { type: "resolveLocalFileLinkResponse" }
     >,
   ): void {
+    if (this.receiveConfigurationMessage(message)) return;
+
     switch (message.type) {
       case "writeOutput":
         this.runtime?.write({ data: encodeTerminalOutput(message.text) });
@@ -246,19 +251,34 @@ class TerminalWebViewBridge {
       case "resize":
         this.runtime?.resize({ force: true, shouldClaim: message.shouldClaim !== false });
         break;
+    }
+  }
+
+  private receiveConfigurationMessage(
+    message: Exclude<
+      InboundMessage,
+      MountMessage | { type: "unmount" } | { type: "resolveLocalFileLinkResponse" }
+    >,
+  ): boolean {
+    switch (message.type) {
       case "setTheme":
         this.applyThemeBackground(message.theme);
         this.runtime?.setTheme({ theme: message.theme });
-        break;
+        return true;
       case "setScrollback":
         this.runtime?.setScrollback({ lines: message.lines });
-        break;
+        return true;
+      case "setFont":
+        this.runtime?.setFont({ fontFamily: message.fontFamily, fontSize: message.fontSize });
+        return true;
       case "setPendingModifiers":
         this.runtime?.setPendingModifiers({ pendingModifiers: message.pendingModifiers });
-        break;
+        return true;
       case "setSwipeGesturesEnabled":
         this.swipeGesturesEnabled = message.enabled;
-        break;
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -300,6 +320,8 @@ class TerminalWebViewBridge {
       initialSnapshot: message.initialSnapshot,
       scrollback: message.scrollbackLines,
       theme: message.theme,
+      fontFamily: message.fontFamily,
+      fontSize: message.fontSize,
     });
     sendToNative({ type: "rendererReady", streamKey: message.streamKey, isReady: true });
   }

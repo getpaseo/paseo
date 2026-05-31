@@ -45,6 +45,8 @@ interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  fontFamily?: string;
+  fontSize?: number;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
@@ -81,6 +83,8 @@ type BridgeInboundMessage =
       initialSnapshot: TerminalState | null;
       scrollbackLines: number;
       theme: ITheme;
+      fontFamily?: string;
+      fontSize?: number;
       pendingModifiers: PendingTerminalModifiers;
       swipeGesturesEnabled: boolean;
     }
@@ -93,6 +97,7 @@ type BridgeInboundMessage =
   | { type: "resize"; streamKey: string; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
+  | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
@@ -160,6 +165,8 @@ function createMountMessage(input: {
   initialSnapshot: TerminalState | null;
   scrollbackLines: number;
   theme: ITheme;
+  fontFamily?: string;
+  fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
   swipeGesturesEnabled: boolean;
 }): BridgeInboundMessage {
@@ -169,6 +176,8 @@ function createMountMessage(input: {
     initialSnapshot: input.initialSnapshot,
     scrollbackLines: input.scrollbackLines,
     theme: input.theme,
+    fontFamily: input.fontFamily,
+    fontSize: input.fontSize,
     pendingModifiers: input.pendingModifiers,
     swipeGesturesEnabled: input.swipeGesturesEnabled,
   };
@@ -184,6 +193,8 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  fontFamily,
+  fontSize,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
@@ -218,6 +229,8 @@ export default function TerminalEmulator({
     initialSnapshot,
     scrollbackLines,
     theme: xtermTheme,
+    fontFamily,
+    fontSize,
     pendingModifiers,
     swipeGesturesEnabled,
   });
@@ -226,6 +239,8 @@ export default function TerminalEmulator({
     initialSnapshot,
     scrollbackLines,
     theme: xtermTheme,
+    fontFamily,
+    fontSize,
     pendingModifiers,
     swipeGesturesEnabled,
   };
@@ -392,6 +407,11 @@ export default function TerminalEmulator({
     if (!mountedStreamKeyRef.current) return;
     sendToWebView({ type: "setScrollback", streamKey, lines: scrollbackLines });
   }, [scrollbackLines, sendToWebView, streamKey]);
+
+  useEffect(() => {
+    if (!mountedStreamKeyRef.current) return;
+    sendToWebView({ type: "setFont", streamKey, fontFamily, fontSize });
+  }, [fontFamily, fontSize, sendToWebView, streamKey]);
 
   useEffect(() => {
     if (!mountedStreamKeyRef.current) return;

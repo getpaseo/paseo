@@ -86,7 +86,7 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown; scrollback?: number };
+  options?: { theme?: unknown; scrollback?: number; fontFamily?: string; fontSize?: number };
   rows?: number;
   cols?: number;
 }
@@ -381,6 +381,31 @@ describe("terminal-emulator-runtime", () => {
     runtime.setScrollback({ lines: 42_000 });
 
     expect(terminal.options?.scrollback).toBe(42_000);
+    expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("updates terminal font without remounting", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const fitAndEmitResize = vi.fn();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { fontFamily: "before", fontSize: 13 },
+      rows: 12,
+      cols: 40,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
+      fitAndEmitResize;
+
+    runtime.setFont({ fontFamily: "  Menlo  ", fontSize: 18 });
+
+    expect(terminal.options?.fontFamily).toBe("Menlo");
+    expect(terminal.options?.fontSize).toBe(18);
+    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true });
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 

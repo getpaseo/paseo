@@ -173,6 +173,10 @@ export function TerminalPane({
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const terminalFontFamily = useMemo(() => {
+    const trimmed = settings.monoFontFamily.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -763,6 +767,8 @@ export function TerminalPane({
               testId="terminal-surface"
               xtermTheme={xtermTheme}
               scrollbackLines={settings.terminalScrollbackLines}
+              fontFamily={terminalFontFamily}
+              fontSize={settings.codeFontSize}
               swipeGesturesEnabled={swipeGesturesEnabled}
               initialSnapshot={initialSnapshot}
               onRendererReadyChange={handleRendererReadyChange}

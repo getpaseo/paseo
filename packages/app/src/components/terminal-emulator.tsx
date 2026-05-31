@@ -134,6 +134,8 @@ interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  fontFamily?: string;
+  fontSize?: number;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
@@ -215,6 +217,8 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  fontFamily,
+  fontSize,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
@@ -236,8 +240,12 @@ export default function TerminalEmulator({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalEmulatorRuntime | null>(null);
   const mountedThemeRef = useRef<ITheme>(xtermTheme);
+  const fontFamilyRef = useRef(fontFamily);
+  const fontSizeRef = useRef(fontSize);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
+  fontFamilyRef.current = fontFamily;
+  fontSizeRef.current = fontSize;
   const viewportRef = useRef<HTMLElement | null>(null);
   const dragStartOffsetRef = useRef(0);
   const dragStartClientYRef = useRef(0);
@@ -486,6 +494,8 @@ export default function TerminalEmulator({
       initialSnapshot: initialSnapshotRef.current,
       scrollback: scrollbackLinesRef.current,
       theme: mountedThemeRef.current,
+      fontFamily: fontFamilyRef.current,
+      fontSize: fontSizeRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
 
@@ -524,6 +534,10 @@ export default function TerminalEmulator({
   useEffect(() => {
     runtimeRef.current?.setPendingModifiers({ pendingModifiers });
   }, [pendingModifiers]);
+
+  useEffect(() => {
+    runtimeRef.current?.setFont({ fontFamily, fontSize });
+  }, [fontFamily, fontSize]);
 
   useEffect(() => {
     if (focusRequestToken <= 0) {

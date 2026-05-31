@@ -37,6 +37,8 @@ export interface TerminalEmulatorRuntimeMountInput {
   initialSnapshot: TerminalState | null;
   scrollback: number;
   theme: ITheme;
+  fontFamily?: string;
+  fontSize?: number;
 }
 
 export interface TerminalEmulatorRuntimeCallbacks {
@@ -107,6 +109,7 @@ const isAppleHandheld =
   });
 
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
+const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
@@ -146,6 +149,17 @@ const DEFAULT_TERMINAL_FONT_FAMILY = [
   "'Liberation Mono'",
   "monospace",
 ].join(", ");
+
+function resolveTerminalFontFamily(fontFamily: string | undefined): string {
+  const trimmed = fontFamily?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_TERMINAL_FONT_FAMILY;
+}
+
+function resolveTerminalFontSize(fontSize: number | undefined): number {
+  return typeof fontSize === "number" && Number.isFinite(fontSize) && fontSize > 0
+    ? fontSize
+    : DEFAULT_TERMINAL_FONT_SIZE;
+}
 
 function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
   return {
@@ -210,8 +224,8 @@ export class TerminalEmulatorRuntime {
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "bar",
-      fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
-      fontSize: 13,
+      fontFamily: resolveTerminalFontFamily(input.fontFamily),
+      fontSize: resolveTerminalFontSize(input.fontSize),
       lineHeight: 1.0,
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
@@ -665,6 +679,24 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
+    this.refreshVisibleRows();
+  }
+
+  setFont(input: { fontFamily?: string; fontSize?: number }): void {
+    const terminal = this.terminal;
+    if (!terminal) {
+      return;
+    }
+
+    try {
+      terminal.options.fontFamily = resolveTerminalFontFamily(input.fontFamily);
+      terminal.options.fontSize = resolveTerminalFontSize(input.fontSize);
+    } catch {
+      // ignore
+      return;
+    }
+
+    this.fitAndEmitResize?.({ force: true });
     this.refreshVisibleRows();
   }
 
