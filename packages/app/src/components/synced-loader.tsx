@@ -1,12 +1,5 @@
 import { View } from "react-native";
-import Animated, {
-  Easing,
-  makeMutable,
-  type SharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
+import Animated, { makeMutable, type SharedValue, useAnimatedStyle } from "react-native-reanimated";
 import { useEffect, useMemo } from "react";
 
 const SYNCED_LOADER_DURATION_MS = 950;
@@ -17,44 +10,64 @@ const GRID_COLUMNS = 2;
 const SNAKE_SEGMENT_OFFSETS = [0, -1, -2, -3, -4] as const;
 const SNAKE_OPACITIES = [1, 0.78, 0.56, 0.34, 0] as const;
 const DOT_KEYS = Array.from({ length: DOT_COUNT }, (_, i) => `dot-${i}`);
-const sharedStepProgress = makeMutable(0);
-let sharedLoopStarted = false;
+// The snake's head only moves at discrete dot boundaries — SpinnerDot opacity is
+// a step function of Math.floor(progress) — so the loader needs ~DOT_COUNT
+// updates per cycle, not one per display frame.
+const SYNCED_LOADER_STEP_MS = SYNCED_LOADER_DURATION_MS / DOT_COUNT;
 
-function ensureSharedStepLoopStarted(): void {
-  if (sharedLoopStarted) {
+const sharedStepProgress = makeMutable(0);
+let sharedStepTimer: ReturnType<typeof setInterval> | null = null;
+let mountedLoaderCount = 0;
+
+// Head index derived from a fixed epoch, so every loader stays in phase across
+// mounts (and clients/restarts) without any running animation to read from.
+function currentSnakeStep(): number {
+  const elapsedMs = (Date.now() - SYNCED_LOADER_EPOCH_MS) % SYNCED_LOADER_DURATION_MS;
+  return Math.floor((elapsedMs / SYNCED_LOADER_DURATION_MS) * DOT_COUNT) % DOT_COUNT;
+}
+
+// Drive the head with a low-rate timer instead of a per-frame withTiming/
+// withRepeat. With no active animation Reanimated idles between ticks and the
+// compositor stops producing frames; the old infinite loop pinned the display
+// at its refresh rate for the app's whole life, even after every loader left.
+function startSharedStepLoop(): void {
+  if (sharedStepTimer !== null) {
     return;
   }
+  sharedStepProgress.value = currentSnakeStep();
+  sharedStepTimer = setInterval(() => {
+    sharedStepProgress.value = currentSnakeStep();
+  }, SYNCED_LOADER_STEP_MS);
+}
 
-  sharedLoopStarted = true;
-  const elapsedMs = (Date.now() - SYNCED_LOADER_EPOCH_MS) % SYNCED_LOADER_DURATION_MS;
-  sharedStepProgress.value = (elapsedMs / SYNCED_LOADER_DURATION_MS) * DOT_COUNT;
-  sharedStepProgress.value = withTiming(
-    DOT_COUNT,
-    {
-      duration: Math.max(1, Math.round(SYNCED_LOADER_DURATION_MS - elapsedMs)),
-      easing: Easing.linear,
-    },
-    (finished) => {
-      if (!finished) {
-        sharedLoopStarted = false;
-        return;
-      }
-      sharedStepProgress.value = 0;
-      sharedStepProgress.value = withRepeat(
-        withTiming(DOT_COUNT, {
-          duration: SYNCED_LOADER_DURATION_MS,
-          easing: Easing.linear,
-        }),
-        -1,
-        false,
-      );
-    },
-  );
+function stopSharedStepLoop(): void {
+  if (sharedStepTimer !== null) {
+    clearInterval(sharedStepTimer);
+    sharedStepTimer = null;
+  }
+}
+
+// Reference-count mounted loaders so the timer runs only while at least one
+// working indicator is on screen; the last unmount stops it and lets the UI
+// thread go idle.
+function acquireSharedStepLoop(): void {
+  mountedLoaderCount += 1;
+  if (mountedLoaderCount === 1) {
+    startSharedStepLoop();
+  }
+}
+
+function releaseSharedStepLoop(): void {
+  mountedLoaderCount = Math.max(0, mountedLoaderCount - 1);
+  if (mountedLoaderCount === 0) {
+    stopSharedStepLoop();
+  }
 }
 
 export function SyncedLoader({ size = 10, color }: { size?: number; color: string }) {
   useEffect(() => {
-    ensureSharedStepLoopStarted();
+    acquireSharedStepLoop();
+    return () => releaseSharedStepLoop();
   }, []);
 
   const animatedStyle = useAnimatedStyle(() => ({
