@@ -2,6 +2,12 @@ import { fork, spawn, type ChildProcess } from "child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { createStream as createRotatingFileStream } from "rotating-file-stream";
+import {
+  DEFAULT_RESTART_POLICY,
+  isCrash,
+  planWorkerExit,
+  type RestartPolicy,
+} from "./restart-policy.js";
 
 interface SupervisorLogFileOptions {
   path: string;
@@ -38,6 +44,7 @@ interface SupervisorOptions {
   } | null;
   onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
   restartOnCrash?: boolean;
+  restartPolicy?: RestartPolicy;
   onSupervisorExit?: () => Promise<void> | void;
   logFile?: SupervisorLogFileOptions;
 }
@@ -98,6 +105,7 @@ function createSupervisorLogStream(options: SupervisorLogFileOptions | undefined
 
 export function runSupervisor(options: SupervisorOptions): void {
   const restartOnCrash = options.restartOnCrash ?? false;
+  const restartPolicy = options.restartPolicy ?? DEFAULT_RESTART_POLICY;
   const workerArgs = options.workerArgs ?? process.argv.slice(2);
   const workerEnv = options.workerEnv ?? process.env;
   const workerExecArgv = options.workerExecArgv ?? ["--import", "tsx"];
@@ -107,6 +115,8 @@ export function runSupervisor(options: SupervisorOptions): void {
   let restarting = false;
   let shuttingDown = false;
   let exiting = false;
+  let crashTimestamps: number[] = [];
+  let pendingRestart: ReturnType<typeof setTimeout> | null = null;
   const logStream = createSupervisorLogStream(options.logFile);
 
   const writeDurableChunk = (chunk: string | Buffer): void => {
@@ -227,30 +237,61 @@ export function runSupervisor(options: SupervisorOptions): void {
       const exitDescriptor = describeExit(code, signal);
       writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
 
-      if (shuttingDown) {
-        log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
-        exitSupervisor(0);
-        return;
+      const plan = planWorkerExit({
+        shuttingDown,
+        restarting,
+        restartOnCrash,
+        code,
+        signal,
+        crashTimestamps,
+        now: Date.now(),
+        policy: restartPolicy,
+      });
+
+      switch (plan.action) {
+        case "shutdown-exit":
+          log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
+          exitSupervisor(0);
+          return;
+        case "restart": {
+          restarting = false;
+          crashTimestamps = plan.crashTimestamps;
+          log(
+            isCrash(restartOnCrash, code, signal)
+              ? `Worker crashed (${exitDescriptor}). Restarting worker in ${plan.delayMs}ms...`
+              : `Worker exited (${exitDescriptor}). Restarting worker...`,
+          );
+          scheduleRestart(plan.delayMs);
+          return;
+        }
+        case "give-up":
+          restarting = false;
+          crashTimestamps = plan.crashTimestamps;
+          log(
+            `Worker crash-looped (${plan.crashTimestamps.length} crashes within ${restartPolicy.windowMs}ms). Supervisor giving up.`,
+          );
+          exitSupervisor(plan.code);
+          return;
+        case "exit":
+          log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
+          exitSupervisor(plan.code);
+          return;
       }
-
-      const crashed =
-        restartOnCrash &&
-        ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
-
-      if (restarting || crashed) {
-        restarting = false;
-        log(
-          crashed
-            ? `Worker crashed (${exitDescriptor}). Restarting worker...`
-            : `Worker exited (${exitDescriptor}). Restarting worker...`,
-        );
-        spawnWorker();
-        return;
-      }
-
-      log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
-      exitSupervisor(typeof code === "number" ? code : 1);
     });
+  };
+
+  const scheduleRestart = (delayMs: number): void => {
+    if (delayMs <= 0) {
+      spawnWorker();
+      return;
+    }
+    pendingRestart = setTimeout(() => {
+      pendingRestart = null;
+      if (shuttingDown) {
+        return;
+      }
+      spawnWorker();
+    }, delayMs);
   };
 
   const requestRestart = (reason: string) => {
@@ -271,6 +312,14 @@ export function runSupervisor(options: SupervisorOptions): void {
     restarting = false;
     writeLifecycleLog("Supervisor shutdown requested", { reason });
     log(`${reason}. Stopping worker...`);
+    if (pendingRestart) {
+      // A crashed worker was waiting to respawn — cancel the timer and exit
+      // cleanly, since no worker is currently live to SIGTERM.
+      clearTimeout(pendingRestart);
+      pendingRestart = null;
+      exitSupervisor(0);
+      return;
+    }
     if (!child) {
       exitSupervisor(0);
       return;

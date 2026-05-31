@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { describe, expect, test } from "vitest";
 import { isPlatform } from "../src/test-utils/platform.js";
+import type { RestartPolicy } from "./restart-policy.js";
 import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -13,6 +14,7 @@ const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url)
 async function runSupervisorFixture(options: {
   workerSource: string;
   restartOnCrash?: boolean;
+  restartPolicy?: RestartPolicy;
 }): Promise<{
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -26,6 +28,9 @@ async function runSupervisorFixture(options: {
   const runnerPath = path.join(tempDir, "runner.mjs");
 
   await writeFile(workerPath, options.workerSource);
+  const restartPolicySource = options.restartPolicy
+    ? `restartPolicy: ${JSON.stringify(options.restartPolicy)},`
+    : "";
   await writeFile(
     runnerPath,
     `
@@ -39,6 +44,7 @@ async function runSupervisorFixture(options: {
         workerEnv: process.env,
         workerExecArgv: [],
         restartOnCrash: ${JSON.stringify(options.restartOnCrash ?? false)},
+        ${restartPolicySource}
         logFile: {
           path: ${JSON.stringify(logPath)},
           rotate: { maxSize: "1m", maxFiles: 2 },
@@ -186,4 +192,30 @@ describe("supervisor durable logging", () => {
       expect(result.log).toContain("Supervisor exiting");
     },
   );
+});
+
+describe("supervisor crash restart policy", () => {
+  test("backs off and gives up after repeated worker crashes", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: "process.exit(1);",
+      restartOnCrash: true,
+      restartPolicy: {
+        maxRestarts: 2,
+        windowMs: 5_000,
+        baseDelayMs: 10,
+        maxDelayMs: 20,
+      },
+    });
+
+    const restartLogs =
+      result.stderr.match(/Worker crashed \(code 1\)\. Restarting worker in \d+ms/g) ?? [];
+
+    expect(result.code).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(restartLogs).toHaveLength(2);
+    expect(result.stderr).toContain(
+      "Worker crash-looped (3 crashes within 5000ms). Supervisor giving up.",
+    );
+    expect(result.log).toContain('"msg":"Worker crash-looped');
+  });
 });

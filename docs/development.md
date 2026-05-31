@@ -140,6 +140,12 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+The supervisor also bounds crash restarts. When the daemon worker exits
+non-zero repeatedly, the supervisor applies exponential backoff and then exits
+instead of respawning forever. Look for `Worker crash-looped` in
+`daemon.log` when a desktop or CLI-managed daemon stops after repeated startup
+failures such as a stale port owner.
+
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
