@@ -51,17 +51,17 @@ const CodeHorizontalScrollView = isWeb ? RNScrollView : GHScrollView;
 // otherwise accumulate differently between the two columns per platform.
 const codeLineHeight = (fontSizeCode: number) => Math.round(fontSizeCode * 1.45);
 
-// Above this size a Markdown file is NOT rendered. The rendered path emits one
-// UITextView per block (paragraph / heading / list item); a large document
-// spawns hundreds and iOS OOM-kills the app. Instead it falls back to a plain
-// <Text> source view — a single lightweight UILabel that the system pages
-// efficiently and never OOMs. Selection degrades to whole-content copy there.
-// Conservative on purpose: prose docs trip this well before the OOM cliff.
-const LARGE_MARKDOWN_CHARS = 15_000;
+// Above this size a text file (Markdown or source code) is shown as a plain
+// source view instead of its rich view. The rich paths mount one native view
+// per unit — one UITextView per Markdown block, or one token + gutter view per
+// highlighted code line — so a large file spawns hundreds/thousands and iOS
+// OOM-kills the app. The plain fallback is a single UITextView for the whole
+// file (still word-selectable). Conservative; trips before the OOM cliff.
+const LARGE_TEXT_CHARS = 15_000;
 // Hard cap for the plain-text fallback so a pathological multi-MB file can't
 // stall text layout; beyond this the preview shows a truncation note.
 const MAX_PLAIN_PREVIEW_CHARS = 200_000;
-// Even below LARGE_MARKDOWN_CHARS, cap how many top-level blocks the rendered
+// Even below LARGE_TEXT_CHARS, cap how many top-level blocks the rendered
 // path will mount (each ≈ one UITextView) as a second safety net.
 const MAX_MARKDOWN_TOP_LEVEL_CHILDREN = 150;
 
@@ -406,11 +406,11 @@ const codeStyles = StyleSheet.create((theme) => ({
 // raw location.lineStart, so jump-to-line still works there.
 function resolveScrollTargetLine(
   lineSelection: FileLineSelection | null,
-  isLargeMarkdown: boolean,
+  isLargeText: boolean,
   lineStart: number | undefined,
 ): number | null {
   if (lineSelection) return lineSelection.lineStart;
-  if (isLargeMarkdown && lineStart) return lineStart;
+  if (isLargeText && lineStart) return lineStart;
   return null;
 }
 
@@ -502,10 +502,11 @@ function RenderedMarkdownPreview({
   );
 }
 
-// Source-view fallback for large Markdown (see LARGE_MARKDOWN_CHARS): one
-// UITextView holding the whole file as a single attributed string. Unlike the
-// rendered path (one view per block) or the token-highlighted CodeBody (one
-// child per token), this is a single native view + one text run, so it stays
+// Source-view fallback for large text files — Markdown or code (see
+// LARGE_TEXT_CHARS): one UITextView holding the whole file as a single
+// attributed string. Unlike the rendered Markdown path (one view per block) or
+// the token-highlighted CodeBody (one child per token + one gutter view per
+// line), this is a single native view + one text run, so it stays
 // word-selectable (TextKit-paged) without the per-node OOM.
 function LargeSourcePreview({
   content,
@@ -557,16 +558,16 @@ function FilePreviewBody({
   const filePath = location.path;
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
   const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
-  // OOM from per-block UITextViews is a NATIVE concern (iOS especially; Android
-  // ReactTextViews are lighter but still real native views). Web/desktop render
-  // to the DOM, which the browser/Chromium handles fine, so only native falls
-  // back to the source view. The fallback is ONE UITextView holding the whole
-  // source as a single attributed string — still word-selectable, but without
-  // the per-block view explosion — and it also surfaces the raw Markdown (#1264).
+  // OOM from per-unit native views is a NATIVE concern (iOS especially; Android
+  // ReactTextViews are lighter but still real views). Web/desktop render to the
+  // DOM, which the browser handles fine, so only native falls back. This covers
+  // BOTH large rendered Markdown (one UITextView per block) AND large
+  // syntax-highlighted code (one token + gutter view per line) — any big text
+  // file degrades to the single-UITextView source view, which never explodes.
   const isMarkdownPath = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
-  const isLargeMarkdown =
-    isNative && isMarkdownPath && (preview?.content ?? "").length > LARGE_MARKDOWN_CHARS;
-  const isMarkdownFile = isMarkdownPath && !location.lineStart && !isLargeMarkdown;
+  const isLargeText =
+    isNative && preview?.kind === "text" && (preview?.content ?? "").length > LARGE_TEXT_CHARS;
+  const isMarkdownFile = isMarkdownPath && !location.lineStart && !isLargeText;
 
   const previewScrollRef = useRef<RNScrollView>(null);
   const webScrollbarStyle = useWebScrollbarStyle();
@@ -575,12 +576,12 @@ function FilePreviewBody({
   });
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text" || isMarkdownFile || isLargeMarkdown) {
+    if (!preview || preview.kind !== "text" || isMarkdownFile || isLargeText) {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [isMarkdownFile, isLargeMarkdown, preview, filePath]);
+  }, [isMarkdownFile, isLargeText, preview, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
@@ -616,11 +617,7 @@ function FilePreviewBody({
   // to location.lineStart there so jump-to-line still works. (The plain-text
   // body wraps, so it's an approximate offset rather than an exact row, but it
   // preserves the deep-link intent that would otherwise be silently dropped.)
-  const targetScrollLine = resolveScrollTargetLine(
-    lineSelection,
-    isLargeMarkdown,
-    location.lineStart,
-  );
+  const targetScrollLine = resolveScrollTargetLine(lineSelection, isLargeText, location.lineStart);
   useEffect(() => {
     if (!targetScrollLine) {
       return;
@@ -665,7 +662,7 @@ function FilePreviewBody({
       );
     }
 
-    if (isLargeMarkdown) {
+    if (isLargeText) {
       return (
         <LargeSourcePreview
           content={preview.content ?? ""}
