@@ -65,4 +65,8 @@ export const en = {
   },
 } as const;
 
-export type TranslationResources = typeof en;
+type WidenStringLeaves<T> = {
+  [K in keyof T]: T[K] extends string ? string : WidenStringLeaves<T[K]>;
+};
+
+export type TranslationResources = WidenStringLeaves<typeof en>;
