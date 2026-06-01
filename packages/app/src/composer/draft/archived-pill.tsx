@@ -8,13 +8,11 @@ const ThemedArchiveIcon = withUnistyles(ArchiveIcon);
 const iconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 interface ComposerArchivedSessionsPillProps {
-  count: number;
   onPress: () => void;
   disabled?: boolean;
 }
 
 export function ComposerArchivedSessionsPill({
-  count,
   onPress,
   disabled = false,
 }: ComposerArchivedSessionsPillProps) {
@@ -27,7 +25,7 @@ export function ComposerArchivedSessionsPill({
       <Pressable
         testID="composer-archived-sessions-pill"
         accessibilityRole="button"
-        accessibilityLabel={`Archived sessions (${count})`}
+        accessibilityLabel="Archived sessions"
         onPress={onPress}
         disabled={disabled}
         onHoverIn={handleHoverIn}
@@ -36,7 +34,7 @@ export function ComposerArchivedSessionsPill({
       >
         <ThemedArchiveIcon size={14} uniProps={iconColorMapping} />
         <Text style={styles.label} numberOfLines={1}>
-          {`Archived Sessions(${count})`}
+          Archived Sessions
         </Text>
       </Pressable>
     </View>

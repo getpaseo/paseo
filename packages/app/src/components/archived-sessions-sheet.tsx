@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { Inbox } from "lucide-react-native";
@@ -57,7 +57,7 @@ function ArchivedSessionRow({ agent, disabled, pending, onPress }: ArchivedSessi
   const { theme } = useUnistyles();
   const ProviderIcon = getProviderIcon(agent.provider);
   const title = getRowTitle(agent);
-  const lastActivity = formatTimeAgo(new Date(agent.lastActivityAt));
+  const lastActivity = formatTimeAgo(agent.lastActivityAt);
   const accessibilityState = useMemo(
     () => (disabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
     [disabled],
@@ -124,6 +124,15 @@ export function ArchivedSessionsSheet({
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null);
   const [errorAgentId, setErrorAgentId] = useState<string | null>(null);
 
+  // Clear transient row state when the sheet hides so a stale "Could not restore"
+  // banner doesn't greet the user on the next open.
+  useEffect(() => {
+    if (!visible) {
+      setPendingAgentId(null);
+      setErrorAgentId(null);
+    }
+  }, [visible]);
+
   const handleRestore = useCallback(
     async (agent: AggregatedAgent) => {
       if (!client || !isConnected || pendingAgentId) {
@@ -133,15 +142,23 @@ export function ArchivedSessionsSheet({
       setErrorAgentId(null);
       try {
         await client.refreshAgent(agent.id);
-        void queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) });
-        onUnarchivedAgent?.(agent.id);
-        onClose();
       } catch (error) {
         console.error("[ArchivedSessionsSheet] Failed to restore agent:", error);
         setErrorAgentId(agent.id);
-      } finally {
         setPendingAgentId(null);
+        return;
       }
+      // Restore succeeded server-side. The follow-up tab-open is best-effort —
+      // if it throws (e.g. workspace gone), log it but don't surface a restore
+      // error since the agent itself is already unarchived.
+      void queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) });
+      try {
+        onUnarchivedAgent?.(agent.id);
+      } catch (error) {
+        console.error("[ArchivedSessionsSheet] Failed to open restored agent:", error);
+      }
+      onClose();
+      setPendingAgentId(null);
     },
     [client, isConnected, onClose, onUnarchivedAgent, pendingAgentId, queryClient, serverId],
   );
