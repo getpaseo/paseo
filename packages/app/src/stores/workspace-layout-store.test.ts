@@ -387,6 +387,66 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("preserves source mode when opening the same file without a render mode", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    const firstTabId = store.openTabFocused(workspaceKey, {
+      kind: "file",
+      path: "/repo/worktree/README.md",
+      renderMode: "source",
+    });
+    const secondTabId = store.openTabFocused(workspaceKey, {
+      kind: "file",
+      path: "/repo/worktree/README.md",
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    expect(firstTabId).toBe("file_/repo/worktree/README.md");
+    expect(secondTabId).toBe(firstTabId);
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "file_/repo/worktree/README.md",
+        target: {
+          kind: "file",
+          path: "/repo/worktree/README.md",
+          renderMode: "source",
+        },
+        createdAt: expect.any(Number),
+      },
+    ]);
+  });
+
+  it("honors an explicit source render mode for an existing preview file tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    const firstTabId = store.openTabFocused(workspaceKey, {
+      kind: "file",
+      path: "/repo/worktree/README.md",
+    });
+    const secondTabId = store.openTabFocused(workspaceKey, {
+      kind: "file",
+      path: "/repo/worktree/README.md",
+      renderMode: "source",
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    expect(firstTabId).toBe("file_/repo/worktree/README.md");
+    expect(secondTabId).toBe(firstTabId);
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "file_/repo/worktree/README.md",
+        target: {
+          kind: "file",
+          path: "/repo/worktree/README.md",
+          renderMode: "source",
+        },
+        createdAt: expect.any(Number),
+      },
+    ]);
+  });
+
   it("openTabInBackground inserts a tab without stealing focus", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

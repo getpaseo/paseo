@@ -222,6 +222,10 @@ function attachParentTab(input: {
   });
 }
 
+function shouldPreserveExistingFileRenderMode(target: WorkspaceTabTargetInput): boolean {
+  return target.kind === "file" && target.renderMode == null;
+}
+
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
 ) {
@@ -244,6 +248,7 @@ export function createWorkspaceLayoutStore(
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             target: normalizedTarget,
             now: Date.now(),
+            preserveExistingFileRenderMode: shouldPreserveExistingFileRenderMode(target),
           });
 
           set((state) => ({
@@ -276,6 +281,7 @@ export function createWorkspaceLayoutStore(
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             target: normalizedTarget,
             now: Date.now(),
+            preserveExistingFileRenderMode: shouldPreserveExistingFileRenderMode(target),
           });
 
           set((state) => {
@@ -314,6 +320,7 @@ export function createWorkspaceLayoutStore(
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             target: normalizedTarget,
             now: Date.now(),
+            preserveExistingFileRenderMode: shouldPreserveExistingFileRenderMode(target),
           });
 
           set((state) => ({

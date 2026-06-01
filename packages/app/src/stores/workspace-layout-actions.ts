@@ -8,6 +8,7 @@ import {
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
 } from "@/workspace-tabs/identity";
+import { workspaceFileLocationsEqual } from "@/workspace/file-open";
 
 export interface SplitPane {
   id: string;
@@ -102,6 +103,7 @@ interface OpenTabInLayoutInput {
   layout: WorkspaceLayout;
   target: WorkspaceTabTarget;
   now: number;
+  preserveExistingFileRenderMode: boolean;
 }
 
 interface OpenTabInLayoutResult {
@@ -1072,8 +1074,17 @@ function updateExistingTabTarget(
   layout: WorkspaceLayout,
   tab: WorkspaceTab,
   target: WorkspaceTabTarget,
+  preserveExistingFileRenderMode: boolean,
 ): WorkspaceLayout {
   if (workspaceTabTargetsEqual(tab.target, target)) {
+    return layout;
+  }
+  if (
+    preserveExistingFileRenderMode &&
+    tab.target.kind === "file" &&
+    target.kind === "file" &&
+    workspaceFileLocationsEqual(tab.target, target)
+  ) {
     return layout;
   }
   return withNormalizedParentTabMap({
@@ -1090,7 +1101,12 @@ export function openTabInLayoutFocused(input: OpenTabInLayoutInput): OpenTabInLa
   const layout = asInternalLayout(input.layout);
   const existingTab = findExistingTabForTarget(layout.root, input.target);
   if (existingTab) {
-    const nextLayout = updateExistingTabTarget(input.layout, existingTab, input.target);
+    const nextLayout = updateExistingTabTarget(
+      input.layout,
+      existingTab,
+      input.target,
+      input.preserveExistingFileRenderMode,
+    );
     return {
       tabId: existingTab.tabId,
       layout:
@@ -1110,7 +1126,12 @@ export function openTabInLayoutBackground(input: OpenTabInLayoutInput): OpenTabI
   if (existingTab) {
     return {
       tabId: existingTab.tabId,
-      layout: updateExistingTabTarget(input.layout, existingTab, input.target),
+      layout: updateExistingTabTarget(
+        input.layout,
+        existingTab,
+        input.target,
+        input.preserveExistingFileRenderMode,
+      ),
     };
   }
 

@@ -5,7 +5,11 @@ import {
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
 } from "@/workspace-tabs/identity";
-import type { WorkspaceFileTabTarget, WorkspaceFileTabTargetInput } from "@/workspace/file-open";
+import {
+  workspaceFileLocationsEqual,
+  type WorkspaceFileTabTarget,
+  type WorkspaceFileTabTargetInput,
+} from "@/workspace/file-open";
 
 export interface WorkspaceDraftTabSetup {
   provider: AgentProvider;
@@ -107,19 +111,42 @@ function retargetTabAtIndex(
   return index === targetIndex ? { ...tab, target: normalizedTarget } : tab;
 }
 
+function targetsShareFileLocation(left: WorkspaceTabTarget, right: WorkspaceTabTarget): boolean {
+  return left.kind === "file" && right.kind === "file" && workspaceFileLocationsEqual(left, right);
+}
+
+function shouldPreserveExistingFileRenderMode(target: WorkspaceTabTargetInput): boolean {
+  return target.kind === "file" && target.renderMode == null;
+}
+
 function buildNextTabsForEnsure(args: {
   currentTabs: WorkspaceTab[];
   existingIndex: number;
   effectiveTabId: string;
   normalizedTarget: WorkspaceTabTarget;
   createdAt: number;
+  preserveExistingFileRenderMode: boolean;
 }): WorkspaceTab[] {
-  const { currentTabs, existingIndex, effectiveTabId, normalizedTarget, createdAt } = args;
+  const {
+    currentTabs,
+    existingIndex,
+    effectiveTabId,
+    normalizedTarget,
+    createdAt,
+    preserveExistingFileRenderMode,
+  } = args;
   if (existingIndex < 0) {
     return [...currentTabs, { tabId: effectiveTabId, target: normalizedTarget, createdAt }];
   }
   const existing = currentTabs[existingIndex];
   if (existing && workspaceTabTargetsEqual(existing.target, normalizedTarget)) {
+    return currentTabs;
+  }
+  if (
+    preserveExistingFileRenderMode &&
+    existing &&
+    targetsShareFileLocation(existing.target, normalizedTarget)
+  ) {
     return currentTabs;
   }
   return currentTabs.map((tab, index) =>
@@ -147,6 +174,7 @@ export function applyEnsureTab(
     serverId: input.serverId,
     workspaceId: input.workspaceId,
   });
+  const preserveExistingFileRenderMode = shouldPreserveExistingFileRenderMode(input.target);
   const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
   if (!key || !normalizedTarget) {
     return { state, tabId: null };
@@ -167,6 +195,7 @@ export function applyEnsureTab(
     effectiveTabId,
     normalizedTarget,
     createdAt: input.now,
+    preserveExistingFileRenderMode,
   });
 
   const uiTabsByWorkspace =

@@ -322,6 +322,77 @@ describe("workspace-tabs-store reducers", () => {
     expect(reopened.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(fileResult.tabId);
   });
 
+  it("openOrFocusTab preserves source mode when reopening the same file without a render mode", () => {
+    let state = emptyState();
+    const fileResult = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "file",
+        path: "/repo/worktree/README.md",
+        renderMode: "source",
+      },
+      now: NOW,
+    });
+    state = fileResult.state;
+
+    const reopened = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "file", path: "/repo/worktree/README.md" },
+      now: NOW,
+    });
+
+    expect(reopened.tabId).toBe(fileResult.tabId);
+    expect(reopened.state.uiTabsByWorkspace[WORKSPACE_KEY]).toEqual([
+      {
+        tabId: "file_/repo/worktree/README.md",
+        target: {
+          kind: "file",
+          path: "/repo/worktree/README.md",
+          renderMode: "source",
+        },
+        createdAt: NOW,
+      },
+    ]);
+    expect(reopened.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(fileResult.tabId);
+  });
+
+  it("openOrFocusTab honors an explicit source render mode for an existing preview file tab", () => {
+    let state = emptyState();
+    const fileResult = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "file", path: "/repo/worktree/README.md" },
+      now: NOW,
+    });
+    state = fileResult.state;
+
+    const reopened = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "file",
+        path: "/repo/worktree/README.md",
+        renderMode: "source",
+      },
+      now: NOW,
+    });
+
+    expect(reopened.tabId).toBe(fileResult.tabId);
+    expect(reopened.state.uiTabsByWorkspace[WORKSPACE_KEY]).toEqual([
+      {
+        tabId: "file_/repo/worktree/README.md",
+        target: {
+          kind: "file",
+          path: "/repo/worktree/README.md",
+          renderMode: "source",
+        },
+        createdAt: NOW,
+      },
+    ]);
+  });
+
   it("builds a deterministic setup tab keyed by workspace id", () => {
     const result = applyOpenOrFocusTab(initialWorkspaceTabsCoreState, {
       serverId: SERVER_ID,
