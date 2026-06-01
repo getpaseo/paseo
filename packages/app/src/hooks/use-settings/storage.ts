@@ -1,6 +1,7 @@
 import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
+import { parseAppLanguage, type AppLanguage } from "@/i18n/locales";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
@@ -10,7 +11,6 @@ const LEGACY_SETTINGS_KEY = "@paseo:settings";
 export type SendBehavior = "interrupt" | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
-export type AppLanguage = "system" | "en" | "zh-CN";
 
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
@@ -203,13 +203,6 @@ function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<App
     result.theme = legacy.theme;
   }
   return result;
-}
-
-function parseAppLanguage(value: unknown): AppLanguage | null {
-  if (value === "system" || value === "en" || value === "zh-CN") {
-    return value;
-  }
-  return null;
 }
 
 export function parseTerminalScrollbackLines(value: unknown): number | null {
