@@ -518,6 +518,7 @@ export async function createPaseoDaemon(
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,
+    workspaceRegistry,
     deps: {
       github,
     },
@@ -658,6 +659,7 @@ export async function createPaseoDaemon(
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
     daemonConfigStore,
+    workspaceRegistry,
     workspaceGitService,
     github,
     agentManager,
@@ -686,6 +688,7 @@ export async function createPaseoDaemon(
         providerSnapshotManager,
         github,
         workspaceGitService,
+        workspaceRegistry,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,

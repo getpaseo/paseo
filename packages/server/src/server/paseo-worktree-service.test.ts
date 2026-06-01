@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -64,6 +64,46 @@ test("creates a worktree and registers it in the source workspace project withou
     "project:remote:github.com/acme/repo",
     `workspace:${result.workspace.workspaceId}`,
   ]);
+});
+
+test("creates a worktree under the source workspace storage path", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const storagePath = path.join(tempDir, "custom-worktrees");
+  const resolvedStoragePath = path.join(
+    realpathSync(path.dirname(storagePath)),
+    path.basename(storagePath),
+  );
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: "remote:github.com/acme/repo",
+    rootPath: repoDir,
+    displayName: "acme/repo",
+  });
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: repoDir,
+    projectId: sourceProject.projectId,
+    cwd: repoDir,
+    kind: "local_checkout",
+    displayName: "main",
+    worktreeStoragePath: storagePath,
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "feature-one",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.worktree.worktreePath).toBe(path.join(resolvedStoragePath, "feature-one"));
+  expect(result.workspace.cwd).toBe(path.join(resolvedStoragePath, "feature-one"));
+  expect(result.workspace.worktreeStoragePath).toBe(storagePath);
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
@@ -536,6 +576,7 @@ function createPersistedWorkspaceRecordForTest(input: {
   cwd: string;
   kind: PersistedWorkspaceRecord["kind"];
   displayName: string;
+  worktreeStoragePath?: string | null;
 }): PersistedWorkspaceRecord {
   return {
     workspaceId: input.workspaceId,
@@ -543,6 +584,7 @@ function createPersistedWorkspaceRecordForTest(input: {
     cwd: input.cwd,
     kind: input.kind,
     displayName: input.displayName,
+    worktreeStoragePath: input.worktreeStoragePath ?? null,
     createdAt: "2026-04-22T00:00:00.000Z",
     updatedAt: "2026-04-22T00:00:00.000Z",
     archivedAt: null,

@@ -38,6 +38,7 @@ import {
   buildWorkspaceGitMetadataFromSnapshot,
   type WorkspaceGitMetadata,
 } from "./workspace-git-metadata.js";
+import type { WorkspaceRegistry } from "./workspace-registry.js";
 import { checkoutLiteFromGitSnapshot, normalizeWorkspaceId } from "./workspace-registry-model.js";
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
@@ -143,7 +144,7 @@ export interface WorkspaceGitService {
   ): Promise<WorkspaceGitStashEntry[]>;
   listWorktrees(
     cwdOrRepoRoot: string,
-    options?: WorkspaceGitReadOptions,
+    options?: WorkspaceGitReadOptions & { worktreeStoragePath?: string | null },
   ): Promise<WorkspaceGitWorktreeInfo[]>;
   getWorkspaceGitMetadata(
     cwd: string,
@@ -259,6 +260,7 @@ interface WorkspaceGitServiceDependencies {
 interface WorkspaceGitServiceOptions {
   logger: pino.Logger;
   paseoHome: string;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "list">;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
@@ -348,6 +350,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
   private readonly deps: WorkspaceGitServiceDependencies;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "list"> | null;
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -385,6 +388,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
+    this.workspaceRegistry = options.workspaceRegistry ?? null;
     this.deps = resolveWorkspaceGitServiceDeps(options.deps);
   }
 
@@ -573,14 +577,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async listWorktrees(
     cwdOrRepoRoot: string,
-    options?: WorkspaceGitReadOptions,
+    options?: WorkspaceGitReadOptions & { worktreeStoragePath?: string | null },
   ): Promise<WorkspaceGitWorktreeInfo[]> {
     const repoRoot = await this.resolveRepoRoot(cwdOrRepoRoot, options);
-    const key = JSON.stringify(["worktrees", repoRoot]);
+    const key = JSON.stringify(["worktrees", repoRoot, options?.worktreeStoragePath ?? null]);
     return this.readAuxiliaryCache(this.worktreeListCache, key, options, () =>
       this.deps.listPaseoWorktrees({
         cwd: repoRoot,
         paseoHome: this.paseoHome,
+        worktreeStoragePath: options?.worktreeStoragePath,
       }),
     );
   }
@@ -1563,10 +1568,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<CheckoutSnapshotFacts> {
     const now = this.deps.now();
     target.lastShellOutAtMs = now.getTime();
+    const previousGitHubPollKey = this.getGitHubPollKey(target);
 
     const cwd = target.cwd;
-    const previousGitHubPollKey = this.getGitHubPollKey(target);
-    const baseContext: CheckoutContext = { paseoHome: this.paseoHome, logger: this.logger };
+    const worktreesRoot = await this.resolvePersistedWorktreeStorageRoot(cwd);
+    const baseContext: CheckoutContext = {
+      paseoHome: this.paseoHome,
+      logger: this.logger,
+      ...(worktreesRoot ? { worktreesRoot } : {}),
+    };
     const facts = await this.loadCheckoutFacts(target, {
       ...baseContext,
       allowRecent: !request.force,
@@ -1832,6 +1842,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.intervalId = null;
     }
     target.workspaceKeys.clear();
+  }
+  private async resolvePersistedWorktreeStorageRoot(cwd: string): Promise<string | null> {
+    if (!this.workspaceRegistry) {
+      return null;
+    }
+    const workspaces = await this.workspaceRegistry.list();
+    const workspace = workspaces.find(
+      (record) => record.kind === "worktree" && !record.archivedAt && record.cwd === cwd,
+    );
+    return workspace?.worktreeStoragePath ?? null;
   }
 }
 

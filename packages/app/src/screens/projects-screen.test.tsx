@@ -202,6 +202,7 @@ function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceS
     workspaceKind: "directory",
     status: "done",
     currentBranch: "main",
+    worktreeStoragePath: null,
     ...overrides,
   };
 }
@@ -211,9 +212,11 @@ function hostEntry(overrides: Partial<ProjectHostEntry> = {}): ProjectHostEntry 
     serverId: "host-a",
     serverName: "alpha",
     isOnline: true,
+    workspaceId: "ws-1",
     repoRoot: "/home/me/proj",
     workspaceCount: 1,
     workspaces: [workspaceSummary()],
+    worktreeStoragePath: null,
     ...overrides,
   };
 }

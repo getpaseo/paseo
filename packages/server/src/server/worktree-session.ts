@@ -378,6 +378,7 @@ export async function handlePaseoWorktreeListRequest(
     emit: EmitSessionMessage;
     paseoHome?: string;
     workspaceGitService: WorkspaceGitService;
+    workspaceRegistry: Pick<import("./workspace-registry.js").WorkspaceRegistry, "list">;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_list_request" }>,
 ): Promise<void> {
@@ -396,9 +397,14 @@ export async function handlePaseoWorktreeListRequest(
   }
 
   try {
+    const sourceWorkspace = await findWorkspaceForWorktreeSource({
+      cwd,
+      workspaceRegistry: dependencies.workspaceRegistry,
+      workspaceGitService: dependencies.workspaceGitService,
+    });
     const worktrees = await listPaseoWorktreesCommand(
       { workspaceGitService: dependencies.workspaceGitService },
-      { cwd },
+      { cwd, worktreeStoragePath: sourceWorkspace?.worktreeStoragePath ?? null },
     );
     dependencies.emit({
       type: "paseo_worktree_list_response",
@@ -425,6 +431,27 @@ export async function handlePaseoWorktreeListRequest(
   }
 }
 
+async function findWorkspaceForWorktreeSource(options: {
+  cwd: string;
+  workspaceRegistry: Pick<import("./workspace-registry.js").WorkspaceRegistry, "list">;
+  workspaceGitService: Pick<WorkspaceGitService, "resolveRepoRoot">;
+}) {
+  const inputCwd = options.cwd;
+  let repoRoot = inputCwd;
+  try {
+    repoRoot = await options.workspaceGitService.resolveRepoRoot(inputCwd);
+  } catch {
+    repoRoot = inputCwd;
+  }
+
+  const workspaces = await options.workspaceRegistry.list();
+  return (
+    workspaces.find((workspace) => workspace.cwd === inputCwd && !workspace.archivedAt) ??
+    workspaces.find((workspace) => workspace.cwd === repoRoot && !workspace.archivedAt) ??
+    null
+  );
+}
+
 export async function handlePaseoWorktreeArchiveRequest(
   dependencies: Omit<
     ArchivePaseoWorktreeDependencies,
@@ -432,6 +459,7 @@ export async function handlePaseoWorktreeArchiveRequest(
   > & {
     emit: EmitSessionMessage;
     workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+    workspaceRegistry?: Pick<import("./workspace-registry.js").WorkspaceRegistry, "list">;
     emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
@@ -501,6 +529,7 @@ export async function handleCreatePaseoWorktreeRequest(
         refName: request.refName,
         action: request.action,
         githubPrNumber: request.githubPrNumber,
+        worktreeStoragePath: request.worktreeStoragePath,
       },
     );
 

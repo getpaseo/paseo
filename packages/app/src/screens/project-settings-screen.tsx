@@ -3,7 +3,16 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  FolderOpen,
+  MoreVertical,
+  Pencil,
+  Plus,
+  X,
+} from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { projectIconToDataUri, useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import type {
@@ -28,6 +37,8 @@ import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
+import { getIsElectron } from "@/constants/platform";
+import { pickDirectory } from "@/desktop/pick-directory";
 import { useProjects } from "@/hooks/use-projects";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -335,6 +346,7 @@ function renderContent({
       baseConfig={loadedConfig}
       revision={loadedRevision}
       repoRoot={selectedHost.repoRoot}
+      selectedHost={selectedHost}
       queryKey={queryKey}
       client={client}
       onReload={onReload}
@@ -416,6 +428,7 @@ interface ProjectConfigFormProps {
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
+  selectedHost: ProjectHostEntry;
 }
 
 function ProjectConfigForm({
@@ -425,6 +438,7 @@ function ProjectConfigForm({
   queryKey,
   client,
   onReload,
+  selectedHost,
 }: ProjectConfigFormProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -621,6 +635,8 @@ function ProjectConfigForm({
 
   return (
     <View>
+      <WorktreeStorageEditor host={selectedHost} client={client} />
+
       <SettingsGroup
         title="Worktree lifecycle hooks"
         info={WORKTREE_GROUP_INFO}
@@ -765,6 +781,126 @@ function ProjectConfigForm({
 
 function ResolveSpinnerColor(): string {
   return styles.spinnerColor.color;
+}
+
+interface WorktreeStorageEditorProps {
+  host: ProjectHostEntry;
+  client: DaemonClient;
+}
+
+function WorktreeStorageEditor({ host, client }: WorktreeStorageEditorProps) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [value, setValue] = useState(host.worktreeStoragePath ?? "");
+
+  useEffect(() => {
+    setValue(host.worktreeStoragePath ?? "");
+  }, [host.worktreeStoragePath]);
+
+  const mutation = useMutation({
+    mutationFn: (worktreeStoragePath: string | null) =>
+      client.setWorkspaceWorktreeStoragePath(host.workspaceId, worktreeStoragePath),
+    onSuccess: (result) => {
+      setValue(result.worktreeStoragePath ?? "");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.show("Worktree storage saved", { variant: "success" });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Couldn't save worktree storage";
+      toast.show(message, { variant: "error" });
+    },
+  });
+
+  const handleSave = useCallback(() => {
+    const trimmed = value.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    if (next === (host.worktreeStoragePath ?? null)) {
+      return;
+    }
+    mutation.mutate(next);
+  }, [value, host.worktreeStoragePath, mutation]);
+
+  const handleReset = useCallback(() => {
+    setValue("");
+    mutation.mutate(null);
+  }, [mutation]);
+
+  const handleChooseDirectory = useCallback(async () => {
+    const directory = await pickDirectory();
+    if (!directory) {
+      return;
+    }
+    setValue(directory);
+    mutation.mutate(directory);
+  }, [mutation]);
+
+  const canPickDirectory = getIsElectron();
+  const unchanged = value.trim() === (host.worktreeStoragePath ?? "");
+
+  return (
+    <SettingsGroup
+      title="Worktree storage"
+      info="Where new Paseo worktrees for this workspace are created. Leave blank to use the default location."
+      testID="worktree-storage-group"
+    >
+      <SettingsSection title="Directory" testID="worktree-storage-section">
+        <View style={settingsStyles.card}>
+          <View style={styles.storageRow}>
+            <TextInput
+              testID="worktree-storage-input"
+              accessibilityLabel="Worktree storage directory"
+              value={value}
+              onChangeText={setValue}
+              placeholder="Default Paseo location"
+              placeholderTextColor={styles.placeholderColor.color}
+              editable={!mutation.isPending}
+              style={styles.storageInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={handleSave}
+              returnKeyType="done"
+            />
+            {canPickDirectory ? (
+              <Button
+                testID="worktree-storage-choose-button"
+                accessibilityLabel="Choose worktree storage directory"
+                variant="outline"
+                size="sm"
+                leftIcon={FolderOpen}
+                disabled={mutation.isPending}
+                onPress={handleChooseDirectory}
+              >
+                Choose…
+              </Button>
+            ) : null}
+            <Button
+              testID="worktree-storage-save-button"
+              accessibilityLabel="Save worktree storage directory"
+              variant="default"
+              size="sm"
+              disabled={mutation.isPending || unchanged}
+              loading={mutation.isPending}
+              onPress={handleSave}
+            >
+              Save
+            </Button>
+            {host.worktreeStoragePath ? (
+              <Button
+                testID="worktree-storage-reset-button"
+                accessibilityLabel="Reset worktree storage directory"
+                variant="ghost"
+                size="sm"
+                disabled={mutation.isPending}
+                onPress={handleReset}
+              >
+                Reset
+              </Button>
+            ) : null}
+          </View>
+        </View>
+      </SettingsSection>
+    </SettingsGroup>
+  );
 }
 
 interface ProjectNameEditorProps {
@@ -1243,6 +1379,25 @@ const styles = StyleSheet.create((theme) => ({
   backButton: {
     alignSelf: "flex-start",
     paddingHorizontal: 0,
+  },
+  storageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  storageInput: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    minWidth: 0,
   },
   headerBlock: {
     marginTop: theme.spacing[2],

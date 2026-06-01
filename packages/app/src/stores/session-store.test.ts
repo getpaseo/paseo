@@ -24,6 +24,7 @@ function createWorkspace(
     name: input.name ?? "main",
     status: input.status ?? "done",
     archivingAt: input.archivingAt ?? null,
+    worktreeStoragePath: input.worktreeStoragePath ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   };
@@ -75,6 +76,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       workspaceKind: "checkout",
       name: "main",
       archivingAt: null,
+      worktreeStoragePath: null,
       status: "running",
       activityAt: "not-a-date",
       diffStat: null,
@@ -108,6 +110,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       workspaceKind: "checkout",
       name: "main",
       archivingAt: null,
+      worktreeStoragePath: null,
       status: "done",
       activityAt: null,
       diffStat: null,
@@ -140,6 +143,48 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.archivingAt).toBeNull();
   });
 
+  it("defaults missing worktreeStoragePath to null", () => {
+    const payload = {
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      status: "done",
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    } as unknown as WorkspaceDescriptorPayload;
+
+    const workspace = normalizeWorkspaceDescriptor(payload);
+
+    expect(workspace.worktreeStoragePath).toBeNull();
+  });
+
+  it("preserves worktreeStoragePath from workspace descriptor payloads", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      worktreeStoragePath: "/tmp/paseo-worktrees/repo",
+      status: "done",
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+
+    expect(workspace.worktreeStoragePath).toBe("/tmp/paseo-worktrees/repo");
+  });
+
   it("preserves project placement from workspace descriptor payloads", () => {
     const workspace = normalizeWorkspaceDescriptor({
       id: "1",
@@ -151,6 +196,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       workspaceKind: "local_checkout",
       name: "main",
       archivingAt: null,
+      worktreeStoragePath: null,
       status: "done",
       activityAt: null,
       diffStat: null,

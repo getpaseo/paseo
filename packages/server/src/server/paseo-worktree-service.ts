@@ -9,9 +9,11 @@ import {
 import { deriveProjectGroupingName, normalizeWorkspaceId } from "./workspace-registry-model.js";
 import {
   createWorktreeCore,
+  resolveWorktreeRepoRoot,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
+import { expandUserPath } from "./path-utils.js";
 import { validateBranchSlug, type WorktreeConfig } from "../utils/worktree.js";
 import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
 import {
@@ -58,13 +60,27 @@ export async function createPaseoWorktree(
   input: CreatePaseoWorktreeInput,
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
-  const createdWorktree = await createWorktreeCore(input, deps);
+  const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
+  const sourceWorkspace = await findWorkspaceForSource({
+    inputCwd: normalizeWorkspaceId(input.cwd),
+    repoRoot: normalizeWorkspaceId(repoRoot),
+    workspaceRegistry: deps.workspaceRegistry,
+  });
+  const worktreeStoragePath = resolveRequestedWorktreeStoragePath(
+    input.worktreeStoragePath ?? sourceWorkspace?.worktreeStoragePath ?? null,
+  );
+  const createdWorktree = await createWorktreeCore(
+    { ...input, cwd: repoRoot, worktreeStoragePath },
+    deps,
+  );
   maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
   const workspace = await upsertWorkspaceForWorktree({
     inputCwd: input.cwd,
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
     worktree: createdWorktree.worktree,
+    sourceWorkspace,
+    worktreeStoragePath,
     deps,
   });
 
@@ -195,6 +211,8 @@ async function upsertWorkspaceForWorktree(options: {
   projectId?: string;
   repoRoot: string;
   worktree: WorktreeConfig;
+  sourceWorkspace: PersistedWorkspaceRecord | null;
+  worktreeStoragePath: string | null;
   deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
 }): Promise<PersistedWorkspaceRecord> {
   const normalizedCwd = normalizeWorkspaceId(options.worktree.worktreePath);
@@ -209,6 +227,7 @@ async function upsertWorkspaceForWorktree(options: {
     projectId: options.projectId,
     repoRoot: normalizedRepoRoot,
     existingWorkspace,
+    sourceWorkspace: options.sourceWorkspace,
     deps: options.deps,
   });
   const workspaceId = normalizedCwd;
@@ -235,6 +254,7 @@ async function upsertWorkspaceForWorktree(options: {
     displayName: options.worktree.branchName || normalizedCwd,
     createdAt: existingWorkspace?.createdAt ?? now,
     updatedAt: now,
+    worktreeStoragePath: options.worktreeStoragePath,
     archivedAt: null,
   });
 
@@ -315,6 +335,7 @@ async function resolveSourceProjectForWorktree(options: {
   projectId?: string;
   repoRoot: string;
   existingWorkspace: PersistedWorkspaceRecord | null;
+  sourceWorkspace: PersistedWorkspaceRecord | null;
   deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
 }): Promise<SourceProjectForWorktree> {
   if (options.projectId) {
@@ -326,6 +347,7 @@ async function resolveSourceProjectForWorktree(options: {
 
   const sourceWorkspace =
     options.existingWorkspace ??
+    options.sourceWorkspace ??
     (await findWorkspaceForSource({
       inputCwd: options.inputCwd,
       repoRoot: options.repoRoot,
@@ -344,6 +366,11 @@ async function resolveSourceProjectForWorktree(options: {
     repoRoot: options.repoRoot,
     projectRegistry: options.deps.projectRegistry,
   });
+}
+
+function resolveRequestedWorktreeStoragePath(value: string | null): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length === 0 ? null : expandUserPath(trimmed);
 }
 
 async function findWorkspaceForSource(options: {

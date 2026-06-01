@@ -779,6 +779,7 @@ export interface MergeFromBaseOptions {
 
 export interface CheckoutContext {
   paseoHome?: string;
+  worktreesRoot?: string | null;
   logger?: Pick<Logger, "trace">;
   facts?: CheckoutSnapshotFacts | null;
 }
@@ -1003,12 +1004,18 @@ async function getPaseoWorktreeForCwd(
   context?: CheckoutContext,
   knownWorktreeRoot?: string | null,
 ): Promise<PaseoWorktreeForCwd> {
-  // Fast-path reject: non-worktree paths do not need expensive ownership checks.
-  if (!/[\\/]worktrees[\\/]/.test(cwd)) {
+  const shouldCheckOwnership =
+    knownWorktreeRoot !== null ||
+    context?.worktreesRoot !== undefined ||
+    /[\\/]worktrees[\\/]/.test(cwd);
+  if (!shouldCheckOwnership) {
     return { isPaseoOwnedWorktree: false };
   }
 
-  const ownership = await isPaseoOwnedWorktreeCwd(cwd, { paseoHome: context?.paseoHome });
+  const ownership = await isPaseoOwnedWorktreeCwd(cwd, {
+    paseoHome: context?.paseoHome,
+    worktreesRoot: context?.worktreesRoot,
+  });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };
   }

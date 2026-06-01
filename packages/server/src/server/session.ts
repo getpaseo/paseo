@@ -207,6 +207,7 @@ import {
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
+import { expandUserPath } from "./path-utils.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -934,6 +935,7 @@ export class Session {
       agentStorage: this.agentStorage,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
+      workspaceRegistry: this.workspaceRegistry,
       createPaseoWorktreeWorkflow: (input, workflowOptions) =>
         this.createPaseoWorktreeWorkflow(input, workflowOptions),
       archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
@@ -2117,6 +2119,8 @@ export class Session {
         return this.handlePaseoWorktreeArchiveRequest(msg);
       case "create_paseo_worktree_request":
         return this.handleCreatePaseoWorktreeRequest(msg);
+      case "workspace.set_worktree_storage_path.request":
+        return this.handleWorkspaceSetWorktreeStoragePathRequest(msg);
       case "workspace_setup_status_request":
         return this.handleWorkspaceSetupStatusRequest(msg);
       case "list_available_editors_request":
@@ -2606,6 +2610,67 @@ export class Session {
           accepted: false,
           customName: null,
           error: getErrorMessageOr(error, "Failed to rename project"),
+        },
+      });
+    }
+  }
+  private async handleWorkspaceSetWorktreeStoragePathRequest(
+    msg: Extract<SessionInboundMessage, { type: "workspace.set_worktree_storage_path.request" }>,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { workspaceId: msg.workspaceId, requestId: msg.requestId },
+      "session: workspace.set_worktree_storage_path.request",
+    );
+
+    try {
+      const existing = await this.workspaceRegistry.get(msg.workspaceId);
+      if (!existing) {
+        this.emit({
+          type: "workspace.set_worktree_storage_path.response",
+          payload: {
+            requestId: msg.requestId,
+            workspaceId: msg.workspaceId,
+            accepted: false,
+            worktreeStoragePath: null,
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+
+      const trimmed = msg.worktreeStoragePath?.trim() ?? "";
+      const nextWorktreeStoragePath = trimmed.length === 0 ? null : expandUserPath(trimmed);
+      const updatedWorkspace = {
+        ...existing,
+        worktreeStoragePath: nextWorktreeStoragePath,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.workspaceRegistry.upsert(updatedWorkspace);
+
+      this.emit({
+        type: "workspace.set_worktree_storage_path.response",
+        payload: {
+          requestId: msg.requestId,
+          workspaceId: msg.workspaceId,
+          accepted: true,
+          worktreeStoragePath: nextWorktreeStoragePath,
+          error: null,
+        },
+      });
+      await this.emitWorkspaceUpdatesForWorkspaceIds([msg.workspaceId], { skipReconcile: true });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId: msg.workspaceId, requestId: msg.requestId },
+        "session: workspace.set_worktree_storage_path.request error",
+      );
+      this.emit({
+        type: "workspace.set_worktree_storage_path.response",
+        payload: {
+          requestId: msg.requestId,
+          workspaceId: msg.workspaceId,
+          accepted: false,
+          worktreeStoragePath: null,
+          error: getErrorMessageOr(error, "Failed to set worktree storage path"),
         },
       });
     }
@@ -5700,6 +5765,7 @@ export class Session {
         emit: (message) => this.emit(message),
         paseoHome: this.paseoHome,
         workspaceGitService: this.workspaceGitService,
+        workspaceRegistry: this.workspaceRegistry,
       },
       msg,
     );
@@ -5713,6 +5779,7 @@ export class Session {
         paseoHome: this.paseoHome,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
+        workspaceRegistry: this.workspaceRegistry,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
@@ -6279,6 +6346,7 @@ export class Session {
       workspaceKind: workspace.kind,
       name: workspace.displayName,
       archivingAt: null,
+      worktreeStoragePath: workspace.worktreeStoragePath,
       status: "done",
       activityAt: null,
       diffStat,
@@ -6370,6 +6438,7 @@ export class Session {
       workspaceKind: result.workspace.kind,
       name: result.worktree.branchName || result.workspace.displayName,
       archivingAt: null,
+      worktreeStoragePath: result.workspace.worktreeStoragePath,
       status: "done",
       activityAt: null,
       diffStat: { additions: 0, deletions: 0 },

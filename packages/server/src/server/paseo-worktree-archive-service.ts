@@ -37,15 +37,18 @@ export async function archivePaseoWorktree(
     targetPath: string;
     repoRoot: string | null;
     worktreesRoot?: string;
+    resolveWorktreeRoot?: boolean;
     requestId: string;
   },
 ): Promise<string[]> {
   let targetPath = options.targetPath;
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
-    paseoHome: dependencies.paseoHome,
-  });
-  if (resolvedWorktree) {
-    targetPath = resolvedWorktree.worktreePath;
+  if (options.resolveWorktreeRoot !== false) {
+    const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
+      paseoHome: dependencies.paseoHome,
+    });
+    if (resolvedWorktree) {
+      targetPath = resolvedWorktree.worktreePath;
+    }
   }
 
   const archivedAgents = new Set<string>();

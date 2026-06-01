@@ -534,6 +534,21 @@ export function NewWorkspaceScreen({
   const isPending = pendingAction !== null;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const worktreeStoragePath = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    if (!session) {
+      return null;
+    }
+    const workspaces = Array.from(session.workspaces.values());
+    const sourceWorkspace =
+      workspaces.find(
+        (entry) => entry.projectId === projectId && entry.projectRootPath === sourceDirectory,
+      ) ??
+      workspaces.find((entry) => entry.projectRootPath === sourceDirectory) ??
+      workspaces.find((entry) => entry.workspaceDirectory === sourceDirectory) ??
+      null;
+    return sourceWorkspace?.worktreeStoragePath ?? null;
+  });
   const draftKey = `new-workspace:${serverId}:${sourceDirectory}`;
   const chatDraft = useAgentInputDraft({
     draftKey,
@@ -718,6 +733,7 @@ export function NewWorkspaceScreen({
       return {
         cwd: input.cwd,
         ...(projectId ? { projectId } : {}),
+        ...(worktreeStoragePath ? { worktreeStoragePath } : {}),
         worktreeSlug: createNameId(),
         ...(hasFirstAgentContext
           ? {
@@ -730,7 +746,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [currentBranch, projectId, selectedItem],
+    [currentBranch, projectId, selectedItem, worktreeStoragePath],
   );
 
   const ensureWorkspace = useCallback(

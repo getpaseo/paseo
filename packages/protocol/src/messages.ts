@@ -775,6 +775,13 @@ export const ProjectRenameRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceSetWorktreeStoragePathRequestSchema = z.object({
+  type: z.literal("workspace.set_worktree_storage_path.request"),
+  workspaceId: z.string(),
+  worktreeStoragePath: z.string().nullable(),
+  requestId: z.string(),
+});
+
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
@@ -1301,6 +1308,19 @@ export const ProjectRenameResponseSchema = z.object({
   payload: ProjectRenameResponsePayloadSchema,
 });
 
+export const WorkspaceSetWorktreeStoragePathResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  accepted: z.boolean(),
+  worktreeStoragePath: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceSetWorktreeStoragePathResponseSchema = z.object({
+  type: z.literal("workspace.set_worktree_storage_path.response"),
+  payload: WorkspaceSetWorktreeStoragePathResponsePayloadSchema,
+});
+
 export const SetVoiceModeResponseMessageSchema = z.object({
   type: z.literal("set_voice_mode_response"),
   payload: z.object({
@@ -1560,6 +1580,7 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   githubPrNumber: z.number().int().positive().optional(),
+  worktreeStoragePath: z.string().nullable().optional(),
   requestId: z.string(),
 });
 
@@ -1863,6 +1884,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
+  WorkspaceSetWorktreeStoragePathRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -2412,6 +2434,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
     name: z.string(),
     archivingAt: z.string().nullable().optional().default(null),
+    worktreeStoragePath: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     activityAt: z.string().nullable(),
     diffStat: z
@@ -3704,6 +3727,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
+  WorkspaceSetWorktreeStoragePathResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
@@ -3846,6 +3870,12 @@ export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessa
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
+export type WorkspaceSetWorktreeStoragePathResponse = z.infer<
+  typeof WorkspaceSetWorktreeStoragePathResponseSchema
+>;
+export type WorkspaceSetWorktreeStoragePathResponsePayload = z.infer<
+  typeof WorkspaceSetWorktreeStoragePathResponsePayloadSchema
+>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
 export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
@@ -3960,6 +3990,9 @@ export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessage
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
+export type WorkspaceSetWorktreeStoragePathRequest = z.infer<
+  typeof WorkspaceSetWorktreeStoragePathRequestSchema
+>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;

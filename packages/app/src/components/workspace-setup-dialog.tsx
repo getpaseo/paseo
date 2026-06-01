@@ -85,11 +85,12 @@ async function callWorkspaceCreation({
 }: {
   creationMethod: "create_worktree" | "open_project";
   connectedClient: DaemonClient;
-  input: { cwd: string };
+  input: { cwd: string; worktreeStoragePath?: string | null };
 }) {
   if (creationMethod === "create_worktree") {
     return connectedClient.createPaseoWorktree({
       cwd: input.cwd,
+      ...(input.worktreeStoragePath ? { worktreeStoragePath: input.worktreeStoragePath } : {}),
       worktreeSlug: createNameId(),
     });
   }
@@ -158,6 +159,17 @@ export function WorkspaceSetupDialog() {
   const workspace = createdWorkspace;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const worktreeStoragePath = useSessionStore((state) => {
+    if (!pendingWorkspaceSetup) {
+      return null;
+    }
+    const sourceWorkspace = pendingWorkspaceSetup.sourceWorkspaceId
+      ? state.sessions[pendingWorkspaceSetup.serverId]?.workspaces.get(
+          pendingWorkspaceSetup.sourceWorkspaceId,
+        )
+      : null;
+    return sourceWorkspace?.worktreeStoragePath ?? null;
+  });
   const chatDraft = useAgentInputDraft({
     draftKey: `workspace-setup:${serverId}:${sourceDirectory}`,
     composer: buildChatDraftComposerArgs({
@@ -237,7 +249,7 @@ export function WorkspaceSetupDialog() {
       const payload = await callWorkspaceCreation({
         creationMethod: pendingWorkspaceSetup.creationMethod,
         connectedClient,
-        input,
+        input: { ...input, worktreeStoragePath },
       });
 
       if (payload.error || !payload.workspace) {
@@ -260,6 +272,7 @@ export function WorkspaceSetupDialog() {
       pendingWorkspaceSetup,
       setHasHydratedWorkspaces,
       withConnectedClient,
+      worktreeStoragePath,
     ],
   );
 

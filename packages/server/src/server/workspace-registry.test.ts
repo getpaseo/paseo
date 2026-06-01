@@ -180,4 +180,43 @@ describe("workspace registries", () => {
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
   });
+
+  test("workspace record schema accepts records without worktreeStoragePath", async () => {
+    await workspaceRegistry.initialize();
+
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "/tmp/repo",
+        projectId: "remote:github.com/acme/repo",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await workspaceRegistry.get("/tmp/repo");
+    expect(record?.worktreeStoragePath).toBeNull();
+  });
+
+  test("workspace record persists worktreeStoragePath", async () => {
+    await workspaceRegistry.initialize();
+
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "/tmp/repo",
+        projectId: "remote:github.com/acme/repo",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        worktreeStoragePath: "/Volumes/paseo/worktrees/acme-repo",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await workspaceRegistry.get("/tmp/repo");
+    expect(record?.worktreeStoragePath).toBe("/Volumes/paseo/worktrees/acme-repo");
+  });
 });

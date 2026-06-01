@@ -127,6 +127,7 @@ export interface WorkspaceDescriptor {
   name: string;
   status: WorkspaceDescriptorPayload["status"];
   archivingAt: string | null;
+  worktreeStoragePath: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
@@ -149,6 +150,7 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     status: payload.status,
     archivingAt: payload.archivingAt ?? null,
+    worktreeStoragePath: payload.worktreeStoragePath ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,

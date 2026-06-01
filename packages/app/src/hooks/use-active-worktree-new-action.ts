@@ -14,7 +14,7 @@ export function useActiveWorktreeNewAction() {
   const serverId = selection?.serverId ?? null;
   const workspaceId = selection?.workspaceId ?? null;
 
-  const workingDir = useSessionStore((state) => {
+  const routeContext = useSessionStore((state) => {
     if (!serverId || !workspaceId) {
       return null;
     }
@@ -22,7 +22,10 @@ export function useActiveWorktreeNewAction() {
     if (!workspace || workspace.projectKind !== "git") {
       return null;
     }
-    return workspace.projectRootPath;
+    return {
+      workingDir: workspace.projectRootPath,
+      projectId: workspace.projectId,
+    };
   });
 
   const displayName = useSessionStore((state) => {
@@ -37,21 +40,22 @@ export function useActiveWorktreeNewAction() {
   });
 
   const handle = useCallback(() => {
-    if (!serverId || !workingDir) {
+    if (!serverId || !routeContext) {
       return false;
     }
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, workingDir, {
+      buildHostNewWorkspaceRoute(serverId, routeContext.workingDir, {
         displayName: displayName ?? undefined,
+        projectId: routeContext.projectId,
       }) as never,
     );
     return true;
-  }, [serverId, workingDir, displayName]);
+  }, [serverId, routeContext, displayName]);
 
   useKeyboardActionHandler({
     handlerId: "worktree-new-active",
     actions: WORKTREE_NEW_ACTIONS,
-    enabled: serverId !== null && workingDir !== null,
+    enabled: serverId !== null && routeContext !== null,
     priority: 0,
     handle,
   });

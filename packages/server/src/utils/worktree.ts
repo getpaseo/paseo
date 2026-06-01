@@ -168,12 +168,14 @@ export interface CreateWorktreeOptions {
   source: WorktreeSource;
   runSetup: boolean;
   paseoHome?: string;
+  worktreeStoragePath?: string | null;
 }
 
 interface ResolveExistingWorktreeForSlugOptions {
   slug: string;
   repoRoot: string;
   paseoHome?: string;
+  worktreeStoragePath?: string | null;
 }
 
 export class BranchAlreadyCheckedOutError extends Error {
@@ -772,6 +774,18 @@ export async function getPaseoWorktreesRoot(cwd: string, paseoHome?: string): Pr
   return join(home, "worktrees", projectHash);
 }
 
+export async function resolvePaseoWorktreesRoot(input: {
+  cwd: string;
+  paseoHome?: string;
+  worktreeStoragePath?: string | null;
+}): Promise<string> {
+  const customRoot = input.worktreeStoragePath?.trim();
+  if (customRoot) {
+    return resolve(customRoot);
+  }
+  return getPaseoWorktreesRoot(input.cwd, input.paseoHome);
+}
+
 export async function computeWorktreePath(
   cwd: string,
   slug: string,
@@ -798,7 +812,7 @@ function resolveRepoRootFromGitCommonDir(commonDir: string): string {
 
 export async function isPaseoOwnedWorktreeCwd(
   cwd: string,
-  options?: { paseoHome?: string },
+  options?: { paseoHome?: string; worktreesRoot?: string | null },
 ): Promise<PaseoWorktreeOwnership> {
   const resolvedCwd = normalizePathForOwnership(cwd);
 
@@ -820,6 +834,19 @@ export async function isPaseoOwnedWorktreeCwd(
   // The <hash>/<slug> prefix is Paseo-private — nothing else writes there — so the
   // path shape alone is sufficient proof of ownership, even when git has already
   // forgotten about the worktree.
+
+  if (options?.worktreesRoot) {
+    const customRoot = normalizePathForOwnership(options.worktreesRoot);
+    const customRootPrefix = customRoot + sep;
+    if (resolvedCwd === customRoot || resolvedCwd.startsWith(customRootPrefix)) {
+      return {
+        allowed: resolvedCwd !== customRoot,
+        ...(repoRoot !== undefined ? { repoRoot } : {}),
+        worktreeRoot: customRoot,
+        worktreePath: resolvedCwd,
+      };
+    }
+  }
   if (!resolvedCwd.startsWith(paseoWorktreesPrefix)) {
     return {
       allowed: false,
@@ -901,11 +928,13 @@ function resolveWorktreeCreatedAtIso(worktreePath: string): string {
 export async function listPaseoWorktrees({
   cwd,
   paseoHome,
+  worktreeStoragePath,
 }: {
   cwd: string;
   paseoHome?: string;
+  worktreeStoragePath?: string | null;
 }): Promise<PaseoWorktreeInfo[]> {
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
+  const worktreesRoot = await resolvePaseoWorktreesRoot({ cwd, paseoHome, worktreeStoragePath });
   const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
@@ -924,10 +953,12 @@ export async function resolveExistingWorktreeForSlug({
   slug,
   repoRoot,
   paseoHome,
+  worktreeStoragePath,
 }: ResolveExistingWorktreeForSlugOptions): Promise<WorktreeConfig | null> {
   const worktrees = await listPaseoWorktrees({
     cwd: repoRoot,
     paseoHome,
+    worktreeStoragePath,
   });
   const slugSuffix = `${sep}${slug}`;
   const existingWorktree = worktrees.find((worktree) => worktree.path.endsWith(slugSuffix));
@@ -1121,9 +1152,13 @@ export const createWorktree = async ({
   worktreeSlug,
   runSetup,
   paseoHome,
+  worktreeStoragePath,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome), worktreeSlug);
+  let worktreePath = join(
+    await resolvePaseoWorktreesRoot({ cwd, paseoHome, worktreeStoragePath }),
+    worktreeSlug,
+  );
   mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Also handle worktree path collision

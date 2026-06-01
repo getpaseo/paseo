@@ -4589,6 +4589,127 @@ test("project.rename.request stores customName and emits an updated workspace de
   });
 });
 
+test("workspace.set_worktree_storage_path.request stores normalized path and emits descriptor", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: "remote:github.com/acme/repo",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "repo",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: workspace.projectId,
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async () => project;
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const next = createPersistedWorkspaceRecord(
+      record as Parameters<typeof createPersistedWorkspaceRecord>[0],
+    );
+    workspaces.set(next.workspaceId, next);
+  };
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  await session.handleMessage({
+    type: "workspace.set_worktree_storage_path.request",
+    workspaceId: REPO_CWD,
+    worktreeStoragePath: "~/paseo-worktrees/acme-repo",
+    requestId: "req-set-worktree-storage",
+  });
+
+  const updated = workspaces.get(REPO_CWD);
+  expect(updated?.worktreeStoragePath).toBe(path.resolve(homedir(), "paseo-worktrees/acme-repo"));
+  expect(messages).toContainEqual({
+    type: "workspace.set_worktree_storage_path.response",
+    payload: {
+      requestId: "req-set-worktree-storage",
+      workspaceId: REPO_CWD,
+      accepted: true,
+      worktreeStoragePath: path.resolve(homedir(), "paseo-worktrees/acme-repo"),
+      error: null,
+    },
+  });
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "workspace_update",
+      payload: expect.objectContaining({
+        kind: "upsert",
+        workspace: expect.objectContaining({
+          id: REPO_CWD,
+          worktreeStoragePath: path.resolve(homedir(), "paseo-worktrees/acme-repo"),
+        }),
+      }),
+    }),
+  );
+});
+
+test("workspace.set_worktree_storage_path.request clears blank path", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: "remote:github.com/acme/repo",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "repo",
+    worktreeStoragePath: "/tmp/custom-worktrees/acme-repo",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const next = createPersistedWorkspaceRecord(
+      record as Parameters<typeof createPersistedWorkspaceRecord>[0],
+    );
+    workspaces.set(next.workspaceId, next);
+  };
+
+  await session.handleMessage({
+    type: "workspace.set_worktree_storage_path.request",
+    workspaceId: REPO_CWD,
+    worktreeStoragePath: "   ",
+    requestId: "req-clear-worktree-storage",
+  });
+
+  expect(workspaces.get(REPO_CWD)?.worktreeStoragePath).toBeNull();
+  expect(messages).toContainEqual({
+    type: "workspace.set_worktree_storage_path.response",
+    payload: {
+      requestId: "req-clear-worktree-storage",
+      workspaceId: REPO_CWD,
+      accepted: true,
+      worktreeStoragePath: null,
+      error: null,
+    },
+  });
+});
+
 test("project.rename.request with whitespace-only customName clears the override", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(

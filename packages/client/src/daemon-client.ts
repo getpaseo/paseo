@@ -276,6 +276,7 @@ export interface CreatePaseoWorktreeInput extends Pick<
   | "refName"
   | "action"
   | "githubPrNumber"
+  | "worktreeStoragePath"
 > {}
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
@@ -309,6 +310,10 @@ type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type CreatePaseoWorktreePayload = Extract<
   SessionOutboundMessage,
   { type: "create_paseo_worktree_response" }
+>["payload"];
+type WorkspaceSetWorktreeStoragePathPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.set_worktree_storage_path.response" }
 >["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
 export type FileExplorerDirectoryPayload = NonNullable<FileExplorerPayload["directory"]>;
@@ -2056,6 +2061,29 @@ export class DaemonClient {
     return { customName: payload.customName };
   }
 
+  async setWorkspaceWorktreeStoragePath(
+    workspaceId: string,
+    worktreeStoragePath: string | null,
+    requestId?: string,
+  ): Promise<{ worktreeStoragePath: string | null }> {
+    const payload: WorkspaceSetWorktreeStoragePathPayload = await this.sendCorrelatedSessionRequest(
+      {
+        requestId,
+        message: {
+          type: "workspace.set_worktree_storage_path.request",
+          workspaceId,
+          worktreeStoragePath,
+        },
+        responseType: "workspace.set_worktree_storage_path.response",
+        timeout: 10000,
+      },
+    );
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceWorktreeStoragePath rejected");
+    }
+    return { worktreeStoragePath: payload.worktreeStoragePath };
+  }
+
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -3176,6 +3204,9 @@ export class DaemonClient {
         ...(input.refName !== undefined ? { refName: input.refName } : {}),
         ...(input.action !== undefined ? { action: input.action } : {}),
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
+        ...(input.worktreeStoragePath !== undefined
+          ? { worktreeStoragePath: input.worktreeStoragePath }
+          : {}),
       },
       responseType: "create_paseo_worktree_response",
       timeout: 60000,

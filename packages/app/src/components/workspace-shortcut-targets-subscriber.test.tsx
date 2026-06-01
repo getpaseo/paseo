@@ -32,6 +32,7 @@ function workspaceDescriptor(input: {
     name: input.name ?? input.id,
     status: "done",
     archivingAt: null,
+    worktreeStoragePath: null,
     diffStat: null,
     scripts: [],
   };

@@ -4,6 +4,7 @@ import {
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
+  listPaseoWorktrees,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
@@ -20,6 +21,7 @@ interface LegacyCreateWorktreeTestOptions {
   worktreeSlug: string;
   runSetup?: boolean;
   paseoHome?: string;
+  worktreeStoragePath?: string | null;
 }
 
 function createLegacyWorktreeForTest(
@@ -39,6 +41,7 @@ function createLegacyWorktreeForTest(
     },
     runSetup: options.runSetup ?? true,
     paseoHome: options.paseoHome,
+    worktreeStoragePath: options.worktreeStoragePath,
   });
 }
 
@@ -111,6 +114,31 @@ describe("paseo worktree manager", () => {
     });
   });
 
+  it("creates and lists worktrees under a custom storage root", async () => {
+    const customRoot = join(tempDir, "custom-worktrees");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "feature-custom-root",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "feature-custom-root",
+      runSetup: false,
+      paseoHome,
+      worktreeStoragePath: customRoot,
+    });
+
+    expect(created.worktreePath).toBe(join(customRoot, "feature-custom-root"));
+    const listed = await listPaseoWorktrees({
+      cwd: repoDir,
+      paseoHome,
+      worktreeStoragePath: customRoot,
+    });
+    expect(listed.map((worktree) => worktree.path)).toContain(created.worktreePath);
+    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, {
+      paseoHome,
+      worktreesRoot: customRoot,
+    });
+    expect(ownership.allowed).toBe(true);
+  });
   it("deletes a worktree whose .git admin dir has already been removed", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "orphan-delete-branch",

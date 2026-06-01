@@ -9,6 +9,7 @@ import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitServiceImpl,
 } from "../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
@@ -17,6 +18,7 @@ export interface AutoArchiveArchiveOptions {
   paseoHome: string;
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   github: GitHubService;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -81,7 +83,12 @@ export async function archiveIfSafe(input: {
       return;
     }
 
-    const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, { paseoHome: options.paseoHome });
+    const ownership = await resolveArchiveOwnership({
+      cwd,
+      paseoHome: options.paseoHome,
+      workspaceRegistry: options.workspaceRegistry,
+      deps,
+    });
     if (!ownership.allowed) {
       return;
     }
@@ -115,6 +122,7 @@ export async function archiveIfSafe(input: {
           targetPath: cwd,
           repoRoot: ownership.repoRoot ?? null,
           worktreesRoot: ownership.worktreeRoot,
+          resolveWorktreeRoot: ownership.worktreeRoot === undefined,
           requestId: "auto-archive-on-merge",
         },
       );
@@ -125,4 +133,29 @@ export async function archiveIfSafe(input: {
   } finally {
     inFlight.delete(cwd);
   }
+}
+
+async function resolveArchiveOwnership(input: {
+  cwd: string;
+  paseoHome: string;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  deps: ArchiveIfSafeDependencies;
+}) {
+  const defaultOwnership = await input.deps.isPaseoOwnedWorktreeCwd(input.cwd, {
+    paseoHome: input.paseoHome,
+  });
+  if (defaultOwnership.allowed) {
+    return defaultOwnership;
+  }
+
+  const workspaces = await input.workspaceRegistry.list();
+  const workspace = workspaces.find(
+    (record) => record.kind === "worktree" && !record.archivedAt && record.cwd === input.cwd,
+  );
+  if (!workspace) {
+    return defaultOwnership;
+  }
+  return input.deps.isPaseoOwnedWorktreeCwd(input.cwd, {
+    worktreesRoot: workspace.worktreeStoragePath ?? undefined,
+  });
 }

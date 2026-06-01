@@ -9,6 +9,7 @@ import type {
   CreatePaseoWorktreeWorkflowResult,
 } from "../worktree-session.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type {
   CreateAgentWorktreeTarget,
   FirstAgentContext,
@@ -23,6 +24,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   agentStorage: AgentStorage;
   github: GitHubService;
   workspaceGitService: WorkspaceGitService;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
@@ -192,7 +194,10 @@ export class CreateAgentLifecycleDispatch {
     const ownership = await isPaseoOwnedWorktreeCwd(options.worktreePath, {
       paseoHome: this.dependencies.paseoHome,
     });
-    if (!ownership.allowed) {
+    const persistedOwnership = ownership.allowed
+      ? ownership
+      : await this.resolvePersistedWorktreeOwnership(options);
+    if (!persistedOwnership.allowed) {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
     }
 
@@ -213,8 +218,9 @@ export class CreateAgentLifecycleDispatch {
       },
       {
         targetPath: options.worktreePath,
-        repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
-        worktreesRoot: ownership.worktreeRoot,
+        repoRoot: options.repoRoot ?? persistedOwnership.repoRoot ?? null,
+        resolveWorktreeRoot: persistedOwnership.worktreeRoot === undefined,
+        worktreesRoot: persistedOwnership.worktreeRoot,
         requestId: randomUUID(),
       },
     );
@@ -222,5 +228,19 @@ export class CreateAgentLifecycleDispatch {
     if (options.agentId) {
       this.dependencies.emitAgentRemove(options.agentId);
     }
+  }
+
+  private async resolvePersistedWorktreeOwnership(options: { worktreePath: string }) {
+    const workspaces = await this.dependencies.workspaceRegistry.list();
+    const workspace = workspaces.find(
+      (record) =>
+        record.kind === "worktree" && !record.archivedAt && record.cwd === options.worktreePath,
+    );
+    if (!workspace) {
+      return { allowed: false as const };
+    }
+    return isPaseoOwnedWorktreeCwd(options.worktreePath, {
+      worktreesRoot: workspace.worktreeStoragePath ?? undefined,
+    });
   }
 }

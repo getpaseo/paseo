@@ -30,6 +30,11 @@ const PersistedWorkspaceRecordSchema = z.object({
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
   displayName: z.string(),
+  worktreeStoragePath: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -231,12 +236,14 @@ export function createPersistedWorkspaceRecord(input: {
   cwd: string;
   kind: PersistedWorkspaceKind;
   displayName: string;
+  worktreeStoragePath?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
+    worktreeStoragePath: input.worktreeStoragePath ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }

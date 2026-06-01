@@ -83,6 +83,7 @@ function workspace(input: {
     workspaceKind: "local_checkout",
     name: input.id,
     archivingAt: null,
+    worktreeStoragePath: null,
     status: "done",
     activityAt: null,
     diffStat: null,

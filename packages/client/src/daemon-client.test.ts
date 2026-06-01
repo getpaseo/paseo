@@ -1053,6 +1053,62 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   });
 });
 
+test("sends worktreeStoragePath in create_paseo_worktree_request when supplied", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createPaseoWorktree(
+    {
+      cwd: "/tmp/project",
+      worktreeSlug: "feature-a",
+      worktreeStoragePath: "/tmp/custom-worktrees/project",
+    },
+    "req-worktree-storage",
+  );
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "create_paseo_worktree_request",
+    cwd: "/tmp/project",
+    worktreeSlug: "feature-a",
+    worktreeStoragePath: "/tmp/custom-worktrees/project",
+    requestId: "req-worktree-storage",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "create_paseo_worktree_response",
+      payload: {
+        requestId: request.requestId,
+        workspace: null,
+        error: "worktree storage path sentinel",
+        setupTerminalId: null,
+      },
+    }),
+  );
+
+  await expect(createPromise).resolves.toEqual({
+    requestId: request.requestId,
+    workspace: null,
+    error: "worktree storage path sentinel",
+    setupTerminalId: null,
+  });
+});
+
 test("omitting create_paseo_worktree_request worktree base-ref fields preserves legacy wire shape", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -1107,6 +1163,54 @@ test("omitting create_paseo_worktree_request worktree base-ref fields preserves 
     workspace: null,
     error: "legacy worktree shape sentinel",
     setupTerminalId: null,
+  });
+});
+
+test("setWorkspaceWorktreeStoragePath sends workspace storage path request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const updatePromise = client.setWorkspaceWorktreeStoragePath(
+    "/tmp/project",
+    "/tmp/custom-worktrees/project",
+    "req-set-storage",
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.set_worktree_storage_path.request",
+    workspaceId: "/tmp/project",
+    worktreeStoragePath: "/tmp/custom-worktrees/project",
+    requestId: "req-set-storage",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.set_worktree_storage_path.response",
+      payload: {
+        requestId: "req-set-storage",
+        workspaceId: "/tmp/project",
+        accepted: true,
+        worktreeStoragePath: "/tmp/custom-worktrees/project",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(updatePromise).resolves.toEqual({
+    worktreeStoragePath: "/tmp/custom-worktrees/project",
   });
 });
 

@@ -6,15 +6,18 @@ export interface WorkspaceSummary {
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   status: WorkspaceDescriptor["status"];
   currentBranch: string | null;
+  worktreeStoragePath: string | null;
 }
 
 export interface ProjectHostEntry {
   serverId: string;
   serverName: string;
   isOnline: boolean;
+  workspaceId: string;
   repoRoot: string;
   workspaceCount: number;
   workspaces: WorkspaceSummary[];
+  worktreeStoragePath: string | null;
   gitRuntime?: WorkspaceDescriptor["gitRuntime"];
   githubRuntime?: WorkspaceDescriptor["githubRuntime"];
 }
@@ -86,6 +89,7 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
     workspaceKind: workspace.workspaceKind,
     status: workspace.status,
     currentBranch: workspace.gitRuntime?.currentBranch ?? null,
+    worktreeStoragePath: workspace.worktreeStoragePath,
   };
 }
 
@@ -97,10 +101,12 @@ function toHostEntry(group: HostGroup): ProjectHostEntry {
   return {
     serverId: group.serverId,
     serverName: group.serverName,
+    workspaceId: canonical?.id ?? "",
     isOnline: group.isOnline,
     repoRoot,
     workspaceCount: group.workspaces.length,
     workspaces: group.workspaces.map(toWorkspaceSummary),
+    worktreeStoragePath: canonical?.worktreeStoragePath ?? null,
     gitRuntime: canonical?.gitRuntime,
     githubRuntime: canonical?.githubRuntime,
   };

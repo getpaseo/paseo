@@ -32,6 +32,7 @@ function workspace(input: {
   projectId?: string;
   projectName?: string;
   remoteUrl?: string | null;
+  worktreeStoragePath?: string | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -44,6 +45,7 @@ function workspace(input: {
     name: input.id,
     status: "done",
     archivingAt: null,
+    worktreeStoragePath: input.worktreeStoragePath ?? null,
     diffStat: null,
     scripts: [],
     gitRuntime: {
@@ -146,6 +148,39 @@ describe("buildProjects", () => {
     expect(laptop?.workspaceCount).toBe(2);
     expect(local?.workspaces.map((entry) => entry.id)).toEqual(["main", "feature-a", "feature-b"]);
     expect(laptop?.workspaces.map((entry) => entry.id)).toEqual(["main", "feature"]);
+  });
+
+  it("carries the canonical workspace worktree storage path to the host entry", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "MacBook",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "main",
+              repoRoot: "/repo",
+              project: placement({
+                projectKey: "remote:github.com/acme/repo",
+                projectName: "acme/repo",
+                cwd: "/repo",
+                remoteUrl: "git@github.com:acme/repo.git",
+              }),
+              worktreeStoragePath: "/tmp/paseo-worktrees/acme-repo",
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts[0]?.workspaceId).toBe("main");
+    expect(result.projects[0]?.hosts[0]?.worktreeStoragePath).toBe(
+      "/tmp/paseo-worktrees/acme-repo",
+    );
+    expect(result.projects[0]?.hosts[0]?.workspaces[0]?.worktreeStoragePath).toBe(
+      "/tmp/paseo-worktrees/acme-repo",
+    );
   });
 
   it("collapses five workspaces on one host into a single host entry whose workspaceCount is five", () => {
