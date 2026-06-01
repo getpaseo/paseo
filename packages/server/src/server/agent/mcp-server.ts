@@ -514,6 +514,28 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     registerRawTool(name, relaxMcpToolOutputSchema(config), (async (args: never, extra: never) =>
       addModelVisibleStructuredContent(await handler(args, extra))) as typeof handler);
 
+  const buildCronScheduleCadence = (input: {
+    cron: string | undefined;
+    timezone?: string;
+  }): ScheduleCadence => {
+    const expression = input.cron?.trim() ?? "";
+    if (!expression) {
+      throw new Error("cron is required");
+    }
+    const timezone = normalizeScheduleTimeZoneArg(input.timezone);
+    return {
+      type: "cron",
+      expression,
+      ...(timezone !== undefined ? { timezone } : {}),
+    };
+  };
+
+  const buildScheduleExpiry = (expiresIn: string | undefined): string | undefined => {
+    return expiresIn === undefined
+      ? undefined
+      : new Date(Date.now() + parseDurationString(expiresIn)).toISOString();
+  };
+
   const resolveCallerAgent = () => {
     if (!callerAgentId) {
       return null;
@@ -541,7 +563,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (opts?.required) {
         throw new Error("cwd is required");
       }
-      throw new Error("cwd is required when no caller agent is available");
+      throw new Error("cwd is required outside an agent-scoped session");
     }
 
     return expandUserPath(trimmedCwd);
@@ -699,7 +721,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     cwd: z
       .string()
       .optional()
-      .describe("Optional working directory. Defaults to the caller agent working directory."),
+      .describe("Optional working directory. Defaults to your current working directory."),
     title: z
       .string()
       .trim()
@@ -718,19 +740,19 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
-    background: z
+    detached: z
       .boolean()
       .optional()
       .default(false)
       .describe(
-        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
+        "If true, the created agent stands on its own: it does not appear in your subagent track and is not archived with you.",
       ),
     notifyOnFinish: z
       .boolean()
       .optional()
-      .default(false)
+      .default(true)
       .describe(
-        "Send a notification prompt to the caller agent when this agent finishes, errors, or needs permission. Requires a caller agent context.",
+        "Get notified when the created agent finishes, errors, or needs permission. Set false only for truly fire-and-forget agents.",
       ),
   };
 
@@ -787,7 +809,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .optional()
       .default(false)
       .describe(
-        "Send a notification prompt to the caller agent when this agent finishes, errors, or needs permission. Requires a caller agent context.",
+        "Agent-scoped only: get notified when the created agent finishes, errors, or needs permission.",
       ),
   };
 
@@ -806,6 +828,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       "Draft provider settings used to compute available features.",
     ),
   };
+  type AgentToAgentCreateAgentArgs = z.infer<typeof agentToAgentCreateAgentArgsSchema>;
   type TopLevelCreateAgentArgs = z.infer<typeof topLevelCreateAgentArgsSchema>;
 
   if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
@@ -832,7 +855,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         }
         const handler = resolveSpeakHandler?.(callerAgentId) ?? null;
         if (!handler) {
-          throw new Error(`No speak handler registered for caller agent '${callerAgentId}'`);
+          throw new Error(`No speak handler registered for your session '${callerAgentId}'`);
         }
         await handler({
           text: args.text,
@@ -867,11 +890,29 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         availableModes: z.array(ProviderModeSchema),
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
+        guidance: z.string().optional(),
       },
     },
     async (args: unknown) => {
-      const { parsedArgs, worktree } = resolveCreateAgentToolArgs(args);
-      const { snapshot, background, initialPromptStarted } = await createAgentCommand(
+      const resolvedArgs = resolveCreateAgentToolArgs(args);
+      const { parsedArgs, worktree } = resolvedArgs;
+      let requestedBackground: boolean;
+      let notifyOnFinish: boolean;
+      let detached: boolean;
+      if (resolvedArgs.kind === "agent-scoped") {
+        requestedBackground = true;
+        notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish;
+        detached = resolvedArgs.parsedArgs.detached;
+      } else {
+        requestedBackground = resolvedArgs.parsedArgs.background;
+        notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
+        detached = false;
+      }
+      const {
+        snapshot,
+        background: createdInBackground,
+        initialPromptStarted,
+      } = await createAgentCommand(
         {
           agentManager,
           agentStorage,
@@ -892,8 +933,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           features: parsedArgs.settings?.features,
           labels: parsedArgs.labels,
           mode: parsedArgs.settings?.modeId,
-          background: parsedArgs.background ?? false,
-          notifyOnFinish: parsedArgs.notifyOnFinish ?? false,
+          background: requestedBackground,
+          notifyOnFinish,
+          detached,
           callerAgentId,
           callerContext,
           worktree,
@@ -901,7 +943,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       );
 
       try {
-        if (!background && initialPromptStarted) {
+        if (!createdInBackground && initialPromptStarted) {
           const result = await waitForAgentWithTimeout(agentManager, snapshot.id, {
             waitForActive: true,
           });
@@ -930,8 +972,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         throw error;
       }
 
-      // Return immediately if background=true
+      // Return immediately for async creation.
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
+      const guidance =
+        callerAgentId && notifyOnFinish && initialPromptStarted
+          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not call wait_for_agent or poll for status; continue with other work until the notification arrives."
+          : undefined;
       const response = {
         content: [],
         structuredContent: ensureValidJson({
@@ -943,26 +989,36 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           availableModes: currentSnapshot.availableModes,
           lastMessage: null,
           permission: null,
+          ...(guidance ? { guidance } : {}),
         }),
       };
       return response;
     },
   );
 
-  function resolveCreateAgentToolArgs(args: unknown): {
-    parsedArgs:
-      | z.infer<typeof agentToAgentCreateAgentArgsSchema>
-      | z.infer<typeof topLevelCreateAgentArgsSchema>;
-    worktree: ReturnType<typeof resolveTopLevelCreateAgentWorktree>;
-  } {
+  type ResolvedCreateAgentToolArgs =
+    | {
+        kind: "agent-scoped";
+        parsedArgs: AgentToAgentCreateAgentArgs;
+        worktree: undefined;
+      }
+    | {
+        kind: "top-level";
+        parsedArgs: TopLevelCreateAgentArgs;
+        worktree: ReturnType<typeof resolveTopLevelCreateAgentWorktree>;
+      };
+
+  function resolveCreateAgentToolArgs(args: unknown): ResolvedCreateAgentToolArgs {
     if (callerAgentId) {
       return {
+        kind: "agent-scoped",
         parsedArgs: agentToAgentCreateAgentArgsSchema.parse(args),
         worktree: undefined,
       };
     }
     const parsedArgs = topLevelCreateAgentArgsSchema.parse(args);
     return {
+      kind: "top-level",
       parsedArgs,
       worktree: resolveTopLevelCreateAgentWorktree(parsedArgs),
     };
@@ -1088,7 +1144,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           .optional()
           .default(false)
           .describe(
-            "Send a notification prompt to the caller agent when this agent finishes, errors, or needs permission.",
+            "Agent-scoped only: get notified when this run finishes, errors, or needs permission.",
           ),
       },
       outputSchema: {
@@ -1402,7 +1458,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cwd: z
           .string()
           .optional()
-          .describe("Optional working directory. Defaults to the caller agent cwd."),
+          .describe("Optional working directory. Defaults to your current working directory."),
         all: z.boolean().optional().describe("List terminals across all working directories."),
       },
       outputSchema: {
@@ -1450,7 +1506,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cwd: z
           .string()
           .optional()
-          .describe("Optional working directory. Defaults to the caller agent cwd."),
+          .describe("Optional working directory. Defaults to your current working directory."),
         name: z.string().optional().describe("Optional terminal name."),
       },
       outputSchema: TerminalSummarySchema.shape,
@@ -1591,22 +1647,18 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "create_schedule",
     {
       title: "Create schedule",
-      description: "Create a recurring schedule that runs on an agent or a new agent.",
+      description: "Create a recurring schedule that starts a new agent on a cron cadence.",
       inputSchema: {
         prompt: z.string().trim().min(1, "prompt is required"),
-        every: z.string().optional(),
-        cron: z.string().optional(),
+        cron: z.string().trim().min(1, "cron is required"),
         timezone: z
           .string()
           .trim()
           .min(1)
           .optional()
-          .describe(
-            "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
-          ),
+          .describe("IANA time zone for the cron cadence. For example: America/New_York."),
         name: z.string().optional(),
-        target: z.enum(["self", "new-agent"]).optional(),
-        provider: AgentProviderEnum.optional().describe(
+        provider: AgentProviderEnum.describe(
           "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
         ),
         cwd: z.string().optional(),
@@ -1615,70 +1667,71 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, every, cron, timezone, name, target, provider, cwd, maxRuns, expiresIn }) => {
+    async ({ prompt, cron, timezone, name, provider, cwd, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
 
-      const normalizedEvery = normalizeScheduleCadenceArg(every);
-      const normalizedCron = normalizeScheduleCadenceArg(cron);
-      const normalizedTimeZone = normalizeScheduleTimeZoneArg(timezone);
-      const cadenceCount =
-        Number(normalizedEvery !== undefined) + Number(normalizedCron !== undefined);
-      if (cadenceCount !== 1) {
-        throw new Error("Specify exactly one of every or cron");
-      }
-      if (normalizedTimeZone !== undefined && normalizedCron === undefined) {
-        throw new Error("timezone can only be used with cron");
-      }
-
-      const scheduleTarget =
-        target === "self"
-          ? (() => {
-              const callerAgent = resolveCallerAgent();
-              if (!callerAgentId || !callerAgent) {
-                throw new Error("target=self requires a caller agent");
-              }
-              const trimmedCwd = cwd?.trim();
-              if (trimmedCwd && expandUserPath(trimmedCwd) !== callerAgent.cwd) {
-                throw new Error("cwd can only differ from the caller agent when target=new-agent");
-              }
-              if (provider !== undefined) {
-                const resolved = resolveScheduleProviderAndModel({
-                  provider,
-                  defaultProvider: callerAgent.provider,
-                });
-                if (
-                  resolved.provider !== callerAgent.provider ||
-                  (resolved.model !== undefined && resolved.model !== callerAgent.config.model)
-                ) {
-                  throw new Error(
-                    "provider can only differ from the caller agent when target=new-agent",
-                  );
-                }
-              }
-              return { type: "agent" as const, agentId: callerAgentId };
-            })()
-          : (() => {
-              return resolveNewAgentScheduleTarget({ provider, cwd });
-            })();
-
+      const expiresAt = buildScheduleExpiry(expiresIn);
       const schedule = await scheduleService.create({
         prompt: prompt.trim(),
-        cadence:
-          normalizedEvery !== undefined
-            ? { type: "every" as const, everyMs: parseDurationString(normalizedEvery) }
-            : {
-                type: "cron" as const,
-                expression: normalizedCron!,
-                ...(normalizedTimeZone !== undefined ? { timezone: normalizedTimeZone } : {}),
-              },
-        target: scheduleTarget,
+        cadence: buildCronScheduleCadence({
+          cron,
+          ...(timezone !== undefined ? { timezone } : {}),
+        }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
-        ...(expiresIn === undefined
-          ? {}
-          : { expiresAt: new Date(Date.now() + parseDurationString(expiresIn)).toISOString() }),
+        ...(expiresAt === undefined ? {} : { expiresAt }),
+      });
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson(toScheduleSummary(schedule)),
+      };
+    },
+  );
+
+  registerTool(
+    "create_heartbeat",
+    {
+      title: "Create heartbeat",
+      description: "Create a recurring heartbeat that sends you a prompt on a cron cadence.",
+      inputSchema: {
+        prompt: z.string().trim().min(1, "prompt is required"),
+        cron: z.string().trim().min(1, "cron is required"),
+        timezone: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("IANA time zone for the cron cadence. For example: America/New_York."),
+        name: z.string().optional(),
+        maxRuns: z.number().int().positive().optional(),
+        expiresIn: z.string().optional(),
+      },
+      outputSchema: ScheduleSummarySchema.shape,
+    },
+    async ({ prompt, cron, timezone, name, maxRuns, expiresIn }) => {
+      if (!scheduleService) {
+        throw new Error("Schedule service is not configured");
+      }
+      if (!callerAgentId) {
+        throw new Error("create_heartbeat requires an agent-scoped session");
+      }
+      resolveCallerAgent();
+
+      const expiresAt = buildScheduleExpiry(expiresIn);
+      const schedule = await scheduleService.create({
+        prompt: prompt.trim(),
+        cadence: buildCronScheduleCadence({
+          cron,
+          ...(timezone !== undefined ? { timezone } : {}),
+        }),
+        target: { type: "agent", agentId: callerAgentId },
+        ...(name?.trim() ? { name: name.trim() } : {}),
+        ...(maxRuns === undefined ? {} : { maxRuns }),
+        ...(expiresAt === undefined ? {} : { expiresAt }),
       });
 
       return {
@@ -2027,7 +2080,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cwd: z
           .string()
           .optional()
-          .describe("Optional repository cwd. Defaults to the caller agent cwd."),
+          .describe("Optional repository cwd. Defaults to your current working directory."),
       },
       outputSchema: {
         worktrees: z.array(WorktreeSummarySchema),
@@ -2131,7 +2184,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cwd: z
           .string()
           .optional()
-          .describe("Optional repository cwd. Defaults to the caller agent cwd."),
+          .describe("Optional repository cwd. Defaults to your current working directory."),
         worktreePath: z.string().optional(),
         worktreeSlug: z.string().optional(),
       },

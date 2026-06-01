@@ -13,7 +13,7 @@ Single agent. Reads the situation you're in. Gives a judgment. You decide what t
 
 ## Prerequisites
 
-Read the **paseo** skill — provider for the advisor comes from orchestration preferences unless the user names one.
+Read the **paseo** skill. Before choosing a provider, read `~/.paseo/orchestration-preferences.json` unless the user explicitly named a provider in this request. Do not create the advisor until you have read it.
 
 ## Picking the advisor
 

@@ -232,18 +232,16 @@ To confirm the submission landed, inspect the EAS workflow with `npx eas workflo
 
 The user rarely opens the Expo dashboard. A failed EAS build or submit/review job can sit silently until users complain about a stale version. After every stable release, set up a long-delay babysit that re-checks GitHub Actions, EAS builds, and the EAS `Release Mobile` workflow for the release tag. If any build is `ERRORED`/`CANCELED`, any workflow is `FAILURE`, or any required submit/review job fails, surface it immediately. If all builds are `FINISHED` and all required submit/review jobs are `SUCCESS`, confirm and stop.
 
-**Use a heartbeat schedule, never a new-agent schedule.** Babysitting fires back into the current conversation as a wake-up prompt — `target: "self"` in `mcp__paseo__create_schedule`. Never use `target: "new-agent"`. A new agent spawns a fresh conversation the user has to find and read; a heartbeat surfaces the build status inline in the conversation that owns the release, where it is impossible to miss. If you find yourself reaching for `new-agent` for a release babysit, you are about to ship a status report into a void.
+**Use `create_heartbeat`, never `create_schedule`, for release babysitting.** Babysitting fires back into the current conversation as a wake-up prompt. `create_schedule` starts a fresh agent the user has to find and read; `create_heartbeat` surfaces the build status inline in the conversation that owns the release, where it is impossible to miss. If you find yourself reaching for `create_schedule` for a release babysit, you are about to ship a status report into a void.
 
 Pattern:
 
 ```jsonc
-// mcp__paseo__create_schedule arguments
+// mcp__paseo__create_heartbeat arguments
 {
   "name": "vX.Y.Z release babysit heartbeat",
-  "every": "15m",
+  "cron": "*/15 * * * *",
   "maxRuns": 8, // covers ~2h of build + store-submission window
-  "target": "self", // heartbeat, NOT "new-agent"
-  "cwd": "/path/to/paseo",
   "prompt": "Heartbeat: check vX.Y.Z release. Run gh run list, eas build:list, eas workflow:runs, and eas workflow:view for the matching Release Mobile run. Report concisely. The release is not done until desktop/APK workflows are green, EAS builds are FINISHED, Android submit_android is SUCCESS, and iOS submit_ios + submit_ios_for_review are SUCCESS. Flag any ERRORED/FAILED/CANCELED/FAILURE loudly.",
 }
 ```
