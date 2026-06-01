@@ -122,6 +122,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     }
 
     expect(toggleEntry.label).toBe("Show source");
+    expect(toggleEntry.icon).toBe("code");
     expect(toggleEntry.testID).toBe("workspace-tab-context-file_README.md-show-source");
 
     toggleEntry.onSelect();
@@ -147,7 +148,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
 
     expect(
       entries.find((entry) => entry.kind === "item" && entry.key === "toggle-markdown-source"),
-    ).toEqual(expect.objectContaining({ label: "Show preview" }));
+    ).toEqual(expect.objectContaining({ label: "Show preview", icon: "eye" }));
   });
 
   it("does not add source toggle for line-targeted markdown file tabs", () => {

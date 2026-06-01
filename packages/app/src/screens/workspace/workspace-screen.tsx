@@ -24,6 +24,7 @@ import {
   Copy,
   Ellipsis,
   EllipsisVertical,
+  Eye,
   Globe,
   Import as ImportIcon,
   PanelRight,
@@ -225,6 +226,7 @@ const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCode2 = withUnistyles(Code2);
+const ThemedEye = withUnistyles(Eye);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -482,6 +484,8 @@ function MobileTabDropdownMenuItem({
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
       case "code":
         return <ThemedCode2 size={16} uniProps={mutedColorMapping} />;
+      case "eye":
+        return <ThemedEye size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
         return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
       case "arrow-left-to-line":

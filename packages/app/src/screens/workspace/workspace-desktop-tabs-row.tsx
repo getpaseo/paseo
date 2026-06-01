@@ -23,6 +23,7 @@ import {
   Code2,
   Columns2,
   Copy,
+  Eye,
   Pencil,
   RotateCw,
   Rows2,
@@ -71,6 +72,7 @@ const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedX = withUnistyles(X);
 const ThemedCode2 = withUnistyles(Code2);
+const ThemedEye = withUnistyles(Eye);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -101,6 +103,8 @@ function TabContextMenuItem({
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
       case "code":
         return <ThemedCode2 size={16} uniProps={mutedColorMapping} />;
+      case "eye":
+        return <ThemedEye size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
         return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
       case "arrow-left-to-line":

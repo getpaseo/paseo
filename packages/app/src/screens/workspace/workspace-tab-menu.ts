@@ -13,6 +13,7 @@ export type WorkspaceTabMenuEntry =
       icon?:
         | "copy"
         | "code"
+        | "eye"
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
@@ -180,7 +181,7 @@ export function buildWorkspaceTabMenuEntries(
       kind: "item",
       key: "toggle-markdown-source",
       label: isSourceMode ? "Show preview" : "Show source",
-      icon: "code",
+      icon: isSourceMode ? "eye" : "code",
       testID: `${menuTestIDBase}-${isSourceMode ? "show-preview" : "show-source"}`,
       onSelect: () => {
         onToggleMarkdownSource?.(tab);
