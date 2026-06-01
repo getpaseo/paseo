@@ -190,6 +190,7 @@ vi.mock("@/hooks/use-projects", () => ({
 
 vi.mock("@/hooks/use-project-icon-query", () => ({
   useProjectIconQuery: () => ({ icon: null, isLoading: false, isError: false }),
+  projectIconToDataUri: () => null,
 }));
 
 import ProjectsScreen from "./projects-screen";

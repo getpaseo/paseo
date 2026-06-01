@@ -31,6 +31,7 @@ import type {
   CheckoutMergeFromBaseResponse,
   CheckoutPullResponse,
   CheckoutPushResponse,
+  CheckoutRefreshResponse,
   CheckoutPrCreateResponse,
   CheckoutPrMergeResponse,
   CheckoutPrMergeMethod,
@@ -288,6 +289,7 @@ type CheckoutMergePayload = CheckoutMergeResponse["payload"];
 type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPullPayload = CheckoutPullResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
+type CheckoutRefreshPayload = CheckoutRefreshResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutGithubSetAutoMergePayload = CheckoutGithubSetAutoMergeResponse["payload"];
@@ -566,6 +568,7 @@ export interface CreateScheduleOptions {
     | {
         type: "cron";
         expression: string;
+        timezone?: string;
       };
   target:
     | {
@@ -621,6 +624,7 @@ export interface UpdateScheduleOptions {
     | {
         type: "cron";
         expression: string;
+        timezone?: string;
       };
   newAgentConfig?: UpdateScheduleNewAgentConfig;
   maxRuns?: number | null;
@@ -2950,6 +2954,18 @@ export class DaemonClient {
     });
   }
 
+  async checkoutRefresh(cwd: string, requestId?: string): Promise<CheckoutRefreshPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout.refresh.request",
+        cwd,
+      },
+      responseType: "checkout.refresh.response",
+      timeout: 60000,
+    });
+  }
+
   async checkoutPrCreate(
     cwd: string,
     input: { title?: string; body?: string; baseRef?: string },
@@ -4265,6 +4281,7 @@ export class DaemonClient {
           capabilities: {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
+            [CLIENT_CAPS.terminalReflowableSnapshot]: true,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
         }),

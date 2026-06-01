@@ -1013,6 +1013,27 @@ const x = 1;
     );
   });
 
+  it("marks tracked generated one-line diffs as too_large by content size", async () => {
+    writeFileSync(join(repoDir, "generated.js"), `const data = "old";\n`);
+    execFileSync("git", ["add", "generated.js"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add generated"], {
+      cwd: repoDir,
+    });
+
+    writeFileSync(join(repoDir, "generated.js"), `const data = "${"x".repeat(1_100_000)}";\n`);
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const entry = diff.structured?.find((file) => file.path === "generated.js");
+
+    expect(entry).toBeTruthy();
+    expect(entry?.status).toBe("too_large");
+    expect(entry?.additions).toBe(1);
+    expect(entry?.deletions).toBe(1);
+    expect(entry?.hunks).toEqual([]);
+    expect(diff.diff).toContain("# generated.js: diff too large omitted");
+    expect(diff.diff).not.toContain("x".repeat(10_000));
+  });
+
   it("short-circuits tracked binary files", async () => {
     const trackedBinaryPath = join(repoDir, "tracked-blob.bin");
     writeFileSync(trackedBinaryPath, Buffer.from([0x00, 0xff, 0x10, 0x80, 0x00]));

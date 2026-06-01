@@ -279,6 +279,37 @@ describe("createTerminal", () => {
     expect(state.cols).toBe(120);
   });
 
+  it("reports per-row soft-wrap flags only when wrap flags are requested", async () => {
+    const session = trackSession(
+      await createTerminal({
+        cwd: realpathSync(tmpdir()),
+        cols: 40,
+        rows: 10,
+        command: process.execPath,
+        // 100 chars with no newline soft-wraps across three rows at 40 cols.
+        args: ["-e", "process.stdout.write('A'.repeat(100)); setInterval(() => {}, 100000);"],
+      }),
+    );
+
+    const start = Date.now();
+    while (Date.now() - start < 5000) {
+      if (rowToText(session.getState().grid[2]).startsWith("A")) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    // Rows 0 and 1 continue onto the next row; row 2 is the end of the logical line.
+    const withFlags = session.getState({ includeWrapFlags: true });
+    expect(withFlags.gridWrapped?.slice(0, 3)).toEqual([true, true, false]);
+
+    // Back-compat gate: without the capability the daemon must not attach the new
+    // fields, so an old strict-schema client still parses the snapshot.
+    const withoutFlags = session.getState();
+    expect(withoutFlags.gridWrapped).toBeUndefined();
+    expect(withoutFlags.scrollbackWrapped).toBeUndefined();
+  });
+
   it("captures exit diagnostics from the terminal buffer", async () => {
     const session = trackSession(
       await createTerminal({

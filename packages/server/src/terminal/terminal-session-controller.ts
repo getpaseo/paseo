@@ -65,6 +65,10 @@ export interface TerminalSessionControllerOptions {
   hasBinaryChannel: () => boolean;
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   sessionLogger: pino.Logger;
+  // Whether the connected client can reflow restored snapshots. When true the
+  // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
+  // so old (strict-schema) clients still parse the snapshot.
+  clientSupportsWrapReflow?: () => boolean;
 }
 
 export interface TerminalSessionControllerMetrics {
@@ -104,6 +108,7 @@ export class TerminalSessionController {
   private readonly hasBinaryChannel: () => boolean;
   private readonly isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   private readonly sessionLogger: pino.Logger;
+  private readonly clientSupportsWrapReflow: () => boolean;
 
   private readonly subscribedDirectories = new Set<string>();
   private unsubscribeTerminalsChanged: (() => void) | null = null;
@@ -119,15 +124,16 @@ export class TerminalSessionController {
     this.hasBinaryChannel = options.hasBinaryChannel;
     this.isPathWithinRoot = options.isPathWithinRoot;
     this.sessionLogger = options.sessionLogger;
+    this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
   }
 
   start(): void {
     if (!this.terminalManager) {
       return;
     }
-    this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) =>
-      this.handleTerminalsChanged(event),
-    );
+    this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) => {
+      void this.handleTerminalsChanged(event);
+    });
   }
 
   getMetrics(): TerminalSessionControllerMetrics {
@@ -293,31 +299,30 @@ export class TerminalSessionController {
     };
   }
 
-  private handleTerminalsChanged(event: TerminalsChangedEvent): void {
-    if (!this.subscribedDirectories.has(event.cwd)) {
-      return;
+  private async handleTerminalsChanged(event: TerminalsChangedEvent): Promise<void> {
+    // A terminal can live in a subdirectory of a subscribed workspace root (an
+    // agent can open one there). Deliver the change to every subscribed root at
+    // or above the terminal's cwd, keyed by that root, carrying the full
+    // aggregated list — so the client's cache replacement doesn't drop the
+    // terminals that live directly at the root.
+    const matchingRoots = Array.from(this.subscribedDirectories).filter((root) =>
+      this.isPathWithinRoot(root, event.cwd),
+    );
+    for (const root of matchingRoots) {
+      await this.emitTerminalsSnapshotForRoot(root);
     }
-    this.emitTerminalsChangedSnapshot({
-      cwd: event.cwd,
-      terminals: event.terminals.map((terminal) =>
-        Object.assign(
-          { id: terminal.id, name: terminal.name },
-          terminal.title ? { title: terminal.title } : {},
-        ),
-      ),
-    });
   }
 
   private handleSubscribeTerminalsRequest(msg: SubscribeTerminalsRequest): void {
     this.subscribedDirectories.add(msg.cwd);
-    void this.emitInitialTerminalsChangedSnapshot(msg.cwd);
+    void this.emitTerminalsSnapshotForRoot(msg.cwd);
   }
 
   private handleUnsubscribeTerminalsRequest(msg: UnsubscribeTerminalsRequest): void {
     this.subscribedDirectories.delete(msg.cwd);
   }
 
-  private async emitInitialTerminalsChangedSnapshot(cwd: string): Promise<void> {
+  private async emitTerminalsSnapshotForRoot(cwd: string): Promise<void> {
     if (!this.terminalManager || !this.subscribedDirectories.has(cwd)) {
       return;
     }
@@ -802,7 +807,9 @@ export class TerminalSessionController {
     activeStream: ActiveTerminalStream,
     terminalManager: TerminalManager,
   ): Promise<SnapshotSendResult> {
-    const snapshot = await terminalManager.getTerminalState(activeStream.terminalId);
+    const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
+      includeWrapFlags: this.clientSupportsWrapReflow(),
+    });
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
       return { shouldContinue: false };
     }
@@ -830,10 +837,10 @@ export class TerminalSessionController {
       return { shouldContinue: true };
     }
 
-    const snapshot = await terminalManager.getTerminalState(
-      activeStream.terminalId,
-      snapshotOptions,
-    );
+    const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
+      ...snapshotOptions,
+      includeWrapFlags: this.clientSupportsWrapReflow(),
+    });
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
       return { shouldContinue: false };
     }

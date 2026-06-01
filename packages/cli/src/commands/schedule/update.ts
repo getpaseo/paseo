@@ -15,6 +15,7 @@ import {
 export interface ScheduleUpdateOptions extends ScheduleCommandOptions {
   every?: string;
   cron?: string;
+  timezone?: string;
   name?: string;
   prompt?: string;
   provider?: string;
@@ -36,6 +37,7 @@ export async function runUpdateCommand(
     id,
     every: options.every,
     cron: options.cron,
+    timezone: options.timezone,
     name: options.name,
     prompt: options.prompt,
     provider: options.provider,

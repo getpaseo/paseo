@@ -5,6 +5,7 @@ import {
   extractCodexShellOutput,
   flattenReadContent as flattenToolReadContent,
   nonEmptyString,
+  stripReadLineNumberGutter,
   truncateDiffText,
 } from "./tool-call-mapper-utils.js";
 
@@ -776,11 +777,15 @@ export function toReadToolDetail(
     return undefined;
   }
 
+  const stripped = output?.content ? stripReadLineNumberGutter(output.content) : undefined;
+  const content = stripped?.content ?? output?.content;
+  const offset = input?.offset ?? stripped?.startLine;
+
   return {
     type: "read",
     filePath,
-    ...(output?.content ? { content: output.content } : {}),
-    ...(input?.offset !== undefined ? { offset: input.offset } : {}),
+    ...(content ? { content } : {}),
+    ...(offset !== undefined ? { offset } : {}),
     ...(input?.limit !== undefined ? { limit: input.limit } : {}),
   };
 }

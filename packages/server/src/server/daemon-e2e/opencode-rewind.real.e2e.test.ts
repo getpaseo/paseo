@@ -2,14 +2,17 @@ import { execFileSync } from "node:child_process";
 import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pino from "pino";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 import {
   closeRewindSession,
   fetchTimelineItems,
@@ -56,7 +59,7 @@ async function launchOpenCodeRewindSession(
   const agent = await harness.client.createAgent({
     cwd,
     title,
-    ...getFullAccessConfig("opencode"),
+    ...getRealProviderConfig("opencode"),
   });
 
   return { agentId: agent.id, cwd, scratchPath };
@@ -212,12 +215,17 @@ async function rewindOpenCode(
 }
 
 describe("daemon E2E (real opencode) - rewind", () => {
+  let canRun = false;
   let harness: OpenCodeRewindHarness;
 
   beforeAll(async () => {
+    canRun = await canRunRealProvider("opencode");
+    if (!canRun) {
+      return;
+    }
     const logger = pino({ level: "silent" });
     const daemon = await createTestPaseoDaemon({
-      agentClients: { opencode: new OpenCodeAgentClient(logger) },
+      agentClients: createRealProviderClients(["opencode"], logger),
       logger,
     });
     const client = new DaemonClient({
@@ -235,7 +243,14 @@ describe("daemon E2E (real opencode) - rewind", () => {
     await harness?.daemon.close().catch(() => undefined);
   });
 
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test("rewinds conversation and files after a single real OpenCode edit turn", async () => {
+    if (!harness) throw new Error("OpenCode rewind harness was not initialized");
     const session = await launchOpenCodeRewindSession(harness, "opencode-rewind-single-edit-real");
 
     try {

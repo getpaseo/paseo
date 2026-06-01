@@ -134,12 +134,15 @@ interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  fontFamily?: string;
+  fontSize?: number;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
   initialSnapshot?: TerminalState | null;
   onInput?: (data: string) => Promise<void> | void;
-  onResize?: (input: { rows: number; cols: number }) => Promise<void> | void;
+  onFocus?: () => Promise<void> | void;
+  onResize?: (input: { rows: number; cols: number; shouldClaim: boolean }) => Promise<void> | void;
   onTerminalKey?: (input: {
     key: string;
     ctrl: boolean;
@@ -214,11 +217,14 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  fontFamily,
+  fontSize,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
   initialSnapshot = null,
   onInput,
+  onFocus,
   onResize,
   onTerminalKey,
   onPendingModifiersConsumed,
@@ -234,8 +240,12 @@ export default function TerminalEmulator({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalEmulatorRuntime | null>(null);
   const mountedThemeRef = useRef<ITheme>(xtermTheme);
+  const fontFamilyRef = useRef(fontFamily);
+  const fontSizeRef = useRef(fontSize);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
+  fontFamilyRef.current = fontFamily;
+  fontSizeRef.current = fontSize;
   const viewportRef = useRef<HTMLElement | null>(null);
   const dragStartOffsetRef = useRef(0);
   const dragStartClientYRef = useRef(0);
@@ -484,6 +494,8 @@ export default function TerminalEmulator({
       initialSnapshot: initialSnapshotRef.current,
       scrollback: scrollbackLinesRef.current,
       theme: mountedThemeRef.current,
+      fontFamily: fontFamilyRef.current,
+      fontSize: fontSizeRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
 
@@ -524,10 +536,14 @@ export default function TerminalEmulator({
   }, [pendingModifiers]);
 
   useEffect(() => {
+    runtimeRef.current?.setFont({ fontFamily, fontSize });
+  }, [fontFamily, fontSize]);
+
+  useEffect(() => {
     if (focusRequestToken <= 0) {
       return () => {};
     }
-    runtimeRef.current?.resize({ force: true });
+    runtimeRef.current?.resize({ force: true, shouldClaim: true });
     return focusWithRetries({
       focus: () => {
         runtimeRef.current?.focus();
@@ -547,7 +563,7 @@ export default function TerminalEmulator({
     if (resizeRequestToken <= 0) {
       return;
     }
-    runtimeRef.current?.resize({ force: true });
+    runtimeRef.current?.resize({ force: true, shouldClaim: true });
   }, [resizeRequestToken]);
 
   useEffect(() => {
@@ -742,8 +758,9 @@ export default function TerminalEmulator({
   }, []);
 
   const handleRootPointerDown = useCallback(() => {
+    onFocus?.();
     runtimeRef.current?.focus();
-  }, []);
+  }, [onFocus]);
 
   const handleRootContextMenu = useCallback(
     (event: ReactMouseEvent) => {

@@ -6,6 +6,7 @@ import {
 } from "./terminal.js";
 import { captureTerminalLines, type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { resolve, sep, win32, posix } from "node:path";
+import { isSameOrDescendantPath } from "../server/path-utils.js";
 
 export interface TerminalListItem {
   id: string;
@@ -169,7 +170,16 @@ export function createTerminalManager(): TerminalManager {
     async getTerminals(cwd: string): Promise<TerminalSession[]> {
       assertAbsolutePath(cwd);
 
-      return terminalsByCwd.get(cwd) ?? [];
+      // Terminals are bucketed by exact cwd, but an agent can open a terminal in
+      // a subdirectory of the workspace. A query for the workspace root must
+      // surface those too, so aggregate every bucket at or below `cwd`.
+      const sessions: TerminalSession[] = [];
+      for (const [bucketCwd, bucketSessions] of terminalsByCwd) {
+        if (isSameOrDescendantPath(cwd, bucketCwd)) {
+          sessions.push(...bucketSessions);
+        }
+      }
+      return sessions;
     },
 
     async createTerminal(options: {

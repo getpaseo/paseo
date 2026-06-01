@@ -6,8 +6,11 @@ import pino from "pino";
 
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
-import { isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-claude-model-init-"));
@@ -17,7 +20,7 @@ describe("daemon E2E (real claude) - model resolution on init", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -30,7 +33,7 @@ describe("daemon E2E (real claude) - model resolution on init", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -45,9 +48,8 @@ describe("daemon E2E (real claude) - model resolution on init", () => {
       const catalogModelIds = new Set(modelsResult.models.map((m) => m.id));
 
       const agent = await client.createAgent({
-        provider: "claude",
+        ...getRealProviderConfig("claude"),
         cwd,
-        model: "haiku",
         title: "model-init-test",
       });
 

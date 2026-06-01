@@ -12,14 +12,17 @@ import { generateStructuredAgentResponse } from "./agent-response-loop.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { createAgentMcpServer } from "./mcp-server.js";
-import { createAllClients, shutdownProviders } from "./provider-registry.js";
-import { isProviderAvailable } from "../daemon-e2e/agent-configs.js";
+import { shutdownProviders } from "./provider-registry.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "../daemon-e2e/real-provider-test-config.js";
 import pino from "pino";
 
-const CODEX_TEST_MODEL = "gpt-5.4-mini";
-const CODEX_TEST_THINKING_OPTION_ID = "low";
-
-const hasOpenAICredentials = !!process.env.OPENAI_API_KEY;
+const CODEX_TEST_MODEL = getRealProviderConfig("codex").model;
+const CODEX_TEST_THINKING_OPTION_ID = getRealProviderConfig("codex").thinkingOptionId;
+const CLAUDE_TEST_MODEL = getRealProviderConfig("claude").model;
 
 interface AgentMcpServerHandle {
   url: string;
@@ -154,8 +157,8 @@ describe("getStructuredAgentResponse (e2e)", () => {
   const logger = pino({ level: "silent" });
 
   beforeAll(async () => {
-    canRunCodex = !process.env.CI && hasOpenAICredentials;
-    canRunClaude = await isProviderAvailable("claude");
+    canRunCodex = await canRunRealProvider("codex");
+    canRunClaude = await canRunRealProvider("claude");
     if (!canRunCodex && !canRunClaude) {
       return;
     }
@@ -169,7 +172,7 @@ describe("getStructuredAgentResponse (e2e)", () => {
   beforeEach(async () => {
     cwd = mkdtempSync(path.join(tmpdir(), "agent-response-loop-"));
     manager = new AgentManager({
-      clients: createAllClients(logger),
+      clients: createRealProviderClients(["codex", "claude"], logger),
       logger,
     });
   });
@@ -193,7 +196,9 @@ describe("getStructuredAgentResponse (e2e)", () => {
       agentConfig: {
         provider: "codex",
         model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        ...(CODEX_TEST_THINKING_OPTION_ID
+          ? { thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID }
+          : {}),
         cwd,
         title: "Structured Response Test",
       },
@@ -222,7 +227,7 @@ describe("getStructuredAgentResponse (e2e)", () => {
           manager,
           agentConfig: {
             provider: "claude",
-            model: "haiku",
+            model: CLAUDE_TEST_MODEL,
             thinkingOptionId: "on",
             cwd,
             title: "Claude Haiku Structured Test",

@@ -9,14 +9,12 @@ export const FileTransferOpcode = {
 
 export type FileTransferOpcode = (typeof FileTransferOpcode)[keyof typeof FileTransferOpcode];
 
-export const FileBeginMetadataSchema = z
-  .object({
-    mime: z.string().min(1),
-    size: z.number().int().nonnegative(),
-    encoding: z.enum(["utf-8", "binary"]),
-    modifiedAt: z.string(),
-  })
-  .strict();
+export const FileBeginMetadataSchema = z.object({
+  mime: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  encoding: z.enum(["utf-8", "binary"]),
+  modifiedAt: z.string(),
+});
 
 export interface FileBegin {
   opcode: typeof FileTransferOpcode.FileBegin;

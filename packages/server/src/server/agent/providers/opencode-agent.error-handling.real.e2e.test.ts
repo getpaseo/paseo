@@ -2,8 +2,10 @@ import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import { isCommandAvailable } from "../../../utils/executable.js";
-import { OpenCodeAgentClient } from "./opencode-agent.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+} from "../../daemon-e2e/real-provider-test-config.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 
 function isTerminalEvent(event: AgentStreamEvent): boolean {
@@ -24,7 +26,7 @@ describe("opencode agent error handling (real)", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isCommandAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {
@@ -34,7 +36,7 @@ describe("opencode agent error handling (real)", () => {
   });
 
   test("surfaces error for the exact opencode/<bad-model> path used by paseo run", async () => {
-    const client = new OpenCodeAgentClient(pino({ level: "silent" }));
+    const client = createRealProviderClient("opencode", pino({ level: "silent" }));
     const session = await client.createSession({
       provider: "opencode",
       cwd: process.cwd(),
@@ -59,7 +61,7 @@ describe("opencode agent error handling (real)", () => {
   }, 45_000);
 
   test("surfaces error for unknown provider model (fast path)", async () => {
-    const client = new OpenCodeAgentClient(pino({ level: "silent" }));
+    const client = createRealProviderClient("opencode", pino({ level: "silent" }));
     const session = await client.createSession({
       provider: "opencode",
       cwd: process.cwd(),
@@ -84,7 +86,7 @@ describe("opencode agent error handling (real)", () => {
   }, 30_000);
 
   test("sequential sessions: second session works after first errors", async () => {
-    const client = new OpenCodeAgentClient(pino({ level: "silent" }));
+    const client = createRealProviderClient("opencode", pino({ level: "silent" }));
 
     // Session 1: bogus model, will error quickly
     const s1 = await client.createSession({
@@ -121,7 +123,7 @@ describe("opencode agent error handling (real)", () => {
   test("surfaces error for known provider with nonexistent model (retry path)", async () => {
     // When the provider is recognized (anthropic) but the model doesn't exist,
     // OpenCode retries before surfacing the error. This must not hang.
-    const client = new OpenCodeAgentClient(pino({ level: "silent" }));
+    const client = createRealProviderClient("opencode", pino({ level: "silent" }));
     const session = await client.createSession({
       provider: "opencode",
       cwd: process.cwd(),

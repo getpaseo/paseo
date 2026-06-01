@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { resolveBinaryVersion } from "../agent/providers/diagnostic-utils.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-codex-goal-"));
@@ -89,7 +92,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    if (!(await isProviderAvailable("codex"))) {
+    if (!(await canRunRealProvider("codex"))) {
       return;
     }
     const versionOutput = await resolveBinaryVersion("codex");
@@ -106,7 +109,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      agentClients: createRealProviderClients(["codex"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -118,7 +121,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-goal-set",
-        ...getFullAccessConfig("codex"),
+        ...getRealProviderConfig("codex"),
       });
 
       const sentinel = "TX9Q4Z";
@@ -160,7 +163,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      agentClients: createRealProviderClients(["codex"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -172,7 +175,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-goal-mid-turn",
-        ...getFullAccessConfig("codex"),
+        ...getRealProviderConfig("codex"),
       });
 
       // Set an initial goal so pause has something to act on.
@@ -237,7 +240,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      agentClients: createRealProviderClients(["codex"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -249,7 +252,7 @@ describe("daemon E2E (real codex) - /goal command", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-goal-clear",
-        ...getFullAccessConfig("codex"),
+        ...getRealProviderConfig("codex"),
       });
 
       await client.sendMessage(agent.id, "/goal something to be cleared");

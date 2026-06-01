@@ -64,7 +64,13 @@ describe("shared messages tool_call schema", () => {
       error: null,
     });
 
-    const withTopLevelInputOutput = AgentTimelineItemPayloadSchema.safeParse({
+    expect(missingCallId.success).toBe(false);
+    expect(unknownStatus.success).toBe(false);
+  });
+
+  it("ignores unknown top-level fields on tool_call payloads", () => {
+    // Non-strict protocol: extra top-level keys are stripped, not rejected.
+    const parsed = AgentTimelineItemPayloadSchema.safeParse({
       ...canonicalBase(),
       status: "running",
       error: null,
@@ -72,9 +78,7 @@ describe("shared messages tool_call schema", () => {
       output: { exitCode: 0 },
     });
 
-    expect(missingCallId.success).toBe(false);
-    expect(unknownStatus.success).toBe(false);
-    expect(withTopLevelInputOutput.success).toBe(false);
+    expect(parsed.success).toBe(true);
   });
 
   it("rejects legacy status/error combinations without normalization", () => {

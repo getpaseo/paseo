@@ -49,7 +49,8 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
 
 export function formatCadence(cadence: ScheduleCadence): string {
   if (cadence.type === "cron") {
-    return `cron:${cadence.expression}`;
+    const timezoneSuffix = cadence.timezone ? ` (${cadence.timezone})` : "";
+    return `cron:${cadence.expression}${timezoneSuffix}`;
   }
   return `every:${formatDurationMs(cadence.everyMs)}`;
 }
@@ -129,6 +130,7 @@ export function parseScheduleCreateInput(options: {
   prompt: string;
   every?: string;
   cron?: string;
+  timezone?: string;
   name?: string;
   target?: string;
   provider?: string;
@@ -147,7 +149,7 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
 
-  const cadence = parseCadenceFromFlags(options.every, options.cron);
+  const cadence = parseCadenceFromFlags(options.every, options.cron, options.timezone);
   if (!cadence) {
     throw {
       code: "INVALID_CADENCE",
@@ -232,6 +234,7 @@ export interface ScheduleUpdateOptionsInput {
   id: string;
   every?: string;
   cron?: string;
+  timezone?: string;
   name?: string;
   prompt?: string;
   provider?: string;
@@ -253,7 +256,7 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
     } satisfies CommandError;
   }
 
-  const cadence = parseCadenceFromFlags(options.every, options.cron);
+  const cadence = parseCadenceFromFlags(options.every, options.cron, options.timezone);
   const newAgentConfig = buildNewAgentConfigPatch(options);
   const maxRuns = parseUpdateMaxRuns(options);
   const expiresAt = parseUpdateExpiresAt(options);
@@ -288,6 +291,7 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
 function parseCadenceFromFlags(
   every: string | undefined,
   cron: string | undefined,
+  timezone: string | undefined,
 ): ScheduleCadence | undefined {
   if (every !== undefined && cron !== undefined) {
     throw {
@@ -295,13 +299,38 @@ function parseCadenceFromFlags(
       message: "Specify at most one of --every or --cron",
     } satisfies CommandError;
   }
+  const trimmedTimeZone = parseTimeZoneFlag(timezone);
+  if (trimmedTimeZone !== undefined && cron === undefined) {
+    throw {
+      code: "INVALID_TIME_ZONE",
+      message: "--timezone can only be used with --cron",
+    } satisfies CommandError;
+  }
   if (every !== undefined) {
     return { type: "every", everyMs: parseDuration(every) };
   }
   if (cron !== undefined) {
-    return { type: "cron", expression: cron.trim() };
+    return {
+      type: "cron",
+      expression: cron.trim(),
+      ...(trimmedTimeZone ? { timezone: trimmedTimeZone } : {}),
+    };
   }
   return undefined;
+}
+
+function parseTimeZoneFlag(timeZone: string | undefined): string | undefined {
+  if (timeZone === undefined) {
+    return undefined;
+  }
+  const trimmed = timeZone.trim();
+  if (!trimmed) {
+    throw {
+      code: "INVALID_TIME_ZONE",
+      message: "--timezone cannot be empty",
+    } satisfies CommandError;
+  }
+  return trimmed;
 }
 
 function parseUpdateMaxRuns(options: ScheduleUpdateOptionsInput): number | null | undefined {

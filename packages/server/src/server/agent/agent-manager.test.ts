@@ -2214,6 +2214,20 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
   expect(result.rows[0]?.seq).toBe(3);
   expect(result.rows[result.rows.length - 1]?.seq).toBe(3);
   expect(result.hasOlder).toBe(true);
+
+  const older = manager.fetchTimeline(snapshot.id, {
+    direction: "before",
+    cursor: {
+      epoch: result.epoch,
+      seq: result.rows[0]?.seq ?? 0,
+    },
+    limit: 1,
+  });
+
+  expect(older.reset).toBe(false);
+  expect(older.rows).toHaveLength(1);
+  expect(older.rows[0]?.seq).toBe(2);
+  expect(older.hasOlder).toBe(true);
 });
 
 test("getTimelineRows falls back to the in-memory timeline when no durable store is configured", async () => {

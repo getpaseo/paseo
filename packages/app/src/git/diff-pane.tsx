@@ -25,7 +25,8 @@ import {
   type ViewStyle,
   type TextStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
@@ -41,6 +42,7 @@ import {
   ListChevronsUpDown,
   Pilcrow,
   RefreshCcw,
+  RotateCw,
   Upload,
   WrapText,
 } from "lucide-react-native";
@@ -55,8 +57,8 @@ import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { DiffScroll } from "@/components/diff-scroll";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
-import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/git/diff-scroll";
 import {
   buildSplitDiffRows,
@@ -78,6 +80,10 @@ import { lineNumberGutterWidth } from "@/components/code-insets";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { useGitActions } from "@/git/use-actions";
+import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { useToast } from "@/contexts/toast-context";
+import { useSessionStore } from "@/stores/session-store";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { usePanelStore } from "@/stores/panel-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
@@ -949,7 +955,7 @@ function DiffFileBody({
         if (layout === "split") {
           const rows = buildSplitDiffRows(file);
           return (
-            <View style={DIFF_CONTENT_SPLIT_ROW_STYLE}>
+            <View style={DIFF_CONTENT_SPLIT_ROW_STYLE} dataSet={CODE_SURFACE_DATASET}>
               <SplitDiffColumn
                 rows={rows}
                 side="left"
@@ -973,7 +979,7 @@ function DiffFileBody({
 
         if (wrapLines) {
           return (
-            <View style={styles.diffContent}>
+            <View style={styles.diffContent} dataSet={CODE_SURFACE_DATASET}>
               <View style={styles.linesContainer}>
                 {computedLines.map(({ line, lineNumber, key, reviewTarget }) => (
                   <View key={key}>
@@ -1000,7 +1006,7 @@ function DiffFileBody({
         const textViewportWidth =
           scrollViewWidth > 0 ? scrollViewWidth : Math.max(0, bodyWidth - gutterWidth);
         return (
-          <View style={DIFF_CONTENT_ROW_STYLE}>
+          <View style={DIFF_CONTENT_ROW_STYLE} dataSet={CODE_SURFACE_DATASET}>
             <View style={styles.gutterColumn}>
               {computedLines.map(({ line, lineNumber, key, reviewTarget }) => (
                 <View key={key}>
@@ -1219,6 +1225,44 @@ function DiffFilesToolbar({
         </TooltipContent>
       </Tooltip>
     </View>
+  );
+}
+
+interface DiffRefreshButtonProps {
+  isRefreshing: boolean;
+  toggleStyle: PressableStyleFn;
+  onPress: () => void;
+}
+
+const ThemedRotateCw = withUnistyles(RotateCw);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const refreshIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function DiffRefreshButton({ isRefreshing, toggleStyle, onPress }: DiffRefreshButtonProps) {
+  return (
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isRefreshing ? "Refreshing" : "Refresh git and GitHub state"}
+          testID="changes-refresh"
+          style={toggleStyle}
+          onPress={onPress}
+          disabled={isRefreshing}
+        >
+          <View style={styles.refreshIcon}>
+            {isRefreshing ? (
+              <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={refreshIconColorMapping} />
+            ) : (
+              <ThemedRotateCw size={ICON_SIZE.sm} uniProps={refreshIconColorMapping} />
+            )}
+          </View>
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        <Text style={styles.tooltipText}>Refresh</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -1558,6 +1602,29 @@ export function GitDiffPane({
     () => buildExpandAllButtonStyle(controlSurfaceColor),
     [controlSurfaceColor],
   );
+
+  const refreshToggleStyle = useMemo(
+    () => buildExpandAllButtonStyle(controlSurfaceColor),
+    [controlSurfaceColor],
+  );
+
+  const toast = useToast();
+  const refreshSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
+  );
+  const runRefresh = useCheckoutGitActionsStore((s) => s.refresh);
+  const isRefreshing =
+    useCheckoutGitActionsStore((s) => s.getStatus({ serverId, cwd, actionId: "refresh" })) ===
+    "pending";
+
+  const handleRefresh = useCallback(() => {
+    if (isRefreshing) {
+      return;
+    }
+    void runRefresh({ serverId, cwd }).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to refresh git state.");
+    });
+  }, [cwd, isRefreshing, runRefresh, serverId, toast]);
 
   const {
     status,
@@ -2088,6 +2155,13 @@ export function GitDiffPane({
                   onToggleExpandAll={handleToggleExpandAll}
                 />
               ) : null}
+              {refreshSupported ? (
+                <DiffRefreshButton
+                  isRefreshing={isRefreshing}
+                  toggleStyle={refreshToggleStyle}
+                  onPress={handleRefresh}
+                />
+              ) : null}
             </View>
           </View>
         </View>
@@ -2215,6 +2289,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   toggleButtonSelected: {
     backgroundColor: theme.colors.surface2,
+  },
+  refreshIcon: {
+    width: ICON_SIZE.md,
+    height: ICON_SIZE.md,
+    alignItems: "center",
+    justifyContent: "center",
   },
   expandAllButton: {
     flexDirection: "row",
@@ -2477,7 +2557,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: theme.spacing[2],
     fontSize: theme.fontSize.code,
     lineHeight: theme.lineHeight.diff,
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     color: theme.colors.foregroundMuted,
     userSelect: "none",
   },
@@ -2492,7 +2572,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: theme.spacing[3],
     fontSize: theme.fontSize.code,
     lineHeight: theme.lineHeight.diff,
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     color: theme.colors.foreground,
     userSelect: "text",
   },

@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
+import {
+  canRunRealProvider,
+  getRealProviderRuntimeSettings,
+} from "../../../daemon-e2e/real-provider-test-config.js";
 import { findExecutable } from "../../../../utils/executable.js";
 import { claudeQuery } from "./query.js";
 
@@ -89,7 +92,7 @@ describe("Claude SDK direct behavior", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -104,20 +107,23 @@ describe("Claude SDK direct behavior", () => {
     const claudeBinary = await findExecutable("claude");
 
     // Use same options as the Claude provider
-    const q = claudeQuery({
-      prompt: input,
-      options: {
-        cwd,
-        includePartialMessages: true,
-        permissionMode: "bypassPermissions",
-        ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
-        systemPrompt: {
-          type: "preset",
-          preset: "claude_code",
+    const q = claudeQuery(
+      {
+        prompt: input,
+        options: {
+          cwd,
+          includePartialMessages: true,
+          permissionMode: "bypassPermissions",
+          ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
+          systemPrompt: {
+            type: "preset",
+            preset: "claude_code",
+          },
+          settingSources: ["user", "project"],
         },
-        settingSources: ["user", "project"],
       },
-    });
+      { runtimeSettings: getRealProviderRuntimeSettings("claude") },
+    );
 
     try {
       // Send first message

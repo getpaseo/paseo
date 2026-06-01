@@ -259,6 +259,27 @@ describe("combined model selector data", () => {
     ).toBe("Default");
   });
 
+  it("keeps provider snapshot errors visible in the selected trigger label", () => {
+    const providers = buildSelectableProviderSelectorProviders([
+      snapshotEntry({
+        provider: "opencode",
+        label: "OpenCode",
+        status: "error",
+        error: "OpenCode app.agents timed out after 10s",
+        models: [],
+      }),
+    ]);
+
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "opencode",
+        selectedModel: "",
+        isLoading: false,
+      }),
+    ).toBe("Error");
+  });
+
   it("returns observable submission readiness reasons", () => {
     expect(
       resolveSubmissionReadiness({

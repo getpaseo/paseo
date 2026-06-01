@@ -388,6 +388,41 @@ describe("processTimelineResponse", () => {
     expect(getUserTexts(result.tail)).toHaveLength(0);
   });
 
+  it("treats a stale epoch reset as a replacement with the new epoch window", () => {
+    const oldTail: StreamItem[] = [makeAssistantItem("old epoch message", "old-assistant")];
+    const oldHead: StreamItem[] = [makeAssistantItem("old live head", "old-head")];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: oldTail,
+      currentHead: oldHead,
+      currentCursor: { epoch: "old-epoch", startSeq: 1, endSeq: 95 },
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "new-epoch",
+        startCursor: { seq: 101 },
+        endCursor: { seq: 105 },
+        hasOlder: true,
+        entries: [
+          makeTimelineEntry(101, "new one"),
+          makeTimelineEntry(102, "new two"),
+          makeTimelineEntry(103, "new three"),
+          makeTimelineEntry(104, "new four"),
+          makeTimelineEntry(105, "new five"),
+        ],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual(["new onenew twonew threenew fournew five"]);
+    expect(result.head).toEqual([]);
+    expect(result.cursor).toEqual({ epoch: "new-epoch", startSeq: 101, endSeq: 105 });
+    expect(result.sideEffects).not.toContainEqual({
+      type: "catch_up",
+      cursor: { epoch: "old-epoch", endSeq: 95 },
+    });
+  });
+
   it("performs bootstrap tail init with catch-up side effect", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -510,6 +545,153 @@ describe("processTimelineResponse", () => {
       startSeq: 1,
       endSeq: 3,
     });
+  });
+
+  it("hydrates a fetched in-progress tool call as one item and streams the next update on top", () => {
+    const fetched = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "tail",
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        epoch: "epoch-1",
+        startCursor: { seq: 10 },
+        endCursor: { seq: 250 },
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(10, "call-1", "running", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }),
+            seqEnd: 250,
+            sourceSeqRanges: [
+              { startSeq: 10, endSeq: 10 },
+              { startSeq: 250, endSeq: 250 },
+            ],
+            collapsed: ["tool_lifecycle"],
+          },
+        ],
+      },
+    });
+
+    expect(getAgentToolCalls(fetched.tail)).toHaveLength(1);
+    expect(fetched.cursor).toEqual({ epoch: "epoch-1", startSeq: 10, endSeq: 250 });
+
+    const streamed = processAgentStreamEvent({
+      ...baseStreamInput,
+      currentTail: fetched.tail,
+      currentHead: fetched.head,
+      currentCursor: fetched.cursor ?? undefined,
+      seq: 251,
+      epoch: "epoch-1",
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "Read",
+          status: "completed",
+          detail: {
+            type: "read",
+            filePath: "/tmp/example.ts",
+          },
+          error: null,
+        },
+      } as AgentStreamEventPayload,
+    });
+
+    const tools = getAgentToolCalls(streamed.tail);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.payload.data.status).toBe("completed");
+    expect(streamed.cursor).toEqual({ epoch: "epoch-1", startSeq: 10, endSeq: 251 });
+  });
+
+  it("accepts an after-page projected tool update whose item started before the cursor", () => {
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 10,
+      endSeq: 249,
+    };
+    const runningTool = hydrateStreamState(
+      [
+        {
+          event: makeToolCallTimelineEvent("call-1"),
+          timestamp: new Date(1010),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: runningTool,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 250 },
+        endCursor: { seq: 250 },
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(10, "call-1", "completed", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }),
+            seqEnd: 250,
+            sourceSeqRanges: [
+              { startSeq: 10, endSeq: 10 },
+              { startSeq: 250, endSeq: 250 },
+            ],
+            collapsed: ["tool_lifecycle"],
+          },
+        ],
+      },
+    });
+
+    const catchUp = result.sideEffects.find((effect) => effect.type === "catch_up");
+    const tools = getAgentToolCalls(result.tail);
+    expect(catchUp).toBeUndefined();
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.payload.data.status).toBe("completed");
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 10, endSeq: 250 });
+  });
+
+  it("replaces an active assistant head when after-page returns a full projected assistant item", () => {
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 3,
+    };
+    const currentHead = [makeAssistantItem("ABC")];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 4 },
+        endCursor: { seq: 5 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "ABCDE"),
+            seqEnd: 5,
+            sourceSeqRanges: [{ startSeq: 1, endSeq: 5 }],
+            collapsed: ["assistant_merge"],
+          },
+        ],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual([]);
+    expect(getAssistantTexts(result.head)).toEqual(["ABCDE"]);
+    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 5 });
   });
 
   it("detects gap and emits catch-up side effect", () => {
@@ -917,6 +1099,24 @@ describe("processTimelineResponse", () => {
 
     expect(result.initResolution).toBe("resolve");
     expect(result.clearInitializing).toBe(true);
+  });
+
+  it("keeps init open while an after catch-up page has newer rows", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "after",
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        hasNewer: true,
+        entries: [],
+      },
+    });
+
+    expect(result.initResolution).toBe(null);
+    expect(result.clearInitializing).toBe(false);
   });
 
   it("does not resolve init when directions differ (before vs after)", () => {

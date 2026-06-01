@@ -190,6 +190,7 @@ function renderContextWindowMeter(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
+  showPercentage: boolean,
 ): ReactElement | null {
   if (contextWindowMaxTokens === null || contextWindowUsedTokens === null) {
     return null;
@@ -199,6 +200,7 @@ function renderContextWindowMeter(
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
+      showPercentage={showPercentage}
     />
   );
 }
@@ -206,13 +208,13 @@ function renderContextWindowMeter(
 function resolveContextWindowPlacement(
   meter: ReactElement | null,
   isMobile: boolean,
-): { beforeVoiceContent: ReactNode; footerRight: ReactNode } {
+): { beforeVoiceContent: ReactNode; footerInlineContent: ReactNode } {
   if (isMobile) {
-    return { beforeVoiceContent: null, footerRight: meter };
+    return { beforeVoiceContent: null, footerInlineContent: meter };
   }
   return {
     beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{meter}</View>,
-    footerRight: null,
+    footerInlineContent: null,
   };
 }
 
@@ -238,13 +240,18 @@ interface RenderAttachmentTrayArgs {
   handleRemoveAttachment: (index: number) => void;
 }
 
-function renderComposerFooter(footer: ReactNode, footerRight: ReactNode): ReactElement | null {
-  if (!footer && !footerRight) return null;
+function renderComposerFooter(
+  footer: ReactNode,
+  footerInlineContent: ReactNode,
+): ReactElement | null {
+  if (!footer && !footerInlineContent) return null;
   return (
     <View style={styles.footer}>
       <View style={styles.footerContent}>
-        <View style={styles.footerLeft}>{footer}</View>
-        <View style={styles.footerRight}>{footerRight}</View>
+        <View style={styles.footerLeft}>
+          {footer}
+          {footerInlineContent}
+        </View>
       </View>
     </View>
   );
@@ -665,6 +672,8 @@ interface ComposerProps {
   inputWrapperStyle?: import("react-native").ViewStyle;
   /** Rendered below the input, inside the keyboard-shifted container. */
   footer?: ReactNode;
+  /** When true, a parent wrapper owns the keyboard shift, so the composer skips its own. */
+  externalKeyboardShift?: boolean;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -859,6 +868,7 @@ export function Composer({
   agentControls,
   inputWrapperStyle,
   footer,
+  externalKeyboardShift,
 }: ComposerProps) {
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
@@ -1307,6 +1317,7 @@ export function Composer({
 
   const { style: keyboardAnimatedStyle } = useKeyboardShiftStyle({
     mode: "translate",
+    enabled: !externalKeyboardShift,
   });
 
   const isVoiceModeForAgent = resolveIsVoiceModeForAgent(voice, serverId, agentId);
@@ -1464,10 +1475,11 @@ export function Composer({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
+        isMobile,
       ),
-    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd],
+    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isMobile],
   );
-  const { beforeVoiceContent, footerRight } = useMemo(
+  const { beforeVoiceContent, footerInlineContent } = useMemo(
     () => resolveContextWindowPlacement(contextWindowMeter, isMobile),
     [contextWindowMeter, isMobile],
   );
@@ -1714,7 +1726,7 @@ export function Composer({
           </View>
         </View>
       </View>
-      {renderComposerFooter(footer, footerRight)}
+      {renderComposerFooter(footer, footerInlineContent)}
     </Animated.View>
   );
 }
@@ -1749,8 +1761,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
   footer: {
     width: "100%",
     paddingHorizontal: theme.spacing[4],
+    // Negative margin pulls the footer up against the input area's paddingBottom.
+    // On mobile, leave a 3px gap (no token sits below spacing[1]); desktop keeps more.
     marginTop: {
-      xs: -theme.spacing[4],
+      xs: -(theme.spacing[4] - 3),
       md: -theme.spacing[3],
     },
     alignItems: "center",
@@ -1761,12 +1775,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    // On mobile, the negative margins below cancel each glyph's internal padding
+    // to reach the composer border; this inset adds a small visual gap from it.
     paddingLeft: {
-      xs: 6,
+      xs: 5,
       md: 10,
     },
     paddingRight: {
-      xs: 6,
+      xs: 5,
       md: 10,
     },
   },
@@ -1774,11 +1790,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
-  },
-  footerRight: {
-    flexShrink: 0,
-    flexDirection: "row",
-    alignItems: "center",
+    gap: theme.spacing[1],
+    // On mobile, cancel the leading glyph's internal padding (chip paddingHorizontal)
+    // so its icon aligns to the composer border before the footer inset is applied.
+    marginLeft: {
+      xs: -theme.spacing[2],
+      md: 0,
+    },
   },
   messageInputContainer: {
     position: "relative",

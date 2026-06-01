@@ -21,6 +21,7 @@ export function createScheduleCommand(): Command {
       .argument("<prompt>", "Prompt to run on the schedule")
       .option("--every <duration>", "Fixed interval cadence (for example: 5m, 1h)")
       .option("--cron <expr>", "Cron cadence expression")
+      .option("--timezone <iana>", "IANA time zone for cron cadence (default: UTC)")
       .option("--name <name>", "Optional schedule name")
       .option("--target <self|new-agent|agent-id>", "Run target")
       .option(
@@ -82,6 +83,7 @@ export function createScheduleCommand(): Command {
       .argument("<id>", "Schedule ID")
       .option("--every <duration>", "Switch to fixed interval cadence (for example: 5m, 1h)")
       .option("--cron <expr>", "Switch to cron cadence expression")
+      .option("--timezone <iana>", "IANA time zone for cron cadence (requires --cron)")
       .option("--name <name>", "Rename the schedule (empty string clears the name)")
       .option("--prompt <text>", "Replace the schedule prompt")
       .option(

@@ -3,6 +3,7 @@ import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "reac
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
 }
 

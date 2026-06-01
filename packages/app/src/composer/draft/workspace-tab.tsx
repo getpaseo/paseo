@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, Text, View } from "react-native";
+import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -584,9 +586,13 @@ export function WorkspaceDraftAgentTab({
     [composerState],
   );
 
+  const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
+    mode: "translate",
+  });
+
   const inputAreaWrapperStyle = useMemo(
-    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
-    [insets.bottom],
+    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }, composerKeyboardStyle],
+    [insets.bottom, composerKeyboardStyle],
   );
 
   const handleDropdownCloseFocus = useCallback(() => {
@@ -656,7 +662,7 @@ export function WorkspaceDraftAgentTab({
           )}
         </View>
 
-        <View style={inputAreaWrapperStyle}>
+        <ReanimatedAnimated.View style={inputAreaWrapperStyle}>
           {importPillPress ? (
             <View style={styles.importPillRow}>
               <View style={styles.importPillContent}>
@@ -667,6 +673,7 @@ export function WorkspaceDraftAgentTab({
           <Composer
             agentId={tabId}
             serverId={serverId}
+            externalKeyboardShift
             isPaneFocused={isPaneFocused}
             onSubmitMessage={handleCreateFromInput}
             isSubmitLoading={isSubmitting}
@@ -686,7 +693,7 @@ export function WorkspaceDraftAgentTab({
             agentControls={composerAgentControls}
             footer={composerFooter}
           />
-        </View>
+        </ReanimatedAnimated.View>
       </View>
     </FileDropZone>
   );

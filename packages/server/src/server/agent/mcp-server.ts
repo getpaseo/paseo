@@ -333,6 +333,7 @@ interface ScheduleUpdateToolInput {
   id: string;
   every?: string;
   cron?: string;
+  timezone?: string;
   name?: string | null;
   prompt?: string;
   maxRuns?: number | null;
@@ -357,18 +358,30 @@ function normalizeScheduleCadenceArg(value: string | undefined): string | undefi
   return trimmed;
 }
 
+function normalizeScheduleTimeZoneArg(value: string | undefined): string | undefined {
+  return normalizeScheduleCadenceArg(value);
+}
+
 function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleCadence | undefined {
   const every = normalizeScheduleCadenceArg(input.every);
   const cron = normalizeScheduleCadenceArg(input.cron);
+  const timeZone = normalizeScheduleTimeZoneArg(input.timezone);
 
   if (every !== undefined && cron !== undefined) {
     throw new Error("Specify at most one of every or cron");
+  }
+  if (timeZone !== undefined && cron === undefined) {
+    throw new Error("timezone can only be used with cron");
   }
   if (every !== undefined) {
     return { type: "every", everyMs: parseDurationString(every) };
   }
   if (cron !== undefined) {
-    return { type: "cron", expression: cron };
+    return {
+      type: "cron",
+      expression: cron,
+      ...(timeZone !== undefined ? { timezone: timeZone } : {}),
+    };
   }
   return undefined;
 }
@@ -1583,6 +1596,14 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         prompt: z.string().trim().min(1, "prompt is required"),
         every: z.string().optional(),
         cron: z.string().optional(),
+        timezone: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
+          ),
         name: z.string().optional(),
         target: z.enum(["self", "new-agent"]).optional(),
         provider: AgentProviderEnum.optional().describe(
@@ -1594,17 +1615,21 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, every, cron, name, target, provider, cwd, maxRuns, expiresIn }) => {
+    async ({ prompt, every, cron, timezone, name, target, provider, cwd, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
 
       const normalizedEvery = normalizeScheduleCadenceArg(every);
       const normalizedCron = normalizeScheduleCadenceArg(cron);
+      const normalizedTimeZone = normalizeScheduleTimeZoneArg(timezone);
       const cadenceCount =
         Number(normalizedEvery !== undefined) + Number(normalizedCron !== undefined);
       if (cadenceCount !== 1) {
         throw new Error("Specify exactly one of every or cron");
+      }
+      if (normalizedTimeZone !== undefined && normalizedCron === undefined) {
+        throw new Error("timezone can only be used with cron");
       }
 
       const scheduleTarget =
@@ -1643,7 +1668,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cadence:
           normalizedEvery !== undefined
             ? { type: "every" as const, everyMs: parseDurationString(normalizedEvery) }
-            : { type: "cron" as const, expression: normalizedCron! },
+            : {
+                type: "cron" as const,
+                expression: normalizedCron!,
+                ...(normalizedTimeZone !== undefined ? { timezone: normalizedTimeZone } : {}),
+              },
         target: scheduleTarget,
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
@@ -1792,6 +1821,14 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         id: z.string(),
         every: z.string().optional().describe("New interval duration string (e.g. 5m, 1h)."),
         cron: z.string().optional().describe("New cron expression."),
+        timezone: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
+          ),
         name: z.string().nullable().optional().describe("New name (null to clear)."),
         prompt: z.string().trim().min(1).optional().describe("New prompt text."),
         maxRuns: z

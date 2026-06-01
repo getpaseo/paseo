@@ -300,8 +300,8 @@ No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to 
 
 ## Changelog ownership
 
-- **Only Claude should write changelog entries.**
-- If you are Codex and a stable release needs a changelog entry, launch a Claude agent with Paseo to draft it, then review and commit the result.
+- **The agent running the stable release writes the changelog entry.** Do not hand the changelog to another model or agent. The release agent has the release context and owns the final wording.
+- Draft the entry from the stable-to-stable diff, review it against the changelog policy below, show it to the user, and wait for approval before committing it.
 
 ## Changelog voice
 
@@ -380,19 +380,15 @@ Entries within each section (Added, Improved, Fixed) are ordered by user impact:
 
 ## Pre-release sanity check
 
-Before cutting a **stable** release, run a Codex review of the diff as a last line of defence against shipping bugs. Skip this for betas — the beta itself is the smoke test, and gating each beta on a code review defeats the point of using betas as fast release candidates.
+Before cutting a **stable** release, the release agent reviews the diff as a last line of defence against shipping bugs. Skip this for betas — the beta itself is the smoke test, and gating each beta on a code review defeats the point of using betas as fast release candidates.
 
-Load the `paseo` skill and launch a **Codex 5.4** agent with a prompt like:
+Review the diff between the latest release tag and `HEAD`. Focus on:
 
-> Review the diff between the latest release tag and HEAD. Focus on:
->
-> 1. **Breaking changes** — especially in the WebSocket protocol, agent lifecycle, and any server↔client contract.
-> 2. **Backward compatibility** — the important direction is old app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Flag anything that breaks old clients against new daemons or requires both sides to update in lockstep.
-> 3. **Regressions** — anything that looks like it could break existing functionality.
->
-> Diff: `git diff <latest-release-tag>..HEAD`
+1. **Breaking changes** — especially in the WebSocket protocol, agent lifecycle, and any server↔client contract.
+2. **Backward compatibility** — the important direction is old app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Flag anything that breaks old clients against new daemons or requires both sides to update in lockstep.
+3. **Regressions** — anything that looks like it could break existing functionality.
 
-The agent's job is a deep sanity check, not a full code review. If it flags anything, investigate before proceeding.
+Use `git diff <latest-release-tag>..HEAD` as the review input. This is a deep sanity check, not a full code review. If anything looks risky, investigate before proceeding and surface the finding to the user.
 
 ## Changelog scope
 

@@ -4,6 +4,7 @@ import { UITextView } from "react-native-uitextview";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
 }
 

@@ -12,6 +12,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
@@ -19,10 +20,16 @@ import { useFileLink } from "./use-file-link";
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
 }
 
-export function AssistantMarkdownLink({ source, style, children }: AssistantMarkdownLinkProps) {
+export function AssistantMarkdownLink({
+  source,
+  style,
+  monoSurface,
+  children,
+}: AssistantMarkdownLinkProps) {
   const [hovered, setHovered] = useState(false);
   const { target, onHoverIn, onPress, onAuxPress } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
@@ -52,7 +59,12 @@ export function AssistantMarkdownLink({ source, style, children }: AssistantMark
   if (isNative) {
     return (
       <FileLinkHoverTooltip filePath={tooltipPath}>
-        <Text accessibilityRole="link" onPress={onPress} style={style}>
+        <Text
+          accessibilityRole="link"
+          dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
+          onPress={onPress}
+          style={style}
+        >
           {children}
         </Text>
       </FileLinkHoverTooltip>
@@ -72,7 +84,9 @@ export function AssistantMarkdownLink({ source, style, children }: AssistantMark
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >
-        <Text style={hoveredTextStyle}>{children}</Text>
+        <Text dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined} style={hoveredTextStyle}>
+          {children}
+        </Text>
       </Pressable>
     </a>
   );
@@ -100,7 +114,7 @@ export function AssistantMarkdownCodeLink({
     [inheritedStyles, codeInlineStyle, linkStyle],
   );
   return (
-    <AssistantMarkdownLink source={source} style={style}>
+    <AssistantMarkdownLink source={source} style={style} monoSurface>
       {children}
     </AssistantMarkdownLink>
   );

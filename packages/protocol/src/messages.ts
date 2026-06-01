@@ -102,6 +102,20 @@ const MutableDaemonProviderConfigSchema = z
   })
   .passthrough();
 
+const MutableStructuredGenerationProviderSchema = z
+  .object({
+    provider: z.string().min(1),
+    model: z.string().min(1).optional(),
+    thinkingOptionId: z.string().min(1).optional(),
+  })
+  .passthrough();
+
+const MutableMetadataGenerationConfigSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -110,6 +124,7 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
   })
@@ -121,6 +136,7 @@ export const MutableDaemonConfigPatchSchema = z
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
   })
@@ -469,15 +485,13 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, z.ZodTypeDef, unkno
     }),
   ]);
 
-const ToolCallBasePayloadSchema = z
-  .object({
-    type: z.literal("tool_call"),
-    callId: z.string(),
-    name: z.string(),
-    detail: ToolCallDetailPayloadSchema,
-    metadata: z.record(z.string(), z.unknown()).optional(),
-  })
-  .strict();
+const ToolCallBasePayloadSchema = z.object({
+  type: z.literal("tool_call"),
+  callId: z.string(),
+  name: z.string(),
+  detail: ToolCallDetailPayloadSchema,
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
 
 const ToolCallRunningPayloadSchema = ToolCallBasePayloadSchema.extend({
   status: z.literal("running"),
@@ -1382,6 +1396,12 @@ export const CheckoutPushRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutRefreshRequestSchema = z.object({
+  type: z.literal("checkout.refresh.request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
 export const CheckoutPrCreateRequestSchema = z.object({
   type: z.literal("checkout_pr_create_request"),
   cwd: z.string(),
@@ -1786,10 +1806,8 @@ export const SubscribeTerminalRequestSchema = z.object({
           rows: z.number().int().positive(),
           cols: z.number().int().positive(),
         })
-        .strict()
         .optional(),
     })
-    .strict()
     .optional(),
 });
 
@@ -1887,6 +1905,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutMergeFromBaseRequestSchema,
   CheckoutPullRequestSchema,
   CheckoutPushRequestSchema,
+  CheckoutRefreshRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
@@ -2121,6 +2140,8 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
+        // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
+        checkoutRefresh: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3075,6 +3096,16 @@ export const CheckoutPushResponseSchema = z.object({
   }),
 });
 
+export const CheckoutRefreshResponseSchema = z.object({
+  type: z.literal("checkout.refresh.response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutPrCreateResponseSchema = z.object({
   type: z.literal("checkout_pr_create_response"),
   payload: z.object({
@@ -3505,44 +3536,45 @@ const TerminalInfoSchema = z.object({
   title: z.string().optional(),
 });
 
-export const TerminalCellSchema = z
-  .object({
-    char: z.string(),
-    fg: z.number().optional(),
-    bg: z.number().optional(),
-    fgMode: z.number().optional(),
-    bgMode: z.number().optional(),
-    bold: z.boolean().optional(),
-    italic: z.boolean().optional(),
-    underline: z.boolean().optional(),
-    dim: z.boolean().optional(),
-    inverse: z.boolean().optional(),
-    strikethrough: z.boolean().optional(),
-  })
-  .strict();
+export const TerminalCellSchema = z.object({
+  char: z.string(),
+  fg: z.number().optional(),
+  bg: z.number().optional(),
+  fgMode: z.number().optional(),
+  bgMode: z.number().optional(),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.boolean().optional(),
+  dim: z.boolean().optional(),
+  inverse: z.boolean().optional(),
+  strikethrough: z.boolean().optional(),
+});
 
 export const TerminalCursorStyleSchema = z.enum(["block", "underline", "bar"]);
 
-export const TerminalCursorSchema = z
-  .object({
-    row: z.number(),
-    col: z.number(),
-    hidden: z.boolean().optional(),
-    style: TerminalCursorStyleSchema.optional(),
-    blink: z.boolean().optional(),
-  })
-  .strict();
+export const TerminalCursorSchema = z.object({
+  row: z.number(),
+  col: z.number(),
+  hidden: z.boolean().optional(),
+  style: TerminalCursorStyleSchema.optional(),
+  blink: z.boolean().optional(),
+});
 
-export const TerminalStateSchema = z
-  .object({
-    rows: z.number(),
-    cols: z.number(),
-    grid: z.array(z.array(TerminalCellSchema)),
-    scrollback: z.array(z.array(TerminalCellSchema)),
-    cursor: TerminalCursorSchema,
-    title: z.string().optional(),
-  })
-  .strict();
+export const TerminalStateSchema = z.object({
+  rows: z.number(),
+  cols: z.number(),
+  grid: z.array(z.array(TerminalCellSchema)),
+  scrollback: z.array(z.array(TerminalCellSchema)),
+  cursor: TerminalCursorSchema,
+  title: z.string().optional(),
+  // Per-row soft-wrap flags aligned 1:1 with `grid` / `scrollback`. `true` means
+  // the row continued onto the next row (xterm's GRID_LINE_WRAPPED equivalent),
+  // so the client can re-wrap the logical line on resize instead of freezing it
+  // at the snapshot width. Optional: only sent to clients that advertise the
+  // `terminalReflowableSnapshot` capability, so old daemons/clients are unaffected.
+  gridWrapped: z.array(z.boolean()).optional(),
+  scrollbackWrapped: z.array(z.boolean()).optional(),
+});
 
 export const ListTerminalsResponseSchema = z.object({
   type: z.literal("list_terminals_response"),
@@ -3687,6 +3719,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutMergeFromBaseResponseSchema,
   CheckoutPullResponseSchema,
   CheckoutPushResponseSchema,
+  CheckoutRefreshResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
@@ -3949,6 +3982,8 @@ export type CheckoutPullRequest = z.infer<typeof CheckoutPullRequestSchema>;
 export type CheckoutPullResponse = z.infer<typeof CheckoutPullResponseSchema>;
 export type CheckoutPushRequest = z.infer<typeof CheckoutPushRequestSchema>;
 export type CheckoutPushResponse = z.infer<typeof CheckoutPushResponseSchema>;
+export type CheckoutRefreshRequest = z.infer<typeof CheckoutRefreshRequestSchema>;
+export type CheckoutRefreshResponse = z.infer<typeof CheckoutRefreshResponseSchema>;
 export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
 export type CheckoutPrMergeRequest = z.infer<typeof CheckoutPrMergeRequestSchema>;
@@ -4070,6 +4105,7 @@ export const WSHelloMessageSchema = z.object({
       pushNotifications: z.boolean().optional(),
       [CLIENT_CAPS.reasoningMergeEnum]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
+      [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
     })
     .passthrough()
     .optional(),
