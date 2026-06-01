@@ -140,6 +140,10 @@ function resolveIsDesktopWebBreakpoint(isMobile: boolean): boolean {
   return isWeb && !isMobile;
 }
 
+function resolveCompactLayout(override: boolean | undefined, formFactor: boolean): boolean {
+  return override ?? formFactor;
+}
+
 function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean): string {
   return isDesktopWebBreakpoint ? DESKTOP_MESSAGE_PLACEHOLDER : MOBILE_MESSAGE_PLACEHOLDER;
 }
@@ -223,14 +227,22 @@ interface RenderLeftContentArgs {
   agentId: string;
   serverId: string;
   focusInput: () => void;
+  isCompactLayout: boolean;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
-  const { agentControls, agentId, serverId, focusInput } = args;
+  const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} />;
+    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
   }
-  return <AgentControls agentId={agentId} serverId={serverId} onDropdownClose={focusInput} />;
+  return (
+    <AgentControls
+      agentId={agentId}
+      serverId={serverId}
+      onDropdownClose={focusInput}
+      isCompactLayout={isCompactLayout}
+    />
+  );
 }
 
 interface RenderAttachmentTrayArgs {
@@ -674,6 +686,8 @@ interface ComposerProps {
   footer?: ReactNode;
   /** When true, a parent wrapper owns the keyboard shift, so the composer skips its own. */
   externalKeyboardShift?: boolean;
+  /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
+  isCompactLayout?: boolean;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -869,6 +883,7 @@ export function Composer({
   inputWrapperStyle,
   footer,
   externalKeyboardShift,
+  isCompactLayout: isCompactLayoutOverride,
 }: ComposerProps) {
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
@@ -899,9 +914,11 @@ export function Composer({
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
-  const isMobile = useIsCompactFormFactor();
-  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isMobile);
-  const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
+  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
+  const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
+  const messagePlaceholder = resolveMessagePlaceholder(isDesktopLayout);
   const userInput = value;
   const setUserInput = onChangeText;
   const {
@@ -1437,7 +1454,7 @@ export function Composer({
         isAgentRunning={isAgentRunning}
         hasSendableContent={hasSendableContent}
         isProcessing={isProcessing}
-        isCompact={isMobile}
+        isCompact={isCompactLayout}
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
         isConnected={isConnected}
@@ -1455,7 +1472,7 @@ export function Composer({
       hasSendableContent,
       isAgentRunning,
       isConnected,
-      isMobile,
+      isCompactLayout,
       isProcessing,
       isVoiceModeForAgent,
       isVoiceSwitching,
@@ -1475,13 +1492,13 @@ export function Composer({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
-        isMobile,
+        isCompactLayout,
       ),
-    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isMobile],
+    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isCompactLayout],
   );
   const { beforeVoiceContent, footerInlineContent } = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, isMobile),
-    [contextWindowMeter, isMobile],
+    () => resolveContextWindowPlacement(contextWindowMeter, isCompactLayout),
+    [contextWindowMeter, isCompactLayout],
   );
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
@@ -1548,8 +1565,8 @@ export function Composer({
   );
 
   const leftContent = useMemo(
-    () => renderLeftContent({ agentControls, agentId, serverId, focusInput }),
-    [agentId, focusInput, serverId, agentControls],
+    () => renderLeftContent({ agentControls, agentId, serverId, focusInput, isCompactLayout }),
+    [agentId, focusInput, serverId, agentControls, isCompactLayout],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {

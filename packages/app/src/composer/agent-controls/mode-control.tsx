@@ -235,14 +235,17 @@ interface AgentModeControlProps {
   serverId: string;
   agentId: string;
   placement: AgentModeControlPlacement;
+  isCompactLayout?: boolean;
 }
 
 export const AgentModeControl = memo(function AgentModeControl({
   serverId,
   agentId,
   placement,
+  isCompactLayout,
 }: AgentModeControlProps) {
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
   const slice = useSessionStore(
     useShallow((state) => {
       const agent = state.sessions[serverId]?.agents?.get(agentId);
@@ -303,6 +306,7 @@ export interface DraftAgentModeControlProps {
   onSelectMode: (modeId: string) => void;
   disabled?: boolean;
   placement: AgentModeControlPlacement;
+  isCompactLayout?: boolean;
 }
 
 export function DraftAgentModeControl({
@@ -313,8 +317,10 @@ export function DraftAgentModeControl({
   onSelectMode,
   disabled,
   placement,
+  isCompactLayout,
 }: DraftAgentModeControlProps) {
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
   if (!selectedProvider || modeOptions.length === 0) return null;
   if (!shouldRenderForPlacement(placement, isCompact)) return null;
   return (

@@ -97,6 +97,7 @@ interface ControlledAgentControlsProps {
   /** Extra elements rendered inline with the agent controls (desktop only). */
   desktopExtras?: ReactNode;
   modelSelectorServerId?: string | null;
+  isCompactLayout?: boolean;
 }
 
 export interface DraftAgentControlsProps {
@@ -124,12 +125,14 @@ export interface DraftAgentControlsProps {
   isRetryingModelProvider?: boolean;
   disabled?: boolean;
   modelSelectorServerId?: string | null;
+  isCompactLayout?: boolean;
 }
 
 interface AgentControlsProps {
   agentId: string;
   serverId: string;
   onDropdownClose?: () => void;
+  isCompactLayout?: boolean;
 }
 
 function findOptionLabel(
@@ -409,9 +412,11 @@ function ControlledAgentControls({
   isRetryingModelProvider = false,
   desktopExtras,
   modelSelectorServerId = null,
+  isCompactLayout,
 }: ControlledAgentControlsProps) {
   const { theme } = useUnistyles();
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
 
@@ -1345,6 +1350,7 @@ export const AgentControls = memo(function AgentControls({
   agentId,
   serverId,
   onDropdownClose,
+  isCompactLayout,
 }: AgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
@@ -1518,8 +1524,15 @@ export const AgentControls = memo(function AgentControls({
   );
 
   const modeChip = useMemo(
-    () => <AgentModeControl serverId={serverId} agentId={agentId} placement="toolbar" />,
-    [serverId, agentId],
+    () => (
+      <AgentModeControl
+        serverId={serverId}
+        agentId={agentId}
+        placement="toolbar"
+        isCompactLayout={isCompactLayout}
+      />
+    ),
+    [serverId, agentId, isCompactLayout],
   );
 
   if (!agent) {
@@ -1548,6 +1561,7 @@ export const AgentControls = memo(function AgentControls({
       disabled={!client}
       desktopExtras={modeChip}
       modelSelectorServerId={serverId}
+      isCompactLayout={isCompactLayout}
     />
   );
 });
@@ -1577,9 +1591,11 @@ export function DraftAgentControls({
   isRetryingModelProvider = false,
   disabled = false,
   modelSelectorServerId = null,
+  isCompactLayout,
 }: DraftAgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
 
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
@@ -1625,9 +1641,18 @@ export function DraftAgentControls({
         selectedMode={selectedMode}
         onSelectMode={onSelectMode}
         disabled={disabled}
+        isCompactLayout={isCompactLayout}
       />
     ),
-    [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
+    [
+      selectedProvider,
+      providerDefinitions,
+      modeOptions,
+      selectedMode,
+      onSelectMode,
+      disabled,
+      isCompactLayout,
+    ],
   );
 
   if (!isCompact) {
@@ -1661,6 +1686,7 @@ export function DraftAgentControls({
             isRetryingModelProvider={isRetryingModelProvider}
             disabled={disabled}
             desktopExtras={draftModeChip}
+            isCompactLayout={isCompactLayout}
           />
         ) : null}
       </View>
@@ -1688,6 +1714,7 @@ export function DraftAgentControls({
       isRetryingModelProvider={isRetryingModelProvider}
       disabled={disabled}
       modelSelectorServerId={modelSelectorServerId}
+      isCompactLayout={isCompactLayout}
     />
   );
 }
