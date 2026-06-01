@@ -59,11 +59,24 @@ Daily GitHub triage on GLM through OpenCode:
 ```bash
 paseo schedule create \
   --cron "0 14 * * 1-5" \
+  --timezone UTC \
   --run-now \
   --name github-triage \
   --provider opencode/openrouter/glm-5.1 \
   --cwd ~/dev/my-app \
   "Triage GitHub issues, PRs, and failing checks. Summarize what needs attention."
+```
+
+Morning triage at 9 AM in New York, including daylight saving time changes:
+
+```bash
+paseo schedule create \
+  --cron "0 9 * * 1-5" \
+  --timezone America/New_York \
+  --name morning-triage \
+  --provider codex/gpt-5.5 \
+  --cwd ~/dev/my-app \
+  "Review overnight CI failures and summarize anything urgent."
 ```
 
 Heartbeat the current agent:
@@ -89,7 +102,9 @@ paseo schedule update <id> --every 10m --max-runs 6
 paseo schedule delete <id>
 ```
 
-Use `--every <duration>` for intervals and `--cron "<expr>"` for 5-field UTC cron. Interval schedules run once immediately by default; pass `--no-run-now` to wait for the first interval. Cron schedules wait for the next matching time; pass `--run-now` to fire once immediately.
+Use `--every <duration>` for intervals and `--cron "<expr>"` for 5-field cron. Cron schedules default to UTC. Pass `--timezone <IANA>` to interpret cron fields in a local wall-clock time zone, for example `--timezone America/New_York`. The persisted `nextRunAt` is still a UTC instant, but it is computed from that local time zone so recurring jobs stay at the same local time across daylight saving time changes.
+
+Interval schedules run once immediately by default; pass `--no-run-now` to wait for the first interval. Cron schedules wait for the next matching time; pass `--run-now` to fire once immediately.
 
 When targeting a remote daemon with `--host`, pass `--cwd`; your local working directory may not exist on the remote machine.
 

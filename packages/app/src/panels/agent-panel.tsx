@@ -1,6 +1,6 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { SquarePen } from "lucide-react-native";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,6 +38,7 @@ import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { RenderProfile } from "@/utils/render-profiler";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
@@ -1095,42 +1096,52 @@ function ChatAgentReadyContent({
       agentId,
     }),
   });
+  const streamSection = (
+    <RenderProfile id={`AgentStreamSection:${agentId}`}>
+      <AgentStreamSection
+        streamViewRef={streamViewRef}
+        serverId={serverId}
+        agentId={agentId}
+        agent={effectiveAgent}
+        routeBottomAnchorRequest={routeBottomAnchorRequest}
+        hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
+        toast={panelToast.api}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    </RenderProfile>
+  );
+  const composerSection = (
+    <RenderProfile id={`AgentComposerSection:${agentId}`}>
+      <AgentComposerSection
+        agentId={agentId}
+        serverId={serverId}
+        isPaneFocused={isPaneFocused}
+        isArchivingCurrentAgent={isArchivingCurrentAgent}
+        archivedAt={agentState.archivedAt}
+        cwd={cwd}
+        isSubmitLoading={false}
+        agentInputDraft={agentInputDraft}
+        onAttentionInputFocus={attentionController.clearOnInputFocus}
+        onAttentionPromptSend={attentionController.clearOnPromptSend}
+        onAddImages={handleAddImagesCallback}
+        onComposerHeightChange={handleComposerHeightChange}
+        onMessageSent={handleMessageSent}
+      />
+    </RenderProfile>
+  );
+  const streamContent = (
+    <ReanimatedAnimated.View style={animatedContentStyle}>{streamSection}</ReanimatedAnimated.View>
+  );
+  const contentContainer = <View style={styles.contentContainer}>{streamContent}</View>;
 
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
       <View style={styles.root}>
         <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
           <View style={styles.container}>
-            <View style={styles.contentContainer}>
-              <ReanimatedAnimated.View style={animatedContentStyle}>
-                <AgentStreamSection
-                  streamViewRef={streamViewRef}
-                  serverId={serverId}
-                  agentId={agentId}
-                  agent={effectiveAgent}
-                  routeBottomAnchorRequest={routeBottomAnchorRequest}
-                  hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-                  toast={panelToast.api}
-                  onOpenWorkspaceFile={onOpenWorkspaceFile}
-                />
-              </ReanimatedAnimated.View>
-            </View>
+            {contentContainer}
 
-            <AgentComposerSection
-              agentId={agentId}
-              serverId={serverId}
-              isPaneFocused={isPaneFocused}
-              isArchivingCurrentAgent={isArchivingCurrentAgent}
-              archivedAt={agentState.archivedAt}
-              cwd={cwd}
-              isSubmitLoading={false}
-              agentInputDraft={agentInputDraft}
-              onAttentionInputFocus={attentionController.clearOnInputFocus}
-              onAttentionPromptSend={attentionController.clearOnPromptSend}
-              onAddImages={handleAddImagesCallback}
-              onComposerHeightChange={handleComposerHeightChange}
-              onMessageSent={handleMessageSent}
-            />
+            {composerSection}
 
             {showHistorySyncOverlay ? (
               <View style={styles.historySyncOverlay} testID="agent-history-overlay">
@@ -1158,7 +1169,7 @@ function ChatAgentReadyContent({
   );
 }
 
-function AgentStreamSection({
+const AgentStreamSection = memo(function AgentStreamSection({
   streamViewRef,
   serverId,
   agentId,
@@ -1222,7 +1233,7 @@ function AgentStreamSection({
       onOpenWorkspaceFile={onOpenWorkspaceFile}
     />
   );
-}
+});
 
 function AgentComposerSection({
   agentId,

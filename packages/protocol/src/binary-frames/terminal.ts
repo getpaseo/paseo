@@ -1,12 +1,10 @@
 import { z } from "zod";
 import { TerminalStateSchema } from "../messages.js";
 
-export const TerminalStreamResizeSchema = z
-  .object({
-    rows: z.number().int().positive(),
-    cols: z.number().int().positive(),
-  })
-  .strict();
+export const TerminalStreamResizeSchema = z.object({
+  rows: z.number().int().positive(),
+  cols: z.number().int().positive(),
+});
 
 export const TerminalStreamOpcode = {
   Output: 0x01,

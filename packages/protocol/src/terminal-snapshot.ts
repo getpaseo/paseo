@@ -28,12 +28,22 @@ const DEFAULT_STYLE: TerminalStyle = {
 
 export function renderTerminalSnapshotToAnsi(state: TerminalState): string {
   const rows = [...state.scrollback, ...state.grid];
-  const lines: string[] = ["\u001b[?7l"];
+  const wrapFlags = [...(state.scrollbackWrapped ?? []), ...(state.gridWrapped ?? [])];
+  // Soft-wrapped lines can only be re-wrapped on resize when we know which rows
+  // were continuations. With that per-row flag we replay each logical line as one
+  // unbroken run (autowrap on) so xterm marks the continuations wrapped and reflows
+  // them. Without it (old daemon) we keep the verbatim per-row replay: autowrap off
+  // plus a hard newline per row.
+  const hasWrapInfo = wrapFlags.length === rows.length;
+  const lines: string[] = hasWrapInfo ? [] : ["\u001b[?7l"];
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
-    lines.push(renderTerminalRow(row));
-    if (rowIndex < rows.length - 1) {
+    const continuesToNextRow = hasWrapInfo && wrapFlags[rowIndex] === true;
+    // A continuation row must fill the full width so the next row first cell
+    // triggers xterm auto-wrap, which is what marks the row wrapped/reflowable.
+    lines.push(renderTerminalRow(row, continuesToNextRow ? state.cols : undefined));
+    if (rowIndex < rows.length - 1 && !continuesToNextRow) {
       lines.push("\r\n");
     }
   }
@@ -45,7 +55,9 @@ export function renderTerminalSnapshotToAnsi(state: TerminalState): string {
   }
   lines.push(`\u001b[${state.cursor.row + 1};${state.cursor.col + 1}H`);
   lines.push(state.cursor.hidden ? "\u001b[?25l" : "\u001b[?25h");
-  lines.push("\u001b[?7h");
+  if (!hasWrapInfo) {
+    lines.push("\u001b[?7h");
+  }
   return lines.join("");
 }
 
@@ -67,9 +79,10 @@ function renderCursorPresentationToAnsi(cursor: TerminalState["cursor"]): string
   return `\u001b[${cursorStyleCode} q`;
 }
 
-function renderTerminalRow(row: TerminalCell[]): string {
+function renderTerminalRow(row: TerminalCell[], padToCols?: number): string {
   const output: string[] = [];
-  const length = getTerminalRowLength(row);
+  const contentLength = getTerminalRowLength(row);
+  const length = padToCols !== undefined ? Math.max(contentLength, padToCols) : contentLength;
   let previousStyle = DEFAULT_STYLE;
 
   for (let index = 0; index < length; index += 1) {

@@ -67,8 +67,15 @@ export function setupDarwinCompositorWatchdog(win: BrowserWindow): void {
     return;
   }
 
-  // Keep producing frames while occluded so the probe is not fooled by throttling.
-  win.webContents.setBackgroundThrottling(false);
+  // Deliberately do NOT call win.webContents.setBackgroundThrottling(false) here.
+  // Disabling background throttling keeps Chromium's compositor producing frames
+  // continuously, which pins ProMotion displays at their max refresh rate (120Hz)
+  // forever and drains the battery even while the app sits idle. The probe does
+  // not need it: the visibility guards below (screen lock / isVisible /
+  // isMinimized / document.visibilityState) already skip windows that legitimately
+  // stop producing frames, so throttling cannot fool the probe into a false stall.
+  // The freeze this watchdog targets happens while the window is visible and
+  // focused (just after display wake), where background throttling never applies.
 
   let stalledChecks = 0;
   let recovering = false;

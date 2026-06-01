@@ -86,9 +86,13 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown; scrollback?: number };
+  options?: { theme?: unknown; scrollback?: number; fontFamily?: string; fontSize?: number };
   rows?: number;
   cols?: number;
+}
+
+interface RuntimeFitProbe {
+  fitAndEmitResize: (input?: { force?: boolean; shouldClaim?: boolean }) => void;
 }
 
 function createRuntimeWithTerminal(): {
@@ -328,14 +332,13 @@ describe("terminal-emulator-runtime", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
 
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
 
     runtime.resize();
     runtime.resize({ force: true });
 
-    expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, false);
-    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, true);
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, undefined);
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, { force: true });
   });
 
   it("updates terminal theme without remounting", () => {
@@ -381,12 +384,36 @@ describe("terminal-emulator-runtime", () => {
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
-  it("forces a refit when the page becomes visible again", () => {
+  it("updates terminal font without remounting", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const fitAndEmitResize = vi.fn();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { fontFamily: "before", fontSize: 13 },
+      rows: 12,
+      cols: 40,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
+      fitAndEmitResize;
+
+    runtime.setFont({ fontFamily: "  Menlo  ", fontSize: 18 });
+
+    expect(terminal.options?.fontFamily).toBe("Menlo");
+    expect(terminal.options?.fontSize).toBe(18);
+    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true });
+    expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("passively refits when the page becomes visible again", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
 
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
     (globalThis as { document?: { visibilityState?: string } }).document = {
       visibilityState: "visible",
     };
@@ -397,15 +424,14 @@ describe("terminal-emulator-runtime", () => {
       }
     ).handleVisibilityRestore();
 
-    expect(fitAndEmitResize).toHaveBeenCalledWith(true);
+    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true, shouldClaim: false });
   });
 
   it("does not refit while the page is still hidden", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
 
-    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
-      fitAndEmitResize;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
     (globalThis as { document?: { visibilityState?: string } }).document = {
       visibilityState: "hidden",
     };

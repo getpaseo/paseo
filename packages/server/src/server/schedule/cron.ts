@@ -81,6 +81,14 @@ interface ParsedCronExpression {
   dayOfWeek: CronFieldMatcher;
 }
 
+interface CronDateParts {
+  minute: number;
+  hour: number;
+  dayOfMonth: number;
+  month: number;
+  dayOfWeek: number;
+}
+
 function parseCronExpression(expression: string): ParsedCronExpression {
   const parts = expression.trim().split(/\s+/);
   if (parts.length !== 5) {
@@ -110,9 +118,65 @@ function startOfNextMinute(date: Date): Date {
   );
 }
 
+function assertValidTimeZone(timeZone: string): void {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date(0));
+  } catch {
+    throw new Error(`Invalid cron time zone: ${timeZone}`);
+  }
+}
+
+function createCronDatePartsReader(timeZone: string | undefined): (date: Date) => CronDateParts {
+  if (timeZone === undefined) {
+    return (date: Date) => ({
+      minute: date.getUTCMinutes(),
+      hour: date.getUTCHours(),
+      dayOfMonth: date.getUTCDate(),
+      month: date.getUTCMonth() + 1,
+      dayOfWeek: date.getUTCDay(),
+    });
+  }
+
+  assertValidTimeZone(timeZone);
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return (date: Date) => {
+    const values: Record<string, string> = {};
+    for (const part of formatter.formatToParts(date)) {
+      if (part.type !== "literal") {
+        values[part.type] = part.value;
+      }
+    }
+
+    const year = Number.parseInt(values.year, 10);
+    const month = Number.parseInt(values.month, 10);
+    const dayOfMonth = Number.parseInt(values.day, 10);
+
+    return {
+      minute: Number.parseInt(values.minute, 10),
+      hour: Number.parseInt(values.hour, 10),
+      dayOfMonth,
+      month,
+      dayOfWeek: new Date(Date.UTC(year, month - 1, dayOfMonth)).getUTCDay(),
+    };
+  };
+}
+
 export function validateScheduleCadence(cadence: ScheduleCadence): void {
   if (cadence.type === "cron") {
     parseCronExpression(cadence.expression);
+    if (cadence.timezone !== undefined) {
+      assertValidTimeZone(cadence.timezone);
+    }
   }
 }
 
@@ -122,15 +186,12 @@ export function computeNextRunAt(cadence: ScheduleCadence, after: Date): Date {
   }
 
   const cron = parseCronExpression(cadence.expression);
+  const readDateParts = createCronDatePartsReader(cadence.timezone);
   const limit = 366 * 24 * 60;
   let cursor = startOfNextMinute(after);
 
   for (let index = 0; index < limit; index += 1) {
-    const minute = cursor.getUTCMinutes();
-    const hour = cursor.getUTCHours();
-    const dayOfMonth = cursor.getUTCDate();
-    const month = cursor.getUTCMonth() + 1;
-    const dayOfWeek = cursor.getUTCDay();
+    const { minute, hour, dayOfMonth, month, dayOfWeek } = readDateParts(cursor);
 
     if (
       cron.minute.matches(minute) &&

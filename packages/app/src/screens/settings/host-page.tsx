@@ -74,25 +74,30 @@ function formatDaemonVersionBadge(version: string | null): string | null {
 const REMOVE_CONNECTION_HEADER: SheetHeader = { title: "Remove connection" };
 const REMOVE_HOST_HEADER: SheetHeader = { title: "Remove host" };
 
-export interface HostPageProps {
-  serverId: string;
-  onHostRemoved?: () => void;
+function useHostProfile(serverId: string): HostProfile | null {
+  const daemons = useHosts();
+  return daemons.find((entry) => entry.serverId === serverId) ?? null;
 }
 
-export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
-  const daemons = useHosts();
-  const host = daemons.find((entry) => entry.serverId === serverId) ?? null;
+function HostNotFound() {
+  return (
+    <View>
+      <View style={EMPTY_CARD_STYLE}>
+        <Text style={styles.emptyText}>Host not found</Text>
+      </View>
+    </View>
+  );
+}
+
+function HostStatusBadges({ serverId }: { serverId: string }) {
   const { theme } = useUnistyles();
   const snapshot = useHostRuntimeSnapshot(serverId);
-  const isLocalDaemon = useIsLocalDaemon(serverId);
-
   const daemonVersion = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.version ?? null,
   );
 
   const connectionStatus = snapshot?.connectionStatus ?? "connecting";
   const activeConnection = snapshot?.activeConnection ?? null;
-  const lastError = snapshot?.lastError ?? null;
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
   let statusColor: string;
@@ -117,8 +122,6 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   }
   const connectionBadge = formatActiveConnectionBadge(activeConnection, theme);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
-  const connectionError =
-    typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
 
   const statusPillStyle = useMemo(
     () => [styles.statusPill, { backgroundColor: statusPillBg }],
@@ -130,46 +133,125 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   );
   const statusTextStyle = useMemo(() => [styles.statusText, { color: statusColor }], [statusColor]);
 
-  if (!host) {
-    return (
-      <View testID={`settings-host-page-${serverId}`}>
-        <View style={EMPTY_CARD_STYLE}>
-          <Text style={styles.emptyText}>Host not found</Text>
-        </View>
+  return (
+    <View style={styles.identityBadges} testID="host-page-identity">
+      <View style={statusPillStyle}>
+        <View style={statusDotStyle} />
+        <Text style={statusTextStyle}>{statusLabel}</Text>
       </View>
-    );
+      {connectionBadge ? (
+        <View style={styles.badgePill}>
+          {connectionBadge.icon}
+          <Text style={styles.badgeText} numberOfLines={1}>
+            {connectionBadge.text}
+          </Text>
+        </View>
+      ) : null}
+      {versionBadgeText ? (
+        <View style={styles.badgePill}>
+          <Text style={styles.badgeText} numberOfLines={1}>
+            {versionBadgeText}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function HostConnectionError({ serverId }: { serverId: string }) {
+  const snapshot = useHostRuntimeSnapshot(serverId);
+  const lastError = snapshot?.lastError ?? null;
+  const connectionError =
+    typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
+  if (!connectionError) return null;
+  return <Text style={styles.errorText}>{connectionError}</Text>;
+}
+
+export function HostConnectionsPage({ serverId }: { serverId: string }) {
+  const host = useHostProfile(serverId);
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
   }
 
   return (
-    <View testID={`settings-host-page-${serverId}`}>
-      <View style={styles.identityBadges} testID="host-page-identity">
-        <View style={statusPillStyle}>
-          <View style={statusDotStyle} />
-          <Text style={statusTextStyle}>{statusLabel}</Text>
-        </View>
-        {connectionBadge ? (
-          <View style={styles.badgePill}>
-            {connectionBadge.icon}
-            <Text style={styles.badgeText} numberOfLines={1}>
-              {connectionBadge.text}
-            </Text>
-          </View>
-        ) : null}
-        {versionBadgeText ? (
-          <View style={styles.badgePill}>
-            <Text style={styles.badgeText} numberOfLines={1}>
-              {versionBadgeText}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-      {connectionError ? <Text style={styles.errorText}>{connectionError}</Text> : null}
-
+    <View>
+      <HostConnectionError serverId={serverId} />
       <ConnectionsSection host={host} />
+      {isLocalDaemon ? (
+        <SettingsSection title="Pair devices">
+          <PairDeviceRow />
+        </SettingsSection>
+      ) : null}
+    </View>
+  );
+}
 
-      <DaemonSection host={host} isLocalDaemon={isLocalDaemon} />
+export function HostOrchestrationPage({ serverId }: { serverId: string }) {
+  const host = useHostProfile(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
 
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
+      {isConnected ? (
+        <SettingsSection title="Orchestration">
+          <InjectPaseoToolsCard serverId={serverId} />
+          <AppendSystemPromptCard serverId={serverId} />
+        </SettingsSection>
+      ) : (
+        <View style={EMPTY_CARD_STYLE}>
+          <Text style={styles.emptyText}>Connect to this host to manage orchestration</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export function HostProvidersPage({ serverId }: { serverId: string }) {
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
       <ProvidersSection serverId={serverId} />
+    </View>
+  );
+}
+
+export function HostDaemonPage({
+  serverId,
+  onHostRemoved,
+}: {
+  serverId: string;
+  onHostRemoved?: () => void;
+}) {
+  const host = useHostProfile(serverId);
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
+      <View style={styles.daemonHeader}>
+        <Text style={styles.daemonHeaderLabel} numberOfLines={1}>
+          {host.label}
+        </Text>
+        <HostRenameButton host={host} />
+      </View>
+
+      <HostStatusBadges serverId={serverId} />
+
+      {isLocalDaemon ? <LocalDaemonSection /> : null}
 
       <RemoveHostSection host={host} onRemoved={onHostRemoved} />
     </View>
@@ -337,7 +419,7 @@ function ConnectionRow({
     if (latencyLoading) return "...";
     if (latencyError) return "Timeout";
     if (latencyMs != null) return formatLatency(latencyMs);
-    return "\u2014";
+    return "—";
   })();
   const latencyColor = latencyError ? theme.colors.palette.red[300] : theme.colors.foregroundMuted;
 
@@ -375,23 +457,6 @@ function ConnectionRow({
         Remove
       </Button>
     </View>
-  );
-}
-
-function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaemon: boolean }) {
-  return (
-    <>
-      <SettingsSection title="Daemon settings">
-        <InjectPaseoToolsCard serverId={host.serverId} />
-        <AppendSystemPromptCard serverId={host.serverId} />
-      </SettingsSection>
-      {isLocalDaemon ? (
-        <SettingsSection title="Pair devices">
-          <PairDeviceRow />
-        </SettingsSection>
-      ) : null}
-      {isLocalDaemon ? <LocalDaemonSection /> : null}
-    </>
   );
 }
 
@@ -612,7 +677,7 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>System prompt</Text>
-            <Text style={settingsStyles.rowHint}>Added a system prompt to all agents</Text>
+            <Text style={settingsStyles.rowHint}>Adds a system prompt to all agents</Text>
           </View>
           <Button
             variant="outline"
@@ -802,6 +867,18 @@ const styles = StyleSheet.create((theme) => ({
   identityEditButton: {
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
+  },
+  daemonHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    marginBottom: theme.spacing[4],
+  },
+  daemonHeaderLabel: {
+    flexShrink: 1,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
   },
   identityBadges: {
     flexDirection: "row",

@@ -155,6 +155,20 @@ The "render invisible to measure, then reveal" pattern is the canonical
 solution to chicken-and-egg positioning in this codebase. Reach for it before
 anything fancier.
 
+## Gotcha 6 — Bottom sheet refs are not lifecycle truth
+
+`@gorhom/bottom-sheet` modals churn their imperative ref while presenting and
+dismissing. Do not treat `ref != null` as permission to call `present()`, and do
+not treat `ref == null` as the sheet being closed. The user-visible lifecycle is
+the desired `visible` prop plus the sheet callbacks (`onChange(-1)`,
+`onDismiss`).
+
+If a user closes a sheet with the backdrop or a pan gesture, the sheet may detach
+and reattach before React state has acknowledged `visible=false`. Re-presenting
+on that attach races Gorhom's dismiss path and leaves the modal unable to reopen.
+Track an explicit phase (`closed` / `presenting` / `presented` / `dismissing`) and
+ignore ref churn while dismissing.
+
 ## Recipe for a new anchored panel
 
 Before you write a new one, ask:

@@ -19,15 +19,18 @@ import {
   type AgentSession,
   type AgentStreamEvent,
 } from "../../agent-sdk-types.js";
-import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
-import { ClaudeAgentClient } from "./agent.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+  getRealProviderConfig,
+} from "../../../daemon-e2e/real-provider-test-config.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const logger = pino({ level: "silent" });
-const client = new ClaudeAgentClient({ logger });
+const client = createRealProviderClient("claude", logger);
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -62,11 +65,10 @@ async function createSession(params?: {
 }): Promise<{ cwd: string; session: AgentSession }> {
   const cwd = tmpCwd(params?.cwdPrefix ?? "event-stream-integration-");
   const session = await client.createSession({
-    provider: "claude",
+    ...getRealProviderConfig("claude"),
     cwd,
     title: "event-stream integration",
     modeId: "acceptEdits",
-    model: "haiku",
   });
   return { cwd, session };
 }
@@ -202,7 +204,7 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
 let canRun = false;
 
 beforeAll(async () => {
-  canRun = await isProviderAvailable("claude");
+  canRun = await canRunRealProvider("claude");
 });
 
 beforeEach((context) => {

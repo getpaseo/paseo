@@ -14,12 +14,20 @@ import {
   APP_SETTINGS_QUERY_KEY,
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_CODE_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  DEFAULT_UI_FONT_SIZE,
+  MAX_CODE_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK_LINES,
+  MAX_UI_FONT_SIZE,
+  MIN_CODE_FONT_SIZE,
   MIN_TERMINAL_SCROLLBACK_LINES,
+  MIN_UI_FONT_SIZE,
   loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
   loadSettingsFromStorage as loadSettingsFromStoragePure,
+  parseClampedFontSize,
   parseTerminalScrollbackLines,
+  sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
   type AppSettings,
   type DesktopSettingsBridge,
@@ -35,10 +43,18 @@ export {
   APP_SETTINGS_KEY,
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_CODE_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  DEFAULT_UI_FONT_SIZE,
+  MAX_CODE_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK_LINES,
+  MAX_UI_FONT_SIZE,
+  MIN_CODE_FONT_SIZE,
   MIN_TERMINAL_SCROLLBACK_LINES,
+  MIN_UI_FONT_SIZE,
+  parseClampedFontSize,
   parseTerminalScrollbackLines,
+  sanitizeFontFamily,
 };
 export type {
   AppSettings,
@@ -135,6 +151,21 @@ export function useSettings(): UseSettingsReturn {
       }
       if (updates.terminalScrollbackLines !== undefined) {
         appUpdates.terminalScrollbackLines = updates.terminalScrollbackLines;
+      }
+      if (updates.uiFontFamily !== undefined) {
+        appUpdates.uiFontFamily = updates.uiFontFamily;
+      }
+      if (updates.monoFontFamily !== undefined) {
+        appUpdates.monoFontFamily = updates.monoFontFamily;
+      }
+      if (updates.uiFontSize !== undefined) {
+        appUpdates.uiFontSize = updates.uiFontSize;
+      }
+      if (updates.codeFontSize !== undefined) {
+        appUpdates.codeFontSize = updates.codeFontSize;
+      }
+      if (updates.syntaxTheme !== undefined) {
+        appUpdates.syntaxTheme = updates.syntaxTheme;
       }
       const promises: Promise<void>[] = [];
       if (Object.keys(appUpdates).length > 0) {

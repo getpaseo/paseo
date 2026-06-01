@@ -2,8 +2,10 @@ import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentStreamEvent, AgentSession } from "../../agent-sdk-types.js";
-import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
-import { ClaudeAgentClient } from "./agent.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+} from "../../../daemon-e2e/real-provider-test-config.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 
 function isTerminalEvent(event: AgentStreamEvent): boolean {
@@ -29,7 +31,7 @@ describe("Claude max effort availability (real)", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -39,9 +41,7 @@ describe("Claude max effort availability (real)", () => {
   });
 
   test("surfaces the Claude stderr diagnostic when bypassPermissions + max effort is unavailable", async () => {
-    const client = new ClaudeAgentClient({
-      logger: pino({ level: "silent" }),
-    });
+    const client = createRealProviderClient("claude", pino({ level: "silent" }));
     const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),

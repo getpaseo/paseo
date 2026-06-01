@@ -206,7 +206,7 @@ One file per schedule. ID is 8 hex characters. Writes are direct (not atomic).
 ### Nested: ScheduleCadence (discriminated union on `type`)
 
 - `{ type: "every", everyMs: number }` — interval in milliseconds
-- `{ type: "cron", expression: string }` — cron expression
+- `{ type: "cron", expression: string, timezone?: string }` — cron expression; absent `timezone` means UTC, present `timezone` is an IANA time zone used for local wall-clock recurrence
 
 ### Nested: ScheduleTarget (discriminated union on `type`)
 

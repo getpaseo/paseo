@@ -2,8 +2,8 @@
 
 Agent chat delivery has two paths:
 
-1. **Live stream** — `agent_stream` WebSocket messages for immediacy.
-2. **Authoritative history** — `fetch_agent_timeline_request` for correctness.
+1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
+2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
 The invariant is:
 
@@ -23,6 +23,8 @@ Heartbeat is used for notification routing. It must not be used as a correctness
 ## Catch-up is paged but complete
 
 Large unbounded timeline responses can exceed relay frame limits, so catch-up uses bounded pages. Bounded does not mean partial.
+
+Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
 When the app fetches `direction: "after"` and the daemon responds with `hasNewer: true`, the app must immediately fetch the next page from `endCursor`. The catch-up is complete only when `hasNewer: false`.
 

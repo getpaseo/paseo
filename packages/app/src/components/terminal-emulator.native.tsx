@@ -45,12 +45,15 @@ interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  fontFamily?: string;
+  fontSize?: number;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
   initialSnapshot?: TerminalState | null;
   onInput?: (data: string) => Promise<void> | void;
-  onResize?: (input: { rows: number; cols: number }) => Promise<void> | void;
+  onFocus?: () => Promise<void> | void;
+  onResize?: (input: { rows: number; cols: number; shouldClaim: boolean }) => Promise<void> | void;
   onTerminalKey?: (input: {
     key: string;
     ctrl: boolean;
@@ -80,6 +83,8 @@ type BridgeInboundMessage =
       initialSnapshot: TerminalState | null;
       scrollbackLines: number;
       theme: ITheme;
+      fontFamily?: string;
+      fontSize?: number;
       pendingModifiers: PendingTerminalModifiers;
       swipeGesturesEnabled: boolean;
     }
@@ -89,9 +94,10 @@ type BridgeInboundMessage =
   | { type: "renderSnapshot"; streamKey: string; state: TerminalState | null }
   | { type: "clear"; streamKey: string }
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
-  | { type: "resize"; streamKey: string }
+  | { type: "resize"; streamKey: string; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
+  | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
   | {
@@ -105,7 +111,7 @@ type BridgeOutboundMessage =
   | { type: "bridgeReady" }
   | { type: "rendererReady"; streamKey: string; isReady: boolean }
   | { type: "input"; streamKey: string; data: string }
-  | { type: "resize"; streamKey: string; rows: number; cols: number }
+  | { type: "resize"; streamKey: string; rows: number; cols: number; shouldClaim?: boolean }
   | {
       type: "terminalKey";
       streamKey: string;
@@ -159,6 +165,8 @@ function createMountMessage(input: {
   initialSnapshot: TerminalState | null;
   scrollbackLines: number;
   theme: ITheme;
+  fontFamily?: string;
+  fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
   swipeGesturesEnabled: boolean;
 }): BridgeInboundMessage {
@@ -168,6 +176,8 @@ function createMountMessage(input: {
     initialSnapshot: input.initialSnapshot,
     scrollbackLines: input.scrollbackLines,
     theme: input.theme,
+    fontFamily: input.fontFamily,
+    fontSize: input.fontSize,
     pendingModifiers: input.pendingModifiers,
     swipeGesturesEnabled: input.swipeGesturesEnabled,
   };
@@ -183,11 +193,14 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  fontFamily,
+  fontSize,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
   initialSnapshot = null,
   onInput,
+  onFocus,
   onResize,
   onTerminalKey,
   onPendingModifiersConsumed,
@@ -216,6 +229,8 @@ export default function TerminalEmulator({
     initialSnapshot,
     scrollbackLines,
     theme: xtermTheme,
+    fontFamily,
+    fontSize,
     pendingModifiers,
     swipeGesturesEnabled,
   });
@@ -224,11 +239,14 @@ export default function TerminalEmulator({
     initialSnapshot,
     scrollbackLines,
     theme: xtermTheme,
+    fontFamily,
+    fontSize,
     pendingModifiers,
     swipeGesturesEnabled,
   };
   const callbacksRef = useRef({
     onInput,
+    onFocus,
     onResize,
     onTerminalKey,
     onPendingModifiersConsumed,
@@ -241,6 +259,7 @@ export default function TerminalEmulator({
   });
   callbacksRef.current = {
     onInput,
+    onFocus,
     onResize,
     onTerminalKey,
     onPendingModifiersConsumed,
@@ -391,6 +410,11 @@ export default function TerminalEmulator({
 
   useEffect(() => {
     if (!mountedStreamKeyRef.current) return;
+    sendToWebView({ type: "setFont", streamKey, fontFamily, fontSize });
+  }, [fontFamily, fontSize, sendToWebView, streamKey]);
+
+  useEffect(() => {
+    if (!mountedStreamKeyRef.current) return;
     sendToWebView({ type: "setPendingModifiers", streamKey, pendingModifiers });
   }, [pendingModifiers, sendToWebView, streamKey]);
 
@@ -401,14 +425,14 @@ export default function TerminalEmulator({
 
   useEffect(() => {
     if (focusRequestToken <= 0) return;
-    sendToWebView({ type: "resize", streamKey });
+    sendToWebView({ type: "resize", streamKey, shouldClaim: true });
     sendToWebView({ type: "focus", streamKey });
     webViewRef.current?.requestFocus();
   }, [focusRequestToken, sendToWebView, streamKey]);
 
   useEffect(() => {
     if (resizeRequestToken <= 0) return;
-    sendToWebView({ type: "resize", streamKey });
+    sendToWebView({ type: "resize", streamKey, shouldClaim: true });
   }, [resizeRequestToken, sendToWebView, streamKey]);
 
   useEffect(() => {
@@ -495,7 +519,11 @@ export default function TerminalEmulator({
           callbacksRef.current.onInput?.(message.data);
           break;
         case "resize":
-          callbacksRef.current.onResize?.({ rows: message.rows, cols: message.cols });
+          callbacksRef.current.onResize?.({
+            rows: message.rows,
+            cols: message.cols,
+            shouldClaim: message.shouldClaim !== false,
+          });
           break;
         case "terminalKey":
           callbacksRef.current.onTerminalKey?.({
@@ -592,6 +620,7 @@ export default function TerminalEmulator({
       return;
     }
     webViewRef.current?.requestFocus();
+    callbacksRef.current.onFocus?.();
     sendToWebView({ type: "focus", streamKey, forceRefocus: true });
   }, [sendToWebView, streamKey]);
 

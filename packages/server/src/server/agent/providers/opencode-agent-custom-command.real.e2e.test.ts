@@ -6,21 +6,24 @@ import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
-import { isCommandAvailable } from "../../../utils/executable.js";
 import { createDaemonTestContext, type DaemonTestContext } from "../../test-utils/index.js";
-import { OpenCodeAgentClient } from "./opencode-agent.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "../../daemon-e2e/real-provider-test-config.js";
 
 const COMMAND_NAME = "paseo-issue-903-big-pickle";
 const COMMAND_FILE_NAME = `${COMMAND_NAME}.md`;
-const BIG_PICKLE_MODEL = "opencode/big-pickle";
+const OPENCODE_REAL_TEST_MODEL = getRealProviderConfig("opencode").model;
 const EXPECTED_RESPONSE = "PASEO_ISSUE_903_BIG_PICKLE_OK";
 
 describe("opencode custom command Big Pickle E2E (real)", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isCommandAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {
@@ -59,21 +62,19 @@ describe("opencode custom command Big Pickle E2E (real)", () => {
 
       ctx = await createDaemonTestContext({
         logger,
-        agentClients: {
-          opencode: new OpenCodeAgentClient(logger),
-        },
+        agentClients: createRealProviderClients(["opencode"], logger),
       });
 
       const agent = await ctx.client.createAgent({
         provider: "opencode",
         cwd: projectDir,
-        model: BIG_PICKLE_MODEL,
+        model: OPENCODE_REAL_TEST_MODEL,
         modeId: "plan",
         title: "OpenCode issue 903 Big Pickle custom command",
       });
 
       expect(agent.provider).toBe("opencode");
-      expect(agent.model).toBe(BIG_PICKLE_MODEL);
+      expect(agent.model).toBe(OPENCODE_REAL_TEST_MODEL);
       expect(agent.status).toBe("idle");
 
       const commands = await ctx.client.listCommands(agent.id);

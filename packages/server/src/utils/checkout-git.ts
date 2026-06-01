@@ -538,7 +538,7 @@ function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] })
 }
 
 const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
-const TRACKED_MAX_CHANGED_LINES = 40_000;
+const TRACKED_DIFF_PER_FILE_MAX_CHARS = 1024 * 1024;
 const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function isUnbornHeadDiffError(error: unknown): boolean {
@@ -606,11 +606,68 @@ async function getTrackedNumstatByPath(
   return stats;
 }
 
-function isTrackedDiffTooLarge(stat: FileStat): boolean {
-  if (!stat || stat.isBinary) {
-    return false;
+interface TrackedDiffSection {
+  path: string;
+  text: string;
+  isTooLarge: boolean;
+}
+
+function extractTrackedDiffMetadataPath(section: string, prefix: "--- " | "+++ "): string | null {
+  const line = section.split("\n").find((candidate) => candidate.startsWith(prefix));
+  if (!line) {
+    return null;
   }
-  return stat.additions + stat.deletions > TRACKED_MAX_CHANGED_LINES;
+  const path = line.slice(prefix.length).replace(/\t.*$/, "").trimEnd();
+  if (path === "/dev/null") {
+    return null;
+  }
+  return path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path;
+}
+
+function extractTrackedDiffSectionPath(section: string): string | null {
+  const firstLineEnd = section.indexOf("\n");
+  const firstLine = firstLineEnd === -1 ? section : section.slice(0, firstLineEnd);
+  const header = firstLine.startsWith("diff --git ") ? firstLine.slice("diff --git ".length) : "";
+  const prefixedPathMatch = header.match(/^a\/(.+) b\/(.+)$/);
+  if (prefixedPathMatch) {
+    return prefixedPathMatch[2] ?? null;
+  }
+
+  const metadataPath =
+    extractTrackedDiffMetadataPath(section, "+++ ") ??
+    extractTrackedDiffMetadataPath(section, "--- ");
+  if (metadataPath) {
+    return metadataPath;
+  }
+
+  const pathMatch = header.match(/^(\S+)\s+(\S+)$/);
+  return pathMatch?.[2] ?? null;
+}
+
+function splitTrackedDiffSections(diffText: string): TrackedDiffSection[] {
+  const starts: number[] = [];
+  const diffHeaderPattern = /^diff --git /gm;
+  let match: RegExpExecArray | null;
+  while ((match = diffHeaderPattern.exec(diffText))) {
+    starts.push(match.index);
+  }
+
+  const sections: TrackedDiffSection[] = [];
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index];
+    const end = starts[index + 1] ?? diffText.length;
+    const text = diffText.slice(start, end);
+    const path = extractTrackedDiffSectionPath(text);
+    if (!path) {
+      continue;
+    }
+    sections.push({
+      path,
+      text,
+      isTooLarge: text.length > TRACKED_DIFF_PER_FILE_MAX_CHARS,
+    });
+  }
+  return sections;
 }
 
 export class NotGitRepoError extends Error {
@@ -2107,6 +2164,93 @@ async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promi
   });
 }
 
+interface ProcessTrackedChangesInput {
+  cwd: string;
+  refsForDiff: CheckoutDiffRefs;
+  trackedChanges: CheckoutFileChange[];
+  ignoreWhitespace: boolean;
+  appendDiff: (text: string) => void;
+}
+
+interface ProcessTrackedChangesResult {
+  trackedChangeByPath: Map<string, CheckoutFileChange>;
+  trackedNumstatByPath: Map<string, FileStat>;
+  trackedPlaceholderByPath: Map<string, { status: "binary" | "too_large"; stat: FileStat }>;
+  trackedDiffText: string;
+  trackedDiffTruncated: boolean;
+}
+
+async function processTrackedChanges(
+  input: ProcessTrackedChangesInput,
+): Promise<ProcessTrackedChangesResult> {
+  const { cwd, refsForDiff, trackedChanges, ignoreWhitespace, appendDiff } = input;
+  const trackedChangeByPath = new Map(trackedChanges.map((change) => [change.path, change]));
+  const trackedNumstatByPath =
+    trackedChanges.length > 0
+      ? await getTrackedNumstatByPath(cwd, refsForDiff, ignoreWhitespace)
+      : new Map<string, FileStat>();
+  const trackedDiffPaths: string[] = [];
+  const trackedPlaceholderByPath = new Map<
+    string,
+    { status: "binary" | "too_large"; stat: FileStat }
+  >();
+
+  for (const change of trackedChanges) {
+    const stat = trackedNumstatByPath.get(change.path) ?? null;
+    if (stat?.isBinary) {
+      trackedPlaceholderByPath.set(change.path, { status: "binary", stat });
+      continue;
+    }
+    trackedDiffPaths.push(change.path);
+  }
+
+  let trackedDiffText = "";
+  let trackedDiffTruncated = false;
+  if (trackedDiffPaths.length > 0) {
+    const trackedDiffResult = await runGitCommand(
+      buildGitDiffArgs({
+        ignoreWhitespace,
+        extra: [...getCheckoutDiffRefArgs(refsForDiff), "--", ...trackedDiffPaths],
+      }),
+      {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+        maxOutputBytes: TOTAL_DIFF_MAX_BYTES,
+      },
+    );
+    trackedDiffTruncated = trackedDiffResult.truncated;
+
+    const visibleTrackedDiffs: string[] = [];
+    const sections = splitTrackedDiffSections(trackedDiffResult.stdout);
+    for (let index = 0; index < sections.length; index += 1) {
+      const section = sections[index];
+      const isTruncatedTail = trackedDiffTruncated && index === sections.length - 1;
+      if (section.isTooLarge || isTruncatedTail) {
+        trackedPlaceholderByPath.set(section.path, {
+          status: "too_large",
+          stat: trackedNumstatByPath.get(section.path) ?? null,
+        });
+        continue;
+      }
+      visibleTrackedDiffs.push(section.text);
+    }
+
+    trackedDiffText = visibleTrackedDiffs.join("");
+    appendDiff(trackedDiffText);
+    if (trackedDiffTruncated) {
+      appendDiff("# tracked diff truncated\n");
+    }
+  }
+
+  return {
+    trackedChangeByPath,
+    trackedNumstatByPath,
+    trackedPlaceholderByPath,
+    trackedDiffText,
+    trackedDiffTruncated,
+  };
+}
+
 async function resolveCheckoutDiffRefs(
   cwd: string,
   compare: CheckoutDiffCompare,
@@ -2181,52 +2325,13 @@ export async function getCheckoutDiff(
 
   const trackedChanges = changes.filter((change) => !change.isUntracked);
   const untrackedChanges = changes.filter((change) => change.isUntracked === true);
-  const trackedChangeByPath = new Map(trackedChanges.map((change) => [change.path, change]));
-
-  const trackedNumstatByPath =
-    trackedChanges.length > 0
-      ? await getTrackedNumstatByPath(cwd, effectiveRefsForDiff, ignoreWhitespace)
-      : new Map<string, FileStat>();
-  const trackedDiffPaths: string[] = [];
-  const trackedPlaceholderByPath = new Map<
-    string,
-    { status: "binary" | "too_large"; stat: FileStat }
-  >();
-
-  for (const change of trackedChanges) {
-    const stat = trackedNumstatByPath.get(change.path) ?? null;
-    if (stat?.isBinary) {
-      trackedPlaceholderByPath.set(change.path, { status: "binary", stat });
-      continue;
-    }
-    if (isTrackedDiffTooLarge(stat)) {
-      trackedPlaceholderByPath.set(change.path, { status: "too_large", stat });
-      continue;
-    }
-    trackedDiffPaths.push(change.path);
-  }
-
-  let trackedDiffText = "";
-  let trackedDiffTruncated = false;
-  if (trackedDiffPaths.length > 0) {
-    const trackedDiffResult = await runGitCommand(
-      buildGitDiffArgs({
-        ignoreWhitespace,
-        extra: [...getCheckoutDiffRefArgs(effectiveRefsForDiff), "--", ...trackedDiffPaths],
-      }),
-      {
-        cwd,
-        envOverlay: READ_ONLY_GIT_ENV,
-        maxOutputBytes: TOTAL_DIFF_MAX_BYTES,
-      },
-    );
-    trackedDiffText = trackedDiffResult.stdout;
-    trackedDiffTruncated = trackedDiffResult.truncated;
-    appendDiff(trackedDiffText);
-    if (trackedDiffTruncated) {
-      appendDiff("# tracked diff truncated\n");
-    }
-  }
+  const trackedDiff = await processTrackedChanges({
+    cwd,
+    refsForDiff: effectiveRefsForDiff,
+    trackedChanges,
+    ignoreWhitespace,
+    appendDiff,
+  });
 
   const appendTrackedPlaceholderComment = (
     change: CheckoutFileChange,
@@ -2243,11 +2348,11 @@ export async function getCheckoutDiff(
     await appendStructuredTrackedDiffs({
       cwd,
       trackedChanges,
-      trackedChangeByPath,
-      trackedNumstatByPath,
-      trackedPlaceholderByPath,
-      trackedDiffText,
-      trackedDiffTruncated,
+      trackedChangeByPath: trackedDiff.trackedChangeByPath,
+      trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
+      trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
+      trackedDiffText: trackedDiff.trackedDiffText,
+      trackedDiffTruncated: trackedDiff.trackedDiffTruncated,
       refsForDiff: effectiveRefsForDiff,
       ignoreWhitespace,
       structured,
@@ -2256,7 +2361,7 @@ export async function getCheckoutDiff(
     });
   } else {
     for (const change of trackedChanges) {
-      const placeholder = trackedPlaceholderByPath.get(change.path);
+      const placeholder = trackedDiff.trackedPlaceholderByPath.get(change.path);
       if (placeholder) {
         appendTrackedPlaceholderComment(change, placeholder.status);
       }

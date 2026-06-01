@@ -17,9 +17,13 @@ import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { AntigravityAgentClient } from "../agent/providers/antigravity-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { isProviderAvailable } from "./agent-configs.js";
+import { isCommandAvailable } from "../../utils/executable.js";
 
 process.env.PASEO_SUPERVISED = "0";
+
+async function isProviderAvailable(_provider: string): Promise<boolean> {
+  return await isCommandAvailable("agy");
+}
 
 const ANTIGRAVITY_TEST_TIMEOUT_MS = 120_000;
 
@@ -88,7 +92,7 @@ test(
       expect(modelsResult.error).toBeFalsy();
       expect(modelsResult.models).toBeTruthy();
       expect(modelsResult.models!.length).toBeGreaterThan(0);
-      expect(modelsResult.models![0].id).toBe("gemini");
+      expect(modelsResult.models![0].id).toBe("Gemini 3.5 Flash (Medium)");
       expect(modelsResult.models![0].isDefault).toBe(true);
 
       const modesResult = await client.listProviderModes("antigravity");

@@ -25,6 +25,7 @@ import {
   expectDiagnosticsContent,
   expectAboutContent,
   expectGeneralContent,
+  expectAppearanceContent,
 } from "./helpers/settings";
 
 test.describe("Settings sidebar navigation", () => {
@@ -43,9 +44,13 @@ test.describe("Settings sidebar navigation", () => {
     await openSettingsSection(page, "general");
     await expectSettingsHeader(page, "General");
     await expectGeneralContent(page);
+
+    await openSettingsSection(page, "appearance");
+    await expectSettingsHeader(page, "Appearance");
+    await expectAppearanceContent(page);
   });
 
-  test("/h/[serverId]/settings redirects to /settings/hosts/[serverId]", async ({ page }) => {
+  test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
   });
@@ -132,7 +137,9 @@ test.describe("Settings — compact master-detail", () => {
     await expectSettingsBackButton(page);
   });
 
-  test("tapping a host entry pushes /settings/hosts/[serverId]", async ({ page }) => {
+  test("tapping a host section row pushes /settings/hosts/[serverId]/connections", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
     await openCompactSettings(page);
 

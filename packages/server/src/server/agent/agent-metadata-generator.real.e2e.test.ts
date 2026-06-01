@@ -7,13 +7,19 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { createAllClients, shutdownProviders } from "./provider-registry.js";
+import { shutdownProviders } from "./provider-registry.js";
 import { generateAndApplyAgentMetadata } from "./agent-metadata-generator.js";
-import { isProviderAvailable } from "../daemon-e2e/agent-configs.js";
 import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "../daemon-e2e/real-provider-test-config.js";
 
-const CODEX_TEST_MODEL = "gpt-5.4-mini";
-const CODEX_TEST_THINKING_OPTION_ID = "low";
+const CODEX_TEST_MODEL = getRealProviderConfig("codex").model;
+const CODEX_TEST_THINKING_OPTION_ID = getRealProviderConfig("codex").thinkingOptionId;
+const CLAUDE_TEST_MODEL = getRealProviderConfig("claude").model;
+const OPENCODE_TEST_MODEL = getRealProviderConfig("opencode").model;
 
 function collectFilesRecursively(root: string, filter: (name: string) => boolean): Set<string> {
   const results = new Set<string>();
@@ -75,9 +81,9 @@ describe("agent metadata generation (real agents)", () => {
 
   beforeAll(async () => {
     [codexAvailable, claudeAvailable, opencodeAvailable] = await Promise.all([
-      isProviderAvailable("codex"),
-      isProviderAvailable("claude"),
-      isProviderAvailable("opencode"),
+      canRunRealProvider("codex"),
+      canRunRealProvider("claude"),
+      canRunRealProvider("opencode"),
     ]);
   });
 
@@ -86,7 +92,7 @@ describe("agent metadata generation (real agents)", () => {
     paseoHome = tmpCwd("metadata-paseo-home-");
     storage = new AgentStorage(path.join(paseoHome, "agents"), logger);
     manager = new AgentManager({
-      clients: createAllClients(logger),
+      clients: createRealProviderClients(["codex", "claude", "opencode"], logger),
       registry: storage,
       logger,
     });
@@ -106,7 +112,9 @@ describe("agent metadata generation (real agents)", () => {
       {
         provider: "codex",
         model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        ...(CODEX_TEST_THINKING_OPTION_ID
+          ? { thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID }
+          : {}),
         modeId: "auto",
         cwd: cwd,
         title: "Main Agent",
@@ -144,7 +152,7 @@ describe("agent metadata generation (real agents)", () => {
     const agent = await manager.createAgent(
       {
         provider: "claude",
-        model: "haiku",
+        model: CLAUDE_TEST_MODEL,
         thinkingOptionId: "on",
         cwd: cwd,
         title: "Main Claude Agent",
@@ -182,7 +190,7 @@ describe("agent metadata generation (real agents)", () => {
     const agent = await manager.createAgent(
       {
         provider: "opencode",
-        model: "opencode/gpt-5-nano",
+        model: OPENCODE_TEST_MODEL,
         modeId: "build",
         cwd: cwd,
         title: "Main OpenCode Agent",

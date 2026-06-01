@@ -256,6 +256,7 @@ test("advertises client capabilities in hello", async () => {
     capabilities: {
       custom_mode_icons: true,
       reasoning_merge_enum: true,
+      terminal_reflowable_snapshot: true,
     },
   });
 });

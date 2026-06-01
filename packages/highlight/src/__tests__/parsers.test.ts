@@ -13,6 +13,7 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("test.css")).toBe(true);
     expect(isLanguageSupported("test.html")).toBe(true);
     expect(isLanguageSupported("test.java")).toBe(true);
+    expect(isLanguageSupported("test.swift")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
   });
 
@@ -49,6 +50,7 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("py");
     expect(extensions).toContain("go");
     expect(extensions).toContain("rs");
+    expect(extensions).toContain("swift");
     expect(extensions).toContain("json");
   });
 });

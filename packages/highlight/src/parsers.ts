@@ -1,3 +1,5 @@
+import { StreamLanguage } from "@codemirror/language";
+import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
 import { parser as cssParser } from "@lezer/css";
@@ -55,6 +57,8 @@ const parsersByExtension: Record<string, Parser> = {
   yml: yamlParser,
   // Rust
   rs: rustParser,
+  // Swift
+  swift: StreamLanguage.define(swift).parser,
   // Elixir
   ex: elixirParser,
   exs: elixirParser,

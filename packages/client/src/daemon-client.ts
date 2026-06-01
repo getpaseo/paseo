@@ -568,6 +568,7 @@ export interface CreateScheduleOptions {
     | {
         type: "cron";
         expression: string;
+        timezone?: string;
       };
   target:
     | {
@@ -623,6 +624,7 @@ export interface UpdateScheduleOptions {
     | {
         type: "cron";
         expression: string;
+        timezone?: string;
       };
   newAgentConfig?: UpdateScheduleNewAgentConfig;
   maxRuns?: number | null;
@@ -4279,6 +4281,7 @@ export class DaemonClient {
           capabilities: {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
+            [CLIENT_CAPS.terminalReflowableSnapshot]: true,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
         }),

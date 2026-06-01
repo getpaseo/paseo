@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -25,6 +25,7 @@ import type {
   AgentStreamEvent,
   ListModelsOptions,
   ListModesOptions,
+  AgentSlashCommand,
 } from "../agent-sdk-types.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { isCommandAvailable } from "../../../utils/executable.js";
@@ -32,6 +33,28 @@ import { isCommandAvailable } from "../../../utils/executable.js";
 const ANTIGRAVITY_PROVIDER = "antigravity";
 const ANTIGRAVITY_BINARY = process.env.ANTIGRAVITY_COMMAND ?? "agy";
 const CONVERSATIONS_DIR = join(homedir(), ".gemini", "antigravity-cli", "conversations");
+
+interface AntigravitySettings {
+  model?: string;
+  [key: string]: unknown;
+}
+
+function updateSettingsModel(model: string, logger: Logger) {
+  const settingsPath = join(homedir(), ".gemini", "antigravity-cli", "settings.json");
+  try {
+    let settings: AntigravitySettings = {};
+    if (existsSync(settingsPath)) {
+      settings = JSON.parse(readFileSync(settingsPath, "utf8")) as AntigravitySettings;
+    }
+    if (settings.model !== model) {
+      settings.model = model;
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+      logger.info({ model }, "antigravity: updated model in settings.json");
+    }
+  } catch (err) {
+    logger.error({ err }, "antigravity: failed to update settings.json model");
+  }
+}
 
 export const ANTIGRAVITY_MODE_DEFAULT = "default";
 export const ANTIGRAVITY_MODE_BYPASS = "bypass";
@@ -143,6 +166,13 @@ class AntigravityAgentSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     const turnId = randomUUID();
     this._activeTurnId = turnId;
+
+    // Update settings.json with the chosen model before spawning agy
+    const model =
+      this._config.model === "gemini"
+        ? "Gemini 3.5 Flash (Medium)"
+        : (this._config.model ?? "Gemini 3.5 Flash (Medium)");
+    updateSettingsModel(model, this._logger);
 
     const args: string[] = [];
     if (this._conversationId) {
@@ -291,7 +321,10 @@ class AntigravityAgentSession implements AgentSession {
     return {
       provider: ANTIGRAVITY_PROVIDER,
       sessionId: this._conversationId,
-      model: "gemini",
+      model:
+        this._config.model === "gemini"
+          ? "Gemini 3.5 Flash (Medium)"
+          : (this._config.model ?? "Gemini 3.5 Flash (Medium)"),
       modeId: this._modeId,
     };
   }
@@ -312,6 +345,12 @@ class AntigravityAgentSession implements AgentSession {
       currentModeId: modeId,
       availableModes: MODES,
     });
+  }
+
+  async setModel(modelId: string | null): Promise<void> {
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    this._config.model = normalizedModelId ?? undefined;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -379,10 +418,52 @@ export class AntigravityAgentClient implements AgentClient {
     return [
       {
         provider: ANTIGRAVITY_PROVIDER,
-        id: "gemini",
-        label: "Gemini",
-        description: "Google Gemini via Antigravity CLI",
+        id: "Gemini 3.5 Flash (Medium)",
+        label: "Gemini 3.5 Flash (Medium)",
+        description: "Google Gemini 3.5 Flash (Medium) via Antigravity CLI",
         isDefault: true,
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "Gemini 3.5 Flash (High)",
+        label: "Gemini 3.5 Flash (High)",
+        description: "Google Gemini 3.5 Flash (High) via Antigravity CLI",
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "Gemini 3.5 Flash (Low)",
+        label: "Gemini 3.5 Flash (Low)",
+        description: "Google Gemini 3.5 Flash (Low) via Antigravity CLI",
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "Gemini 3.1 Pro (Low)",
+        label: "Gemini 3.1 Pro (Low)",
+        description: "Google Gemini 3.1 Pro (Low) via Antigravity CLI",
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "Gemini 3.1 Pro (High)",
+        label: "Gemini 3.1 Pro (High)",
+        description: "Google Gemini 3.1 Pro (High) via Antigravity CLI",
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "Claude Sonnet 4.6 (Thinking)",
+        label: "Claude Sonnet 4.6 (Thinking)",
+        description: "Anthropic Claude Sonnet 4.6 (Thinking) via Antigravity CLI",
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "Claude Opus 4.6 (Thinking)",
+        label: "Claude Opus 4.6 (Thinking)",
+        description: "Anthropic Claude Opus 4.6 (Thinking) via Antigravity CLI",
+      },
+      {
+        provider: ANTIGRAVITY_PROVIDER,
+        id: "GPT-OSS 120B (Medium)",
+        label: "GPT-OSS 120B (Medium)",
+        description: "GPT-OSS 120B (Medium) via Antigravity CLI",
       },
     ];
   }
@@ -419,5 +500,30 @@ export class AntigravityAgentClient implements AgentClient {
       config: baseConfig,
       logger: this.logger,
     });
+  }
+
+  async listCommands(): Promise<AgentSlashCommand[]> {
+    return [
+      {
+        name: "explain",
+        description: "Explain code or active context",
+        argumentHint: "[code/topic]",
+      },
+      {
+        name: "usage",
+        description: "Show model quota and usage status",
+        argumentHint: "",
+      },
+      {
+        name: "config",
+        description: "Show active agent settings",
+        argumentHint: "",
+      },
+      {
+        name: "permissions",
+        description: "Manage tool execution permission rules",
+        argumentHint: "",
+      },
+    ];
   }
 }

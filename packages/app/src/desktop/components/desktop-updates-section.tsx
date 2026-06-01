@@ -15,6 +15,7 @@ import { useBuiltInDaemonManagement } from "@/desktop/hooks/use-built-in-daemon-
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useDesktopSettings, type DesktopSettings } from "@/desktop/settings/desktop-settings";
 import { resolveAppVersion } from "@/utils/app-version";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 
 type DesktopDaemonSettings = DesktopSettings["daemon"];
 
@@ -133,7 +134,7 @@ function DaemonLogsModal({ visible, onClose, daemonLogs }: DaemonLogsModalProps)
     >
       <View style={styles.modalBody}>
         <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable"}</Text>
-        <Text style={styles.logOutput} selectable>
+        <Text style={styles.logOutput} selectable dataSet={CODE_SURFACE_DATASET}>
           {daemonLogs?.contents?.length ? daemonLogs.contents : "(log file is empty)"}
         </Text>
       </View>
@@ -163,7 +164,7 @@ function DaemonCliStatusModal({
       snapPoints={CLI_STATUS_MODAL_SNAP_POINTS}
     >
       <View style={styles.modalBody}>
-        <Text style={styles.logOutput} selectable>
+        <Text style={styles.logOutput} selectable dataSet={CODE_SURFACE_DATASET}>
           {cliStatusOutput ?? ""}
         </Text>
         <View style={styles.modalActions}>

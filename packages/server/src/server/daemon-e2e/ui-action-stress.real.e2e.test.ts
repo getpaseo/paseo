@@ -4,18 +4,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import type { AgentClient } from "../agent/agent-sdk-types.js";
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
-import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
-import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import {
-  allProviders,
-  getFullAccessConfig,
-  isProviderAvailable,
-  type AgentProvider,
-} from "./agent-configs.js";
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+  realProviders,
+  type RealProvider,
+} from "./real-provider-test-config.js";
 
 type UiAction =
   | {
@@ -109,7 +106,7 @@ function longRunningPrompt(sleepSeconds: number, token: string): string {
   ].join(" ");
 }
 
-function buildNormalUsageScenario(provider: AgentProvider, seed: number): UiScenario {
+function buildNormalUsageScenario(provider: RealProvider, seed: number): UiScenario {
   const token1 = `UI_${provider}_${seed}_A`;
   const token2 = `UI_${provider}_${seed}_B`;
   return {
@@ -146,7 +143,7 @@ function buildNormalUsageScenario(provider: AgentProvider, seed: number): UiScen
 }
 
 function buildOverlapScenario(
-  provider: AgentProvider,
+  provider: RealProvider,
   seed: number,
   firstPick: "first" | "last",
 ): UiScenario {
@@ -444,21 +441,11 @@ async function runUiScenario(params: {
   }
 }
 
-function createRealAgentClient(provider: AgentProvider, logger: pino.Logger): AgentClient {
-  if (provider === "claude") {
-    return new ClaudeAgentClient({ logger });
-  }
-  if (provider === "codex") {
-    return new CodexAppServerAgentClient(logger);
-  }
-  return new OpenCodeAgentClient(logger);
-}
-
-describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider) => {
+describe.each(realProviders)("daemon E2E (real %s) - UI action stress", (provider) => {
   let shouldRun = false;
 
   beforeAll(async () => {
-    shouldRun = await isProviderAvailable(provider);
+    shouldRun = await canRunRealProvider(provider);
   });
 
   beforeEach((context) => {
@@ -471,9 +458,7 @@ describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: {
-        [provider]: createRealAgentClient(provider, logger),
-      } as Partial<Record<AgentProvider, AgentClient>>,
+      agentClients: createRealProviderClients([provider], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -486,7 +471,7 @@ describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider
       const agent = await client.createAgent({
         cwd,
         title: `uist-n-${provider}`,
-        ...getFullAccessConfig(provider),
+        ...getRealProviderConfig(provider),
       });
 
       await runUiScenario({
@@ -507,9 +492,7 @@ describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: {
-        [provider]: createRealAgentClient(provider, logger),
-      } as Partial<Record<AgentProvider, AgentClient>>,
+      agentClients: createRealProviderClients([provider], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -528,7 +511,7 @@ describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider
         const agent = await client.createAgent({
           cwd,
           title: `uist-o-${provider}`,
-          ...getFullAccessConfig(provider),
+          ...getRealProviderConfig(provider),
         });
 
         await runUiScenario({

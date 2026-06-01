@@ -41,6 +41,7 @@ import { PlanCard } from "@/components/plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
 import type {
+  AgentCapabilityFlags,
   AgentPermissionAction,
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
@@ -77,6 +78,7 @@ import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
+import { recordRenderProfileReasons } from "@/utils/render-profiler";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -213,6 +215,18 @@ export interface AgentStreamViewProps {
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }
+
+const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
+  "supportsStreaming",
+  "supportsSessionPersistence",
+  "supportsDynamicModes",
+  "supportsMcpServers",
+  "supportsReasoningStream",
+  "supportsToolInvocations",
+  "supportsRewindConversation",
+  "supportsRewindFiles",
+  "supportsRewindBoth",
+];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
 
@@ -745,7 +759,68 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   },
 );
 
-export const AgentStreamView = memo(AgentStreamViewComponent);
+function agentCapabilityFlagsEqual(
+  left: AgentCapabilityFlags | undefined,
+  right: AgentCapabilityFlags | undefined,
+): boolean {
+  return AGENT_CAPABILITY_FLAG_KEYS.every((key) => left?.[key] === right?.[key]);
+}
+
+function collectAgentScreenAgentDiffs(left: AgentScreenAgent, right: AgentScreenAgent): string[] {
+  const reasons: string[] = [];
+  if (left.serverId !== right.serverId) reasons.push("agent.serverId");
+  if (left.id !== right.id) reasons.push("agent.id");
+  if (left.status !== right.status) reasons.push("agent.status");
+  if (left.cwd !== right.cwd) reasons.push("agent.cwd");
+  if (!agentCapabilityFlagsEqual(left.capabilities, right.capabilities)) {
+    reasons.push("agent.capabilities");
+  }
+  if (left.lastError !== right.lastError) reasons.push("agent.lastError");
+  if (left.projectPlacement?.checkout?.cwd !== right.projectPlacement?.checkout?.cwd) {
+    reasons.push("agent.projectPlacement.checkout.cwd");
+  }
+  if (left.projectPlacement?.checkout?.isGit !== right.projectPlacement?.checkout?.isGit) {
+    reasons.push("agent.projectPlacement.checkout.isGit");
+  }
+  return reasons;
+}
+
+function bottomAnchorRouteRequestsEqual(
+  left: BottomAnchorRouteRequest | null | undefined,
+  right: BottomAnchorRouteRequest | null | undefined,
+): boolean {
+  return (
+    left?.agentId === right?.agentId &&
+    left?.reason === right?.reason &&
+    left?.requestKey === right?.requestKey
+  );
+}
+
+function agentStreamViewPropsEqual(
+  left: AgentStreamViewProps,
+  right: AgentStreamViewProps,
+): boolean {
+  const reasons: string[] = [];
+  if (left.agentId !== right.agentId) reasons.push("agentId");
+  if (left.serverId !== right.serverId) reasons.push("serverId");
+  reasons.push(...collectAgentScreenAgentDiffs(left.agent, right.agent));
+  if (left.streamItems !== right.streamItems) reasons.push("streamItems");
+  if (left.pendingPermissions !== right.pendingPermissions) reasons.push("pendingPermissions");
+  if (
+    !bottomAnchorRouteRequestsEqual(left.routeBottomAnchorRequest, right.routeBottomAnchorRequest)
+  ) {
+    reasons.push("routeBottomAnchorRequest");
+  }
+  if (left.isAuthoritativeHistoryReady !== right.isAuthoritativeHistoryReady) {
+    reasons.push("isAuthoritativeHistoryReady");
+  }
+  if (left.toast !== right.toast) reasons.push("toast");
+  if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
+  recordRenderProfileReasons(`AgentStreamView:${right.agentId}`, reasons);
+  return reasons.length === 0;
+}
+
+export const AgentStreamView = memo(AgentStreamViewComponent, agentStreamViewPropsEqual);
 AgentStreamView.displayName = "AgentStreamView";
 
 interface ToolCallSlotProps extends Omit<

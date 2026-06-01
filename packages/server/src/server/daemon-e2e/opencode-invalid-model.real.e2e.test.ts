@@ -4,10 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { isProviderAvailable } from "./agent-configs.js";
+import { canRunRealProvider, createRealProviderClients } from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-opencode-invalid-model-"));
@@ -19,7 +18,7 @@ async function createHarness(): Promise<{
 }> {
   const logger = pino({ level: "silent" });
   const daemon = await createTestPaseoDaemon({
-    agentClients: { opencode: new OpenCodeAgentClient(logger) },
+    agentClients: createRealProviderClients(["opencode"], logger),
     logger,
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -32,7 +31,7 @@ describe("daemon E2E (real opencode) - invalid model handling", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {

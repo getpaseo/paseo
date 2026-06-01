@@ -40,6 +40,10 @@ export interface TerminalStateSnapshot {
 
 export interface TerminalStateSnapshotOptions {
   scrollbackLines?: number;
+  // Include per-row soft-wrap flags (gridWrapped/scrollbackWrapped) so the client
+  // can reflow restored content on resize. Gated on a client capability, so old
+  // clients never receive the extra fields.
+  includeWrapFlags?: boolean;
 }
 
 export interface TerminalSubscribeOptions {
@@ -357,6 +361,39 @@ function extractScrollback(
   }
 
   return scrollback;
+}
+
+// xterm marks a line `isWrapped` when it is a continuation of the PREVIOUS line.
+// The snapshot carries the inverse, tmux-style flag — "this row continues onto the
+// next row" — so the client can rejoin and reflow logical lines. So row y's flag is
+// whether line y+1 is a wrapped continuation.
+function lineContinuesToNext(terminal: TerminalType, absoluteRow: number): boolean {
+  return terminal.buffer.active.getLine(absoluteRow + 1)?.isWrapped === true;
+}
+
+function extractGridWrapped(terminal: TerminalType): boolean[] {
+  const baseY = terminal.buffer.active.baseY;
+  const wrapped: boolean[] = [];
+  for (let row = 0; row < terminal.rows; row++) {
+    wrapped.push(lineContinuesToNext(terminal, baseY + row));
+  }
+  return wrapped;
+}
+
+function extractScrollbackWrapped(
+  terminal: TerminalType,
+  options?: { scrollbackLines?: number },
+): boolean[] {
+  const scrollbackLines = terminal.buffer.active.baseY;
+  const startRow =
+    typeof options?.scrollbackLines === "number"
+      ? Math.max(0, scrollbackLines - options.scrollbackLines)
+      : 0;
+  const wrapped: boolean[] = [];
+  for (let row = startRow; row < scrollbackLines; row++) {
+    wrapped.push(lineContinuesToNext(terminal, row));
+  }
+  return wrapped;
 }
 
 function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
@@ -853,6 +890,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       }),
       cursor: extractCursorState(terminal),
       ...(title ? { title } : {}),
+      ...(snapshotOptions?.includeWrapFlags
+        ? {
+            gridWrapped: extractGridWrapped(terminal),
+            scrollbackWrapped: extractScrollbackWrapped(terminal, {
+              scrollbackLines: snapshotOptions?.scrollbackLines,
+            }),
+          }
+        : {}),
     };
   }
 

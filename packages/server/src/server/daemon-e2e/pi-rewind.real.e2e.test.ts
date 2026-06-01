@@ -1,11 +1,11 @@
 import { readdir } from "node:fs/promises";
 import pino from "pino";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { canRunRealProvider, createRealProviderClients } from "./real-provider-test-config.js";
 import {
   closeRewindSession,
   fetchTimelineItems,
@@ -103,12 +103,17 @@ async function askPi(
 }
 
 describe("daemon E2E (real pi) - rewind", () => {
+  let canRun = false;
   let harness: PiRewindHarness;
 
   beforeAll(async () => {
+    canRun = await canRunRealProvider("pi");
+    if (!canRun) {
+      return;
+    }
     const logger = pino({ level: "silent" });
     const daemon = await createTestPaseoDaemon({
-      agentClients: { pi: new PiRpcAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["pi"], logger),
       logger,
     });
     const client = new DaemonClient({
@@ -126,7 +131,14 @@ describe("daemon E2E (real pi) - rewind", () => {
     await harness?.daemon.close().catch(() => undefined);
   });
 
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test("rewinds a real Pi conversation after a single turn and keeps the session usable", async () => {
+    if (!harness) throw new Error("Pi rewind harness was not initialized");
     const session = await launchPiRewindSession(harness, "pi-rewind-single-conversation-real");
 
     try {

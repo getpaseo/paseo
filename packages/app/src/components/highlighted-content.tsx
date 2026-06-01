@@ -1,8 +1,8 @@
 import React from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { Fonts } from "@/constants/theme";
 import { isWeb } from "@/constants/platform";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { KeyedLine, KeyedToken } from "@/utils/highlight-cache";
 
@@ -56,7 +56,7 @@ const GutteredLine = React.memo(function GutteredLine({
 export function HighlightedLines({ lines, startLine }: HighlightedLinesProps) {
   if (startLine === undefined) {
     return (
-      <View>
+      <View dataSet={CODE_SURFACE_DATASET}>
         {lines.map((line) => (
           <ContentLine key={line.key} line={line} />
         ))}
@@ -67,7 +67,7 @@ export function HighlightedLines({ lines, startLine }: HighlightedLinesProps) {
   const lastLineNumber = startLine + lines.length - 1;
   const digits = Math.max(2, String(lastLineNumber).length);
   return (
-    <View>
+    <View dataSet={CODE_SURFACE_DATASET}>
       {lines.map((line, index) => (
         <GutteredLine key={line.key} line={line} lineNumber={startLine + index} digits={digits} />
       ))}
@@ -81,7 +81,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: CODE_LINE_HEIGHT,
   },
   gutterText: {
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     lineHeight: CODE_LINE_HEIGHT,
     color: theme.colors.foregroundMuted,
@@ -90,7 +90,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   lineText: {
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     color: theme.colors.foreground,
     lineHeight: CODE_LINE_HEIGHT,

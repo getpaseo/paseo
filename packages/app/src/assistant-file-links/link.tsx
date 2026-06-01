@@ -9,9 +9,11 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
+import { MarkdownTextSpan } from "@/components/markdown-text";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
@@ -19,10 +21,16 @@ import { useFileLink } from "./use-file-link";
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
   style: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
 }
 
-export function AssistantMarkdownLink({ source, style, children }: AssistantMarkdownLinkProps) {
+export function AssistantMarkdownLink({
+  source,
+  style,
+  monoSurface,
+  children,
+}: AssistantMarkdownLinkProps) {
   const [hovered, setHovered] = useState(false);
   const { target, onHoverIn, onPress, onAuxPress } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
@@ -50,11 +58,21 @@ export function AssistantMarkdownLink({ source, style, children }: AssistantMark
   );
 
   if (isNative) {
+    // Must be a MarkdownTextSpan, not a plain <Text>: on iOS the link renders
+    // inside the paragraph's native UITextView, and a plain <Text> nested there
+    // is not hoisted into a UITextViewChild, so its text is silently dropped
+    // (the link disappears). The span composes correctly and stays selectable;
+    // onPress is forwarded (reliable tap-to-open on iOS is tracked by #21).
     return (
       <FileLinkHoverTooltip filePath={tooltipPath}>
-        <Text accessibilityRole="link" onPress={onPress} style={style}>
+        <MarkdownTextSpan
+          accessibilityRole="link"
+          monoSurface={monoSurface}
+          onPress={onPress}
+          style={style}
+        >
           {children}
-        </Text>
+        </MarkdownTextSpan>
       </FileLinkHoverTooltip>
     );
   }
@@ -72,7 +90,9 @@ export function AssistantMarkdownLink({ source, style, children }: AssistantMark
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
       >
-        <Text style={hoveredTextStyle}>{children}</Text>
+        <Text dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined} style={hoveredTextStyle}>
+          {children}
+        </Text>
       </Pressable>
     </a>
   );
@@ -100,7 +120,7 @@ export function AssistantMarkdownCodeLink({
     [inheritedStyles, codeInlineStyle, linkStyle],
   );
   return (
-    <AssistantMarkdownLink source={source} style={style}>
+    <AssistantMarkdownLink source={source} style={style} monoSurface>
       {children}
     </AssistantMarkdownLink>
   );
