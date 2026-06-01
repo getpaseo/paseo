@@ -401,6 +401,19 @@ const codeStyles = StyleSheet.create((theme) => ({
   },
 }));
 
+// Which line a deep link should scroll to: the code view's lineSelection, or —
+// for the large-Markdown source fallback (which has no highlightedLines) — the
+// raw location.lineStart, so jump-to-line still works there.
+function resolveScrollTargetLine(
+  lineSelection: FileLineSelection | null,
+  isLargeMarkdown: boolean,
+  lineStart: number | undefined,
+): number | null {
+  if (lineSelection) return lineSelection.lineStart;
+  if (isLargeMarkdown && lineStart) return lineStart;
+  return null;
+}
+
 function ImagePreview({
   imageSource,
   imagePreviewUri,
@@ -522,7 +535,8 @@ function LargeSourcePreview({
         <MarkdownTextSpan style={styles.plainPreviewText}>{shown}</MarkdownTextSpan>
         {truncated ? (
           <Text style={styles.plainPreviewNote}>
-            … 文件过大，仅显示前 {Math.round(MAX_PLAIN_PREVIEW_CHARS / 1000)} KB 源码
+            … file too large — showing the first {Math.round(MAX_PLAIN_PREVIEW_CHARS / 1000)} KB of
+            source
           </Text>
         ) : null}
       </RNScrollView>
@@ -597,18 +611,28 @@ function FilePreviewBody({
     [imagePreviewUri],
   );
 
+  // Scroll a deep-linked target line into view. lineSelection drives the code
+  // view; the large-Markdown source view has no highlightedLines, so fall back
+  // to location.lineStart there so jump-to-line still works. (The plain-text
+  // body wraps, so it's an approximate offset rather than an exact row, but it
+  // preserves the deep-link intent that would otherwise be silently dropped.)
+  const targetScrollLine = resolveScrollTargetLine(
+    lineSelection,
+    isLargeMarkdown,
+    location.lineStart,
+  );
   useEffect(() => {
-    if (!lineSelection) {
+    if (!targetScrollLine) {
       return;
     }
     const timeout = setTimeout(() => {
       previewScrollRef.current?.scrollTo({
-        y: Math.max(0, (lineSelection.lineStart - 1) * lineHeight),
+        y: Math.max(0, (targetScrollLine - 1) * lineHeight),
         animated: false,
       });
     }, 0);
     return () => clearTimeout(timeout);
-  }, [lineHeight, lineSelection]);
+  }, [lineHeight, targetScrollLine]);
 
   if (isLoading && !preview) {
     return (
