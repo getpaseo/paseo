@@ -29,6 +29,7 @@ import {
   parseTerminalScrollbackLines,
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
+  type AppLanguage,
   type AppSettings,
   type DesktopSettingsBridge,
   type KeyValueStorage,
@@ -58,6 +59,7 @@ export {
 };
 export type {
   AppSettings,
+  AppLanguage,
   DesktopSettingsBridge,
   KeyValueStorage,
   ReleaseChannel,
@@ -142,6 +144,9 @@ export function useSettings(): UseSettingsReturn {
       const appUpdates: Partial<AppSettings> = {};
       if (updates.theme !== undefined) {
         appUpdates.theme = updates.theme;
+      }
+      if (updates.language !== undefined) {
+        appUpdates.language = updates.language;
       }
       if (updates.sendBehavior !== undefined) {
         appUpdates.sendBehavior = updates.sendBehavior;
