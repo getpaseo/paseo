@@ -12,11 +12,16 @@ export const zhCN: TranslationResources = {
       app: "应用",
       host: "主机",
     },
+    hostPicker: {
+      switchHost: "切换主机",
+      local: "本机",
+    },
     backToWorkspace: "返回",
     addHost: "添加主机",
     projects: "项目",
     sections: {
       general: "通用",
+      daemon: "Daemon",
       appearance: "外观",
       shortcuts: "快捷键",
       integrations: "集成",
@@ -26,9 +31,10 @@ export const zhCN: TranslationResources = {
     },
     hostSections: {
       connections: "连接",
-      orchestration: "编排",
-      providers: "Provider",
-      daemon: "Daemon",
+      agents: "Agents",
+      workspaces: "Workspaces",
+      providers: "Providers",
+      host: "Host",
     },
     general: {
       title: "通用",

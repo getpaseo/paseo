@@ -10,11 +10,16 @@ export const en = {
       app: "App",
       host: "Host",
     },
+    hostPicker: {
+      switchHost: "Switch host",
+      local: "Local",
+    },
     backToWorkspace: "Back",
     addHost: "Add host",
     projects: "Projects",
     sections: {
       general: "General",
+      daemon: "Daemon",
       appearance: "Appearance",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
@@ -24,9 +29,10 @@ export const en = {
     },
     hostSections: {
       connections: "Connections",
-      orchestration: "Orchestration",
+      agents: "Agents",
+      workspaces: "Workspaces",
       providers: "Providers",
-      daemon: "Daemon",
+      host: "Host",
     },
     general: {
       title: "General",
