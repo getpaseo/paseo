@@ -9,7 +9,11 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { EditorTargetDescriptorPayload, OpenInEditorMode } from "@getpaseo/protocol/messages";
+import {
+  type EditorTargetDescriptorPayload,
+  isFileManagerTargetId,
+  type OpenInEditorMode,
+} from "@getpaseo/protocol/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
@@ -31,8 +35,6 @@ import { useSessionStore } from "@/stores/session-store";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
 import type { Theme } from "@/styles/theme";
 import { filterTargetsForDaemonLocation } from "./workspace-open-targets";
-
-const FILE_MANAGER_TARGET_IDS = new Set<string>(["finder", "explorer", "file-manager"]);
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -150,7 +152,7 @@ export function WorkspaceOpenInEditorButton({
           if (!client) {
             throw new Error("Host is not connected");
           }
-          const isFileManager = FILE_MANAGER_TARGET_IDS.has(editor.id);
+          const isFileManager = isFileManagerTargetId(editor.id);
           let openPath = cwd;
           let mode: OpenInEditorMode | undefined;
           let workspaceCwd: string | undefined;

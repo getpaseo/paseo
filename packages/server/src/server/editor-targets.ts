@@ -1,11 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { posix, win32 } from "node:path";
-import type {
-  EditorTargetDescriptorPayload,
-  EditorTargetId,
-  KnownEditorTargetId,
-  OpenInEditorMode,
+import {
+  type EditorTargetDescriptorPayload,
+  type EditorTargetId,
+  isFileManagerTargetId,
+  type KnownEditorTargetId,
+  type OpenInEditorMode,
 } from "@getpaseo/protocol/messages";
 import { createExternalProcessEnv } from "./paseo-env.js";
 import { findExecutable } from "../utils/executable.js";
@@ -48,14 +49,8 @@ function isAbsolutePath(value: string): boolean {
   return posix.isAbsolute(value) || win32.isAbsolute(value);
 }
 
-const FILE_MANAGER_TARGET_IDS: ReadonlySet<KnownEditorTargetId> = new Set([
-  "finder",
-  "explorer",
-  "file-manager",
-]);
-
 function isFileManagerTarget(target: EditorTargetDefinition): boolean {
-  return FILE_MANAGER_TARGET_IDS.has(target.id);
+  return isFileManagerTargetId(target.id);
 }
 
 function isTargetSupportedOnPlatform(

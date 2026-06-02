@@ -1596,6 +1596,15 @@ export function isLegacyEditorTargetId(value: string): value is LegacyEditorTarg
   return LEGACY_EDITOR_TARGET_ID_SET.has(value);
 }
 
+// Targets that reveal a file in a file manager rather than opening it in an editor.
+export const FILE_MANAGER_EDITOR_TARGET_IDS = ["finder", "explorer", "file-manager"] as const;
+
+const FILE_MANAGER_EDITOR_TARGET_ID_SET = new Set<string>(FILE_MANAGER_EDITOR_TARGET_IDS);
+
+export function isFileManagerTargetId(value: string): boolean {
+  return FILE_MANAGER_EDITOR_TARGET_ID_SET.has(value);
+}
+
 export const EditorTargetDescriptorPayloadSchema = z.object({
   id: EditorTargetIdSchema,
   label: z.string(),
