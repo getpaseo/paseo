@@ -310,4 +310,20 @@ describe("translation resources", () => {
     expect(en.desktop.quitting.detail).toBe("Stopping the local daemon.");
     expect(en.composer.attachments.dropImagesHere).toBe("Drop images here");
   });
+
+  it("includes provider selection utility keys for the Batch 4P migration", () => {
+    expect(en.providerSelection.defaultModel).toBe("Default");
+    expect(en.providerSelection.selectModel).toBe("Select model");
+    expect(en.providerSelection.loading).toBe("Loading...");
+    expect(en.providerSelection.error).toBe("Error");
+    expect(en.providerSelection.unavailable).toBe("Unavailable");
+    expect(en.providerSelection.unknownError).toBe("Unknown error");
+    expect(en.providerSelection.readiness.initialPromptRequired).toBe("Initial prompt is required");
+    expect(en.providerSelection.readiness.noProviders).toBe(
+      "No available providers on the selected host",
+    );
+    expect(en.providerSelection.readiness.modelDefaultsLoading).toBe(
+      "Model defaults are still loading",
+    );
+  });
 });

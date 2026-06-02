@@ -853,6 +853,22 @@ export const zhCN: TranslationResources = {
       unableToInstall: "无法安装 provider",
     },
   },
+  providerSelection: {
+    defaultModel: "默认",
+    selectModel: "选择模型",
+    loading: "正在加载...",
+    error: "错误",
+    unavailable: "不可用",
+    unknownError: "未知错误",
+    readiness: {
+      initialPromptRequired: "初始 prompt 必填",
+      noProviders: "所选 Host 上没有可用的 provider",
+      modelDefaultsLoading: "模型默认值仍在加载",
+      noModelAvailable: "所选 provider 没有可用模型",
+      workspaceDirectoryNotFound: "Workspace 目录未找到",
+      hostDisconnected: "Host 未连接",
+    },
+  },
   pairing: {
     connectionMethods: {
       title: "添加连接",

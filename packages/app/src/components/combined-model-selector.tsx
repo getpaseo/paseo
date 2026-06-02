@@ -645,14 +645,8 @@ export function CombinedModelSelector({
       selectedProvider,
       selectedModel,
       isLoading,
-      labels: {
-        defaultModel: t("modelSelector.defaultModel"),
-        selectModel: t("modelSelector.selectModel"),
-        loading: t("modelSelector.loading"),
-        error: t("modelSelector.error"),
-      },
     });
-  }, [isLoading, providers, selectedModel, selectedProvider, t]);
+  }, [isLoading, providers, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {

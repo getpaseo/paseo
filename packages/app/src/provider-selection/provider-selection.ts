@@ -7,6 +7,7 @@ import type {
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { buildFavoriteModelKey, type FavoriteModelRow } from "@/hooks/use-form-preferences";
+import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
 
 export type ProviderSelectionModelRow = FavoriteModelRow & { isDefault?: boolean };
@@ -36,20 +37,6 @@ export interface ProviderSelectionReadiness {
   reason?: string;
 }
 
-export interface ProviderSelectionLabels {
-  defaultModel: string;
-  selectModel: string;
-  loading: string;
-  error: string;
-}
-
-const DEFAULT_PROVIDER_SELECTION_LABELS: ProviderSelectionLabels = {
-  defaultModel: "Default",
-  selectModel: "Select model",
-  loading: "Loading...",
-  error: "Error",
-};
-
 function buildModelRows(
   provider: string,
   providerLabel: string,
@@ -69,14 +56,13 @@ function buildModelRows(
 function buildSyntheticDefaultRow(
   provider: string,
   providerLabel: string,
-  labels: ProviderSelectionLabels,
 ): ProviderSelectionModelRow {
   return {
     favoriteKey: buildFavoriteModelKey({ provider, modelId: "" }),
     provider,
     providerLabel,
     modelId: "",
-    modelLabel: labels.defaultModel,
+    modelLabel: i18n.t("providerSelection.defaultModel"),
     description: undefined,
     isDefault: true,
   };
@@ -86,13 +72,12 @@ function buildModelSelection(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[] | null,
-  labels: ProviderSelectionLabels,
 ): ProviderModelSelection {
   if (models === null) {
     return { kind: "loading" };
   }
   if (models.length === 0) {
-    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel, labels)] };
+    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
   }
   return { kind: "models", rows: buildModelRows(provider, providerLabel, models) };
 }
@@ -100,29 +85,30 @@ function buildModelSelection(
 function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
-  labels: ProviderSelectionLabels,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
-    return buildModelSelection(entry.provider, label, entry.models ?? null, labels);
+    return buildModelSelection(entry.provider, label, entry.models ?? null);
   }
   if (entry.status === "ready") {
-    return buildModelSelection(entry.provider, label, entry.models ?? null, labels);
+    return buildModelSelection(entry.provider, label, entry.models ?? null);
   }
   if (entry.status === "loading") {
     return { kind: "loading" };
   }
   return {
     kind: "error",
-    message: entry.error ?? (entry.status === "unavailable" ? "Unavailable" : "Unknown error"),
+    message:
+      entry.error ??
+      (entry.status === "unavailable"
+        ? i18n.t("providerSelection.unavailable")
+        : i18n.t("providerSelection.unknownError")),
   };
 }
 
 export function buildProviderSelectorProviders(input: {
   providerDefinitions: AgentProviderDefinition[];
   modelsByProvider: Map<string, AgentModelDefinition[]>;
-  labels?: Partial<ProviderSelectionLabels>;
 }): ProviderSelectorProvider[] {
-  const labels = { ...DEFAULT_PROVIDER_SELECTION_LABELS, ...input.labels };
   return input.providerDefinitions.map((definition) => ({
     id: definition.id,
     label: definition.label,
@@ -132,16 +118,13 @@ export function buildProviderSelectorProviders(input: {
       input.modelsByProvider.has(definition.id)
         ? (input.modelsByProvider.get(definition.id) ?? [])
         : null,
-      labels,
     ),
   }));
 }
 
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
-  labelsInput?: Partial<ProviderSelectionLabels>,
 ): ProviderSelectorProvider[] {
-  const labels = { ...DEFAULT_PROVIDER_SELECTION_LABELS, ...labelsInput };
   return (entries ?? [])
     .filter((entry) => entry.enabled)
     .map((entry) => {
@@ -149,7 +132,7 @@ export function buildSelectableProviderSelectorProviders(
       return {
         id: entry.provider,
         label,
-        modelSelection: buildEntryModelSelection(entry, label, labels),
+        modelSelection: buildEntryModelSelection(entry, label),
       };
     });
 }
@@ -171,26 +154,26 @@ export function resolveSelectedModelLabel(input: {
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
-  labels?: Partial<ProviderSelectionLabels>;
 }): string {
-  const labels = { ...DEFAULT_PROVIDER_SELECTION_LABELS, ...input.labels };
   const selectedProvider = input.selectedProvider.trim();
   if (!selectedProvider) {
-    return labels.selectModel;
+    return i18n.t("providerSelection.selectModel");
   }
 
   const provider = input.providers.find((entry) => entry.id === selectedProvider);
   if (!provider) {
-    return input.isLoading ? labels.loading : labels.selectModel;
+    return input.isLoading
+      ? i18n.t("providerSelection.loading")
+      : i18n.t("providerSelection.selectModel");
   }
   if (provider.modelSelection.kind === "loading") {
-    return labels.loading;
+    return i18n.t("providerSelection.loading");
   }
   if (provider.modelSelection.kind === "error") {
-    return labels.error;
+    return i18n.t("providerSelection.error");
   }
   if (provider.modelSelection.kind !== "models") {
-    return labels.selectModel;
+    return i18n.t("providerSelection.selectModel");
   }
 
   const model = provider.modelSelection.rows.find((entry) => entry.modelId === input.selectedModel);
@@ -199,7 +182,7 @@ export function resolveSelectedModelLabel(input: {
     model?.modelLabel ??
     defaultModel?.modelLabel ??
     provider.modelSelection.rows[0]?.modelLabel ??
-    labels.selectModel
+    i18n.t("providerSelection.selectModel")
   );
 }
 
@@ -304,26 +287,26 @@ export function resolveSubmissionReadiness(input: {
   hasClient: boolean;
 }): ProviderSelectionReadiness {
   if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
-    return { ok: false, reason: "Initial prompt is required" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
   }
   if (input.providerCount === 0) {
-    return { ok: false, reason: "No available providers on the selected host" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
   }
   if (!(input.autoSubmitConfig?.provider ?? input.selection.provider)) {
-    return { ok: false, reason: "Select a model" };
+    return { ok: false, reason: i18n.t("providerSelection.selectModel") };
   }
   if (input.selection.isModelLoading) {
-    return { ok: false, reason: "Model defaults are still loading" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };
   }
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
   if (!hasSelectedModel && input.selection.availableModels.length > 0) {
-    return { ok: false, reason: "No model is available for the selected provider" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
   }
   if (!input.workspaceDirectory) {
-    return { ok: false, reason: "Workspace directory not found" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };
   }
   if (!input.hasClient) {
-    return { ok: false, reason: "Host is not connected" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return { ok: true };
 }
