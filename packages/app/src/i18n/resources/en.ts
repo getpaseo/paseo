@@ -617,6 +617,7 @@ export const en = {
         reload: "Reload",
         tryAgain: "Try again",
         save: "Save",
+        saved: "Project saved",
         saving: "Saving...",
         cancel: "Cancel",
       },

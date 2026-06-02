@@ -610,6 +610,7 @@ export const zhCN: TranslationResources = {
         reload: "重新加载",
         tryAgain: "重试",
         save: "保存",
+        saved: "Project 已保存",
         saving: "正在保存...",
         cancel: "取消",
       },
