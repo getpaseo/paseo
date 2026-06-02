@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -120,6 +121,7 @@ function extractOfferUrlFromScan(result: BarcodeScanningResult): string | null {
 
 export default function PairScanScreen() {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -190,13 +192,13 @@ export default function PairScanScreen() {
         navigateToPairedHost(profile.serverId);
       } catch (error) {
         lastScannedRef.current = null;
-        const message = error instanceof Error ? error.message : "Unable to pair host";
-        Alert.alert("Error", message);
+        const message = error instanceof Error ? error.message : t("pairing.scan.unableToPair");
+        Alert.alert(t("pairing.scan.errorTitle"), message);
       } finally {
         setIsPairing(false);
       }
     },
-    [isPairing, navigateToPairedHost, upsertDaemonFromOfferUrl],
+    [isPairing, navigateToPairedHost, t, upsertDaemonFromOfferUrl],
   );
 
   const handleRouterBack = useCallback(() => router.back(), [router]);
@@ -216,15 +218,13 @@ export default function PairScanScreen() {
   if (isWeb) {
     return (
       <View style={styles.container}>
-        <BackHeader title="Scan QR" onBack={handleRouterBack} />
+        <BackHeader title={t("pairing.scan.title")} onBack={handleRouterBack} />
         <View style={bodyStyle}>
           <View style={styles.permissionCard}>
-            <Text style={styles.permissionTitle}>Not available on web</Text>
-            <Text style={styles.permissionBody}>
-              {`QR scanning isn't supported in the web build. Use "Paste link" instead.`}
-            </Text>
+            <Text style={styles.permissionTitle}>{t("pairing.scan.webUnavailableTitle")}</Text>
+            <Text style={styles.permissionBody}>{t("pairing.scan.webUnavailableBody")}</Text>
             <Pressable style={styles.permissionButton} onPress={closeToSource}>
-              <Text style={styles.permissionButtonText}>Back to Settings</Text>
+              <Text style={styles.permissionButtonText}>{t("pairing.scan.backToSettings")}</Text>
             </Pressable>
           </View>
         </View>
@@ -236,17 +236,15 @@ export default function PairScanScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title="Scan QR" onBack={closeToSource} />
+      <BackHeader title={t("pairing.scan.title")} onBack={closeToSource} />
 
       <View style={bodyStyle}>
         {!granted ? (
           <View style={styles.permissionCard}>
-            <Text style={styles.permissionTitle}>Camera permission</Text>
-            <Text style={styles.permissionBody}>
-              Allow camera access to scan the pairing QR code from your daemon.
-            </Text>
+            <Text style={styles.permissionTitle}>{t("pairing.scan.cameraPermissionTitle")}</Text>
+            <Text style={styles.permissionBody}>{t("pairing.scan.cameraPermissionBody")}</Text>
             <Pressable style={styles.permissionButton} onPress={handleRequestPermission}>
-              <Text style={styles.permissionButtonText}>Grant permission</Text>
+              <Text style={styles.permissionButtonText}>{t("pairing.scan.grantPermission")}</Text>
             </Pressable>
           </View>
         ) : (
@@ -264,7 +262,7 @@ export default function PairScanScreen() {
                 <View style={CORNER_BL_STYLE} />
                 <View style={CORNER_BR_STYLE} />
               </View>
-              {isPairing ? <Text style={helperTextStyle}>Pairing…</Text> : null}
+              {isPairing ? <Text style={helperTextStyle}>{t("pairing.scan.pairing")}</Text> : null}
             </View>
           </View>
         )}
