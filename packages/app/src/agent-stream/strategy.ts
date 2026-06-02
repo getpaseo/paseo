@@ -32,10 +32,7 @@ export type StreamNearBottomInput = StreamViewportMetrics & {
   threshold: number;
 };
 
-export type StreamNearHistoryStartInput = StreamViewportMetrics & {
-  offsetY: number;
-  threshold: number;
-};
+export type StreamNearHistoryStartInput = StreamNearBottomInput;
 
 export interface StreamEdgeSlotProps {
   ListHeaderComponent?: ReactElement | ComponentType<unknown> | null;
