@@ -771,6 +771,35 @@ export const zhCN: TranslationResources = {
       copied: "已复制",
     },
   },
+  realtimeVoice: {
+    actions: {
+      mute: "静音 realtime voice",
+      unmute: "取消静音 realtime voice",
+      stop: "停止 realtime voice 并中断 turn",
+    },
+  },
+  rewind: {
+    tooltip: "回退到此消息",
+    warning: "此操作无法撤销",
+    actions: {
+      conversation: "回退对话",
+      files: "回退文件",
+      both: "回退对话和文件",
+    },
+    errors: {
+      failed: "回退 agent 失败",
+    },
+  },
+  diffViewer: {
+    empty: "没有可显示的变更",
+  },
+  serviceUrl: {
+    title: "打开服务 URL",
+    message: "打开 {{url}}？",
+    inPaseo: "在 Paseo 中",
+    externalBrowser: "外部浏览器",
+    dontAskAgain: "不再询问",
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",

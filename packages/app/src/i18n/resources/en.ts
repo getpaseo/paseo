@@ -787,6 +787,35 @@ export const en = {
       copied: "Copied",
     },
   },
+  realtimeVoice: {
+    actions: {
+      mute: "Mute realtime voice",
+      unmute: "Unmute realtime voice",
+      stop: "Stop realtime voice and interrupt turn",
+    },
+  },
+  rewind: {
+    tooltip: "Rewind to this message",
+    warning: "This action cannot be undone",
+    actions: {
+      conversation: "Rewind conversation",
+      files: "Rewind files",
+      both: "Rewind conversation and files",
+    },
+    errors: {
+      failed: "Failed to rewind agent",
+    },
+  },
+  diffViewer: {
+    empty: "No changes to display",
+  },
+  serviceUrl: {
+    title: "Open service URL",
+    message: "Open {{url}}?",
+    inPaseo: "In Paseo",
+    externalBrowser: "External browser",
+    dontAskAgain: "Don't ask again",
+  },
   panels: {
     draft: {
       newAgent: "New Agent",
