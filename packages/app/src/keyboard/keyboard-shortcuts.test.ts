@@ -586,4 +586,14 @@ describe("keyboard-shortcut help sections", () => {
       expect(findRow(sections, id)?.keys).toEqual(keys);
     }
   });
+
+  it("returns stable i18n keys for section titles and help rows", () => {
+    const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
+    const projects = sections.find((section) => section.id === "projects");
+    const openProject = findRow(sections, "new-agent");
+
+    expect(projects?.titleKey).toBe("settings.shortcuts.sections.projects");
+    expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
+    expect(openProject?.label).toBe("Open project");
+  });
 });
