@@ -26,6 +26,12 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("system", ["zh-Hans-US"])).toBe("zh-CN");
   });
 
+  it("does not map Traditional Chinese system locales to Simplified Chinese", () => {
+    expect(resolveSupportedLocale("system", ["zh-TW"])).toBe("en");
+    expect(resolveSupportedLocale("system", ["zh-Hant"])).toBe("en");
+    expect(resolveSupportedLocale("system", ["zh-HK"])).toBe("en");
+  });
+
   it("maps unsupported or missing system locales to English", () => {
     expect(resolveSupportedLocale("system", ["fr-FR"])).toBe("en");
     expect(resolveSupportedLocale("system", [])).toBe("en");

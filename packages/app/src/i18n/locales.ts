@@ -32,7 +32,7 @@ export function resolveSupportedLocale(
 
   for (const locale of systemLocales) {
     const normalized = locale.toLowerCase();
-    if (normalized === "zh" || normalized.startsWith("zh-")) {
+    if (normalized === "zh" || normalized === "zh-cn" || normalized.startsWith("zh-hans")) {
       return "zh-CN";
     }
   }
