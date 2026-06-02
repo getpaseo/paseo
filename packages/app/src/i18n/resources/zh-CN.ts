@@ -608,6 +608,20 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    host: {
+      noHost: "没有 Host",
+      switchTitle: "切换 Host",
+      searchPlaceholder: "搜索 Hosts...",
+    },
+    actions: {
+      addProject: "添加 project",
+      home: "首页",
+      settings: "设置",
+      closeSidebar: "关闭侧边栏",
+    },
+    sections: {
+      sessions: "会话",
+    },
     project: {
       actions: {
         menu: "Project 操作",
@@ -627,6 +641,10 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         removeFailed: "部分 workspace 移除失败",
       },
+      empty: {
+        title: "还没有 projects",
+        description: "添加 project 以开始",
+      },
     },
     workspace: {
       status: {
@@ -635,6 +653,8 @@ export const zhCN: TranslationResources = {
       },
       actions: {
         menu: "Workspace 操作",
+        newWorkspace: "新建 workspace",
+        createWorkspaceFor: "为 {{projectName}} 新建 workspace",
         copyPath: "复制路径",
         copyBranchName: "复制分支名称",
         rename: "重命名 workspace",
@@ -916,6 +936,9 @@ export const zhCN: TranslationResources = {
     backToWorkspace: "返回",
     addHost: "添加主机",
     projects: "项目",
+    projectList: {
+      hostLoadFailed: "无法从 Host {{hostName}} 加载 projects：{{message}}",
+    },
     sections: {
       general: "通用",
       daemon: "Daemon",

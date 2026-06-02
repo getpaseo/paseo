@@ -1,5 +1,6 @@
 import { router, usePathname } from "expo-router";
 import { FolderPlus, Home, MessagesSquare, Plus, Search, Settings, X } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import {
   type Dispatch,
   memo,
@@ -104,12 +105,23 @@ interface SidebarSharedProps {
   handleOpenProject: () => void;
   handleHome: () => void;
   handleSettings: () => void;
+  labels: SidebarLabels;
   renderHostOption: (input: {
     option: ComboboxOption;
     selected: boolean;
     active: boolean;
     onPress: () => void;
   }) => ReactElement;
+}
+
+interface SidebarLabels {
+  addProject: string;
+  home: string;
+  settings: string;
+  switchHost: string;
+  searchHosts: string;
+  sessions: string;
+  closeSidebar: string;
 }
 
 interface MobileSidebarProps extends SidebarSharedProps {
@@ -132,6 +144,7 @@ export const LeftSidebar = memo(function LeftSidebar({
   void _selectedAgentId;
 
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompactLayout = useIsCompactFormFactor();
   const isOpen = usePanelStore((state) =>
@@ -146,10 +159,10 @@ export const LeftSidebar = memo(function LeftSidebar({
   );
   const activeServerId = activeDaemon?.serverId ?? null;
   const activeHostLabel = useMemo(() => {
-    if (!activeDaemon) return "No host";
+    if (!activeDaemon) return t("sidebar.host.noHost");
     const trimmed = activeDaemon.label?.trim();
     return trimmed && trimmed.length > 0 ? trimmed : activeDaemon.serverId;
-  }, [activeDaemon]);
+  }, [activeDaemon, t]);
   const activeHostSnapshot = useHostRuntimeSnapshot(activeServerId ?? "");
   const activeHostStatus = activeServerId
     ? (activeHostSnapshot?.connectionStatus ?? "connecting")
@@ -271,6 +284,19 @@ export const LeftSidebar = memo(function LeftSidebar({
     [pathname],
   );
 
+  const labels = useMemo(
+    (): SidebarLabels => ({
+      addProject: t("sidebar.actions.addProject"),
+      home: t("sidebar.actions.home"),
+      settings: t("sidebar.actions.settings"),
+      switchHost: t("sidebar.host.switchTitle"),
+      searchHosts: t("sidebar.host.searchPlaceholder"),
+      sessions: t("sidebar.sections.sessions"),
+      closeSidebar: t("sidebar.actions.closeSidebar"),
+    }),
+    [t],
+  );
+
   const sharedProps = {
     theme,
     activeServerId,
@@ -291,6 +317,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     handleRefresh,
     handleHostSelect,
     renderHostOption,
+    labels,
   };
 
   if (isCompactLayout) {
@@ -425,12 +452,14 @@ function FooterIconButton({
 
 function AddProjectTooltipContent({
   newAgentKeys,
+  label,
 }: {
   newAgentKeys: ReturnType<typeof useShortcutKeys>;
+  label: string;
 }) {
   return (
     <View style={styles.tooltipRow}>
-      <Text style={styles.tooltipText}>Add project</Text>
+      <Text style={styles.tooltipText}>{label}</Text>
       {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
     </View>
   );
@@ -465,6 +494,7 @@ function SidebarFooter({
   handleOpenProject,
   handleHome,
   handleSettings,
+  labels,
 }: {
   theme: SidebarTheme;
   activeServerId: string | null;
@@ -479,6 +509,13 @@ function SidebarFooter({
   handleOpenProject: () => void;
   handleHome: () => void;
   handleSettings: () => void;
+  labels: {
+    addProject: string;
+    home: string;
+    settings: string;
+    switchHost: string;
+    searchHosts: string;
+  };
 }) {
   const newAgentKeys = useShortcutKeys("new-agent");
   return (
@@ -498,26 +535,26 @@ function SidebarFooter({
             <FooterIconButton
               onPress={handleOpenProject}
               testID="sidebar-add-project"
-              accessibilityLabel="Add project"
+              accessibilityLabel={labels.addProject}
               icon={FolderPlus}
               theme={theme}
             />
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
-            <AddProjectTooltipContent newAgentKeys={newAgentKeys} />
+            <AddProjectTooltipContent newAgentKeys={newAgentKeys} label={labels.addProject} />
           </TooltipContent>
         </Tooltip>
         <FooterIconButton
           onPress={handleHome}
           testID="sidebar-home"
-          accessibilityLabel="Home"
+          accessibilityLabel={labels.home}
           icon={Home}
           theme={theme}
         />
         <FooterIconButton
           onPress={handleSettings}
           testID="sidebar-settings"
-          accessibilityLabel="Settings"
+          accessibilityLabel={labels.settings}
           icon={Settings}
           theme={theme}
         />
@@ -528,8 +565,8 @@ function SidebarFooter({
         onSelect={handleHostSelect}
         renderOption={renderHostOption}
         searchable={false}
-        title="Switch host"
-        searchPlaceholder="Search hosts..."
+        title={labels.switchHost}
+        searchPlaceholder={labels.searchHosts}
         desktopMinWidth={280}
         open={isHostPickerOpen}
         onOpenChange={setIsHostPickerOpen}
@@ -563,6 +600,7 @@ function MobileSidebar({
   handleOpenProject,
   handleHome,
   handleSettings,
+  labels,
   insetsTop,
   insetsBottom,
   isOpen,
@@ -748,7 +786,7 @@ function MobileSidebar({
             <View style={styles.sidebarHeaderRow}>
               <SidebarHeaderRow
                 icon={MessagesSquare}
-                label="Sessions"
+                label={labels.sessions}
                 onPress={handleViewMore}
                 isActive={isSessionsActive}
                 testID="sidebar-sessions"
@@ -765,7 +803,7 @@ function MobileSidebar({
               nativeID="sidebar-close"
               accessible
               accessibilityRole="button"
-              accessibilityLabel="Close sidebar"
+              accessibilityLabel={labels.closeSidebar}
               hitSlop={8}
             >
               {({ hovered, pressed }) => (
@@ -810,6 +848,7 @@ function MobileSidebar({
               handleOpenProject={handleOpenProject}
               handleHome={handleHome}
               handleSettings={handleSettings}
+              labels={labels}
             />
           </View>
         </Animated.View>
@@ -842,6 +881,7 @@ function DesktopSidebar({
   handleOpenProject,
   handleHome,
   handleSettings,
+  labels,
   insetsTop,
   isOpen,
   handleViewMore,
@@ -919,7 +959,7 @@ function DesktopSidebar({
           <View style={styles.sidebarHeaderRow}>
             <SidebarHeaderRow
               icon={MessagesSquare}
-              label="Sessions"
+              label={labels.sessions}
               onPress={handleViewMore}
               isActive={isSessionsActive}
               testID="sidebar-sessions"
@@ -963,6 +1003,7 @@ function DesktopSidebar({
           handleOpenProject={handleOpenProject}
           handleHome={handleHome}
           handleSettings={handleSettings}
+          labels={labels}
         />
 
         {/* Resize handle - absolutely positioned over right border */}

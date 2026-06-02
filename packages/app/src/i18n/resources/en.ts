@@ -620,6 +620,20 @@ export const en = {
     },
   },
   sidebar: {
+    host: {
+      noHost: "No host",
+      switchTitle: "Switch host",
+      searchPlaceholder: "Search hosts...",
+    },
+    actions: {
+      addProject: "Add project",
+      home: "Home",
+      settings: "Settings",
+      closeSidebar: "Close sidebar",
+    },
+    sections: {
+      sessions: "Sessions",
+    },
     project: {
       actions: {
         menu: "Project actions",
@@ -640,6 +654,10 @@ export const en = {
         hostDisconnected: "Host is not connected",
         removeFailed: "Failed to remove some workspaces",
       },
+      empty: {
+        title: "No projects yet",
+        description: "Add a project to get started",
+      },
     },
     workspace: {
       status: {
@@ -648,6 +666,8 @@ export const en = {
       },
       actions: {
         menu: "Workspace actions",
+        newWorkspace: "New workspace",
+        createWorkspaceFor: "Create a new workspace for {{projectName}}",
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
         rename: "Rename workspace",
@@ -932,6 +952,9 @@ export const en = {
     backToWorkspace: "Back",
     addHost: "Add host",
     projects: "Projects",
+    projectList: {
+      hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
+    },
     sections: {
       general: "General",
       daemon: "Daemon",

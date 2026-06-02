@@ -206,4 +206,24 @@ describe("translation resources", () => {
     expect(en.workspace.header.toasts.workspacePathCopiedLabel).toBe("Workspace path");
     expect(en.workspace.header.toasts.branchNameCopiedLabel).toBe("Branch name");
   });
+
+  it("includes sidebar project list keys for the Batch 4K migration", () => {
+    expect(en.sidebar.host.noHost).toBe("No host");
+    expect(en.sidebar.host.switchTitle).toBe("Switch host");
+    expect(en.sidebar.host.searchPlaceholder).toBe("Search hosts...");
+    expect(en.sidebar.actions.addProject).toBe("Add project");
+    expect(en.sidebar.actions.home).toBe("Home");
+    expect(en.sidebar.actions.settings).toBe("Settings");
+    expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
+    expect(en.sidebar.sections.sessions).toBe("Sessions");
+    expect(en.sidebar.workspace.actions.newWorkspace).toBe("New workspace");
+    expect(en.sidebar.workspace.actions.createWorkspaceFor).toBe(
+      "Create a new workspace for {{projectName}}",
+    );
+    expect(en.sidebar.project.empty.title).toBe("No projects yet");
+    expect(en.sidebar.project.empty.description).toBe("Add a project to get started");
+    expect(en.settings.projectList.hostLoadFailed).toBe(
+      "Couldn't load projects from host {{hostName}}: {{message}}",
+    );
+  });
 });
