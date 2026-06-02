@@ -539,6 +539,106 @@ export const en = {
       },
     },
   },
+  sidebar: {
+    project: {
+      actions: {
+        menu: "Project actions",
+        openSettings: "Open project settings",
+        remove: "Remove project",
+        removing: "Removing...",
+      },
+      confirmations: {
+        removeTitle: "Remove project?",
+        removeMessage:
+          'Remove "{{projectName}}" from the sidebar?\n\nFiles on disk will not be changed.',
+        removeConfirm: "Remove",
+        cancel: "Cancel",
+      },
+      toasts: {
+        hostDisconnected: "Host is not connected",
+        removeFailed: "Failed to remove some workspaces",
+      },
+    },
+    workspace: {
+      status: {
+        scriptsAvailable: "Scripts available",
+        creating: "Creating...",
+      },
+      actions: {
+        menu: "Workspace actions",
+        copyPath: "Copy path",
+        copyBranchName: "Copy branch name",
+        rename: "Rename workspace",
+        archive: "Archive",
+        archiveWorktree: "Archive worktree",
+        hideFromSidebar: "Hide from sidebar",
+        archiving: "Archiving...",
+        hiding: "Hiding...",
+      },
+      confirmations: {
+        hideTitle: "Hide workspace?",
+        hideMessage:
+          'Hide "{{workspaceName}}" from the sidebar?\n\nFiles on disk will not be changed.',
+        hideConfirm: "Hide",
+        cancel: "Cancel",
+      },
+      rename: {
+        title: "Rename workspace",
+        submit: "Rename",
+        invalidBranchName: "Invalid branch name",
+      },
+      toasts: {
+        workspacePathUnavailable: "Workspace path not available",
+        pathCopied: "Path copied",
+        branchNameCopied: "Branch name copied",
+        hostDisconnected: "Host is not connected",
+        hideFailed: "Failed to hide workspace",
+        archiveFailed: "Failed to archive worktree",
+      },
+    },
+  },
+  newWorkspace: {
+    title: "New workspace",
+    create: "Create",
+    errors: {
+      hostDisconnected: "Host is not connected",
+      createWorktreeFailed: "Failed to create worktree",
+      composerStateRequired: "Composer state is required",
+      selectModel: "Select a model",
+    },
+    refPicker: {
+      startingRef: "Starting ref",
+      chooseStart: "Choose where to start from",
+      checkoutHint: "Check out PR #{{number}}?",
+      checkoutPr: "Check out PR #{{number}}",
+      dismissCheckoutHint: "Dismiss PR #{{number}} checkout hint",
+      intoBase: "into {{baseRef}}",
+      searching: "Searching...",
+      noMatchingRefs: "No matching refs.",
+      searchPlaceholder: "Search branches and PRs",
+      title: "Start from",
+    },
+  },
+  openProject: {
+    tiles: {
+      addProject: {
+        title: "Add a project",
+        description: "Open a folder on your machine",
+      },
+      importSession: {
+        title: "Import session",
+        description: "Bring in recent external CLI sessions",
+      },
+      setupProviders: {
+        title: "Setup providers",
+        description: "Configure Claude Code, Codex, and more",
+      },
+      pairDevice: {
+        title: "Pair device",
+        description: "Connect your phone to this daemon",
+      },
+    },
+  },
   panels: {
     draft: {
       newAgent: "New Agent",

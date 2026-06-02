@@ -107,4 +107,12 @@ describe("translation resources", () => {
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
+
+  it("includes sidebar and workspace creation keys for the Batch 4C migration", () => {
+    expect(en.sidebar.workspace.actions.copyPath).toBe("Copy path");
+    expect(en.sidebar.project.confirmations.removeTitle).toBe("Remove project?");
+    expect(en.newWorkspace.title).toBe("New workspace");
+    expect(en.newWorkspace.refPicker.searchPlaceholder).toBe("Search branches and PRs");
+    expect(en.openProject.tiles.addProject.title).toBe("Add a project");
+  });
 });

@@ -527,6 +527,104 @@ export const zhCN: TranslationResources = {
       },
     },
   },
+  sidebar: {
+    project: {
+      actions: {
+        menu: "Project 操作",
+        openSettings: "打开 project 设置",
+        remove: "移除 project",
+        removing: "正在移除...",
+      },
+      confirmations: {
+        removeTitle: "移除 project？",
+        removeMessage: "从侧边栏移除「{{projectName}}」？\n\n磁盘上的文件不会被更改。",
+        removeConfirm: "移除",
+        cancel: "取消",
+      },
+      toasts: {
+        hostDisconnected: "Host 未连接",
+        removeFailed: "部分 workspace 移除失败",
+      },
+    },
+    workspace: {
+      status: {
+        scriptsAvailable: "有可用 scripts",
+        creating: "正在创建...",
+      },
+      actions: {
+        menu: "Workspace 操作",
+        copyPath: "复制路径",
+        copyBranchName: "复制分支名称",
+        rename: "重命名 workspace",
+        archive: "归档",
+        archiveWorktree: "归档 worktree",
+        hideFromSidebar: "从侧边栏隐藏",
+        archiving: "正在归档...",
+        hiding: "正在隐藏...",
+      },
+      confirmations: {
+        hideTitle: "隐藏 workspace？",
+        hideMessage: "从侧边栏隐藏「{{workspaceName}}」？\n\n磁盘上的文件不会被更改。",
+        hideConfirm: "隐藏",
+        cancel: "取消",
+      },
+      rename: {
+        title: "重命名 workspace",
+        submit: "重命名",
+        invalidBranchName: "无效的分支名称",
+      },
+      toasts: {
+        workspacePathUnavailable: "Workspace 路径不可用",
+        pathCopied: "路径已复制",
+        branchNameCopied: "分支名称已复制",
+        hostDisconnected: "Host 未连接",
+        hideFailed: "隐藏 workspace 失败",
+        archiveFailed: "归档 worktree 失败",
+      },
+    },
+  },
+  newWorkspace: {
+    title: "新建 workspace",
+    create: "创建",
+    errors: {
+      hostDisconnected: "Host 未连接",
+      createWorktreeFailed: "创建 worktree 失败",
+      composerStateRequired: "Composer 状态必填",
+      selectModel: "请选择模型",
+    },
+    refPicker: {
+      startingRef: "起始 ref",
+      chooseStart: "选择起始位置",
+      checkoutHint: "Checkout PR #{{number}}？",
+      checkoutPr: "Checkout PR #{{number}}",
+      dismissCheckoutHint: "忽略 PR #{{number}} checkout 提示",
+      intoBase: "进入 {{baseRef}}",
+      searching: "正在搜索...",
+      noMatchingRefs: "没有匹配的 refs。",
+      searchPlaceholder: "搜索分支和 PR",
+      title: "起始位置",
+    },
+  },
+  openProject: {
+    tiles: {
+      addProject: {
+        title: "添加 project",
+        description: "打开此机器上的文件夹",
+      },
+      importSession: {
+        title: "导入会话",
+        description: "导入最近的外部 CLI 会话",
+      },
+      setupProviders: {
+        title: "设置 providers",
+        description: "配置 Claude Code、Codex 等",
+      },
+      pairDevice: {
+        title: "配对设备",
+        description: "将手机连接到此 daemon",
+      },
+    },
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",
