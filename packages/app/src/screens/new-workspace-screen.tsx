@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -151,6 +152,8 @@ function RefPickerTrigger({
   badgePressableStyle,
   selectedItem,
   triggerLabel,
+  accessibilityLabel,
+  tooltipLabel,
   iconColor,
   iconSize,
 }: {
@@ -160,6 +163,8 @@ function RefPickerTrigger({
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
   selectedItem: PickerItem | null;
   triggerLabel: string;
+  accessibilityLabel: string;
+  tooltipLabel: string;
   iconColor: string;
   iconSize: number;
 }) {
@@ -173,7 +178,7 @@ function RefPickerTrigger({
           disabled={disabled}
           style={badgePressableStyle}
           accessibilityRole="button"
-          accessibilityLabel="Starting ref"
+          accessibilityLabel={accessibilityLabel}
         >
           <RefPickerBadgeContent
             selectedItem={selectedItem}
@@ -184,7 +189,7 @@ function RefPickerTrigger({
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>Choose where to start from</Text>
+        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -253,13 +258,17 @@ function ProjectPickerTrigger({
 }
 
 function CheckoutHintBadge({
-  prNumber,
+  label,
+  acceptLabel,
+  dismissLabel,
   onAccept,
   onDismiss,
   iconColor,
   iconSize,
 }: {
-  prNumber: number;
+  label: string;
+  acceptLabel: string;
+  dismissLabel: string;
   onAccept: () => void;
   onDismiss: () => void;
   iconColor: string;
@@ -268,14 +277,14 @@ function CheckoutHintBadge({
   return (
     <View style={styles.checkoutHintBadge}>
       <Text style={styles.badgeText} numberOfLines={1}>
-        Check out PR #{prNumber}?
+        {label}
       </Text>
       <Pressable
         testID="new-workspace-checkout-hint-accept"
         onPress={onAccept}
         style={styles.checkoutHintAction}
         accessibilityRole="button"
-        accessibilityLabel={`Check out PR #${prNumber}`}
+        accessibilityLabel={acceptLabel}
       >
         <Check size={iconSize} color={iconColor} />
       </Pressable>
@@ -284,7 +293,7 @@ function CheckoutHintBadge({
         onPress={onDismiss}
         style={styles.checkoutHintAction}
         accessibilityRole="button"
-        accessibilityLabel={`Dismiss PR #${prNumber} checkout hint`}
+        accessibilityLabel={dismissLabel}
       >
         <X size={iconSize} color={iconColor} />
       </Pressable>
@@ -585,10 +594,11 @@ async function createAndMergeWorkspace(input: {
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
   ) => void;
   serverId: string;
+  createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const payload = await input.client.createPaseoWorktree(input.createInput);
   if (payload.error || !payload.workspace) {
-    throw new Error(payload.error ?? "Failed to create worktree");
+    throw new Error(payload.error ?? input.createFailedMessage);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.createInput.firstAgentContext
@@ -608,17 +618,21 @@ interface CreateChatAgentInput {
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
   draftKey: string;
+  labels: {
+    composerStateRequired: string;
+    selectModel: string;
+  };
 }
 
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
   const { text, attachments, cwd } = payload;
   if (!composerState) {
-    throw new Error("Composer state is required");
+    throw new Error(input.labels.composerStateRequired);
   }
   const provider = composerState.selectedProvider;
   if (!provider) {
-    throw new Error("Select a model");
+    throw new Error(input.labels.selectModel);
   }
   const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
   const ensuredWorkspace = await ensureWorkspace({
@@ -755,6 +769,7 @@ export function NewWorkspaceScreen({
   displayName: displayNameProp,
 }: NewWorkspaceScreenProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
@@ -816,10 +831,10 @@ export function NewWorkspaceScreen({
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
-      throw new Error("Host is not connected");
+      throw new Error(t("newWorkspace.errors.hostDisconnected"));
     }
     return client;
-  }, [client, isConnected]);
+  }, [client, isConnected, t]);
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
@@ -1034,11 +1049,12 @@ export function NewWorkspaceScreen({
         createInput: buildCreateWorktreeInput(input),
         mergeWorkspaces,
         serverId,
+        createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
       });
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
     },
-    [buildCreateWorktreeInput, createdWorkspace, mergeWorkspaces, serverId, withConnectedClient],
+    [buildCreateWorktreeInput, createdWorkspace, mergeWorkspaces, serverId, t, withConnectedClient],
   );
 
   const handleSubmitNewWorkspace = useCallback(
@@ -1064,6 +1080,10 @@ export function NewWorkspaceScreen({
           ensureWorkspace,
           serverId,
           draftKey,
+          labels: {
+            composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
+            selectModel: t("newWorkspace.errors.selectModel"),
+          },
         });
       } catch (error) {
         const message = toErrorMessage(error);
@@ -1072,7 +1092,7 @@ export function NewWorkspaceScreen({
         toast.error(message);
       }
     },
-    [composerState, draftKey, ensureWorkspace, serverId, toast],
+    [composerState, draftKey, ensureWorkspace, serverId, t, toast],
   );
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
@@ -1105,7 +1125,9 @@ export function NewWorkspaceScreen({
         : `new-workspace-ref-picker-pr-${item.item.number}`;
 
       const description =
-        !isBranch && item.item.baseRefName ? `into ${item.item.baseRefName}` : undefined;
+        !isBranch && item.item.baseRefName
+          ? t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName })
+          : undefined;
 
       return (
         <PickerOptionItem
@@ -1122,7 +1144,7 @@ export function NewWorkspaceScreen({
         />
       );
     },
-    [isPending, itemById, theme.colors.foregroundMuted, theme.iconSize.sm],
+    [isPending, itemById, t, theme.colors.foregroundMuted, theme.iconSize.sm],
   );
 
   const renderProjectOption = useCallback(
@@ -1175,8 +1197,8 @@ export function NewWorkspaceScreen({
 
   const pickerEmptyText =
     branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
-      ? "Searching..."
-      : "No matching refs.";
+      ? t("newWorkspace.refPicker.searching")
+      : t("newWorkspace.refPicker.noMatchingRefs");
 
   const composerFooter = useMemo(
     () => (
@@ -1220,6 +1242,8 @@ export function NewWorkspaceScreen({
             badgePressableStyle={badgePressableStyle}
             selectedItem={selectedItem}
             triggerLabel={triggerLabel}
+            accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
+            tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
             iconColor={theme.colors.foregroundMuted}
             iconSize={theme.iconSize.sm}
           />
@@ -1228,8 +1252,8 @@ export function NewWorkspaceScreen({
             value={selectedOptionId}
             onSelect={handleSelectOption}
             searchable
-            searchPlaceholder="Search branches and PRs"
-            title="Start from"
+            searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
+            title={t("newWorkspace.refPicker.title")}
             open={pickerOpen}
             onOpenChange={handlePickerOpenChange}
             onSearchQueryChange={setPickerSearchQuery}
@@ -1244,7 +1268,15 @@ export function NewWorkspaceScreen({
         ) : null}
         {checkoutHintPrAttachment ? (
           <CheckoutHintBadge
-            prNumber={checkoutHintPrAttachment.item.number}
+            label={t("newWorkspace.refPicker.checkoutHint", {
+              number: checkoutHintPrAttachment.item.number,
+            })}
+            acceptLabel={t("newWorkspace.refPicker.checkoutPr", {
+              number: checkoutHintPrAttachment.item.number,
+            })}
+            dismissLabel={t("newWorkspace.refPicker.dismissCheckoutHint", {
+              number: checkoutHintPrAttachment.item.number,
+            })}
             onAccept={acceptCheckoutHint}
             onDismiss={dismissCheckoutHint}
             iconColor={theme.colors.foregroundMuted}
@@ -1281,6 +1313,7 @@ export function NewWorkspaceScreen({
       selectedSourceDirectory,
       setPickerSearchQuery,
       agentControlsWithDisabled,
+      t,
       theme.colors.foregroundMuted,
       theme.iconSize.sm,
       triggerLabel,
@@ -1296,7 +1329,7 @@ export function NewWorkspaceScreen({
           <TitlebarDragRegion />
           <View style={styles.centered}>
             <View style={styles.composerTitleContainer}>
-              <Text style={styles.composerTitle}>New workspace</Text>
+              <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
             </View>
             <Composer
               agentId={draftKey}
@@ -1304,7 +1337,7 @@ export function NewWorkspaceScreen({
               isPaneFocused={true}
               onSubmitMessage={handleSubmitNewWorkspace}
               allowEmptySubmit={true}
-              submitButtonAccessibilityLabel="Create"
+              submitButtonAccessibilityLabel={t("newWorkspace.create")}
               submitIcon="return"
               isSubmitLoading={pendingAction !== null}
               submitBehavior="preserve-and-lock"
