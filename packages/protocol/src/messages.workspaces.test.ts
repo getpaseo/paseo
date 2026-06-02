@@ -5,6 +5,7 @@ import {
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceDescriptorPayloadSchema,
+  WorkspaceScriptPayloadSchema,
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
@@ -483,6 +484,53 @@ describe("workspace message schemas", () => {
       type: "service",
       exitCode: null,
     });
+  });
+
+  test("parses workspace service payloads from old daemons without split proxy URLs", () => {
+    const parsed = WorkspaceScriptPayloadSchema.parse({
+      scriptName: "web",
+      type: "service",
+      hostname: "web--repo.localhost",
+      port: 3000,
+      proxyUrl: "http://web--repo.localhost:6767",
+      lifecycle: "running",
+      health: "healthy",
+    });
+
+    expect(parsed.localProxyUrl).toBeUndefined();
+    expect(parsed.publicProxyUrl).toBeUndefined();
+    expect(parsed.proxyUrl).toBe("http://web--repo.localhost:6767");
+  });
+
+  test("parses workspace service payloads with split local and public proxy URLs", () => {
+    const parsed = WorkspaceScriptPayloadSchema.parse({
+      scriptName: "web",
+      type: "service",
+      hostname: "web--repo.localhost",
+      port: 3000,
+      localProxyUrl: "http://web--repo.localhost:6767",
+      publicProxyUrl: "https://web--repo.services.example.com",
+      proxyUrl: "https://web--repo.services.example.com",
+      lifecycle: "running",
+      health: "healthy",
+    });
+
+    expect(parsed.localProxyUrl).toBe("http://web--repo.localhost:6767");
+    expect(parsed.publicProxyUrl).toBe("https://web--repo.services.example.com");
+    expect(parsed.proxyUrl).toBe("https://web--repo.services.example.com");
+  });
+
+  test("defaults omitted workspace script proxyUrl to null", () => {
+    const parsed = WorkspaceScriptPayloadSchema.parse({
+      scriptName: "typecheck",
+      type: "script",
+      hostname: "typecheck",
+      port: null,
+      lifecycle: "stopped",
+      health: null,
+    });
+
+    expect(parsed.proxyUrl).toBeNull();
   });
 
   test("parses workspace_setup_progress payload", () => {

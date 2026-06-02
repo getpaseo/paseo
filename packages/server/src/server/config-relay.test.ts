@@ -104,9 +104,38 @@ describe("daemon service proxy config", () => {
     });
 
     expect(config.serviceProxy).toEqual({
-      enabled: true,
-      listen: "127.0.0.1:6868",
       publicBaseUrl: "https://env.example.com",
+      standaloneListen: null,
+    });
+  });
+
+  test("does not synthesize a standalone service listener from enabled true", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { serviceProxy: { enabled: true } },
+    });
+
+    expect(loadConfig(home, { env: {} }).serviceProxy).toEqual({
+      publicBaseUrl: null,
+      standaloneListen: null,
+    });
+  });
+
+  test("enabled false suppresses optional service proxy layers only", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        serviceProxy: {
+          enabled: false,
+          listen: "127.0.0.1:9999",
+          publicBaseUrl: "https://persisted.example.com",
+        },
+      },
+    });
+
+    expect(loadConfig(home, { env: {} }).serviceProxy).toEqual({
+      publicBaseUrl: null,
+      standaloneListen: null,
     });
   });
 

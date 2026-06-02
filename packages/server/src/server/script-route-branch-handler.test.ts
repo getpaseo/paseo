@@ -76,22 +76,22 @@ describe("script-route-branch-handler", () => {
   it("updates routes on branch rename by removing old hostnames and registering new ones", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "api.feature-auth.paseo.localhost",
+      hostname: "api--feature-auth--paseo.localhost",
       port: 3001,
       scriptName: "api",
     });
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
     handleBranchChange("workspace-a", "feature/auth", "feature/billing");
 
-    expect(routeStore.findRoute("api.feature-auth.paseo.localhost")).toBeNull();
-    expect(routeStore.findRoute("api.feature-billing.paseo.localhost")).toEqual({
-      hostname: "api.feature-billing.paseo.localhost",
+    expect(routeStore.findRoute("api--feature-auth--paseo.localhost")).toBeNull();
+    expect(routeStore.findRoute("api--feature-billing--paseo.localhost")).toEqual({
+      hostname: "api--feature-billing--paseo.localhost",
       port: 3001,
     });
   });
@@ -100,7 +100,7 @@ describe("script-route-branch-handler", () => {
     const routeStore = new ScriptRouteStore();
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -113,14 +113,14 @@ describe("script-route-branch-handler", () => {
   it("is a no-op when the resolved hostnames do not change", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "api.paseo.localhost",
+      hostname: "api--paseo.localhost",
       port: 3001,
       scriptName: "api",
     });
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -128,7 +128,7 @@ describe("script-route-branch-handler", () => {
 
     expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
       {
-        hostname: "api.paseo.localhost",
+        hostname: "api--paseo.localhost",
         port: 3001,
         workspaceId: "workspace-a",
         projectSlug: "paseo",
@@ -141,14 +141,14 @@ describe("script-route-branch-handler", () => {
   it("triggers shared reprojection after a route change", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "api.feature-auth.paseo.localhost",
+      hostname: "api--feature-auth--paseo.localhost",
       port: 3001,
       scriptName: "api",
     });
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -160,7 +160,7 @@ describe("script-route-branch-handler", () => {
   it("updates public route aliases from the stored public base URL", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "api.feature-auth.paseo.localhost",
+      hostname: "api--feature-auth--paseo.localhost",
       publicHostname: "api--feature-auth--paseo.services.example.com",
       publicBaseUrl: "https://services.example.com:8443",
       port: 3001,
@@ -169,7 +169,7 @@ describe("script-route-branch-handler", () => {
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -177,12 +177,12 @@ describe("script-route-branch-handler", () => {
 
     expect(routeStore.findRoute("api--feature-auth--paseo.services.example.com")).toBeNull();
     expect(routeStore.findRoute("api--feature-billing--paseo.services.example.com")).toEqual({
-      hostname: "api.feature-billing.paseo.localhost",
+      hostname: "api--feature-billing--paseo.localhost",
       port: 3001,
     });
     expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
       {
-        hostname: "api.feature-billing.paseo.localhost",
+        hostname: "api--feature-billing--paseo.localhost",
         publicHostname: "api--feature-billing--paseo.services.example.com",
         publicBaseUrl: "https://services.example.com:8443",
         port: 3001,
@@ -196,17 +196,17 @@ describe("script-route-branch-handler", () => {
   it("updates all services for a workspace when multiple routes are registered", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "api.feature-auth.paseo.localhost",
+      hostname: "api--feature-auth--paseo.localhost",
       port: 3001,
       scriptName: "api",
     });
     registerRoute(routeStore, {
-      hostname: "web.feature-auth.paseo.localhost",
+      hostname: "web--feature-auth--paseo.localhost",
       port: 3002,
       scriptName: "web",
     });
     registerRoute(routeStore, {
-      hostname: "docs.docs-app.localhost",
+      hostname: "docs--docs-app.localhost",
       port: 3003,
       workspaceId: "workspace-b",
       projectSlug: "docs-app",
@@ -215,7 +215,7 @@ describe("script-route-branch-handler", () => {
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -223,14 +223,14 @@ describe("script-route-branch-handler", () => {
 
     expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
       {
-        hostname: "api.feature-billing.paseo.localhost",
+        hostname: "api--feature-billing--paseo.localhost",
         port: 3001,
         workspaceId: "workspace-a",
         projectSlug: "paseo",
         scriptName: "api",
       },
       {
-        hostname: "web.feature-billing.paseo.localhost",
+        hostname: "web--feature-billing--paseo.localhost",
         port: 3002,
         workspaceId: "workspace-a",
         projectSlug: "paseo",
@@ -239,7 +239,7 @@ describe("script-route-branch-handler", () => {
     ]);
     expect(routeStore.listRoutesForWorkspace("workspace-b")).toEqual([
       {
-        hostname: "docs.docs-app.localhost",
+        hostname: "docs--docs-app.localhost",
         port: 3003,
         workspaceId: "workspace-b",
         projectSlug: "docs-app",
@@ -251,14 +251,14 @@ describe("script-route-branch-handler", () => {
   it("does not emit a status update when no changes are needed", () => {
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "web.paseo.localhost",
+      hostname: "web--paseo.localhost",
       port: 3002,
       scriptName: "web",
     });
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -279,7 +279,7 @@ describe("script-route-branch-handler", () => {
     });
     const routeStore = new ScriptRouteStore();
     registerRoute(routeStore, {
-      hostname: "api.feature-auth.repo.localhost",
+      hostname: "api--feature-auth--repo.localhost",
       port: 3001,
       workspaceId: workspace.repoDir,
       projectSlug: "repo",
@@ -288,7 +288,7 @@ describe("script-route-branch-handler", () => {
 
     const onRoutesChanged = vi.fn();
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy: routeStore,
       onRoutesChanged,
     });
 
@@ -297,7 +297,7 @@ describe("script-route-branch-handler", () => {
 
       expect(routeStore.listRoutesForWorkspace(workspace.repoDir)).toEqual([
         {
-          hostname: "api.feature-billing.repo.localhost",
+          hostname: "api--feature-billing--repo.localhost",
           port: 3001,
           workspaceId: workspace.repoDir,
           projectSlug: "repo",
@@ -308,5 +308,100 @@ describe("script-route-branch-handler", () => {
     } finally {
       workspace.cleanup();
     }
+  });
+
+  it("leaves existing local and public routes intact when a branch rename collides", () => {
+    const routeStore = new ScriptRouteStore();
+    registerRoute(routeStore, {
+      hostname: "api--feature-auth--repo.localhost",
+      publicHostname: "api--feature-auth--repo.services.example.com",
+      publicBaseUrl: "https://services.example.com",
+      port: 3001,
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+    registerRoute(routeStore, {
+      hostname: "api--feature-billing--repo.localhost",
+      publicHostname: "api--feature-billing--repo.services.example.com",
+      publicBaseUrl: "https://services.example.com",
+      port: 4001,
+      workspaceId: "workspace-b",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+
+    const onRoutesChanged = vi.fn();
+    const handleBranchChange = createBranchChangeRouteHandler({
+      serviceProxy: routeStore,
+      onRoutesChanged,
+    });
+
+    expect(() => handleBranchChange("workspace-a", "feature/auth", "feature/billing")).toThrow(
+      "Service proxy hostname collision",
+    );
+
+    expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
+      {
+        hostname: "api--feature-auth--repo.localhost",
+        publicHostname: "api--feature-auth--repo.services.example.com",
+        publicBaseUrl: "https://services.example.com",
+        port: 3001,
+        workspaceId: "workspace-a",
+        projectSlug: "repo",
+        scriptName: "api",
+      },
+    ]);
+    expect(routeStore.getRouteEntry("api--feature-auth--repo.services.example.com")).toMatchObject({
+      workspaceId: "workspace-a",
+      port: 3001,
+    });
+    expect(
+      routeStore.getRouteEntry("api--feature-billing--repo.services.example.com"),
+    ).toMatchObject({
+      workspaceId: "workspace-b",
+      port: 4001,
+    });
+    expect(onRoutesChanged).not.toHaveBeenCalled();
+  });
+
+  it("leaves old routes intact when branch rename creates an internal incoming collision", () => {
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "api--feature-one--repo.localhost",
+      publicHostname: "api--feature-one--repo.services.example.com",
+      publicBaseUrl: "https://services.example.com",
+      port: 3001,
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+    routeStore.registerRoute({
+      hostname: "api--feature-two--repo.localhost",
+      publicHostname: "api--feature-two--repo.services.example.com",
+      publicBaseUrl: "https://services.example.com",
+      port: 3002,
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+
+    const onRoutesChanged = vi.fn();
+    const handleBranchChange = createBranchChangeRouteHandler({
+      serviceProxy: routeStore,
+      onRoutesChanged,
+    });
+
+    expect(() => handleBranchChange("workspace-a", "feature/one", "feature/collide")).toThrow(
+      "Service proxy hostname collision",
+    );
+    expect(routeStore.getRouteEntry("api--feature-one--repo.localhost")).toMatchObject({
+      port: 3001,
+    });
+    expect(routeStore.getRouteEntry("api--feature-two--repo.localhost")).toMatchObject({
+      port: 3002,
+    });
+    expect(routeStore.getRouteEntry("api--feature-collide--repo.localhost")).toBeNull();
+    expect(onRoutesChanged).not.toHaveBeenCalled();
   });
 });

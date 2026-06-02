@@ -110,10 +110,10 @@ Omit `port` to let Paseo auto-assign one. Bind your process to `$PASEO_PORT` rat
 Every service is reachable through the daemon at a deterministic hostname:
 
 ```
-http://<script>.<branch>.<project>.localhost:<daemon-port>
+http://<script>--<branch>--<project>.localhost:<daemon-port>
 
 # on the default branch, the branch label is dropped:
-http://<script>.<project>.localhost:<daemon-port>
+http://<script>--<project>.localhost:<daemon-port>
 ```
 
 `*.localhost` resolves to `127.0.0.1` on modern systems, so these URLs work out of the box. The proxy supports WebSocket upgrades.
@@ -124,11 +124,11 @@ Services launched from the same workspace see each other's ports and proxy URLs.
 
 ```
 PASEO_PORT=3000                         # this service's port
-PASEO_URL=http://web.my-app.localhost:6767  # this service's proxy URL
+PASEO_URL=http://web--my-app.localhost:6767  # this service's proxy URL
 PASEO_SERVICE_API_PORT=51732
-PASEO_SERVICE_API_URL=http://api.my-app.localhost:6767
+PASEO_SERVICE_API_URL=http://api--my-app.localhost:6767
 PASEO_SERVICE_WEB_PORT=3000
-PASEO_SERVICE_WEB_URL=http://web.my-app.localhost:6767
+PASEO_SERVICE_WEB_URL=http://web--my-app.localhost:6767
 ```
 
 Script names are upper-cased and non-alphanumerics become `_`. Point your frontend at `$PASEO_SERVICE_API_URL` instead of hard-coding a port.

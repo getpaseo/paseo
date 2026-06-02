@@ -24,7 +24,6 @@ import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostn
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
-const DEFAULT_SERVICE_PROXY_LISTEN = "127.0.0.1:6868";
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
@@ -154,9 +153,8 @@ interface ResolvedRelay {
 }
 
 interface ResolvedServiceProxy {
-  enabled: boolean;
-  listen: string;
   publicBaseUrl: string | null;
+  standaloneListen: string | null;
 }
 
 function resolveTlsFromEnv(
@@ -220,21 +218,24 @@ function resolveServiceProxyConfig(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): ResolvedServiceProxy {
-  const publicBaseUrl = resolveServiceProxyPublicBaseUrl(
-    env.PASEO_SERVICE_PROXY_PUBLIC_BASE_URL ??
-      persisted.daemon?.serviceProxy?.publicBaseUrl ??
-      null,
-  );
-  const enabled =
-    parseBooleanEnv(env.PASEO_SERVICE_PROXY_ENABLED) ??
-    persisted.daemon?.serviceProxy?.enabled ??
-    publicBaseUrl !== null;
-  const listen =
-    env.PASEO_SERVICE_PROXY_LISTEN ??
-    persisted.daemon?.serviceProxy?.listen ??
-    DEFAULT_SERVICE_PROXY_LISTEN;
+  const enabledShim =
+    parseBooleanEnv(env.PASEO_SERVICE_PROXY_ENABLED) ?? persisted.daemon?.serviceProxy?.enabled;
+  // COMPAT(serviceProxyEnabled): added 2026-06-02, remove after 2026-12-02.
+  // `enabled=false` used to disable the separate service proxy listener. Localhost
+  // service proxying is now always enabled; this only suppresses optional layers.
+  const optionalLayersEnabled = enabledShim !== false;
+  const publicBaseUrl = optionalLayersEnabled
+    ? resolveServiceProxyPublicBaseUrl(
+        env.PASEO_SERVICE_PROXY_PUBLIC_BASE_URL ??
+          persisted.daemon?.serviceProxy?.publicBaseUrl ??
+          null,
+      )
+    : null;
+  const standaloneListen = optionalLayersEnabled
+    ? (env.PASEO_SERVICE_PROXY_LISTEN ?? persisted.daemon?.serviceProxy?.listen ?? null)
+    : null;
 
-  return { enabled, listen, publicBaseUrl };
+  return { publicBaseUrl, standaloneListen };
 }
 
 function resolveVoiceLlmConfig(
