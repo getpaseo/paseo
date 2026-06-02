@@ -2,7 +2,7 @@
 title: Security
 description: "Security model for Paseo: architecture overview, connection methods, relay encryption, and best practices."
 nav: Security
-order: 12
+order: 16
 ---
 
 # Security

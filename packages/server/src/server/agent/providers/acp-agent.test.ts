@@ -26,6 +26,7 @@ import {
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
+  summarizeACPRequestError,
 } from "./acp-agent.js";
 import {
   COPILOT_ALLOW_ALL_MODE_ID,
@@ -48,6 +49,7 @@ interface ACPSessionInternals {
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
+  acpMcpServers(): unknown[];
 }
 
 interface ACPModelSelectionInternals {
@@ -1486,11 +1488,13 @@ describe("ACPAgentSession slash commands", () => {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
         argumentHint: "",
+        kind: "command",
       },
       {
         name: "create_plan",
         description: "Draft a plan for the requested work",
         argumentHint: "",
+        kind: "command",
       },
     ]);
 
@@ -1499,17 +1503,65 @@ describe("ACPAgentSession slash commands", () => {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
         argumentHint: "",
+        kind: "command",
       },
       {
         name: "create_plan",
         description: "Draft a plan for the requested work",
         argumentHint: "",
+        kind: "command",
       },
     ]);
   });
 });
 
 describe("ACPAgentSession", () => {
+  test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
+    const session = new ACPAgentSession(
+      {
+        provider: "no-mcp-acp",
+        cwd: "/tmp/paseo-acp-test",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+        },
+      },
+      {
+        provider: "no-mcp-acp",
+        logger: createTestLogger(),
+        defaultCommand: ["no-mcp-acp", "serve"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: false,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+
+    expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
+  });
+
+  test("summarizes JSON-RPC error details without stringifying objects", () => {
+    const summary = summarizeACPRequestError(
+      new RequestError(-32603, "Internal error", {
+        details: "Droid process exited unexpectedly (exit code 1)",
+      }),
+    );
+
+    expect(summary).toMatchObject({
+      message: "Internal error: Droid process exited unexpectedly (exit code 1)",
+      code: "-32603",
+    });
+    expect(summary.message).not.toContain("[object Object]");
+    expect(summary.diagnostic).toContain("Droid process exited unexpectedly");
+  });
+
   test("accepts ACP extension notifications without failing the JSON-RPC connection", async () => {
     const logger = createTestLogger();
     const trace = vi.spyOn(logger, "trace");
@@ -1639,6 +1691,72 @@ describe("ACPAgentSession", () => {
       turnId,
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello", { messageId: "msg-client-1" });
+
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageId: "msg-client-1",
+      prompt: [{ type: "text", text: "hello" }],
+    });
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        turnId,
+        item: { type: "user_message", text: "hello", messageId: "msg-client-1" },
+      },
+    ]);
+
+    resolvePrompt({ stopReason: "end_turn" });
+  });
+
+  test("startTurn dedupes ACP user echo chunks for the submitted message", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await session.startTurn("hello", { messageId: "msg-client-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "msg-client-1",
+        content: { type: "text", text: "hello" },
+      } as SessionUpdate,
+    });
+
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toHaveLength(1);
   });
 
   test("startTurn converts background prompt rejections into turn_failed events", async () => {

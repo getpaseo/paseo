@@ -20,7 +20,7 @@ import {
   getWorktreeSetupProgressResults,
 } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
-import type { ScriptRouteStore } from "./script-proxy.js";
+import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { GitHubService } from "../services/github-service.js";
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
@@ -103,10 +103,11 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
-  scriptRouteStore: ScriptRouteStore | null;
+  serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
+  serviceProxyPublicBaseUrl?: string | null;
   onScriptsChanged: ((workspaceId: string, workspaceDirectory: string) => void) | null;
 }
 

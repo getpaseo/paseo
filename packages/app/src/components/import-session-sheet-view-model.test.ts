@@ -51,20 +51,20 @@ describe("resolveProvidersToFetch", () => {
     expect(resolveProvidersToFetch(true, undefined)).toBeNull();
   });
 
-  it("returns only enabled importable providers", () => {
+  it("returns enabled providers", () => {
     const providers = resolveProvidersToFetch(true, [
       { provider: "claude" },
       { provider: "codex" },
       { provider: "opencode", enabled: false },
       { provider: "z-ai" },
     ]);
-    expect(providers).toEqual(["claude", "codex"]);
+    expect(providers).toEqual(["claude", "codex", "z-ai"]);
   });
 
-  it("returns an empty array when snapshot has no enabled importable providers", () => {
+  it("returns an empty array when snapshot has no enabled providers", () => {
     const providers = resolveProvidersToFetch(true, [
       { provider: "claude", enabled: false },
-      { provider: "z-ai" },
+      { provider: "z-ai", enabled: false },
     ]);
     expect(providers).toEqual([]);
   });

@@ -6,7 +6,7 @@ import {
   type ProjectsHostInput,
   type ProjectsRuntime,
   type ProjectsRuntimeSnapshot,
-} from "./use-projects";
+} from "@/projects/aggregated-projects";
 
 type FetchWorkspaces = DaemonClient["fetchWorkspaces"];
 type FetchWorkspacesResult = Awaited<ReturnType<FetchWorkspaces>>;
@@ -84,6 +84,7 @@ function workspace(input: {
     name: input.id,
     archivingAt: null,
     status: "done",
+    statusEnteredAt: null,
     activityAt: null,
     diffStat: null,
     scripts: [],

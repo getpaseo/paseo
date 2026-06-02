@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useMemo } from "react";
 import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { TextInputProps } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
@@ -12,6 +13,7 @@ import {
   BottomSheetTextInput,
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
+import Animated from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/composer/types";
@@ -19,7 +21,9 @@ import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
+import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
 // leading icon, search input icon) and any row primitive rendered inside the
@@ -230,14 +234,14 @@ function SheetBackground({ style }: BottomSheetBackgroundProps) {
     () => [
       style,
       {
-        backgroundColor: theme.colors.surface1,
-        borderTopLeftRadius: theme.borderRadius.xl,
-        borderTopRightRadius: theme.borderRadius.xl,
+        backgroundColor: theme.colors.surface0,
+        borderTopLeftRadius: theme.borderRadius["2xl"],
+        borderTopRightRadius: theme.borderRadius["2xl"],
       },
     ],
-    [style, theme.colors.surface1, theme.borderRadius.xl],
+    [style, theme.colors.surface0, theme.borderRadius],
   );
-  return <View style={combinedStyle} />;
+  return <Animated.View pointerEvents="none" style={combinedStyle} />;
 }
 
 export type AdaptiveTextInputProps = TextInputProps & {
@@ -301,6 +305,7 @@ export function SheetHeaderView({
   testID?: string;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const titleStyle = useMemo(
     () => [styles.title, { color: theme.colors.foreground }],
     [theme.colors.foreground],
@@ -324,7 +329,7 @@ export function SheetHeaderView({
             hitSlop={8}
             style={styles.headerBackButton}
             accessibilityRole="button"
-            accessibilityLabel={back?.accessibilityLabel ?? back?.label ?? "Back"}
+            accessibilityLabel={back?.accessibilityLabel ?? back?.label ?? t("common.actions.back")}
             testID="sheet-header-back"
           >
             {({ pressed }) => (
@@ -344,7 +349,11 @@ export function SheetHeaderView({
         </View>
         {header.actions ? <View style={styles.headerActions}>{header.actions}</View> : null}
         {showCloseButton ? (
-          <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
+          <Pressable
+            accessibilityLabel={t("common.actions.close")}
+            style={styles.closeButton}
+            onPress={onClose}
+          >
             {({ pressed }) => (
               <X
                 size={16}
@@ -360,7 +369,7 @@ export function SheetHeaderView({
           <AdaptiveTextInput
             // @ts-expect-error - outlineStyle is web-only
             style={SEARCH_INPUT_STYLE}
-            placeholder={search.placeholder ?? "Search"}
+            placeholder={search.placeholder ?? t("common.actions.search")}
             resetKey={search.resetKey}
             onChangeText={handleSearchChange}
             autoCapitalize="none"
@@ -376,6 +385,7 @@ export function SheetHeaderView({
 
 export function InlineHeaderView({ header }: { header: SheetHeader }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const back = header.back;
   const handleBackPress = back?.onPress;
   const hasInlineRow = Boolean(handleBackPress || header.leading || header.actions);
@@ -390,7 +400,9 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
               hitSlop={8}
               style={styles.headerBackButton}
               accessibilityRole="button"
-              accessibilityLabel={back?.accessibilityLabel ?? back?.label ?? "Back"}
+              accessibilityLabel={
+                back?.accessibilityLabel ?? back?.label ?? t("common.actions.back")
+              }
               testID="sheet-header-back"
             >
               {({ pressed }) => (
@@ -414,7 +426,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
           <AdaptiveTextInput
             // @ts-expect-error - outlineStyle is web-only
             style={SEARCH_INPUT_STYLE}
-            placeholder={header.search.placeholder ?? "Search"}
+            placeholder={header.search.placeholder ?? t("common.actions.search")}
             resetKey={header.search.resetKey}
             onChangeText={header.search.onChange}
             autoCapitalize="none"
@@ -442,6 +454,7 @@ export interface AdaptiveModalSheetProps {
   /** When provided, wraps the card content in a FileDropZone. */
   onFilesDropped?: (files: ImageAttachment[]) => void;
   scrollable?: boolean;
+  presentation?: "push" | "replace";
 }
 
 export function AdaptiveModalSheet({
@@ -455,13 +468,54 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   onFilesDropped,
   scrollable = true,
+  presentation,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const insets = useSafeAreaInsets();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
+  const compactSafeAreaPadding = useMemo(
+    () =>
+      getCompactSheetSafeAreaPadding({
+        isCompact: isMobile,
+        hasFooter: Boolean(footer),
+        baseContentPadding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+        baseFooterPadding: theme.spacing[3],
+        safeAreaBottom: insets.bottom,
+      }),
+    [footer, insets.bottom, isMobile, theme.spacing],
+  );
+  const bottomSheetContentStyle = useMemo(
+    () => [
+      styles.bottomSheetContent,
+      compactSafeAreaPadding.contentPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
+        : null,
+    ],
+    [compactSafeAreaPadding.contentPaddingBottom],
+  );
+  const bottomSheetStaticContentStyle = useMemo(
+    () => [
+      styles.bottomSheetStaticContent,
+      compactSafeAreaPadding.contentPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
+        : null,
+    ],
+    [compactSafeAreaPadding.contentPaddingBottom],
+  );
+  const footerStyle = useMemo(
+    () => [
+      styles.footer,
+      compactSafeAreaPadding.footerPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.footerPaddingBottom }
+        : null,
+    ],
+    [compactSafeAreaPadding.footerPaddingBottom],
+  );
   const handleIndicatorStyle = useMemo(
-    () => ({ backgroundColor: theme.colors.surface2 }),
-    [theme.colors.surface2],
+    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
+    [theme.colors.palette.zinc],
   );
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
@@ -502,20 +556,21 @@ export function AdaptiveModalSheet({
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
         accessible={false}
+        presentation={presentation}
       >
         <SheetHeaderView header={header} onClose={onClose} testID={testID} />
         {scrollable ? (
           <BottomSheetScrollView
-            contentContainerStyle={styles.bottomSheetContent}
+            contentContainerStyle={bottomSheetContentStyle}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
             {children}
           </BottomSheetScrollView>
         ) : (
-          <View style={styles.bottomSheetStaticContent}>{children}</View>
+          <View style={bottomSheetStaticContentStyle}>{children}</View>
         )}
-        {footer ? <View style={styles.footer}>{footer}</View> : null}
+        {footer ? <View style={footerStyle}>{footer}</View> : null}
       </IsolatedBottomSheetModal>
     );
   }
@@ -534,13 +589,17 @@ export function AdaptiveModalSheet({
       ) : (
         <View style={styles.desktopStaticContent}>{children}</View>
       )}
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
+      {footer ? <View style={footerStyle}>{footer}</View> : null}
     </>
   );
 
   const desktopContent = (
     <View style={styles.desktopOverlay} testID={testID}>
-      <Pressable accessibilityLabel="Dismiss" style={ABSOLUTE_FILL_STYLE} onPress={onClose} />
+      <Pressable
+        accessibilityLabel={t("common.actions.dismiss")}
+        style={ABSOLUTE_FILL_STYLE}
+        onPress={onClose}
+      />
       <View style={desktopCardStyle}>
         {onFilesDropped ? (
           <FileDropZone onFilesDropped={onFilesDropped}>{cardInner}</FileDropZone>

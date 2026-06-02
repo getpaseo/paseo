@@ -5,6 +5,7 @@ import {
   installDesktopAppUpdate,
   shouldShowDesktopUpdateSection,
   type DesktopAppUpdateCheckResult,
+  type DesktopAppUpdateCheckIntent,
   type DesktopAppUpdateInstallResult,
 } from "@/desktop/updates/desktop-updates";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
@@ -15,6 +16,7 @@ import {
   formatStatusText,
   type DesktopAppUpdateStatus,
 } from "@/desktop/updates/desktop-app-updater";
+import { formatMessageTimestamp } from "@/utils/time";
 
 export type { DesktopAppUpdateStatus };
 
@@ -27,7 +29,10 @@ export interface UseDesktopAppUpdaterReturn {
   lastCheckedAt: number | null;
   isChecking: boolean;
   isInstalling: boolean;
-  checkForUpdates: (options?: { silent?: boolean }) => Promise<DesktopAppUpdateCheckResult | null>;
+  checkForUpdates: (options?: {
+    intent?: DesktopAppUpdateCheckIntent;
+    silent?: boolean;
+  }) => Promise<DesktopAppUpdateCheckResult | null>;
   installUpdate: () => Promise<DesktopAppUpdateInstallResult | null>;
 }
 
@@ -57,11 +62,15 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   );
 
   const checkForUpdates = useCallback(
-    async (options: { silent?: boolean } = {}) => {
+    async (options: { intent?: DesktopAppUpdateCheckIntent; silent?: boolean } = {}) => {
       if (!isDesktopApp) {
         return null;
       }
-      return updater.checkForUpdates({ releaseChannel, silent: options.silent });
+      return updater.checkForUpdates({
+        releaseChannel,
+        intent: options.intent ?? "manual",
+        silent: options.silent,
+      });
     },
     [isDesktopApp, releaseChannel, updater],
   );
@@ -77,7 +86,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     if (!isDesktopApp) {
       return;
     }
-    void checkForUpdates({ silent: true });
+    void checkForUpdates({ intent: "automatic", silent: true });
   }, [checkForUpdates, isDesktopApp]);
 
   useEffect(() => {
@@ -86,7 +95,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     }
 
     const intervalId = setInterval(() => {
-      void checkForUpdates({ silent: true });
+      void checkForUpdates({ intent: "automatic", silent: true });
     }, PENDING_RECHECK_MS);
 
     return () => {
@@ -101,7 +110,9 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       status: snapshot.status,
       availableUpdate: snapshot.availableUpdate,
       installMessage: snapshot.installMessage,
+      lastCheckedAt: snapshot.lastCheckedAt,
       formatVersion: formatVersionWithPrefix,
+      formatLastCheckedAt: (timestamp) => formatMessageTimestamp(new Date(timestamp)),
     }),
     availableUpdate: snapshot.availableUpdate,
     errorMessage: snapshot.errorMessage,

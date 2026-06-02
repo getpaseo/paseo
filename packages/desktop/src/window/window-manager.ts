@@ -240,17 +240,19 @@ export function registerWindowManager(): void {
 }
 
 export function setupWindowResizeEvents(win: BrowserWindow): void {
-  win.on("resize", () => {
+  // A resize/fullscreen event can fire while the window is tearing down; sending
+  // to a destroyed webContents throws. Guard so multi-window close doesn't surface
+  // "Object has been destroyed" exceptions.
+  const notifyResized = () => {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
     win.webContents.send("paseo:window:resized", {});
-  });
+  };
 
-  win.on("enter-full-screen", () => {
-    win.webContents.send("paseo:window:resized", {});
-  });
-
-  win.on("leave-full-screen", () => {
-    win.webContents.send("paseo:window:resized", {});
-  });
+  win.on("resize", notifyResized);
+  win.on("enter-full-screen", notifyResized);
+  win.on("leave-full-screen", notifyResized);
 }
 
 /**

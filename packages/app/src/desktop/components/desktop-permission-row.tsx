@@ -10,6 +10,12 @@ export interface DesktopPermissionRowProps {
   title: string;
   status: DesktopPermissionStatus | null;
   isRequesting: boolean;
+  labels: {
+    granted: string;
+    request: string;
+    requesting: string;
+    busyExtraAction: (label: string) => string;
+  };
   showBorder?: boolean;
   onRequest: () => void;
   extraActionLabel?: string;
@@ -22,6 +28,7 @@ export function DesktopPermissionRow({
   title,
   status,
   isRequesting,
+  labels,
   showBorder,
   onRequest,
   extraActionLabel,
@@ -54,7 +61,7 @@ export function DesktopPermissionRow({
           <View style={styles.permissionGrantedActions}>
             <View style={styles.permissionStatusPill}>
               <Check size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              <Text style={styles.permissionStatusText}>Granted</Text>
+              <Text style={styles.permissionStatusText}>{labels.granted}</Text>
             </View>
             {extraActionLabel && onExtraAction ? (
               <Button
@@ -63,13 +70,13 @@ export function DesktopPermissionRow({
                 onPress={onExtraAction}
                 disabled={isExtraActionDisabled || isExtraActionBusy}
               >
-                {isExtraActionBusy ? `${extraActionLabel}...` : extraActionLabel}
+                {isExtraActionBusy ? labels.busyExtraAction(extraActionLabel) : extraActionLabel}
               </Button>
             ) : null}
           </View>
         ) : (
           <Button variant="outline" size="sm" onPress={onRequest} disabled={isRequesting}>
-            {isRequesting ? "Requesting..." : "Request"}
+            {isRequesting ? labels.requesting : labels.request}
           </Button>
         )}
         {shouldShowDetail ? (

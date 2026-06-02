@@ -33,4 +33,21 @@ describe("resolveRewindMenuItems", () => {
       },
     ]);
   });
+
+  test("uses caller-provided labels for available capabilities", () => {
+    expect(
+      resolveRewindMenuItems(
+        {
+          supportsRewindConversation: true,
+          supportsRewindFiles: true,
+          supportsRewindBoth: false,
+        },
+        {
+          conversation: "Conversation label",
+          files: "Files label",
+          both: "Both label",
+        },
+      ).map((item) => item.label),
+    ).toEqual(["Conversation label", "Files label"]);
+  });
 });

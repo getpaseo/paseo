@@ -165,14 +165,14 @@ export async function startRunningMockAgent(
     provider: "mock",
     cwd: repo.path,
     model: opts.model,
-    initialPrompt: opts.prompt,
   });
   const agentUrl = `${buildHostWorkspaceRoute(serverId, repo.path)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
   await page.goto(agentUrl);
+  await expectComposerVisible(page);
+  await client.sendAgentMessage(agent.id, opts.prompt);
   await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
     timeout: 30_000,
   });
-  await expectComposerVisible(page);
   return { client, repo };
 }
 

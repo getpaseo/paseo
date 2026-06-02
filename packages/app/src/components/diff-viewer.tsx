@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
@@ -120,10 +121,12 @@ function DiffSegment({
 export function DiffViewer({
   diffLines,
   maxHeight,
-  emptyLabel = "No changes to display",
+  emptyLabel,
   fillAvailableHeight = false,
 }: DiffViewerProps) {
+  const { t } = useTranslation();
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
+  const resolvedEmptyLabel = emptyLabel ?? t("diffViewer.empty");
   const webScrollbarStyle = useWebScrollbarStyle();
   const handleInnerLayout = React.useCallback(
     (e: { nativeEvent: { layout: { width: number } } }) =>
@@ -159,7 +162,7 @@ export function DiffViewer({
   if (!diffLines.length) {
     return (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyText}>{emptyLabel}</Text>
+        <Text style={styles.emptyText}>{resolvedEmptyLabel}</Text>
       </View>
     );
   }

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
-import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
   Image as RNImage,
@@ -10,6 +9,8 @@ import {
   View,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
@@ -21,7 +22,6 @@ import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -195,9 +195,8 @@ function FilePreviewBody({
   imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const filePath = location.path;
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
-  const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
   const isMarkdownFile =
     preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
 
@@ -253,7 +252,7 @@ function FilePreviewBody({
     return (
       <View style={styles.centerState}>
         <ActivityIndicator size="small" />
-        <Text style={styles.loadingText}>Loading file…</Text>
+        <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
       </View>
     );
   }
@@ -261,7 +260,7 @@ function FilePreviewBody({
   if (!preview) {
     return (
       <View style={styles.centerState}>
-        <Text style={styles.emptyText}>No preview available</Text>
+        <Text style={styles.emptyText}>{t("panels.file.noPreview")}</Text>
       </View>
     );
   }
@@ -280,9 +279,7 @@ function FilePreviewBody({
             scrollEventThrottle={16}
             showsVerticalScrollIndicator={!showDesktopWebScrollbar}
           >
-            <Markdown style={markdownStyles} markdownit={markdownParser}>
-              {preview.content ?? ""}
-            </Markdown>
+            <MarkdownRenderer text={preview.content ?? ""} />
           </RNScrollView>
           {scrollbar.overlay}
         </View>
@@ -348,7 +345,7 @@ function FilePreviewBody({
       return (
         <View style={styles.centerState}>
           <ActivityIndicator size="small" />
-          <Text style={styles.loadingText}>Loading file…</Text>
+          <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
         </View>
       );
     }
@@ -378,7 +375,7 @@ function FilePreviewBody({
 
   return (
     <View style={styles.centerState}>
-      <Text style={styles.emptyText}>Binary preview unavailable</Text>
+      <Text style={styles.emptyText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
       <Text style={styles.binaryMetaText}>{formatFileSize({ size: preview.size })}</Text>
     </View>
   );
@@ -393,6 +390,7 @@ export function FilePane({
   workspaceRoot: string;
   location: WorkspaceFileLocation;
 }) {
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
 
@@ -415,7 +413,10 @@ export function FilePane({
     enabled: Boolean(client && readTarget),
     queryFn: async () => {
       if (!client || !readTarget) {
-        return { file: null as ExplorerFile | null, error: "Host is not connected" };
+        return {
+          file: null as ExplorerFile | null,
+          error: t("workspace.terminal.hostDisconnected"),
+        };
       }
       try {
         const file = await client.readFile(readTarget.cwd, readTarget.path);
@@ -429,7 +430,7 @@ export function FilePane({
         return {
           file: null,
           imageAttachment: null,
-          error: error instanceof Error ? error.message : "Failed to load file",
+          error: error instanceof Error ? error.message : t("panels.file.failedToLoad"),
         };
       }
     },

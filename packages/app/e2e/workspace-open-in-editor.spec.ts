@@ -5,8 +5,10 @@ import { injectDesktopBridge } from "./helpers/desktop-updates";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 
 interface EditorOpenRecord {
-  command: string;
-  args: string[];
+  editorId: string;
+  path: string;
+  cwd?: string;
+  mode?: "open" | "reveal";
 }
 
 function requireE2EEnv(name: string): string {
@@ -43,8 +45,8 @@ async function chooseEditorTarget(page: Page, targetId: "vscode"): Promise<void>
 
 async function expectEditorOpened(input: {
   recordPath: string;
-  command: string;
-  workspacePath: string;
+  editorId: string;
+  path: string;
   afterCount: number;
 }): Promise<void> {
   await expect
@@ -53,10 +55,7 @@ async function expectEditorOpened(input: {
         const records = await readEditorOpenRecords(input.recordPath);
         return records
           .slice(input.afterCount)
-          .some(
-            (record) =>
-              record.command === input.command && record.args.includes(input.workspacePath),
-          );
+          .some((record) => record.editorId === input.editorId && record.path === input.path);
       },
       { timeout: 30_000 },
     )
@@ -73,7 +72,14 @@ test.describe("Workspace open in editor", () => {
     const serverId = requireE2EEnv("E2E_SERVER_ID");
     const recordPath = requireE2EEnv("E2E_EDITOR_RECORD_PATH");
     await rm(recordPath, { force: true });
-    await injectDesktopBridge(page, { serverId });
+    await injectDesktopBridge(page, {
+      serverId,
+      editorTargets: [
+        { id: "cursor", label: "Cursor", kind: "editor" },
+        { id: "vscode", label: "VS Code", kind: "editor" },
+      ],
+      editorRecordPath: recordPath,
+    });
 
     const workspace = await withWorkspace({ prefix: "workspace-editor-target-" });
     await workspace.navigateTo();
@@ -81,8 +87,8 @@ test.describe("Workspace open in editor", () => {
     await chooseEditorTarget(page, "vscode");
     await expectEditorOpened({
       recordPath,
-      command: "code",
-      workspacePath: workspace.repoPath,
+      editorId: "vscode",
+      path: workspace.repoPath,
       afterCount: 0,
     });
     const recordsAfterSelection = (await readEditorOpenRecords(recordPath)).length;
@@ -94,8 +100,8 @@ test.describe("Workspace open in editor", () => {
     await page.getByTestId("workspace-open-in-editor-primary").click();
     await expectEditorOpened({
       recordPath,
-      command: "code",
-      workspacePath: workspace.repoPath,
+      editorId: "vscode",
+      path: workspace.repoPath,
       afterCount: recordsAfterSelection,
     });
     const recordsAfterReturnOpen = (await readEditorOpenRecords(recordPath)).length;
@@ -105,8 +111,8 @@ test.describe("Workspace open in editor", () => {
     await page.getByTestId("workspace-open-in-editor-primary").click();
     await expectEditorOpened({
       recordPath,
-      command: "code",
-      workspacePath: workspace.repoPath,
+      editorId: "vscode",
+      path: workspace.repoPath,
       afterCount: recordsAfterReturnOpen,
     });
   });

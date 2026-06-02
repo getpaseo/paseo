@@ -597,6 +597,7 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     scheduleRefreshForCwd: () => {},
+    onWorkspaceStateMayHaveChanged: () => {},
     dispose: () => {},
   };
 }

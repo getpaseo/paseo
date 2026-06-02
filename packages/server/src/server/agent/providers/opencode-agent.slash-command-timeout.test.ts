@@ -33,7 +33,12 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
 
     await expect(session.listCommands?.()).resolves.toEqual(
       expect.arrayContaining([
-        { name: "compact", description: "Compact the current session", argumentHint: "" },
+        {
+          name: "compact",
+          description: "Compact the current session",
+          argumentHint: "",
+          kind: "command",
+        },
       ]),
     );
     await expect(session.listCommands?.()).resolves.not.toEqual(

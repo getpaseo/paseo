@@ -5,7 +5,7 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
-import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { isDelegatedAgent, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -33,8 +33,9 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
-  type ListPersistedAgentsOptions,
-  type PersistedAgentDescriptor,
+  type ImportedTimelineEntry,
+  type ImportableProviderSession,
+  type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
@@ -54,9 +55,10 @@ import {
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
+import { resolveCreateAgentTitles } from "./create-agent-title.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -73,6 +75,11 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 type TimeoutResult = "completed" | "timed_out";
+
+interface PreparedSessionConfig {
+  storedConfig: AgentSessionConfig;
+  launchConfig: AgentSessionConfig;
+}
 
 interface TimeoutOptions {
   operation: Promise<void>;
@@ -105,7 +112,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.systemPrompt = record.config.systemPrompt;
   }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
-  return config;
+  return stripInternalPaseoMcpServer(config);
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -141,13 +148,17 @@ interface HydrateTimelineOptions {
   broadcast?: boolean;
 }
 
-export type ImportablePersistedAgentQueryOptions = ListPersistedAgentsOptions & {
+export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
   /**
    * When set, only providers in this set are scanned, in addition to the
    * built-in importable allowlist + enabled + non-derived rules.
    */
   providerFilter?: Set<string>;
 };
+
+export interface ManagedImportableProviderSession extends ImportableProviderSession {
+  provider: AgentProvider;
+}
 
 export type AgentAttentionCallback = (params: {
   agentId: string;
@@ -181,9 +192,11 @@ export interface AgentManagerOptions {
   idFactory?: () => string;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
+  onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  mcpAuthToken?: string;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -410,10 +423,53 @@ function buildExplicitTimelineSeedForRegister(
   };
 }
 
+function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
+  const rows: AgentTimelineRow[] = [];
+  for (const entry of entries) {
+    if (entry.item.type === "user_message" && isSystemInjectedEnvelope(entry.item.text)) {
+      continue;
+    }
+    rows.push({
+      seq: rows.length + 1,
+      timestamp: entry.timestamp ?? new Date().toISOString(),
+      item: entry.item,
+    });
+  }
+  return rows;
+}
+
+function resolveImportedAgentTitle(
+  config: AgentSessionConfig,
+  timelineRows: readonly AgentTimelineRow[],
+): string | null {
+  const initialPrompt = getFirstUserMessageTextFromRows(timelineRows);
+  if (!initialPrompt) {
+    return null;
+  }
+  const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
+    configTitle: config.title,
+    initialPrompt,
+  });
+  return explicitTitle ?? provisionalTitle ?? null;
+}
+
+function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): string | null {
+  for (const row of rows) {
+    const item = row.item;
+    if (item.type !== "user_message") {
+      continue;
+    }
+    const text = item.text.trim();
+    if (text) {
+      return text;
+    }
+  }
+  return null;
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
-  private readonly providerDerivedFromId = new Map<AgentProvider, string | null>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -427,9 +483,11 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private readonly mcpAuthToken: string | null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
+  private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
 
@@ -438,7 +496,9 @@ export class AgentManager {
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
+    this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -472,7 +532,6 @@ export class AgentManager {
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
         this.providerEnabled.set(provider, definition.enabled);
-        this.providerDerivedFromId.set(provider, definition.derivedFromProviderId ?? null);
       }
     }
     for (const [provider, client] of Object.entries(input.clients)) {
@@ -496,6 +555,16 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  /**
+   * Capability token the daemon's own MCP clients must present to the Agent MCP
+   * endpoint when a daemon password is configured. Read by the per-client
+   * session to authenticate its own MCP connection. Stays in the daemon — never
+   * sent to remote clients.
+   */
+  getMcpAuthToken(): string | null {
+    return this.mcpAuthToken;
   }
 
   setAppendSystemPrompt(prompt: string | null | undefined): void {
@@ -609,34 +678,37 @@ export class AgentManager {
       .map((agent) => Object.assign({}, agent));
   }
 
-  async listImportablePersistedAgents(
+  async listImportableSessions(
     options?: ImportablePersistedAgentQueryOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  ): Promise<ManagedImportableProviderSession[]> {
     const providerEntries = Array.from(this.clients.entries()).filter(
       ([provider, client]) =>
-        !!client.listPersistedAgents &&
+        client.capabilities.supportsSessionListing &&
+        !!client.listImportableSessions &&
         this.isProviderImportable(provider, options?.providerFilter),
     );
-    const descriptorLists = await Promise.all(
+    const sessionLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
-          return await client.listPersistedAgents!({
-            limit: options?.limit,
-            cwd: options?.cwd,
-          });
+          return (
+            await client.listImportableSessions!({
+              limit: options?.limit,
+              cwd: options?.cwd,
+            })
+          ).map((session) => Object.assign(session, { provider }));
         } catch (error) {
           this.logger.warn(
             { err: error, provider },
-            "Failed to list persisted agents for provider",
+            "Failed to list importable sessions for provider",
           );
           return [];
         }
       }),
     );
-    const descriptors: PersistedAgentDescriptor[] = descriptorLists.flat();
+    const sessions: ManagedImportableProviderSession[] = sessionLists.flat();
 
     const limit = options?.limit ?? 20;
-    return descriptors
+    return sessions
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
       .slice(0, limit);
   }
@@ -645,39 +717,13 @@ export class AgentManager {
     provider: AgentProvider,
     providerFilter: Set<string> | undefined,
   ): boolean {
-    if (!IMPORTABLE_PROVIDERS.includes(provider as (typeof IMPORTABLE_PROVIDERS)[number])) {
-      return false;
-    }
     if (this.providerEnabled.get(provider) === false) {
-      return false;
-    }
-    if (this.providerDerivedFromId.get(provider) != null) {
       return false;
     }
     if (providerFilter && !providerFilter.has(provider)) {
       return false;
     }
     return true;
-  }
-
-  async findPersistedAgent(
-    provider: AgentProvider,
-    sessionId: string,
-    options?: Pick<ListPersistedAgentsOptions, "cwd">,
-  ): Promise<PersistedAgentDescriptor | null> {
-    const client = this.requireClient(provider);
-    if (!client.listPersistedAgents) {
-      return null;
-    }
-
-    const descriptors = await client.listPersistedAgents({ limit: 200, cwd: options?.cwd });
-    return (
-      descriptors.find((descriptor) => {
-        return (
-          descriptor.sessionId === sessionId || descriptor.persistence.nativeHandle === sessionId
-        );
-      }) ?? null
-    );
   }
 
   async listProviderAvailability(): Promise<ProviderAvailability[]> {
@@ -811,30 +857,15 @@ export class AgentManager {
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    const injectedConfig =
-      this.mcpBaseUrl == null
-        ? config
-        : {
-            ...config,
-            mcpServers: {
-              paseo: {
-                type: "http" as const,
-                url: `${this.mcpBaseUrl}?callerAgentId=${resolvedAgentId}`,
-              },
-              ...config.mcpServers,
-            },
-          };
-    this.requireEnabledProvider(injectedConfig.provider);
-    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
-      await this.normalizeConfig(injectedConfig),
-    );
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
+    this.requireEnabledProvider(storedConfig.provider);
     const launchContext = this.buildLaunchContext(resolvedAgentId, options?.env);
     const client = await this.requireAvailableClient({
-      provider: normalizedConfig.provider,
+      provider: storedConfig.provider,
     });
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(normalizedConfig, launchContext, createOptions);
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, {
+    const session = await client.createSession(launchConfig, launchContext, createOptions);
+    return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
       initialTitle: options?.initialTitle,
@@ -872,26 +903,10 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
-      await this.normalizeConfig(mergedConfig),
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      mergedConfig,
+      resolvedAgentId,
     );
-    const resumeOverrides: Partial<AgentSessionConfig> = { ...overrides };
-    let hasResumeOverrides = overrides !== undefined;
-
-    if (normalizedConfig.model !== mergedConfig.model) {
-      resumeOverrides.model = normalizedConfig.model;
-      hasResumeOverrides = true;
-    }
-
-    if (normalizedConfig.modeId !== mergedConfig.modeId) {
-      resumeOverrides.modeId = normalizedConfig.modeId;
-      hasResumeOverrides = true;
-    }
-
-    if (metadata.daemonAppendSystemPrompt !== normalizedConfig.daemonAppendSystemPrompt) {
-      resumeOverrides.daemonAppendSystemPrompt = normalizedConfig.daemonAppendSystemPrompt;
-      hasResumeOverrides = true;
-    }
 
     const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = this.requireClient(handle.provider);
@@ -901,12 +916,52 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const session = await client.resumeSession(
-      handle,
-      hasResumeOverrides ? resumeOverrides : undefined,
-      launchContext,
+    const session = await client.resumeSession(handle, launchConfig, launchContext);
+    return this.registerSession(session, storedConfig, resolvedAgentId, options);
+  }
+
+  async importProviderSession(input: {
+    provider: AgentProvider;
+    providerHandleId: string;
+    cwd: string;
+    labels?: Record<string, string>;
+  }): Promise<ManagedAgent> {
+    const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
+    this.requireEnabledProvider(input.provider);
+
+    const client = await this.requireAvailableClient({ provider: input.provider });
+    if (!client.importSession) {
+      throw new Error(`Provider '${input.provider}' does not support importing sessions`);
+    }
+
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      {
+        provider: input.provider,
+        cwd: input.cwd,
+      },
+      resolvedAgentId,
     );
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
+    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const imported = await client.importSession(
+      {
+        providerHandleId: input.providerHandleId,
+        cwd: input.cwd,
+      },
+      { config: launchConfig, storedConfig, launchContext },
+    );
+    const importedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(imported.config));
+    const timelineRows = buildImportedTimelineRows(imported.timeline);
+    const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+
+    return this.registerSession(imported.session, importedConfig, resolvedAgentId, {
+      labels: input.labels,
+      timelineRows,
+      timelineNextSeq: timelineRows.length + 1,
+      persistence: imported.persistence,
+      historyPrimed: true,
+      initialTitle,
+      publishWhenReady: true,
+    });
   }
 
   // Hot-reload an active agent session with config overrides. By default the
@@ -938,14 +993,12 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
-      await this.normalizeConfig(refreshConfig),
-    );
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
     const launchContext = this.buildLaunchContext(agentId);
 
     const session = handle
-      ? await client.resumeSession(handle, normalizedConfig, launchContext)
-      : await client.createSession(normalizedConfig, launchContext);
+      ? await client.resumeSession(handle, launchConfig, launchContext)
+      : await client.createSession(launchConfig, launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -966,7 +1019,7 @@ export class AgentManager {
     }
 
     // Preserve existing labels and timeline during reload.
-    return this.registerSession(session, normalizedConfig, agentId, {
+    return this.registerSession(session, storedConfig, agentId, {
       labels: existing.labels,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
@@ -2276,11 +2329,13 @@ export class AgentManager {
       timeline?: AgentTimelineItem[];
       timelineRows?: AgentTimelineRow[];
       timelineNextSeq?: number;
+      persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
       lastError?: string;
       attention?: AttentionState;
       initialTitle?: string | null;
+      publishWhenReady?: boolean;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "registerSession");
@@ -2312,14 +2367,16 @@ export class AgentManager {
     this.agents.set(resolvedAgentId, managed);
     // Initialize previousStatus to track transitions
     this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
-    await this.refreshRuntimeInfo(managed);
+    await this.refreshRuntimeInfo(managed, { emit: !options?.publishWhenReady });
     await this.persistSnapshot(managed, {
       workspaceId: options?.workspaceId,
       title: initialPersistedTitle,
     });
-    this.emitState(managed, { persist: false });
+    if (!options?.publishWhenReady) {
+      this.emitState(managed, { persist: false });
+    }
 
-    await this.refreshSessionState(managed);
+    await this.refreshSessionState(managed, { emit: !options?.publishWhenReady });
     managed.lifecycle = "idle";
     await this.persistSnapshot(managed, { workspaceId: options?.workspaceId });
     this.emitState(managed, { persist: false });
@@ -2335,6 +2392,7 @@ export class AgentManager {
           timeline?: AgentTimelineItem[];
           timelineRows?: AgentTimelineRow[];
           timelineNextSeq?: number;
+          persistence?: AgentPersistenceHandle;
           createdAt?: Date;
           updatedAt?: Date;
         }
@@ -2377,6 +2435,7 @@ export class AgentManager {
           lastUsage?: AgentUsage;
           lastError?: string;
           attention?: AttentionState;
+          persistence?: AgentPersistenceHandle;
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -2402,7 +2461,10 @@ export class AgentManager {
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
-      persistence: attachPersistenceCwd(session.describePersistence(), config.cwd),
+      persistence: attachPersistenceCwd(
+        options?.persistence ?? session.describePersistence(),
+        config.cwd,
+      ),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
@@ -2600,7 +2662,10 @@ export class AgentManager {
     return this.registry;
   }
 
-  private async refreshSessionState(agent: ActiveManagedAgent): Promise<void> {
+  private async refreshSessionState(
+    agent: ActiveManagedAgent,
+    options?: { emit?: boolean },
+  ): Promise<void> {
     try {
       const modes = await agent.session.getAvailableModes();
       agent.availableModes = modes;
@@ -2622,10 +2687,13 @@ export class AgentManager {
     }
 
     this.syncFeaturesFromSession(agent);
-    await this.refreshRuntimeInfo(agent);
+    await this.refreshRuntimeInfo(agent, options);
   }
 
-  private async refreshRuntimeInfo(agent: ActiveManagedAgent): Promise<void> {
+  private async refreshRuntimeInfo(
+    agent: ActiveManagedAgent,
+    options?: { emit?: boolean },
+  ): Promise<void> {
     try {
       const newInfo = await agent.session.getRuntimeInfo();
       const changed =
@@ -2641,7 +2709,7 @@ export class AgentManager {
         );
       }
       // Emit state if runtimeInfo changed so clients get the updated model
-      if (changed) {
+      if (changed && options?.emit !== false) {
         this.emitState(agent);
       }
     } catch {
@@ -3163,6 +3231,19 @@ export class AgentManager {
       epoch: this.timelineStore.getEpoch(agentId),
       timestamp: row.timestamp,
     });
+
+    if (
+      item.type === "tool_call" &&
+      item.status === "completed" &&
+      item.detail?.type === "shell" &&
+      commandMayHaveChangedExternalState(item.detail.command)
+    ) {
+      const agent = this.agents.get(agentId);
+      if (agent) {
+        this.onWorkspaceStateMayHaveChanged?.({ cwd: agent.cwd });
+      }
+    }
+
     return event;
   }
 
@@ -3368,6 +3449,10 @@ export class AgentManager {
     agent: ManagedAgent,
     reason: "finished" | "error" | "permission",
   ): void {
+    if (isDelegatedAgent(agent)) {
+      return;
+    }
+
     this.onAgentAttention?.({
       agentId: agent.id,
       provider: agent.provider,
@@ -3485,6 +3570,22 @@ export class AgentManager {
     return normalized;
   }
 
+  private async prepareSessionConfig(
+    config: AgentSessionConfig,
+    agentId: string,
+  ): Promise<PreparedSessionConfig> {
+    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config));
+    const launchConfig = this.applyDaemonAppendSystemPrompt(
+      withRuntimePaseoMcpServer({
+        config: storedConfig,
+        agentId,
+        mcpBaseUrl: this.mcpBaseUrl,
+        mcpAuthToken: this.mcpAuthToken,
+      }),
+    );
+    return { storedConfig, launchConfig };
+  }
+
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
     const daemonAppendSystemPrompt = this.appendSystemPrompt.trim();
     const next = { ...config };
@@ -3590,4 +3691,21 @@ export class AgentManager {
     }
     return agent;
   }
+}
+
+export function commandMayHaveChangedExternalState(command: string): boolean {
+  const normalized = command.toLowerCase();
+  // Commands that operate on remote state and do NOT trigger local file
+  // watchers. Local git mutations (commit, checkout, merge, rebase, reset,
+  // pull) are already caught by watchers on .git/HEAD and refs/heads/.
+  return (
+    // GitHub PR operations (merge, close, create, edit, comment, review)
+    /\bgh\s+pr\s+(merge|close|create|edit|comment|review)\b/.test(normalized) ||
+    // Pushes to remote — local refs unchanged, but remote state (PR checks,
+    // mergeable status) may shift immediately after.
+    /\bgit\s+push\b/.test(normalized) ||
+    // Fetches update refs/remotes/ which our watchers do not watch, so
+    // ahead/behind counts can drift stale until the next refresh.
+    /\bgit\s+fetch\b/.test(normalized)
+  );
 }

@@ -386,7 +386,37 @@ export function selectProjectedTimelinePage(input: {
   const limit = input.limit === undefined ? 0 : Math.max(0, Math.floor(input.limit));
   const bounds = input.bounds ?? getTimelineBounds(input.rows);
   const projectedAll = projectTimelineRows({ rows: input.rows, mode: "projected" });
-  if (projectedAll.length === 0 || !bounds) {
+  if (!bounds) {
+    return {
+      entries: [],
+      startSeq: null,
+      endSeq: null,
+      hasOlder: false,
+      hasNewer: false,
+    };
+  }
+
+  if (projectedAll.length === 0) {
+    if (input.direction === "after") {
+      const cursorSeq = input.cursorSeq ?? bounds.minSeq - 1;
+      return {
+        entries: [],
+        startSeq: null,
+        endSeq: null,
+        hasOlder: cursorSeq >= bounds.minSeq,
+        hasNewer: cursorSeq < bounds.maxSeq,
+      };
+    }
+    if (input.direction === "before") {
+      const cursorSeq = input.cursorSeq ?? bounds.maxSeq + 1;
+      return {
+        entries: [],
+        startSeq: null,
+        endSeq: null,
+        hasOlder: cursorSeq > bounds.minSeq,
+        hasNewer: cursorSeq <= bounds.maxSeq,
+      };
+    }
     return {
       entries: [],
       startSeq: null,

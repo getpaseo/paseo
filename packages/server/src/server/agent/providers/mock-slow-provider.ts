@@ -10,8 +10,6 @@ import type {
   AgentSessionConfig,
   ListModelsOptions,
   ListModesOptions,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 
 export const MOCK_SLOW_PROVIDER_ID = "mock-slow";
@@ -46,12 +44,6 @@ export class MockSlowProviderClient implements AgentClient {
 
   listModes(_options: ListModesOptions): Promise<AgentMode[]> {
     return neverResolves<AgentMode[]>();
-  }
-
-  async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
-    return [];
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

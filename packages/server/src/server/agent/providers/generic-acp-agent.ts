@@ -1,10 +1,12 @@
 import { homedir } from "node:os";
 import type { Logger } from "pino";
+import { z } from "zod";
 
-import type { AgentProvider } from "../agent-sdk-types.js";
+import type { AgentCapabilityFlags, AgentProvider } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
+  DEFAULT_ACP_CAPABILITIES,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
   type SessionStateResponse,
@@ -20,12 +22,21 @@ import {
 const ACP_DIAGNOSTIC_INITIALIZE_TIMEOUT_MS = 8_000;
 const ACP_DIAGNOSTIC_SESSION_TIMEOUT_MS = 8_000;
 
+export const GenericACPProviderParamsSchema = z
+  .object({
+    supportsMcpServers: z.boolean().optional(),
+  })
+  .passthrough();
+
+type GenericACPProviderParams = z.infer<typeof GenericACPProviderParamsSchema>;
+
 interface GenericACPAgentClientOptions {
   logger: Logger;
   command: [string, ...string[]];
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
+  providerParams?: unknown;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
 }
@@ -43,6 +54,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command,
+      capabilities: buildGenericACPCapabilities(options),
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
     });
@@ -171,6 +183,18 @@ export class GenericACPAgentClient extends ACPAgentClient {
       };
     }
   }
+}
+
+function buildGenericACPCapabilities(options: GenericACPAgentClientOptions): AgentCapabilityFlags {
+  const params = parseGenericACPProviderParams(options.providerParams);
+  return {
+    ...DEFAULT_ACP_CAPABILITIES,
+    supportsMcpServers: params.supportsMcpServers ?? DEFAULT_ACP_CAPABILITIES.supportsMcpServers,
+  };
+}
+
+function parseGenericACPProviderParams(params: unknown): GenericACPProviderParams {
+  return GenericACPProviderParamsSchema.parse(params ?? {});
 }
 
 interface ACPDiagnosticProbeResult {

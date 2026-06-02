@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  resolveStartupRedirectRoute,
-  resolveStartupWorkspaceSelection,
+  resolveStartupBlocker,
+  resolveStartupNavigationReady,
+  resolveStartupRoute,
+  shouldRunStartupGiveUpTimer,
   startHostRuntimeBootstrap,
-  WELCOME_ROUTE,
 } from "./host-runtime-bootstrap";
 
 function createFakeStore() {
@@ -117,131 +118,229 @@ describe("startHostRuntimeBootstrap", () => {
   });
 });
 
-describe("resolveStartupRedirectRoute", () => {
-  const baseInput = {
-    pathname: "/",
+describe("startup blocking policy", () => {
+  const noBlockerInput = {
+    isDesktopRuntime: false,
+    anyOnlineHostServerId: null,
+    daemonStartIsRunning: false,
+    daemonStartError: null,
+  };
+
+  it("runs the give-up timer when no startup blocker is active", () => {
+    const blocker = resolveStartupBlocker(noBlockerInput);
+
+    expect(blocker).toEqual({ kind: "none" });
+    expect(resolveStartupNavigationReady({ startupBlocker: blocker })).toBe(true);
+    expect(
+      shouldRunStartupGiveUpTimer({
+        startupBlocker: blocker,
+        anyOnlineHostServerId: null,
+        hasGivenUpWaitingForHost: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks navigation while desktop is starting the managed daemon", () => {
+    const blocker = resolveStartupBlocker({
+      ...noBlockerInput,
+      isDesktopRuntime: true,
+      daemonStartIsRunning: true,
+    });
+
+    expect(blocker).toEqual({ kind: "managed-daemon-starting" });
+    expect(resolveStartupNavigationReady({ startupBlocker: blocker })).toBe(false);
+    expect(
+      shouldRunStartupGiveUpTimer({
+        startupBlocker: blocker,
+        anyOnlineHostServerId: null,
+        hasGivenUpWaitingForHost: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("unblocks navigation when any host is online", () => {
+    const blocker = resolveStartupBlocker({
+      ...noBlockerInput,
+      isDesktopRuntime: true,
+      anyOnlineHostServerId: "srv_desktop",
+      daemonStartIsRunning: true,
+    });
+
+    expect(blocker).toEqual({ kind: "none" });
+    expect(resolveStartupNavigationReady({ startupBlocker: blocker })).toBe(true);
+  });
+
+  it("keeps desktop daemon startup errors on the startup error surface", () => {
+    const blocker = resolveStartupBlocker({
+      ...noBlockerInput,
+      isDesktopRuntime: true,
+      daemonStartError: "daemon failed to start",
+    });
+
+    expect(blocker).toEqual({
+      kind: "managed-daemon-error",
+      message: "daemon failed to start",
+    });
+    expect(resolveStartupNavigationReady({ startupBlocker: blocker })).toBe(true);
+    expect(
+      shouldRunStartupGiveUpTimer({
+        startupBlocker: blocker,
+        anyOnlineHostServerId: null,
+        hasGivenUpWaitingForHost: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveStartupRoute", () => {
+  const baseIndexInput = {
+    route: { kind: "index" as const, pathname: "/" },
+    startupBlocker: { kind: "none" as const },
+    hostRegistryStatus: "ready" as const,
+    hosts: [],
     anyOnlineHostServerId: null,
     workspaceSelection: null,
     isWorkspaceSelectionLoaded: true,
     hasGivenUpWaitingForHost: false,
   };
+  const baseHostInput = {
+    route: { kind: "host" as const, serverId: "server-saved" },
+    startupBlocker: { kind: "none" as const },
+    hostRegistryStatus: "ready" as const,
+    hosts: [],
+  };
 
-  it("returns null when the pathname is not the index route", () => {
+  it("renders non-index routes instead of making an index startup decision", () => {
     expect(
-      resolveStartupRedirectRoute({
-        ...baseInput,
-        pathname: "/h/server-1",
-        anyOnlineHostServerId: "server-1",
+      resolveStartupRoute({
+        ...baseIndexInput,
+        route: { kind: "index", pathname: "/settings" },
       }),
-    ).toBeNull();
+    ).toEqual({ kind: "render" });
   });
 
-  it("waits while the persisted workspace selection has not finished loading", () => {
+  it("keeps startup on the splash while the persisted workspace selection is loading", () => {
     expect(
-      resolveStartupRedirectRoute({
-        ...baseInput,
+      resolveStartupRoute({
+        ...baseIndexInput,
         anyOnlineHostServerId: "server-1",
         isWorkspaceSelectionLoaded: false,
       }),
-    ).toBeNull();
+    ).toEqual({ kind: "splash" });
   });
 
-  it("waits while no host is online and the give-up timer has not fired", () => {
-    expect(resolveStartupRedirectRoute(baseInput)).toBeNull();
+  it("keeps startup on the splash while the host registry is loading", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hostRegistryStatus: "loading",
+      }),
+    ).toEqual({ kind: "splash" });
   });
 
-  describe("scenario: saved-host-online", () => {
-    it("leaves matching persisted workspace navigation to the workspace navigator", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
-        anyOnlineHostServerId: "server-1",
+  it("does not treat loading hosts as an empty registry when a workspace is already restored", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hostRegistryStatus: "loading",
         workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
-      });
-
-      expect(route).toBeNull();
-    });
-
-    it("resolves the persisted workspace when the online host matches it", () => {
-      const selection = resolveStartupWorkspaceSelection({
-        ...baseInput,
-        anyOnlineHostServerId: "server-1",
-        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
-      });
-
-      expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
-    });
-
-    it("leaves persisted workspace navigation to the workspace navigator when another host is first online", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
-        anyOnlineHostServerId: "server-2",
-        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
-      });
-
-      expect(route).toBeNull();
-    });
-
-    it("resolves the persisted workspace when another host is first online", () => {
-      const selection = resolveStartupWorkspaceSelection({
-        ...baseInput,
-        anyOnlineHostServerId: "server-2",
-        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
-      });
-
-      expect(selection).toEqual({ serverId: "server-1", workspaceId: "workspace-a" });
-    });
-
-    it("redirects to the host root when no persisted workspace exists", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
-        anyOnlineHostServerId: "server-2",
-      });
-
-      expect(route).toBe("/h/server-2");
-    });
+        hasGivenUpWaitingForHost: true,
+      }),
+    ).toEqual({ kind: "splash" });
   });
 
-  describe("scenario: daemon-start-success-only (host comes online via daemon-start upsert)", () => {
-    it("redirects to the host that came online", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
-        anyOnlineHostServerId: "srv_desktop",
-      });
-
-      expect(route).toBe("/h/srv_desktop");
-    });
+  it("restores the saved workspace only after the host registry proves the host exists", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-1/workspace/workspace-a" });
   });
 
-  describe("scenario: both-succeed", () => {
-    it("leaves matching persisted workspace navigation to the workspace navigator", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
-        anyOnlineHostServerId: "server-saved",
+  it("falls back to a saved host when the restored workspace host is no longer saved", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
         workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
-      });
-
-      expect(route).toBeNull();
-    });
+        hosts: [{ serverId: "server-next" }],
+        hasGivenUpWaitingForHost: true,
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-next" });
   });
 
-  describe("scenario: both-fail (no host comes online, give-up timer fires)", () => {
-    it("redirects to the welcome route", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
+  it("redirects to the online host when no saved workspace is selected", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        anyOnlineHostServerId: "srv-desktop",
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/srv-desktop" });
+  });
+
+  it("keeps a known connecting host in app-owned routing instead of showing welcome", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-saved" }],
         hasGivenUpWaitingForHost: true,
-      });
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-saved" });
+  });
 
-      expect(route).toBe(WELCOME_ROUTE);
-    });
-
-    it("still redirects to the host when one comes online before the timer expires", () => {
-      const route = resolveStartupRedirectRoute({
-        ...baseInput,
-        anyOnlineHostServerId: "server-saved",
+  it("shows welcome after root startup gives up and no host exists", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
         hasGivenUpWaitingForHost: true,
-      });
+      }),
+    ).toEqual({ kind: "redirect", href: "/welcome" });
+  });
 
-      expect(route).toBe("/h/server-saved");
-    });
+  it("keeps host routes mounted while the host registry is loading", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        hostRegistryStatus: "loading",
+      }),
+    ).toEqual({ kind: "render" });
+  });
+
+  it("keeps host routes mounted while the managed daemon is starting", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        startupBlocker: { kind: "managed-daemon-starting" },
+      }),
+    ).toEqual({ kind: "render" });
+  });
+
+  it("renders a host route once the route host is known", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        hosts: [{ serverId: "server-saved" }],
+      }),
+    ).toEqual({ kind: "render" });
+  });
+
+  it("sends removed host routes to a saved host instead of welcome", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        route: { kind: "host", serverId: "server-removed" },
+        hosts: [{ serverId: "server-next" }],
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-next/open-project" });
+  });
+
+  it("shows welcome from a host route only after the registry proves no hosts exist", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        route: { kind: "host", serverId: "server-removed" },
+      }),
+    ).toEqual({ kind: "redirect", href: "/welcome" });
   });
 });

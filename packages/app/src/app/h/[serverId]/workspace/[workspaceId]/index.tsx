@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import { StyleSheet, View } from "react-native";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
@@ -7,9 +7,18 @@ import {
   type ActiveWorkspaceSelection,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { useHasHydratedWorkspaces, useWorkspaceExists } from "@/stores/session-store-hooks";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
+import {
+  areWorkspaceSelectionListsEqual,
+  areWorkspaceSelectionsEqual,
+  getWorkspaceSelectionKey,
+  pruneMountedWorkspaceSelections,
+  shouldKeepWorkspaceDeckEntryMounted,
+  WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+} from "@/screens/workspace/workspace-deck-retention";
 import {
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
@@ -152,28 +161,33 @@ function HostWorkspaceRouteContent() {
   return <WorkspaceDeck />;
 }
 
-function areWorkspaceSelectionsEqual(
-  left: ActiveWorkspaceSelection | null,
-  right: ActiveWorkspaceSelection | null,
-): boolean {
-  return left?.serverId === right?.serverId && left?.workspaceId === right?.workspaceId;
-}
-
 function WorkspaceDeck() {
   const activeSelection = useActiveWorkspaceSelection();
   const [mountedSelections, setMountedSelections] = useState<ActiveWorkspaceSelection[]>(() =>
     activeSelection ? [activeSelection] : [],
   );
+  const unmountWorkspaceSelection = useCallback((selection: ActiveWorkspaceSelection) => {
+    setMountedSelections((current) =>
+      current.filter(
+        (mountedSelection) => !areWorkspaceSelectionsEqual(mountedSelection, selection),
+      ),
+    );
+  }, []);
 
   useEffect(() => {
     if (!activeSelection) {
       return;
     }
     setMountedSelections((current) => {
-      if (current.some((selection) => areWorkspaceSelectionsEqual(selection, activeSelection))) {
+      const next = pruneMountedWorkspaceSelections({
+        currentSelections: current,
+        activeSelection,
+        maxMountedWorkspaces: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+      });
+      if (areWorkspaceSelectionListsEqual(current, next)) {
         return current;
       }
-      return [...current, activeSelection];
+      return next;
     });
   }, [activeSelection]);
 
@@ -184,21 +198,57 @@ function WorkspaceDeck() {
   return (
     <View style={styles.deck}>
       {mountedSelections.map((selection) => {
-        const isActive = areWorkspaceSelectionsEqual(selection, activeSelection);
         return (
-          <View
-            key={`${selection.serverId}:${selection.workspaceId}`}
-            style={isActive ? styles.activeDeckEntry : styles.inactiveDeckEntry}
-            testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
-          >
-            <WorkspaceScreen
-              serverId={selection.serverId}
-              workspaceId={selection.workspaceId}
-              isRouteFocused={isActive}
-            />
-          </View>
+          <WorkspaceDeckEntry
+            key={getWorkspaceSelectionKey(selection)}
+            selection={selection}
+            activeSelection={activeSelection}
+            onUnmountInactive={unmountWorkspaceSelection}
+          />
         );
       })}
+    </View>
+  );
+}
+
+function WorkspaceDeckEntry({
+  selection,
+  activeSelection,
+  onUnmountInactive,
+}: {
+  selection: ActiveWorkspaceSelection;
+  activeSelection: ActiveWorkspaceSelection;
+  onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
+}) {
+  const isActive = areWorkspaceSelectionsEqual(selection, activeSelection);
+  const hasHydratedWorkspaces = useHasHydratedWorkspaces(selection.serverId);
+  const workspaceExists = useWorkspaceExists(selection.serverId, selection.workspaceId);
+  const shouldKeepMounted = shouldKeepWorkspaceDeckEntryMounted({
+    isActive,
+    hasHydratedWorkspaces,
+    workspaceExists,
+  });
+
+  useEffect(() => {
+    if (!shouldKeepMounted) {
+      onUnmountInactive(selection);
+    }
+  }, [onUnmountInactive, selection, shouldKeepMounted]);
+
+  if (!shouldKeepMounted) {
+    return null;
+  }
+
+  return (
+    <View
+      style={isActive ? styles.activeDeckEntry : styles.inactiveDeckEntry}
+      testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
+    >
+      <WorkspaceScreen
+        serverId={selection.serverId}
+        workspaceId={selection.workspaceId}
+        isRouteFocused={isActive}
+      />
     </View>
   );
 }

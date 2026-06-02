@@ -24,6 +24,10 @@ type WorkerLifecycleMessage =
       reason?: string;
     };
 
+interface SupervisorHeartbeatMessage {
+  type: "paseo:supervisor-heartbeat";
+}
+
 interface SupervisorOptions {
   name: string;
   startupMessage: string;
@@ -183,6 +187,27 @@ export function runSupervisor(options: SupervisorOptions): void {
       });
     }
 
+    const currentChild = child;
+    const heartbeat = setInterval(() => {
+      const message: SupervisorHeartbeatMessage = { type: "paseo:supervisor-heartbeat" };
+      if (currentChild.connected) {
+        currentChild.send?.(message, (error) => {
+          if (error) {
+            writeLifecycleLog("Worker heartbeat IPC send failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
+      } else {
+        writeLifecycleLog("Worker heartbeat skipped because IPC channel is disconnected");
+      }
+    }, 1000);
+    heartbeat.unref();
+
+    child.on("disconnect", () => {
+      writeLifecycleLog("Worker IPC channel disconnected");
+    });
+
     child.stdout?.on("data", (chunk: Buffer) => {
       process.stdout.write(chunk);
       writeDurableChunk(chunk);
@@ -224,6 +249,7 @@ export function runSupervisor(options: SupervisorOptions): void {
     });
 
     child.on("close", (code, signal) => {
+      clearInterval(heartbeat);
       const exitDescriptor = describeExit(code, signal);
       writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
 

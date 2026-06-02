@@ -41,7 +41,11 @@ import {
   createProviderSnapshotManagerStub,
 } from "./test-utils/session-stubs.js";
 import { isPlatform } from "../test-utils/platform.js";
-import type { GitHubPullRequestStatusFacts } from "../services/github-service.js";
+import type {
+  GitHubCheckDetails,
+  GitHubPullRequestStatusFacts,
+  GitHubService,
+} from "../services/github-service.js";
 
 interface SessionHandlerInternals {
   startVoiceTurnController(): Promise<void>;
@@ -207,12 +211,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
-  github?: {
-    invalidate: ReturnType<typeof vi.fn>;
-    isAuthenticated?: ReturnType<typeof vi.fn>;
-    getPullRequestTimeline?: ReturnType<typeof vi.fn>;
-    searchIssuesAndPrs?: ReturnType<typeof vi.fn>;
-  };
+  github?: Partial<GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
   workspaceGitService?: {
     getCheckoutDiff?: ReturnType<typeof vi.fn>;
@@ -229,13 +228,14 @@ interface SessionForTestOptions {
   workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
-  scriptRouteStore?: SessionOptions["scriptRouteStore"];
+  serviceProxy?: SessionOptions["serviceProxy"];
   scriptRuntimeStore?: SessionOptions["scriptRuntimeStore"];
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
+  paseoHome?: string;
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
 }
@@ -272,7 +272,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     logger,
     downloadTokenStore: asDownloadTokenStore(),
     pushTokenStore: asPushTokenStore(),
-    paseoHome: "/tmp/paseo-home",
+    paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
@@ -311,7 +311,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     terminalManager: options.terminalManager ?? null,
     providerSnapshotManager:
       options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
-    scriptRouteStore: options.scriptRouteStore,
+    serviceProxy: options.serviceProxy,
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
@@ -3549,7 +3549,7 @@ describe("session workspace script handling", () => {
       workspaceGitService,
       workspaceRegistry,
       terminalManager: { subscribeTerminalsChanged: vi.fn(() => () => {}) },
-      scriptRouteStore: { listRoutesForWorkspace: vi.fn(() => []) },
+      serviceProxy: { listRoutesForWorkspace: vi.fn(() => []) },
       scriptRuntimeStore: { listForWorkspace: vi.fn(() => []) },
       getDaemonTcpPort: () => 6767,
       getDaemonTcpHost: () => "127.0.0.1",
@@ -3668,6 +3668,7 @@ describe("session pull request timeline handling", () => {
             kind: "review",
             author: "octocat",
             authorUrl: "https://github.com/octocat",
+            avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
             body: "Looks good",
             createdAt: 1710000000000,
             url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
@@ -3705,6 +3706,8 @@ describe("session pull request timeline handling", () => {
             id: "review-1",
             kind: "review",
             author: "octocat",
+            authorUrl: "https://github.com/octocat",
+            avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
             body: "Looks good",
             createdAt: 1710000000000,
             url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
@@ -3795,6 +3798,90 @@ describe("session pull request timeline handling", () => {
         },
         requestId: "request-3",
         githubFeaturesEnabled: false,
+      },
+    });
+  });
+
+  test("emits GitHub check details responses", async () => {
+    const messages: unknown[] = [];
+    const checkDetailRequests: Array<{
+      cwd: string;
+      repoOwner: string;
+      repoName: string;
+      checkRunId: number;
+      workflowRunId?: number;
+    }> = [];
+    const checkDetails: GitHubCheckDetails = {
+      checkRunId: 12345,
+      workflowRunId: 456,
+      name: "server-tests",
+      status: "completed",
+      conclusion: "failure",
+      url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+      detailsUrl: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+      output: { title: "Tests failed", summary: "1 failure", text: "Assertion failed" },
+      annotations: [],
+      failedJobs: [],
+      truncated: false,
+    };
+    const github: Partial<GitHubService> = {
+      invalidate() {},
+      async isAuthenticated() {
+        return true;
+      },
+      async getGitHubCheckDetails(request) {
+        checkDetailRequests.push({
+          cwd: request.cwd,
+          repoOwner: request.repoOwner,
+          repoName: request.repoName,
+          checkRunId: request.checkRunId,
+          workflowRunId: request.workflowRunId,
+        });
+        return checkDetails;
+      },
+    };
+    const session = createSessionForTest({ github, messages });
+
+    await session.handleMessage({
+      type: "checkout.github.get_check_details.request",
+      cwd: "/tmp/repo",
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      checkRunId: 12345,
+      workflowRunId: 456,
+      requestId: "request-check-details",
+    });
+
+    expect(checkDetailRequests).toEqual([
+      {
+        cwd: "/tmp/repo",
+        repoOwner: "getpaseo",
+        repoName: "paseo",
+        checkRunId: 12345,
+        workflowRunId: 456,
+      },
+    ]);
+
+    expect(messages).toContainEqual({
+      type: "checkout.github.get_check_details.response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        details: {
+          checkRunId: 12345,
+          workflowRunId: 456,
+          name: "server-tests",
+          status: "completed",
+          conclusion: "failure",
+          url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+          detailsUrl: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+          output: { title: "Tests failed", summary: "1 failure", text: "Assertion failed" },
+          annotations: [],
+          failedJobs: [],
+          truncated: false,
+        },
+        error: null,
+        requestId: "request-check-details",
       },
     });
   });

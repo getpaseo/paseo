@@ -7,6 +7,7 @@ import type {
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { buildFavoriteModelKey, type FavoriteModelRow } from "@/hooks/use-form-preferences";
+import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
 
 export type ProviderSelectionModelRow = FavoriteModelRow & { isDefault?: boolean };
@@ -47,7 +48,7 @@ function buildModelRows(
     providerLabel,
     modelId: model.id,
     modelLabel: model.label,
-    description: model.description,
+    description: model.description ?? model.id,
     isDefault: model.isDefault,
   }));
 }
@@ -61,7 +62,7 @@ function buildSyntheticDefaultRow(
     provider,
     providerLabel,
     modelId: "",
-    modelLabel: "Default",
+    modelLabel: i18n.t("providerSelection.defaultModel"),
     description: undefined,
     isDefault: true,
   };
@@ -96,7 +97,11 @@ function buildEntryModelSelection(
   }
   return {
     kind: "error",
-    message: entry.error ?? (entry.status === "unavailable" ? "Unavailable" : "Unknown error"),
+    message:
+      entry.error ??
+      (entry.status === "unavailable"
+        ? i18n.t("providerSelection.unavailable")
+        : i18n.t("providerSelection.unknownError")),
   };
 }
 
@@ -152,21 +157,23 @@ export function resolveSelectedModelLabel(input: {
 }): string {
   const selectedProvider = input.selectedProvider.trim();
   if (!selectedProvider) {
-    return "Select model";
+    return i18n.t("providerSelection.selectModel");
   }
 
   const provider = input.providers.find((entry) => entry.id === selectedProvider);
   if (!provider) {
-    return input.isLoading ? "Loading..." : "Select model";
+    return input.isLoading
+      ? i18n.t("providerSelection.loading")
+      : i18n.t("providerSelection.selectModel");
   }
   if (provider.modelSelection.kind === "loading") {
-    return "Loading...";
+    return i18n.t("providerSelection.loading");
   }
   if (provider.modelSelection.kind === "error") {
-    return "Error";
+    return i18n.t("providerSelection.error");
   }
   if (provider.modelSelection.kind !== "models") {
-    return "Select model";
+    return i18n.t("providerSelection.selectModel");
   }
 
   const model = provider.modelSelection.rows.find((entry) => entry.modelId === input.selectedModel);
@@ -175,7 +182,7 @@ export function resolveSelectedModelLabel(input: {
     model?.modelLabel ??
     defaultModel?.modelLabel ??
     provider.modelSelection.rows[0]?.modelLabel ??
-    "Select model"
+    i18n.t("providerSelection.selectModel")
   );
 }
 
@@ -280,26 +287,26 @@ export function resolveSubmissionReadiness(input: {
   hasClient: boolean;
 }): ProviderSelectionReadiness {
   if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
-    return { ok: false, reason: "Initial prompt is required" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
   }
   if (input.providerCount === 0) {
-    return { ok: false, reason: "No available providers on the selected host" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
   }
   if (!(input.autoSubmitConfig?.provider ?? input.selection.provider)) {
-    return { ok: false, reason: "Select a model" };
+    return { ok: false, reason: i18n.t("providerSelection.selectModel") };
   }
   if (input.selection.isModelLoading) {
-    return { ok: false, reason: "Model defaults are still loading" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };
   }
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
   if (!hasSelectedModel && input.selection.availableModels.length > 0) {
-    return { ok: false, reason: "No model is available for the selected provider" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
   }
   if (!input.workspaceDirectory) {
-    return { ok: false, reason: "Workspace directory not found" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };
   }
   if (!input.hasClient) {
-    return { ok: false, reason: "Host is not connected" };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return { ok: true };
 }

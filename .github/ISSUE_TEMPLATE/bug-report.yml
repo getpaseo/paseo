@@ -6,6 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
+        I'm a solo maintainer and don't always keep up with GitHub Issues daily. If something is urgent or blocking you, [Discord](https://discord.gg/jz8T2uahpH) is the fastest place to reach me.
+
         Before opening, please:
 
         - search existing issues for the same symptom

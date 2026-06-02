@@ -70,17 +70,17 @@ describe("bottom sheet visibility tracker", () => {
     expect(sheet.events).toEqual([]);
   });
 
-  it("only reports a user close when the sheet was visible", () => {
+  it("does not treat index -1 as a close because stacked sheets can be hidden without dismissing", () => {
     const { sheet, tracker, closeCount } = setup();
     tracker.attachController(sheet);
     tracker.syncDesired({ visible: true });
 
     tracker.handleSheetIndexChange(-1);
-    expect(closeCount()).toBe(1);
+    expect(closeCount()).toBe(0);
 
     tracker.syncDesired({ visible: false });
     tracker.handleSheetIndexChange(-1);
-    expect(closeCount()).toBe(1);
+    expect(closeCount()).toBe(0);
   });
 
   it("reports a dismiss while visible as a close request", () => {
@@ -93,7 +93,7 @@ describe("bottom sheet visibility tracker", () => {
     expect(closeCount()).toBe(1);
   });
 
-  it("deduplicates close notifications from change and dismiss callbacks", () => {
+  it("reports close once when a hidden sheet is actually dismissed", () => {
     const { sheet, tracker, closeCount } = setup();
     tracker.attachController(sheet);
     tracker.syncDesired({ visible: true });
@@ -110,12 +110,14 @@ describe("bottom sheet visibility tracker", () => {
     tracker.syncDesired({ visible: true });
 
     tracker.handleSheetIndexChange(-1);
+    tracker.handleSheetDismiss();
     expect(closeCount()).toBe(1);
 
     tracker.syncDesired({ visible: false });
     tracker.syncDesired({ visible: true });
 
     tracker.handleSheetIndexChange(-1);
+    tracker.handleSheetDismiss();
     expect(closeCount()).toBe(2);
   });
 
@@ -128,7 +130,7 @@ describe("bottom sheet visibility tracker", () => {
     tracker.attachController(null);
     tracker.attachController(sheet);
 
-    expect(closeCount()).toBe(1);
+    expect(closeCount()).toBe(0);
     expect(sheet.events).toEqual([{ type: "present" }]);
   });
 

@@ -21,7 +21,7 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   await expect(visibleTestId(page, "workspace-tabs-row").first()).toBeVisible({
     timeout: 30_000,
   });
-  await expect(visibleTestId(page, "workspace-new-agent-tab").first()).toBeVisible({
+  await expect(visibleTestId(page, "workspace-new-agent-tab-inline").first()).toBeVisible({
     timeout: 30_000,
   });
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   createDesktopAppUpdater,
   formatStatusText,
@@ -38,13 +39,22 @@ function createUpdater(
 }
 
 describe("desktop app updater — check", () => {
-  it("forwards the requested release channel to the port", async () => {
+  it("forwards manual check intent and the requested release channel to the port", async () => {
     const { updater, port } = createUpdater();
     port.nextCheckResult(buildFakeCheckResult());
 
     await updater.checkForUpdates({ releaseChannel: "beta" });
 
-    expect(port.recordedChecks).toEqual([{ releaseChannel: "beta" }]);
+    expect(port.recordedChecks).toEqual([{ releaseChannel: "beta", intent: "manual" }]);
+  });
+
+  it("forwards automatic check intent independently from silent UI state", async () => {
+    const { updater, port } = createUpdater();
+    port.nextCheckResult(buildFakeCheckResult());
+
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "automatic" }]);
   });
 
   it("moves to 'checking' during a non-silent check", async () => {
@@ -66,7 +76,11 @@ describe("desktop app updater — check", () => {
     expect(updater.getSnapshot().status).toBe("available");
 
     const deferred = port.deferNextCheck();
-    const pending = updater.checkForUpdates({ releaseChannel: "stable", silent: true });
+    const pending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
     expect(updater.getSnapshot().status).toBe("available");
 
     deferred.resolve(buildFakeCheckResult({ hasUpdate: true, readyToInstall: true }));
@@ -128,7 +142,7 @@ describe("desktop app updater — check", () => {
     const statusBeforeSilent = updater.getSnapshot().status;
 
     port.failNextCheck(new Error("boom"));
-    await updater.checkForUpdates({ releaseChannel: "stable", silent: true });
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
 
     expect(updater.getSnapshot().status).toBe(statusBeforeSilent);
   });
@@ -226,6 +240,20 @@ describe("desktop app updater — subscribe", () => {
 describe("formatStatusText", () => {
   const formatVersion = (version: string | null | undefined) =>
     version ? `v${version.replace(/^v/i, "")}` : "\u2014";
+  const formatLastCheckedAt = (timestamp: number) => `time-${timestamp}`;
+
+  it("shows when an up-to-date check completed", () => {
+    expect(
+      formatStatusText({
+        status: "up-to-date",
+        availableUpdate: null,
+        installMessage: null,
+        lastCheckedAt: 42,
+        formatVersion,
+        formatLastCheckedAt,
+      }),
+    ).toBe("Up to date. Last checked at time-42.");
+  });
 
   it("uses the latest version in the 'available' message when present", () => {
     expect(
@@ -233,7 +261,9 @@ describe("formatStatusText", () => {
         status: "available",
         availableUpdate: buildFakeCheckResult({ latestVersion: "1.2.3" }),
         installMessage: null,
+        lastCheckedAt: null,
         formatVersion,
+        formatLastCheckedAt,
       }),
     ).toBe("Update ready: v1.2.3");
   });
@@ -244,7 +274,9 @@ describe("formatStatusText", () => {
         status: "available",
         availableUpdate: null,
         installMessage: null,
+        lastCheckedAt: null,
         formatVersion,
+        formatLastCheckedAt,
       }),
     ).toBe("An app update is ready to install.");
   });
@@ -255,8 +287,38 @@ describe("formatStatusText", () => {
         status: "installed",
         availableUpdate: null,
         installMessage: "Restart now",
+        lastCheckedAt: null,
         formatVersion,
+        formatLastCheckedAt,
       }),
     ).toBe("Restart now");
+  });
+
+  it("uses the active app language for local status wrappers", async () => {
+    await i18n.changeLanguage("zh-CN");
+    try {
+      expect(
+        formatStatusText({
+          status: "checking",
+          availableUpdate: null,
+          installMessage: null,
+          lastCheckedAt: null,
+          formatVersion,
+          formatLastCheckedAt,
+        }),
+      ).toBe("正在检查 app 更新...");
+      expect(
+        formatStatusText({
+          status: "available",
+          availableUpdate: buildFakeCheckResult({ latestVersion: "1.2.3" }),
+          installMessage: null,
+          lastCheckedAt: null,
+          formatVersion,
+          formatLastCheckedAt,
+        }),
+      ).toBe("更新已就绪：v1.2.3");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
 });

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { createRequire } from "node:module";
 import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
-import { tryConnectToDaemon } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
 import { resolveNodePathFromPid } from "./runtime-toolchain.js";
@@ -16,7 +16,7 @@ interface ProviderBinaryStatus {
 interface DaemonStatus {
   serverId: string | null;
   localDaemon: "running" | "stopped" | "stale_pid" | "unresponsive";
-  connectedDaemon: "reachable" | "unreachable" | "not_probed";
+  connectedDaemon: "reachable" | "unreachable" | "auth_required" | "auth_failed" | "not_probed";
   home: string;
   listen: string;
   relay: string;
@@ -33,6 +33,7 @@ interface DaemonStatus {
   daemonVersion: string | null;
   desktopManaged: boolean;
   providers: ProviderBinaryStatus[];
+  agentsUnavailableReason?: string;
   note?: string;
 }
 
@@ -96,7 +97,7 @@ function createStatusSchema(status: DaemonStatus): OutputSchema<StatusRow> {
           }
           if (item.key === "Connected Daemon") {
             if (item.value === "reachable") return "green";
-            if (item.value === "not_probed") return "yellow";
+            if (item.value === "not_probed" || item.value === "auth_required") return "yellow";
             return "red";
           }
           if (item.key.startsWith("  ")) {
@@ -139,7 +140,7 @@ function toStatusRows(status: DaemonStatus): StatusRow[] {
   } else {
     rows.push({
       key: "Agents",
-      value: "Unavailable (daemon API not reachable)",
+      value: `Unavailable (${status.agentsUnavailableReason ?? "daemon API not reachable"})`,
     });
   }
 
@@ -218,7 +219,29 @@ interface DaemonProbeResult {
   idleAgents?: number;
   daemonNodeOverride?: string;
   daemonProviders?: ProviderBinaryStatus[];
+  agentsUnavailableReason?: string;
   note?: string;
+}
+
+type DaemonAuthProbeFailure = "auth_required" | "auth_failed";
+
+function classifyDaemonAuthProbeFailure(error: unknown): DaemonAuthProbeFailure | null {
+  if (!(error instanceof Error)) return null;
+  if (error.message === "Password required") return "auth_required";
+  if (error.message === "Incorrect password") return "auth_failed";
+  return null;
+}
+
+function describeDaemonAuthProbeFailure(host: string, failure: DaemonAuthProbeFailure): string {
+  if (failure === "auth_required") {
+    return `Daemon is reachable at ${host} but requires a password. Set PASEO_PASSWORD and retry.`;
+  }
+  return `Daemon is reachable at ${host} but the supplied password was rejected. Check PASEO_PASSWORD and retry.`;
+}
+
+function describeAgentsUnavailableReason(failure: DaemonAuthProbeFailure): string {
+  if (failure === "auth_required") return "password required";
+  return "incorrect password";
 }
 
 async function probeDaemonOverWebsocket(args: {
@@ -226,8 +249,19 @@ async function probeDaemonOverWebsocket(args: {
   state: ReturnType<typeof resolveLocalDaemonState>;
 }): Promise<DaemonProbeResult> {
   const { host, state } = args;
-  const client = await tryConnectToDaemon({ host, timeout: 1500 });
-  if (!client) {
+  let client: Awaited<ReturnType<typeof connectToDaemon>>;
+  try {
+    client = await connectToDaemon({ host, timeout: 1500 });
+  } catch (error) {
+    const authFailure = classifyDaemonAuthProbeFailure(error);
+    if (authFailure) {
+      return {
+        connectedDaemon: authFailure,
+        agentsUnavailableReason: describeAgentsUnavailableReason(authFailure),
+        note: describeDaemonAuthProbeFailure(host, authFailure),
+      };
+    }
+
     if (state.running) {
       return {
         connectedDaemon: "unreachable",
@@ -309,6 +343,7 @@ interface ProbeMergeState {
   runningAgents: number | null;
   idleAgents: number | null;
   daemonProviders: ProviderBinaryStatus[] | undefined;
+  agentsUnavailableReason: string | undefined;
   note: string | undefined;
 }
 
@@ -322,6 +357,7 @@ function applyProbeToStatus(input: ProbeMergeState): Omit<ProbeMergeState, "prob
     runningAgents: probe.runningAgents !== undefined ? probe.runningAgents : input.runningAgents,
     idleAgents: probe.idleAgents !== undefined ? probe.idleAgents : input.idleAgents,
     daemonProviders: probe.daemonProviders ?? input.daemonProviders,
+    agentsUnavailableReason: probe.agentsUnavailableReason ?? input.agentsUnavailableReason,
     note: probe.note ? appendNote(input.note, probe.note) : input.note,
   };
 }
@@ -371,6 +407,7 @@ export async function runStatusCommand(
   let idleAgents: number | null = null;
   let daemonVersion: string | null = null;
   let daemonProviders: ProviderBinaryStatus[] | undefined;
+  let agentsUnavailableReason: string | undefined;
   let note: string | undefined;
 
   if (!state.running && state.stalePidFile && state.pidInfo) {
@@ -388,6 +425,7 @@ export async function runStatusCommand(
       runningAgents,
       idleAgents,
       daemonProviders,
+      agentsUnavailableReason,
       note,
     } = applyProbeToStatus({
       probe,
@@ -398,6 +436,7 @@ export async function runStatusCommand(
       runningAgents,
       idleAgents,
       daemonProviders,
+      agentsUnavailableReason,
       note,
     }));
   } else {
@@ -434,6 +473,7 @@ export async function runStatusCommand(
     daemonVersion,
     desktopManaged: state.pidInfo?.desktopManaged === true,
     providers,
+    agentsUnavailableReason,
     note,
   };
 

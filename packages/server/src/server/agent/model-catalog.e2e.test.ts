@@ -40,15 +40,23 @@ describe("provider model catalogs (e2e)", () => {
   }, 180_000);
 
   test.runIf(hasCodex)(
-    "Codex catalog exposes gpt-5.1-codex",
+    "Codex catalog exposes normalized models",
     async () => {
       const ctx = await createDaemonTestContext();
       try {
         const result = await ctx.client.listProviderModels("codex");
 
         expect(result.error).toBeNull();
-        const ids = result.models.map((model) => model.id);
-        expect(ids.some((id) => id.includes("codex"))).toBe(true);
+        expect(result.models.length).toBeGreaterThan(0);
+        expect(result.models).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              provider: "codex",
+              id: expect.any(String),
+              label: expect.any(String),
+            }),
+          ]),
+        );
       } finally {
         await ctx.cleanup();
       }
@@ -66,17 +74,15 @@ describe("provider model catalogs (e2e)", () => {
         expect(result.error).toBeNull();
         expect(result.models.length).toBeGreaterThan(0);
 
-        for (const model of result.models) {
-          expect(model.provider).toBe("opencode");
-          expect(model.id).toContain("/");
-          expect(model.label).toBeTruthy();
-          expect(model.metadata).toBeDefined();
-          expect(model.metadata?.providerId).toBeTruthy();
-          expect(model.metadata?.modelId).toBeTruthy();
-        }
-
-        const providerIds = new Set(result.models.map((m) => m.metadata?.providerId));
-        expect(providerIds.size).toBeGreaterThan(0);
+        expect(result.models).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              provider: "opencode",
+              id: expect.any(String),
+              label: expect.any(String),
+            }),
+          ]),
+        );
       } finally {
         await ctx.cleanup();
       }

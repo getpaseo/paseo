@@ -23,6 +23,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -59,6 +60,7 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
+import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 
 const IS_WEB = isWeb;
 
@@ -94,6 +96,7 @@ export interface ComboboxProps {
    */
   header?: SheetHeader;
   mobileChildrenScrollEnabled?: boolean;
+  presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   desktopPlacement?: "top-start" | "bottom-start";
@@ -964,6 +967,7 @@ interface MobileBodyProps {
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
+  presentation?: "push" | "replace";
   searchResetKey: number;
   searchPlaceholder: string;
   searchQuery: string;
@@ -1022,7 +1026,8 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
       keyboardBehavior="extend"
-      keyboardBlurBehavior="restore"
+      keyboardBlurBehavior="none"
+      presentation={props.presentation}
     >
       {props.header ? (
         <SheetHeaderView header={props.header} onClose={props.onClose} />
@@ -1236,17 +1241,18 @@ export function Combobox({
   renderOption,
   onSearchQueryChange,
   searchable = true,
-  placeholder = "Search...",
+  placeholder,
   searchPlaceholder,
-  emptyText = "No options match your search.",
+  emptyText,
   allowCustomValue = false,
   customValuePrefix = "Use",
   customValueDescription,
   customValueKind,
   optionsPosition = "below-search",
-  title = "Select",
+  title,
   header,
   mobileChildrenScrollEnabled = true,
+  presentation,
   open,
   onOpenChange,
   desktopPlacement = "top-start",
@@ -1258,7 +1264,11 @@ export function Combobox({
   anchorRef,
   children,
 }: ComboboxProps): ReactElement | null {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const resolvedPlaceholder = placeholder ?? t("common.placeholders.search");
+  const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
+  const resolvedTitle = title ?? t("common.actions.select");
   const isMobile = useIsCompactFormFactor();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
@@ -1482,6 +1492,7 @@ export function Combobox({
   );
 
   useWebKeyboardListener(isOpen, handleDesktopKey);
+  useDismissKeyboardOnOpen(isOpen, isMobile);
 
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
@@ -1513,7 +1524,7 @@ export function Combobox({
     [],
   );
 
-  const effectiveSearchPlaceholder = searchPlaceholder ?? placeholder;
+  const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;
   const hasChildren = Boolean(children);
 
   if (isMobile) {
@@ -1525,13 +1536,14 @@ export function Combobox({
         handleSheetDismiss={handleSheetDismiss}
         handleIndicatorStyle={handleIndicatorStyle}
         titleColor={titleColor}
-        title={title}
+        title={resolvedTitle}
         header={header}
         onClose={handleClose}
         stickyHeader={stickyHeader}
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
+        presentation={presentation}
         searchResetKey={searchResetKey}
         searchPlaceholder={effectiveSearchPlaceholder}
         searchQuery={searchQuery}
@@ -1540,7 +1552,7 @@ export function Combobox({
         orderedVisibleOptions={orderedVisibleOptions}
         value={value}
         activeIndex={activeIndex}
-        emptyText={emptyText}
+        emptyText={resolvedEmptyText}
         handleSelect={handleSelect}
         renderOption={renderOption}
       >
@@ -1573,7 +1585,7 @@ export function Combobox({
       orderedVisibleOptions={orderedVisibleOptions}
       value={value}
       activeIndex={activeIndex}
-      emptyText={emptyText}
+      emptyText={resolvedEmptyText}
       handleSelect={handleSelect}
       renderOption={renderOption}
       hasChildren={hasChildren}

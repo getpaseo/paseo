@@ -2,7 +2,7 @@
 title: CLI
 description: "Paseo CLI reference: manage agents, daemons, permissions, and worktrees from your terminal."
 nav: CLI
-order: 6
+order: 8
 ---
 
 # CLI

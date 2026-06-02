@@ -10,10 +10,10 @@ import {
 import type { AgentSession } from "./agent-sdk-types.js";
 import type {
   AgentFeature,
+  ImportableProviderSession,
   AgentPermissionRequest,
   AgentPersistenceHandle,
   AgentSessionConfig,
-  PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 
 type ManagedAgentOverrides = Omit<Partial<ManagedAgent>, "config" | "pendingPermissions"> & {
@@ -400,26 +400,18 @@ describe("toAgentPayload", () => {
 });
 
 describe("toRecentProviderSessionDescriptorPayload", () => {
-  it("projects persisted descriptors to provider-opaque public recent sessions", () => {
-    const descriptor: PersistedAgentDescriptor = {
+  it("projects provider import rows to provider-opaque public recent sessions", () => {
+    const session: ImportableProviderSession & { provider: string } = {
       provider: "codex-custom",
-      sessionId: "legacy-session-id",
+      providerHandleId: "provider-native-handle",
       cwd: "/tmp/project",
       title: "Import me",
+      firstPromptPreview: "First prompt with spacing",
+      lastPromptPreview: "Second prompt",
       lastActivityAt: new Date("2026-04-30T12:34:56.000Z"),
-      persistence: {
-        provider: "codex-custom",
-        sessionId: "legacy-session-id",
-        nativeHandle: "provider-native-handle",
-      },
-      timeline: [
-        { type: "assistant_message", text: "Ready" },
-        { type: "user_message", text: "  First prompt\n\nwith spacing  " },
-        { type: "user_message", text: "Second prompt" },
-      ],
     };
 
-    const payload = toRecentProviderSessionDescriptorPayload(descriptor, {
+    const payload = toRecentProviderSessionDescriptorPayload(session, {
       providerLabel: "Custom Codex",
     });
 
@@ -438,28 +430,25 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
     expect(payload).not.toHaveProperty("nativeHandle");
   });
 
-  it("falls back to persistence session id when no provider native handle exists", () => {
-    const descriptor: PersistedAgentDescriptor = {
+  it("preserves null prompt previews", () => {
+    const session: ImportableProviderSession & { provider: string } = {
       provider: "claude-custom",
-      sessionId: "descriptor-session-id",
+      providerHandleId: "provider-session-id",
       cwd: "/tmp/project",
       title: null,
       lastActivityAt: new Date("2026-04-30T12:34:56.000Z"),
-      persistence: {
-        provider: "claude-custom",
-        sessionId: "persistence-session-id",
-      },
-      timeline: [],
+      firstPromptPreview: null,
+      lastPromptPreview: null,
     };
 
     expect(
-      toRecentProviderSessionDescriptorPayload(descriptor, {
+      toRecentProviderSessionDescriptorPayload(session, {
         providerLabel: "Custom Claude",
       }),
     ).toMatchObject({
       providerId: "claude-custom",
       providerLabel: "Custom Claude",
-      providerHandleId: "persistence-session-id",
+      providerHandleId: "provider-session-id",
       firstPromptPreview: null,
       lastPromptPreview: null,
     });

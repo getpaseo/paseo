@@ -206,6 +206,16 @@ export class UnknownBranchError extends Error {
   }
 }
 
+export class InvalidGitBranchNameError extends Error {
+  readonly branchName: string;
+
+  constructor(branchName: string) {
+    super(`Invalid branch name: Git rejected ref name '${branchName}'`);
+    this.name = "InvalidGitBranchNameError";
+    this.branchName = branchName;
+  }
+}
+
 export type ReadPaseoConfigResult =
   | { ok: true; config: PaseoConfig | null }
   | { ok: false; configPath: string; error: unknown };
@@ -1261,7 +1271,7 @@ async function resolveWorktreeSourcePlan({
       };
     }
     case "checkout-branch": {
-      validateWorktreeBranchName(source.branchName);
+      await validateExistingWorktreeBranchName(cwd, source.branchName);
       if (!(await localBranchExists(cwd, source.branchName))) {
         try {
           await runGitCommand(["fetch", "origin", `${source.branchName}:${source.branchName}`], {
@@ -1284,7 +1294,7 @@ async function resolveWorktreeSourcePlan({
     }
     case "checkout-github-pr": {
       const localBranchCandidate = source.localBranchName ?? source.headRef;
-      validateWorktreeBranchName(localBranchCandidate);
+      await validateExistingWorktreeBranchName(cwd, localBranchCandidate);
       const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       await runGitCommand(
@@ -1347,6 +1357,17 @@ function validateWorktreeBranchName(branchName: string): void {
   const validation = validateBranchSlug(branchName);
   if (!validation.valid) {
     throw new Error(`Invalid branch name: ${validation.error}`);
+  }
+}
+
+async function validateExistingWorktreeBranchName(cwd: string, branchName: string): Promise<void> {
+  const result = await runGitCommand(["check-ref-format", "--branch", branchName], {
+    cwd,
+    timeout: 30_000,
+    acceptExitCodes: [0, 1, 128],
+  });
+  if (result.exitCode !== 0) {
+    throw new InvalidGitBranchNameError(branchName);
   }
 }
 

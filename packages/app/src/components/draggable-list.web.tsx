@@ -135,6 +135,7 @@ export function DraggableList<T>({
   showsVerticalScrollIndicator = true,
   enableDesktopWebScrollbar = false,
   scrollEnabled = true,
+  extraData: _extraData,
   useDragHandle = false,
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,

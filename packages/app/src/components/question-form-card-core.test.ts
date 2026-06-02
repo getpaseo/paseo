@@ -76,4 +76,27 @@ describe("question form card core", () => {
       Response: "custom",
     });
   });
+
+  test("shows text input for questions that allow other answers", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Pick or type",
+          header: "Response",
+          options: [{ label: "A" }],
+          allowOther: true,
+          multiSelect: false,
+        },
+      ],
+    });
+
+    if (!questions) throw new Error("questions did not parse");
+    const [question] = questions;
+    if (!question) throw new Error("question missing");
+    expect(questionShowsTextInput(question)).toBe(true);
+    expect(areQuestionsAnswered(questions, {}, { 0: "custom" })).toBe(true);
+    expect(buildQuestionFormAnswers(questions, {}, { 0: "custom" })).toEqual({
+      Response: "custom",
+    });
+  });
 });

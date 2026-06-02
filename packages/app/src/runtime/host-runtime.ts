@@ -40,6 +40,7 @@ import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore } from "@/stores/session-store";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
+export type HostRegistryStatus = "loading" | "ready";
 
 export type ActiveConnection =
   | { type: "directTcp"; endpoint: string; display: string }
@@ -1246,6 +1247,7 @@ export class HostRuntimeStore {
   private version = 0;
   private hostListVersion = 0;
   private hosts: HostProfile[] = [];
+  private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
   private lastConnectionStatusByServer = new Map<string, HostRuntimeConnectionStatus>();
   private agentDirectoryBootstrapInFlight = new Map<string, Promise<void>>();
@@ -1260,6 +1262,10 @@ export class HostRuntimeStore {
 
   getHosts(): HostProfile[] {
     return this.hosts;
+  }
+
+  getHostRegistryStatus(): HostRegistryStatus {
+    return this.hostRegistryStatus;
   }
 
   subscribeHostList(listener: () => void): () => void {
@@ -1307,6 +1313,7 @@ export class HostRuntimeStore {
   }
 
   private async loadFromStorage(): Promise<void> {
+    let shouldPersistHosts = false;
     try {
       const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
       if (!stored) {
@@ -1322,12 +1329,17 @@ export class HostRuntimeStore {
       const profiles = normalizedProfiles.filter((entry) => !isPlaceholderServerId(entry.serverId));
       this.hosts = profiles;
       this.syncHosts(profiles);
-      this.emitHostList();
       if (profiles.length !== normalizedProfiles.length) {
-        void this.persistHosts();
+        shouldPersistHosts = true;
       }
     } catch (error) {
       console.error("[HostRuntime] Failed to load host registry from storage", error);
+    } finally {
+      this.hostRegistryStatus = "ready";
+      this.emitHostList();
+      if (shouldPersistHosts) {
+        void this.persistHosts();
+      }
     }
   }
 
@@ -2074,6 +2086,15 @@ export function useHosts(): HostProfile[] {
     (onStoreChange) => store.subscribeHostList(onStoreChange),
     () => store.getHosts(),
     () => store.getHosts(),
+  );
+}
+
+export function useHostRegistryStatus(): HostRegistryStatus {
+  const store = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => store.subscribeHostList(onStoreChange),
+    () => store.getHostRegistryStatus(),
+    () => store.getHostRegistryStatus(),
   );
 }
 

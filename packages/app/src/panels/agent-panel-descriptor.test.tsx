@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 
 function TestIcon() {
@@ -40,5 +41,28 @@ describe("buildDraftPanelDescriptor", () => {
       titleState: "ready",
       statusBucket: null,
     });
+  });
+
+  it("uses the active language for draft descriptor chrome", async () => {
+    await i18n.changeLanguage("zh-CN");
+    const idleDescriptor = buildDraftPanelDescriptor({
+      isCreating: false,
+      icon: TestIcon,
+    });
+    const creatingDescriptor = buildDraftPanelDescriptor({
+      isCreating: true,
+      pendingPrompt: "   ",
+      icon: TestIcon,
+    });
+
+    expect(idleDescriptor).toMatchObject({
+      label: "新建 Agent",
+      subtitle: "新建 Agent",
+    });
+    expect(creatingDescriptor).toMatchObject({
+      label: "新建 Agent",
+      subtitle: "正在创建 Agent",
+    });
+    await i18n.changeLanguage("en");
   });
 });

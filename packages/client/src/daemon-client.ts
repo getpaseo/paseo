@@ -22,6 +22,7 @@ import type {
   CreateAgentRequestMessage,
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
+  FileUploadResponse,
   FileExplorerResponse,
   FetchAgentTimelineResponseMessage,
   GitSetupOptions,
@@ -36,6 +37,7 @@ import type {
   CheckoutPrMergeResponse,
   CheckoutPrMergeMethod,
   CheckoutGithubSetAutoMergeResponse,
+  CheckoutGithubGetCheckDetailsResponse,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
   CheckoutSwitchBranchResponse,
@@ -50,8 +52,6 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
-  ListAvailableEditorsResponseMessage,
-  OpenInEditorResponseMessage,
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
@@ -77,7 +77,6 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   SendAgentMessageRequest,
-  EditorTargetId,
   PaseoConfigRaw,
   PaseoConfigRevision,
 } from "@getpaseo/protocol/messages";
@@ -93,6 +92,7 @@ import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import {
   asUint8Array,
   decodeFileTransferFrame,
+  encodeFileTransferFrame,
   decodeTerminalStreamFrame,
   FileTransferOpcode,
   TerminalStreamOpcode,
@@ -293,6 +293,7 @@ type CheckoutRefreshPayload = CheckoutRefreshResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutGithubSetAutoMergePayload = CheckoutGithubSetAutoMergeResponse["payload"];
+type CheckoutGithubGetCheckDetailsPayload = CheckoutGithubGetCheckDetailsResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
@@ -321,6 +322,15 @@ export interface FileReadResult {
   kind: LegacyFileExplorerFilePayload["kind"];
   modifiedAt: string;
 }
+export interface FileUploadInput {
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array | ArrayBuffer;
+  modifiedAt?: string;
+  requestId?: string;
+  chunkSize?: number;
+}
+export type FileUploadResult = FileUploadResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderFeaturesPayload = ListProviderFeaturesResponseMessage["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
@@ -641,12 +651,9 @@ export interface RenameTerminalInput {
   title: string;
   requestId?: string;
 }
-type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
-type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
-export type EditorTargetDescriptor = ListAvailableEditorsPayload["editors"][number];
 
 export interface FetchAgentResult {
   agent: AgentSnapshotPayload;
@@ -1528,6 +1535,33 @@ export class DaemonClient {
     });
   }
 
+  async clearWorkspaceAttention(workspaceId: string | string[]): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "workspace.clear_attention.request",
+      workspaceId,
+      requestId,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "workspace.clear_attention.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "Failed to clear workspace attention");
+    }
+  }
+
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -1774,34 +1808,6 @@ export class DaemonClient {
         scriptName,
       },
       responseType: "start_workspace_script_response",
-      timeout: 10000,
-    });
-  }
-
-  async listAvailableEditors(requestId?: string): Promise<ListAvailableEditorsPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "list_available_editors_request",
-      },
-      responseType: "list_available_editors_response",
-      timeout: 10000,
-    });
-  }
-
-  async openInEditor(
-    path: string,
-    editorId: EditorTargetId,
-    requestId?: string,
-  ): Promise<OpenInEditorPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "open_in_editor_request",
-        path,
-        editorId,
-      },
-      responseType: "open_in_editor_response",
       timeout: 10000,
     });
   }
@@ -3019,6 +3025,32 @@ export class DaemonClient {
     });
   }
 
+  async checkoutGithubGetCheckDetails(
+    input: {
+      cwd: string;
+      repoOwner: string;
+      repoName: string;
+      checkRunId: number;
+      workflowRunId?: number;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubGetCheckDetailsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.get_check_details.response">(
+      {
+        requestId,
+        message: {
+          type: "checkout.github.get_check_details.request",
+          cwd: input.cwd,
+          repoOwner: input.repoOwner,
+          repoName: input.repoName,
+          checkRunId: input.checkRunId,
+          workflowRunId: input.workflowRunId,
+        },
+        timeout: 60000,
+      },
+    );
+  }
+
   async checkoutPrStatus(cwd: string, requestId?: string): Promise<CheckoutPrStatusPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -3321,6 +3353,63 @@ export class DaemonClient {
       this.pendingBinaryFileReads.delete(resolvedRequestId);
       this.activeBinaryFileTransfers.delete(resolvedRequestId);
     }
+  }
+
+  async uploadFile(input: FileUploadInput): Promise<FileUploadResult> {
+    const bytes = asUint8Array(input.bytes);
+    if (!bytes) {
+      throw new Error("File bytes are required.");
+    }
+    const resolvedRequestId = this.createRequestId(input.requestId);
+    const modifiedAt = input.modifiedAt ?? new Date().toISOString();
+    const responsePromise = this.sendCorrelatedRequest({
+      requestId: resolvedRequestId,
+      message: {
+        type: "file.upload.request",
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        size: bytes.byteLength,
+        modifiedAt,
+        requestId: resolvedRequestId,
+      },
+      responseType: "file.upload.response",
+      timeout: 60000,
+      options: { skipQueue: true },
+    });
+
+    this.sendBinaryFrame(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId: resolvedRequestId,
+        metadata: {
+          mime: input.mimeType,
+          size: bytes.byteLength,
+          encoding: "binary",
+          modifiedAt,
+          fileName: input.fileName,
+        },
+      }),
+    );
+
+    const chunkSize = input.chunkSize ?? 1024 * 1024;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+      this.sendBinaryFrame(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileChunk,
+          requestId: resolvedRequestId,
+          payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
+        }),
+      );
+    }
+
+    this.sendBinaryFrame(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileEnd,
+        requestId: resolvedRequestId,
+      }),
+    );
+
+    return responsePromise;
   }
 
   async requestDownloadToken(

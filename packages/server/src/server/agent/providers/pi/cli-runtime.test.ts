@@ -121,6 +121,36 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("uses the configured command when resuming a session", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = new PiCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["pi"],
+      runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: ["omp"],
+        },
+      },
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return child;
+      },
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project", session: "/tmp/omp-session.jsonl" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        session: "/tmp/omp-session.jsonl",
+        argv: ["omp", "--mode", "rpc", "--session", "/tmp/omp-session.jsonl"],
+      }),
+    ]);
+  });
+
   test("passes an appended system prompt to Pi", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

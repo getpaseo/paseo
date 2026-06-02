@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { ActivityIndicator, Image, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
@@ -21,18 +22,21 @@ function resolvePairingViewState(args: {
   isError: boolean;
   error: unknown;
   data: { url?: string | null; relayEnabled?: boolean } | undefined;
+  labels: {
+    failedToLoadOffer: string;
+    relayDisabled: string;
+    unavailable: string;
+  };
 }): PairingViewState {
   if (args.isPending) return { tag: "loading" };
   if (args.isError) {
     const message =
-      args.error instanceof Error ? args.error.message : "Failed to load pairing offer.";
+      args.error instanceof Error ? args.error.message : args.labels.failedToLoadOffer;
     return { tag: "error", message };
   }
   if (!args.data?.url) {
     const message =
-      args.data?.relayEnabled === false
-        ? "Relay is not enabled. Enable relay to pair a device."
-        : "Pairing offer unavailable.";
+      args.data?.relayEnabled === false ? args.labels.relayDisabled : args.labels.unavailable;
     return { tag: "unavailable", message };
   }
   return { tag: "ready", url: args.data.url };
@@ -40,6 +44,7 @@ function resolvePairingViewState(args: {
 
 export function PairDeviceSection() {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const showSection = shouldUseDesktopDaemon();
   const [copied, setCopied] = useState(false);
 
@@ -96,6 +101,17 @@ export function PairDeviceSection() {
       ),
     [copied, theme.iconSize.sm, theme.colors.accent, theme.colors.foreground],
   );
+  const bodyLabels = useMemo(
+    () => ({
+      loadingOffer: t("pairing.device.loadingOffer"),
+      hint: t("pairing.device.hint"),
+      qrUnavailable: t("pairing.device.qrUnavailable"),
+      retry: t("pairing.device.retry"),
+      copy: t("pairing.device.copy"),
+      copied: t("pairing.device.copied"),
+    }),
+    [t],
+  );
 
   if (!showSection) return null;
 
@@ -104,6 +120,11 @@ export function PairDeviceSection() {
     isError: pairingQuery.isError,
     error: pairingQuery.error,
     data: pairingQuery.data,
+    labels: {
+      failedToLoadOffer: t("pairing.device.failedToLoadOffer"),
+      relayDisabled: t("pairing.device.relayDisabled"),
+      unavailable: t("pairing.device.unavailable"),
+    },
   });
 
   return (
@@ -119,6 +140,7 @@ export function PairDeviceSection() {
           copied={copied}
           handleRefetch={handleRefetch}
           handleCopyPress={handleCopyPress}
+          labels={bodyLabels}
         />
       </View>
     </View>
@@ -135,6 +157,14 @@ interface PairDeviceBodyProps {
   copied: boolean;
   handleRefetch: () => void;
   handleCopyPress: () => void;
+  labels: {
+    loadingOffer: string;
+    hint: string;
+    qrUnavailable: string;
+    retry: string;
+    copy: string;
+    copied: string;
+  };
 }
 
 function PairDeviceBody(props: PairDeviceBodyProps) {
@@ -148,13 +178,14 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
     copied,
     handleRefetch,
     handleCopyPress,
+    labels,
   } = props;
 
   if (viewState.tag === "loading") {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="small" />
-        <Text style={styles.hint}>Loading pairing offer…</Text>
+        <Text style={styles.hint}>{labels.loadingOffer}</Text>
       </View>
     );
   }
@@ -164,7 +195,7 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
       <View style={styles.centered}>
         <Text style={styles.hint}>{viewState.message}</Text>
         <Button variant="outline" size="sm" leftIcon={retryIcon} onPress={handleRefetch}>
-          Retry
+          {labels.retry}
         </Button>
       </View>
     );
@@ -172,11 +203,13 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
 
   return (
     <View style={styles.content}>
-      <Text style={styles.hint}>
-        Scan this QR code with Paseo on your phone, or copy the link below.
-      </Text>
+      <Text style={styles.hint}>{labels.hint}</Text>
       <View style={styles.qrContainer}>
-        <PairDeviceQrContent qrImageSource={qrImageSource} qrQuery={qrQuery} />
+        <PairDeviceQrContent
+          qrImageSource={qrImageSource}
+          qrQuery={qrQuery}
+          unavailableLabel={labels.qrUnavailable}
+        />
       </View>
       <View style={styles.linkRow}>
         <View style={styles.inputWrapper}>
@@ -189,7 +222,7 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
           />
         </View>
         <Button variant="outline" size="sm" leftIcon={copyButtonIcon} onPress={handleCopyPress}>
-          {copied ? "Copied" : "Copy"}
+          {copied ? labels.copied : labels.copy}
         </Button>
       </View>
     </View>
@@ -199,12 +232,13 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
 function PairDeviceQrContent(props: {
   qrImageSource: { uri: string } | null;
   qrQuery: { isError: boolean };
+  unavailableLabel: string;
 }) {
   if (props.qrImageSource) {
     return <Image source={props.qrImageSource} style={styles.qrImage} resizeMode="contain" />;
   }
   if (props.qrQuery.isError) {
-    return <Text style={styles.hint}>QR code unavailable.</Text>;
+    return <Text style={styles.hint}>{props.unavailableLabel}</Text>;
   }
   return <ActivityIndicator size="small" />;
 }

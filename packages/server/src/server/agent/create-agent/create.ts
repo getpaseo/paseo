@@ -25,7 +25,7 @@ import type {
 import type { AgentStorage } from "../agent-storage.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
-import { resolveClientMessageId } from "../../client-message-id.js";
+import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
 import {
   appendTimelineItemIfAgentKnown,
@@ -202,6 +202,14 @@ async function resolveSessionCreateAgent(
   });
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
+  const clientMessageId = normalizeClientMessageId(input.clientMessageId);
+  const runOptions: AgentRunOptions | undefined =
+    input.outputSchema || clientMessageId
+      ? {
+          ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+          ...(clientMessageId ? { messageId: clientMessageId } : {}),
+        }
+      : undefined;
 
   return {
     config: sessionConfig,
@@ -214,7 +222,7 @@ async function resolveSessionCreateAgent(
     },
     metadataInitialPrompt: trimmedPrompt,
     prompt: hasPromptContent ? prompt : undefined,
-    runOptions: input.outputSchema ? { outputSchema: input.outputSchema } : undefined,
+    runOptions,
     explicitTitle: input.explicitTitle,
     setupContinuation,
     background: true,
@@ -256,6 +264,7 @@ async function resolveMcpCreateAgent(
       requestedMode: input.mode,
       featureValues: input.features,
       parent: parentAgent,
+      unattended: false,
     });
 
   const labels = mergeLabels({

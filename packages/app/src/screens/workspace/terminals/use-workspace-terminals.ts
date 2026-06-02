@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import { useTranslation } from "react-i18next";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -15,9 +16,18 @@ import {
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
 
+interface TerminalProfileInput {
+  name: string;
+  command: string;
+  args?: string[];
+}
+
 interface PendingTerminalCreateInput {
   paneId?: string;
+  profile?: TerminalProfileInput;
 }
+
+export type { TerminalProfileInput };
 
 interface UseWorkspaceTerminalsInput {
   client: DaemonClient | null;
@@ -51,6 +61,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     onWorkspacePathUnavailable,
     onTerminalCreateQueued,
   } = input;
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [pendingCreateInput, setPendingCreateInput] = useState<PendingTerminalCreateInput | null>(
     null,
@@ -69,7 +80,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     enabled: canCreateNow,
     queryFn: async () => {
       if (!client || !workspaceDirectory) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return await client.listTerminals(workspaceDirectory);
     },
@@ -106,7 +117,11 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
   const createMutation = useMutation({
     mutationFn: async (_input?: PendingTerminalCreateInput) => {
       if (!client || !workspaceDirectory) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      if (_input?.profile) {
+        const { name, command, args } = _input.profile;
+        return await client.createTerminal(workspaceDirectory, name, undefined, { command, args });
       }
       return await client.createTerminal(workspaceDirectory);
     },
@@ -134,7 +149,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
   const killMutation = useMutation({
     mutationFn: async (terminalId: string) => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const payload = await client.killTerminal(terminalId);
       if (!payload.success) {

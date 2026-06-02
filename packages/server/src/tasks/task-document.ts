@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { writeFileAtomic } from "../server/atomic-file.js";
 import type { Task, TaskStatus } from "./types.js";
 
 function serializeTask(task: Task): string {
@@ -130,5 +131,5 @@ export async function readTaskDocument(filePath: string): Promise<Task> {
 }
 
 export async function writeTaskDocument(filePath: string, task: Task): Promise<void> {
-  await writeFile(filePath, serializeTask(task), "utf-8");
+  await writeFileAtomic(filePath, serializeTask(task));
 }

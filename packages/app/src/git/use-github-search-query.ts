@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { GitHubSearchRequest, GitHubSearchResponse } from "@getpaseo/protocol/messages";
+import { i18n } from "@/i18n/i18next";
 
 export const GITHUB_SEARCH_STALE_TIME = 30_000;
 
@@ -24,6 +26,7 @@ interface GitHubSearchQueryInput {
   query: string;
   kinds?: GitHubSearchRequest["kinds"];
   enabled: boolean;
+  hostDisconnectedMessage?: string;
 }
 
 export function githubSearchQueryKey(
@@ -46,7 +49,9 @@ export function buildGithubSearchQueryOptions(input: GitHubSearchQueryInput) {
     queryKey: githubSearchQueryKey(input.serverId, input.cwd, query, input.kinds),
     queryFn: async (): Promise<GitHubSearchPayload> => {
       if (!input.client) {
-        throw new Error("Host is not connected");
+        throw new Error(
+          input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"),
+        );
       }
       const request = { cwd: input.cwd, query, limit: 20 };
       if (input.kinds) {
@@ -60,5 +65,11 @@ export function buildGithubSearchQueryOptions(input: GitHubSearchQueryInput) {
 }
 
 export function useGithubSearchQuery(input: GitHubSearchQueryInput) {
-  return useQuery(buildGithubSearchQueryOptions(input));
+  const { t } = useTranslation();
+  return useQuery(
+    buildGithubSearchQueryOptions({
+      ...input,
+      hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
+    }),
+  );
 }

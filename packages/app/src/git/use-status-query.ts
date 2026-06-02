@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
 import {
@@ -26,6 +27,7 @@ function fetchCheckoutStatus(
 }
 
 export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -44,7 +46,7 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
     queryKey: checkoutStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return await peekOrFetchCheckoutStatus({ queryClient, client, serverId, cwd });
     },
@@ -70,13 +72,14 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
  * only the visible agents.
  */
 export function useCheckoutStatusCacheOnly({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
+  const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
 
   return useQuery({
     queryKey: checkoutStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return await fetchCheckoutStatus(client, cwd);
     },

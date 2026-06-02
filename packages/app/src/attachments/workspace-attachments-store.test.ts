@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceComposerAttachment } from "./types";
 import {
+  appendWorkspaceAttachment,
   buildWorkspaceAttachmentScopeKey,
   resetWorkspaceAttachmentsStore,
   useWorkspaceAttachmentsStore,
@@ -46,6 +47,16 @@ function reviewAttachment(body: string): WorkspaceComposerAttachment {
   };
 }
 
+function contextAttachment(id: string): WorkspaceComposerAttachment {
+  return {
+    kind: "github.pull_request_comment",
+    id,
+    title: "Comment · octocat",
+    text: "GitHub pull request comment\n\nLooks good.",
+    url: `https://github.com/getpaseo/paseo/pull/42#${id}`,
+  };
+}
+
 describe("workspace attachments store", () => {
   it("scopes workspace attachments by server and workspace before cwd fallback", () => {
     expect(
@@ -85,5 +96,46 @@ describe("workspace attachments store", () => {
     useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({ scopeKey });
 
     expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey]).toBeUndefined();
+  });
+
+  it("appends unique context attachments without dropping other workspace attachments", () => {
+    const review = reviewAttachment("Please simplify this.");
+    const context = contextAttachment("comment-1");
+
+    expect(appendWorkspaceAttachment([review], context)).toEqual([review, context]);
+  });
+
+  it("dedupes repeated context attachments by provider, source, and id", () => {
+    const original = contextAttachment("comment-1");
+    const replacement = {
+      ...contextAttachment("comment-1"),
+      title: "Comment · octocat updated",
+      text: "Updated text",
+    };
+
+    expect(appendWorkspaceAttachment([original], replacement)).toEqual([replacement]);
+  });
+
+  it("adds a workspace attachment against the current scope state", () => {
+    resetWorkspaceAttachmentsStore();
+    const scopeKey = buildWorkspaceAttachmentScopeKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+    });
+    const review = reviewAttachment("Please simplify this.");
+    const context = contextAttachment("comment-1");
+
+    const addWorkspaceAttachment = useWorkspaceAttachmentsStore.getState().addWorkspaceAttachment;
+    useWorkspaceAttachmentsStore
+      .getState()
+      .setWorkspaceAttachments({ scopeKey, attachments: [review] });
+
+    addWorkspaceAttachment({ scopeKey, attachment: context });
+
+    expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey]).toEqual([
+      review,
+      context,
+    ]);
   });
 });

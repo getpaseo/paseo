@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSessionStore } from "@/stores/session-store";
 import { formatTokenCount } from "./context-window-meter.utils";
@@ -430,6 +431,7 @@ export function ContextWindowMeter({
   provider,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const percentage = getUsagePercentage(maxTokens, usedTokens);
 
   const providerQuota = useSessionStore((state) =>
@@ -455,7 +457,9 @@ export function ContextWindowMeter({
         <Pressable
           style={containerStyle}
           accessibilityRole="image"
-          accessibilityLabel={`Context window ${roundedPercentage}% used`}
+          accessibilityLabel={t("contextWindow.accessibility", {
+            percentage: roundedPercentage,
+          })}
         >
           <Svg
             width={svgSize}
@@ -492,13 +496,20 @@ export function ContextWindowMeter({
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipContent}>
-          <Text style={styles.tooltipTitle}>Context window</Text>
-          <Text style={styles.tooltipText}>{`${roundedPercentage}% used`}</Text>
-          <Text
-            style={styles.tooltipDetail}
-          >{`${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)} tokens`}</Text>
+          <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
+          <Text style={styles.tooltipText}>
+            {t("contextWindow.used", { percentage: roundedPercentage })}
+          </Text>
+          <Text style={styles.tooltipDetail}>
+            {t("contextWindow.tokens", {
+              used: formatTokenCount(usedTokens),
+              max: formatTokenCount(maxTokens),
+            })}
+          </Text>
           {formattedSessionCost ? (
-            <Text style={styles.tooltipDetail}>{`Session cost ${formattedSessionCost}`}</Text>
+            <Text style={styles.tooltipDetail}>
+              {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
+            </Text>
           ) : null}
           <PlanUsageSection provider={provider} providerQuota={providerQuota} />
         </View>

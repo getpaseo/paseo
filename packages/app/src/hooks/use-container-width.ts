@@ -31,7 +31,11 @@ export function useContainerWidthBelow(
   return {
     onLayout: useCallback(
       (e: LayoutChangeEvent) => {
-        const nextIsBelow = e.nativeEvent.layout.width < threshold;
+        const width = e.nativeEvent.layout.width;
+        if (width <= 0) {
+          return;
+        }
+        const nextIsBelow = width < threshold;
         setIsBelow((currentIsBelow) =>
           currentIsBelow === nextIsBelow ? currentIsBelow : nextIsBelow,
         );

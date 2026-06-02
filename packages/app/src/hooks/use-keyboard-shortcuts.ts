@@ -24,6 +24,7 @@ import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
 import {
+  type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
@@ -56,6 +57,13 @@ export function useKeyboardShortcuts({
   const activeServerId = useActiveServerId();
   const openProjectPickerAction = useOpenProjectPicker(activeServerId);
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
+
+  useEffect(() => {
+    if (activeWorkspaceSelection) {
+      keyboardWorkspaceSelectionRef.current = activeWorkspaceSelection;
+    }
+  }, [activeWorkspaceSelection]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -95,6 +103,10 @@ export function useKeyboardShortcuts({
         case "dispatch":
           return keyboardActionDispatcher.dispatch(action.action);
         case "navigate-workspace":
+          keyboardWorkspaceSelectionRef.current = {
+            serverId: action.serverId,
+            workspaceId: action.workspaceId,
+          };
           navigateToWorkspace(action.serverId, action.workspaceId, { currentPathname: pathname });
           return true;
         case "navigate-last-workspace":
@@ -197,7 +209,8 @@ export function useKeyboardShortcuts({
           pathname,
           isMobile,
           sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
-          navigationActiveWorkspace: activeWorkspaceSelection,
+          navigationActiveWorkspace:
+            keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
           commandCenterOpen: store.commandCenterOpen,
           shortcutsDialogOpen: store.shortcutsDialogOpen,
         },

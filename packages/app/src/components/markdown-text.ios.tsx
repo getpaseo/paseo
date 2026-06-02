@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
-import type { StyleProp, TextProps, TextStyle, ViewStyle } from "react-native";
+import { View, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
 import { UITextView } from "react-native-uitextview";
+import { resolvePlainMarkdownTextStyle } from "@/components/markdown-text-style";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
@@ -8,10 +9,11 @@ interface MarkdownTextSpanProps {
   children: ReactNode;
   // Links route through this span too (see assistant-file-links/link.tsx). A
   // plain <Text> nested in the paragraph UITextView is dropped, so the link
-  // must be a UITextView span to be visible. onPress is forwarded best-effort:
-  // react-native-uitextview nulls onPress on the root native view, so reliable
-  // tap-to-open is still tracked by #21 — but visible+selectable text beats an
-  // invisible link.
+  // must be a UITextView span to be visible. onPress is wired onto the leaf
+  // string children here: react-native-uitextview attaches it to the
+  // RNUITextViewChild nodes it builds from string content, which the native tap
+  // recognizer dispatches to. The link's handler reaches these leaf spans via
+  // AssistantLinkPressProvider (see assistant-file-links/link-press-context).
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];
 }
@@ -26,11 +28,13 @@ export function MarkdownTextSpan({
   onPress,
   accessibilityRole,
 }: MarkdownTextSpanProps) {
+  const plainStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
+
   return (
     <UITextView
       uiTextView
       selectable
-      style={style}
+      style={plainStyle}
       onPress={onPress}
       accessibilityRole={accessibilityRole}
     >
@@ -41,10 +45,11 @@ export function MarkdownTextSpan({
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
+  containsImage?: boolean;
   children: ReactNode;
 }
 
-const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
+const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 
 // iOS-only: paragraph wraps in UITextView so the entire paragraph is one
 // native text view. That's what unlocks cross-inline drag selection — handles
@@ -52,13 +57,27 @@ const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
 // ViewStyle is structurally compatible with the layout props paragraphs use
 // (margin, padding, alignment); the cast lets the existing paragraphStyle
 // flow through unchanged.
-export function MarkdownParagraphView({ paragraphStyle, children }: MarkdownParagraphViewProps) {
-  const style = useMemo(
-    () => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET] as StyleProp<TextStyle>,
+export function MarkdownParagraphView({
+  paragraphStyle,
+  containsImage = false,
+  children,
+}: MarkdownParagraphViewProps) {
+  const textStyle = useMemo(
+    () =>
+      resolvePlainMarkdownTextStyle([
+        paragraphStyle,
+        MARKDOWN_PARAGRAPH_RESET,
+      ] as StyleProp<TextStyle>),
     [paragraphStyle],
   );
+  const viewStyle = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
+
+  if (containsImage) {
+    return <View style={viewStyle}>{children}</View>;
+  }
+
   return (
-    <UITextView uiTextView selectable style={style}>
+    <UITextView uiTextView selectable style={textStyle}>
       {children}
     </UITextView>
   );

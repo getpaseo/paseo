@@ -561,6 +561,39 @@ describe("PersistedConfigSchema voice mode config", () => {
   });
 });
 
+describe("loadPersistedConfig", () => {
+  test("accepts the documented config schema marker", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            $schema: "https://paseo.sh/schemas/paseo.config.v1.json",
+            version: 1,
+            daemon: {
+              listen: "127.0.0.1:6767",
+              hostnames: ["localhost", ".localhost"],
+              mcp: { enabled: true },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.daemon?.listen).toBe("127.0.0.1:6767");
+      expect(config.daemon?.hostnames).toEqual(["localhost", ".localhost"]);
+      expect(config.daemon?.mcp?.enabled).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {
   test("initializes config.json with private permissions", () => {
     const home = createTempHome();

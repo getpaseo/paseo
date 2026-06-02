@@ -43,6 +43,18 @@ export interface SeedDaemonClient {
   fetchAgents(options?: { scope?: "active" }): Promise<{
     entries: Array<{ agent: { id: string; cwd: string; title?: string | null } }>;
   }>;
+  fetchRecentProviderSessions(options: {
+    cwd: string;
+    providers: string[];
+    limit: number;
+  }): Promise<{
+    entries: Array<{
+      providerId: string;
+      providerHandleId: string;
+      cwd: string;
+      firstPromptPreview?: string | null;
+    }>;
+  }>;
   updateAgent(agentId: string, updates: { name?: string }): Promise<void>;
   waitForAgentUpsert(
     agentId: string,

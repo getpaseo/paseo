@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import {
   AdaptiveModalSheet,
   AdaptiveTextInput,
@@ -27,13 +28,14 @@ export function AdaptiveRenameModal({
   title,
   initialValue,
   placeholder,
-  submitLabel = "Rename",
+  submitLabel,
   onClose,
   onSubmit,
   validate,
   maxLength,
   testID,
 }: AdaptiveRenameModalProps) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -64,10 +66,10 @@ export function AdaptiveRenameModal({
 
   const computeError = useCallback(
     (value: string): string | null => {
-      if (!value.trim()) return "Name is required";
+      if (!value.trim()) return t("common.errors.nameRequired");
       return validate ? validate(value) : null;
     },
-    [validate],
+    [validate, t],
   );
 
   const handleChange = useCallback((value: string) => {
@@ -91,10 +93,11 @@ export function AdaptiveRenameModal({
       onClose();
     } catch (err) {
       setIsPending(false);
-      const message = err instanceof Error && err.message ? err.message : "Unable to save";
+      const message =
+        err instanceof Error && err.message ? err.message : t("common.errors.unableToSave");
       setError(message);
     }
-  }, [isPending, draft, initialValue, computeError, onSubmit, onClose]);
+  }, [isPending, draft, initialValue, computeError, onSubmit, onClose, t]);
 
   const handleCancel = useCallback(() => {
     if (isPending) return;
@@ -147,7 +150,7 @@ export function AdaptiveRenameModal({
             disabled={isPending}
             testID={cancelTestID}
           >
-            Cancel
+            {t("common.actions.cancel")}
           </Button>
           <Button
             variant="default"
@@ -157,7 +160,7 @@ export function AdaptiveRenameModal({
             disabled={submitDisabled}
             testID={submitTestID}
           >
-            {isPending ? "Saving..." : submitLabel}
+            {isPending ? t("renameModal.saving") : (submitLabel ?? t("renameModal.rename"))}
           </Button>
         </View>
       </View>

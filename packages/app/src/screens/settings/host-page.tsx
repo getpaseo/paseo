@@ -1,13 +1,35 @@
-import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronRight,
+  Globe,
+  Monitor,
+  Pencil,
+  Plus,
+  RotateCw,
+  SquareTerminal,
+  Trash2,
+} from "lucide-react-native";
+import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import {
+  getTerminalProfileIcon,
+  resolveTerminalProfiles,
+} from "@getpaseo/protocol/terminal-profiles";
+import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { startDesktopDaemon, stopDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
@@ -28,16 +50,45 @@ import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { formatLatency } from "@/utils/latency";
+import { ICON_SIZE } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
+import { getProviderIcon } from "@/components/provider-icons";
 
-const RESTART_CONFIRMATION_MESSAGE =
-  "This will restart the daemon. Agents running on it will keep going; the app will reconnect automatically.";
+const ThemedArrowUp = withUnistyles(ArrowUp);
+const ThemedArrowDown = withUnistyles(ArrowDown);
+const ThemedProfilePencil = withUnistyles(Pencil);
+const ThemedTrash2 = withUnistyles(Trash2);
+const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
+const ThemedPlus = withUnistyles(Plus);
 
-function formatHostConnectionLabel(connection: HostConnection): string {
+interface DynamicProviderIconProps {
+  iconKey: string;
+  size: number;
+  color?: string;
+}
+
+function DynamicProviderIcon({ iconKey, size, color = "" }: DynamicProviderIconProps) {
+  const Icon = getProviderIcon(iconKey);
+  return <Icon size={size} color={color} />;
+}
+
+const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
+
+const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+
+const moveUpIcon = <ThemedArrowUp size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const moveDownIcon = <ThemedArrowDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const editProfileIcon = <ThemedProfilePencil size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
+const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+
+function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
   if (connection.type === "relay") {
-    return `Relay (${connection.relayEndpoint})`;
+    return `${t("settings.host.badges.relay")} (${connection.relayEndpoint})`;
   }
   if (connection.type === "directSocket" || connection.type === "directPipe") {
-    return `Local (${connection.path})`;
+    return `${t("settings.host.badges.local")} (${connection.path})`;
   }
   return `TCP (${connection.endpoint})`;
 }
@@ -45,18 +96,19 @@ function formatHostConnectionLabel(connection: HostConnection): string {
 function formatActiveConnectionBadge(
   activeConnection: { type: HostConnection["type"]; display: string } | null,
   theme: ReturnType<typeof useUnistyles>["theme"],
+  t: TFunction,
 ): { icon: React.ReactNode; text: string } | null {
   if (!activeConnection) return null;
   if (activeConnection.type === "relay") {
     return {
       icon: <Globe size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-      text: "Relay",
+      text: t("settings.host.badges.relay"),
     };
   }
   if (activeConnection.type === "directSocket" || activeConnection.type === "directPipe") {
     return {
       icon: <Monitor size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-      text: "Local",
+      text: t("settings.host.badges.local"),
     };
   }
   return {
@@ -71,25 +123,24 @@ function formatDaemonVersionBadge(version: string | null): string | null {
   return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
 }
 
-const REMOVE_CONNECTION_HEADER: SheetHeader = { title: "Remove connection" };
-const REMOVE_HOST_HEADER: SheetHeader = { title: "Remove host" };
-
 function useHostProfile(serverId: string): HostProfile | null {
   const daemons = useHosts();
   return daemons.find((entry) => entry.serverId === serverId) ?? null;
 }
 
 function HostNotFound() {
+  const { t } = useTranslation();
   return (
     <View>
       <View style={EMPTY_CARD_STYLE}>
-        <Text style={styles.emptyText}>Host not found</Text>
+        <Text style={styles.emptyText}>{t("settings.host.notFound")}</Text>
       </View>
     </View>
   );
 }
 
 function HostStatusBadges({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const snapshot = useHostRuntimeSnapshot(serverId);
   const daemonVersion = useSessionStore(
@@ -120,7 +171,7 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
   } else {
     statusPillBg = "rgba(161, 161, 170, 0.1)";
   }
-  const connectionBadge = formatActiveConnectionBadge(activeConnection, theme);
+  const connectionBadge = formatActiveConnectionBadge(activeConnection, theme, t);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
 
   const statusPillStyle = useMemo(
@@ -168,6 +219,7 @@ function HostConnectionError({ serverId }: { serverId: string }) {
 }
 
 export function HostConnectionsPage({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const host = useHostProfile(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
 
@@ -180,7 +232,7 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
       <HostConnectionError serverId={serverId} />
       <ConnectionsSection host={host} />
       {isLocalDaemon ? (
-        <SettingsSection title="Pair devices">
+        <SettingsSection title={t("settings.host.pairDevices.title")}>
           <PairDeviceRow />
         </SettingsSection>
       ) : null}
@@ -188,7 +240,8 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
   );
 }
 
-export function HostOrchestrationPage({ serverId }: { serverId: string }) {
+export function HostAgentsPage({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const host = useHostProfile(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
@@ -199,13 +252,37 @@ export function HostOrchestrationPage({ serverId }: { serverId: string }) {
   return (
     <View>
       {isConnected ? (
-        <SettingsSection title="Orchestration">
+        <SettingsSection title={t("settings.hostSections.agents")}>
           <InjectPaseoToolsCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />
         </SettingsSection>
       ) : (
         <View style={EMPTY_CARD_STYLE}>
-          <Text style={styles.emptyText}>Connect to this host to manage orchestration</Text>
+          <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export function HostWorkspacesPage({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const host = useHostProfile(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
+      {isConnected ? (
+        <SettingsSection title={t("settings.hostSections.workspaces")}>
+          <AutoArchiveMergedWorkspacesCard serverId={serverId} />
+        </SettingsSection>
+      ) : (
+        <View style={EMPTY_CARD_STYLE}>
+          <Text style={styles.emptyText}>{t("settings.host.workspaces.unavailable")}</Text>
         </View>
       )}
     </View>
@@ -226,7 +303,7 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
   );
 }
 
-export function HostDaemonPage({
+export function HostSettingsPage({
   serverId,
   onHostRemoved,
 }: {
@@ -253,12 +330,13 @@ export function HostDaemonPage({
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 
-      <RemoveHostSection host={host} onRemoved={onHostRemoved} />
+      <RemoveHostSection host={host} isLocalDaemon={isLocalDaemon} onRemoved={onHostRemoved} />
     </View>
   );
 }
 
 export function HostRenameButton({ host }: { host: HostProfile }) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { renameHost } = useHostMutations();
   const [isEditing, setIsEditing] = useState(false);
@@ -282,7 +360,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
         hitSlop={8}
         style={styles.identityEditButton}
         accessibilityRole="button"
-        accessibilityLabel="Edit label"
+        accessibilityLabel={t("settings.host.daemon.rename.editLabel")}
         testID="host-page-label-edit-button"
       >
         <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
@@ -290,10 +368,10 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
 
       <AdaptiveRenameModal
         visible={isEditing}
-        title="Rename host"
+        title={t("settings.host.daemon.rename.title")}
         initialValue={host.label}
-        placeholder="My Host"
-        submitLabel="Save"
+        placeholder={t("settings.host.daemon.rename.placeholder")}
+        submitLabel={t("settings.host.daemon.rename.submit")}
         onClose={closeEditor}
         onSubmit={handleSubmit}
         testID="host-page-rename-modal"
@@ -303,6 +381,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
 }
 
 function ConnectionsSection({ host }: { host: HostProfile }) {
+  const { t } = useTranslation();
   const { removeConnection } = useHostMutations();
   const snapshot = useHostRuntimeSnapshot(host.serverId);
   const probeByConnectionId = snapshot?.probeByConnectionId ?? new Map();
@@ -311,13 +390,20 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
     title: string;
   } | null>(null);
   const [isRemovingConnection, setIsRemovingConnection] = useState(false);
+  const removeConnectionHeader = useMemo<SheetHeader>(
+    () => ({ title: t("settings.host.connections.removeTitle") }),
+    [t],
+  );
 
-  const handleRequestRemove = useCallback((connection: HostConnection) => {
-    setPendingRemoveConnection({
-      connectionId: connection.id,
-      title: formatHostConnectionLabel(connection),
-    });
-  }, []);
+  const handleRequestRemove = useCallback(
+    (connection: HostConnection) => {
+      setPendingRemoveConnection({
+        connectionId: connection.id,
+        title: formatHostConnectionLabel(connection, t),
+      });
+    },
+    [t],
+  );
 
   const handleCloseConfirm = useCallback(() => {
     if (isRemovingConnection) return;
@@ -336,13 +422,16 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
       .then(() => setPendingRemoveConnection(null))
       .catch((error) => {
         console.error("[HostPage] Failed to remove connection", error);
-        Alert.alert("Error", "Unable to remove connection");
+        Alert.alert(
+          t("settings.host.connections.removeErrorTitle"),
+          t("settings.host.connections.removeErrorMessage"),
+        );
       })
       .finally(() => setIsRemovingConnection(false));
-  }, [pendingRemoveConnection, removeConnection, host.serverId]);
+  }, [pendingRemoveConnection, removeConnection, host.serverId, t]);
 
   return (
-    <SettingsSection title="Connections">
+    <SettingsSection title={t("settings.host.connections.title")}>
       <View style={settingsStyles.card} testID="host-page-connections-card">
         {host.connections.map((conn, index) => {
           const probe = probeByConnectionId.get(conn.id);
@@ -362,13 +451,15 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
 
       {pendingRemoveConnection ? (
         <AdaptiveModalSheet
-          header={REMOVE_CONNECTION_HEADER}
+          header={removeConnectionHeader}
           visible
           onClose={handleCloseConfirm}
           testID="remove-connection-confirm-modal"
         >
           <Text style={styles.confirmText}>
-            Remove {pendingRemoveConnection.title}? This cannot be undone.
+            {t("settings.host.connections.removeMessage", {
+              name: pendingRemoveConnection.title,
+            })}
           </Text>
           <View style={styles.confirmActions}>
             <Button
@@ -378,7 +469,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
               onPress={handleCancelConfirm}
               disabled={isRemovingConnection}
             >
-              Cancel
+              {t("common.actions.cancel")}
             </Button>
             <Button
               variant="destructive"
@@ -388,7 +479,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
               disabled={isRemovingConnection}
               testID="remove-connection-confirm"
             >
-              Remove
+              {t("settings.host.connections.removeAction")}
             </Button>
           </View>
         </AdaptiveModalSheet>
@@ -412,12 +503,13 @@ function ConnectionRow({
   latencyError: boolean;
   onRemove: (connection: HostConnection) => void;
 }) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
-  const title = formatHostConnectionLabel(connection);
+  const title = formatHostConnectionLabel(connection, t);
 
   const latencyText = (() => {
     if (latencyLoading) return "...";
-    if (latencyError) return "Timeout";
+    if (latencyError) return t("settings.host.connections.timeout");
     if (latencyMs != null) return formatLatency(latencyMs);
     return "—";
   })();
@@ -454,7 +546,7 @@ function ConnectionRow({
         textStyle={destructiveTextStyle}
         onPress={handlePressRemove}
       >
-        Remove
+        {t("settings.host.connections.removeAction")}
       </Button>
     </View>
   );
@@ -466,6 +558,7 @@ const delay = (ms: number) =>
   });
 
 function RestartDaemonCard({ host }: { host: HostProfile }) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const daemonClient = useHostRuntimeClient(host.serverId);
   const isConnected = useHostRuntimeIsConnected(host.serverId);
@@ -508,34 +601,34 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       setIsRestarting(false);
       if (!reconnected) {
         Alert.alert(
-          "Unable to reconnect",
-          `${host.label} did not come back online. Please verify it restarted.`,
+          t("settings.host.daemon.restart.unableToReconnectTitle"),
+          t("settings.host.daemon.restart.unableToReconnectMessage", { name: host.label }),
         );
       }
     }
-  }, [host.label, isHostConnected, waitForCondition]);
+  }, [host.label, isHostConnected, t, waitForCondition]);
 
   const handleRestart = useCallback(() => {
     if (!daemonClient) {
       Alert.alert(
-        "Host unavailable",
-        "This host is not connected. Wait for it to come online before restarting.",
+        t("settings.host.daemon.restart.unavailableTitle"),
+        t("settings.host.daemon.restart.unavailableMessage"),
       );
       return;
     }
     if (!isHostConnected()) {
       Alert.alert(
-        "Host offline",
-        "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting.",
+        t("settings.host.daemon.restart.offlineTitle"),
+        t("settings.host.daemon.restart.offlineMessage"),
       );
       return;
     }
 
     void confirmDialog({
-      title: `Restart ${host.label}`,
-      message: RESTART_CONFIRMATION_MESSAGE,
-      confirmLabel: "Restart",
-      cancelLabel: "Cancel",
+      title: t("settings.host.daemon.restart.confirmTitle", { name: host.label }),
+      message: t("settings.host.daemon.restart.confirmMessage"),
+      confirmLabel: t("settings.host.daemon.restart.confirm"),
+      cancelLabel: t("common.actions.cancel"),
       destructive: true,
     })
       .then((confirmed) => {
@@ -548,8 +641,8 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             if (!isMountedRef.current) return;
             setIsRestarting(false);
             Alert.alert(
-              "Error",
-              "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online.",
+              t("settings.host.daemon.restart.requestFailedTitle"),
+              t("settings.host.daemon.restart.requestFailedMessage"),
             );
           });
         void waitForDaemonRestart();
@@ -557,9 +650,12 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       })
       .catch((error) => {
         console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
-        Alert.alert("Error", "Unable to open the restart confirmation dialog.");
+        Alert.alert(
+          t("settings.host.daemon.restart.requestFailedTitle"),
+          t("settings.host.daemon.restart.dialogFailedMessage"),
+        );
       });
-  }, [daemonClient, host.label, host.serverId, isHostConnected, waitForDaemonRestart]);
+  }, [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart]);
 
   const restartIcon = useMemo(
     () => <RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />,
@@ -570,10 +666,8 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     <View style={settingsStyles.card} testID="host-page-restart-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Restart daemon</Text>
-          <Text style={settingsStyles.rowHint}>
-            Restarts the daemon process. The app will reconnect automatically
-          </Text>
+          <Text style={settingsStyles.rowTitle}>{t("settings.host.daemon.restart.title")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("settings.host.daemon.restart.hint")}</Text>
         </View>
         <Button
           variant="outline"
@@ -583,7 +677,9 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
           disabled={isRestarting || !daemonClient || !isConnected}
           testID="host-page-restart-button"
         >
-          {isRestarting ? "Restarting..." : "Restart"}
+          {isRestarting
+            ? t("settings.host.daemon.restart.restarting")
+            : t("settings.host.daemon.restart.confirm")}
         </Button>
       </View>
     </View>
@@ -591,6 +687,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
 }
 
 function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
 
@@ -611,15 +708,56 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
     <View style={settingsStyles.card} testID="host-page-inject-mcp-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Enable Paseo tools</Text>
+          <Text style={settingsStyles.rowTitle}>
+            {t("settings.host.orchestration.enableTools.title")}
+          </Text>
           <Text style={settingsStyles.rowHint}>
-            Agents will be able to manage worktrees, agents and schedules
+            {t("settings.host.orchestration.enableTools.hint")}
           </Text>
         </View>
         <Switch
           value={config?.mcp.injectIntoAgents !== false}
           onValueChange={handleValueChange}
-          accessibilityLabel="Inject Paseo tools"
+          accessibilityLabel={t("settings.host.orchestration.enableTools.accessibilityLabel")}
+        />
+      </View>
+    </View>
+  );
+}
+
+function AutoArchiveMergedWorkspacesCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({ autoArchiveAfterMerge: next }).catch((error) => {
+        console.error("[HostPage] Failed to update auto-archive after merge", error);
+        Alert.alert(
+          "Unable to update workspaces",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    },
+    [patchConfig],
+  );
+
+  if (!isConnected) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-auto-archive-merged-workspaces-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Archive merged PR workspaces</Text>
+          <Text style={settingsStyles.rowHint}>
+            Automatically archive clean Paseo workspaces after their pull request is merged
+          </Text>
+        </View>
+        <Switch
+          value={config?.autoArchiveAfterMerge === true}
+          onValueChange={handleValueChange}
+          accessibilityLabel="Archive merged PR workspaces"
+          testID="host-page-auto-archive-merged-workspaces-switch"
         />
       </View>
     </View>
@@ -627,13 +765,17 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
 }
 
 function AppendSystemPromptCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const persistedPrompt = config?.appendSystemPrompt ?? "";
   const [draft, setDraft] = useState(persistedPrompt);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const header = useMemo<SheetHeader>(() => ({ title: "Append system prompt" }), []);
+  const header = useMemo<SheetHeader>(
+    () => ({ title: t("settings.host.orchestration.systemPrompt.sheetTitle") }),
+    [t],
+  );
 
   useEffect(() => {
     setDraft(persistedPrompt);
@@ -676,8 +818,12 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
       <View style={settingsStyles.card} testID="host-page-append-system-prompt-card">
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>System prompt</Text>
-            <Text style={settingsStyles.rowHint}>Adds a system prompt to all agents</Text>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.orchestration.systemPrompt.title")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.host.orchestration.systemPrompt.hint")}
+            </Text>
           </View>
           <Button
             variant="outline"
@@ -685,7 +831,7 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
             onPress={handleOpen}
             testID="host-page-append-system-prompt-edit"
           >
-            Edit
+            {t("settings.host.orchestration.systemPrompt.edit")}
           </Button>
         </View>
       </View>
@@ -700,10 +846,10 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
         >
           <SettingsTextAreaCard
             testID="host-page-append-system-prompt-input"
-            accessibilityLabel="Append system prompt"
+            accessibilityLabel={t("settings.host.orchestration.systemPrompt.accessibilityLabel")}
             value={draft}
             onChangeText={setDraft}
-            placeholder="Always keep replies concise."
+            placeholder={t("settings.host.orchestration.systemPrompt.placeholder")}
           />
           <View style={styles.appendPromptActions}>
             <Button
@@ -713,7 +859,7 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
               disabled={!hasChanges || isSaving}
               testID="host-page-append-system-prompt-reset"
             >
-              Reset
+              {t("settings.host.orchestration.systemPrompt.reset")}
             </Button>
             <Button
               variant="default"
@@ -722,7 +868,9 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
               disabled={!hasChanges || isSaving}
               testID="host-page-append-system-prompt-save"
             >
-              {isSaving ? "Saving..." : "Save"}
+              {isSaving
+                ? t("settings.host.orchestration.systemPrompt.saving")
+                : t("settings.host.orchestration.systemPrompt.save")}
             </Button>
           </View>
         </AdaptiveModalSheet>
@@ -732,6 +880,7 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
 }
 
 function PairDeviceRow() {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -747,10 +896,8 @@ function PairDeviceRow() {
         testID="host-page-pair-device-row"
       >
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Pair a device</Text>
-          <Text style={settingsStyles.rowHint}>
-            Scan a QR code or copy a link to connect your phone to this host
-          </Text>
+          <Text style={settingsStyles.rowTitle}>{t("settings.host.pairDevices.rowTitle")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("settings.host.pairDevices.rowHint")}</Text>
         </View>
         <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </Pressable>
@@ -764,11 +911,31 @@ function PairDeviceRow() {
   );
 }
 
-function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?: () => void }) {
+function RemoveHostSection({
+  host,
+  isLocalDaemon,
+  onRemoved,
+}: {
+  host: HostProfile;
+  isLocalDaemon: boolean;
+  onRemoved?: () => void;
+}) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { removeHost } = useHostMutations();
+  const { updateSettings } = useDesktopSettings();
+  const { data: daemonStatusData, setStatus } = useDaemonStatus();
   const [isConfirming, setIsConfirming] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const daemonStatus = daemonStatusData?.status ?? null;
+  const removeHostHeader = useMemo<SheetHeader>(
+    () => ({
+      title: isLocalDaemon
+        ? t("settings.host.daemon.remove.localConfirmTitle")
+        : t("settings.host.daemon.remove.title"),
+    }),
+    [isLocalDaemon, t],
+  );
 
   const destructiveTextStyle = useMemo(
     () => ({ color: theme.colors.destructive }),
@@ -781,9 +948,45 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
     setIsConfirming(false);
   }, [isRemoving]);
   const handleCancel = useCallback(() => setIsConfirming(false), []);
+  const rollbackLocalhostRemoval = useCallback(
+    async (shouldRestartDaemon: boolean) => {
+      await updateSettings({ daemon: { manageBuiltInDaemon: true } });
+      if (!shouldRestartDaemon) {
+        return;
+      }
+      setStatus(await startDesktopDaemon());
+    },
+    [setStatus, updateSettings],
+  );
   const handleConfirmRemove = useCallback(() => {
     setIsRemoving(true);
-    void removeHost(host.serverId)
+    const remove = async () => {
+      let didDisableDaemonManagement = false;
+      let didStopDaemon = false;
+      if (isLocalDaemon) {
+        try {
+          await updateSettings({ daemon: { manageBuiltInDaemon: false } });
+          didDisableDaemonManagement = true;
+          if (daemonStatus?.status === "running" && daemonStatus.desktopManaged) {
+            setStatus(await stopDesktopDaemon());
+            didStopDaemon = true;
+          }
+          await removeHost(host.serverId);
+        } catch (error) {
+          if (didDisableDaemonManagement) {
+            try {
+              await rollbackLocalhostRemoval(didStopDaemon);
+            } catch (rollbackError) {
+              console.error("[HostPage] Failed to roll back localhost removal", rollbackError);
+            }
+          }
+          throw error;
+        }
+        return;
+      }
+      await removeHost(host.serverId);
+    };
+    void remove()
       .then(() => {
         setIsConfirming(false);
         onRemoved?.();
@@ -791,10 +994,25 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
       })
       .catch((error) => {
         console.error("[HostPage] Failed to remove host", error);
-        Alert.alert("Error", "Unable to remove host");
+        Alert.alert(
+          t("settings.host.daemon.remove.errorTitle"),
+          isLocalDaemon
+            ? t("settings.host.daemon.remove.localErrorMessage")
+            : t("settings.host.daemon.remove.errorMessage"),
+        );
       })
       .finally(() => setIsRemoving(false));
-  }, [host.serverId, onRemoved, removeHost]);
+  }, [
+    daemonStatus,
+    host.serverId,
+    isLocalDaemon,
+    onRemoved,
+    removeHost,
+    rollbackLocalhostRemoval,
+    setStatus,
+    t,
+    updateSettings,
+  ]);
 
   const removeIcon = useMemo(
     () => <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />,
@@ -802,15 +1020,24 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
   );
 
   return (
-    <SettingsSection title="Danger zone" testID="host-page-remove-host-card">
+    <SettingsSection
+      title={t("settings.host.daemon.dangerZone")}
+      testID="host-page-remove-host-card"
+    >
       <RestartDaemonCard host={host} />
 
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Remove host</Text>
+            <Text style={settingsStyles.rowTitle}>
+              {isLocalDaemon
+                ? t("settings.host.daemon.remove.localTitle")
+                : t("settings.host.daemon.remove.title")}
+            </Text>
             <Text style={settingsStyles.rowHint}>
-              Removes this host and its saved connections from this device
+              {isLocalDaemon
+                ? t("settings.host.daemon.remove.localHint")
+                : t("settings.host.daemon.remove.hint")}
             </Text>
           </View>
           <Button
@@ -821,20 +1048,22 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
             onPress={handleOpenConfirm}
             testID="host-page-remove-host-button"
           >
-            Remove
+            {t("settings.host.connections.removeAction")}
           </Button>
         </View>
       </View>
 
       {isConfirming ? (
         <AdaptiveModalSheet
-          header={REMOVE_HOST_HEADER}
+          header={removeHostHeader}
           visible
           onClose={handleCloseConfirm}
           testID="remove-host-confirm-modal"
         >
           <Text style={styles.confirmText}>
-            Remove {host.label}? This will delete its saved connections.
+            {isLocalDaemon
+              ? t("settings.host.daemon.remove.localConfirmMessage")
+              : t("settings.host.daemon.remove.confirmMessage", { name: host.label })}
           </Text>
           <View style={styles.confirmActions}>
             <Button
@@ -844,7 +1073,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
               onPress={handleCancel}
               disabled={isRemoving}
             >
-              Cancel
+              {t("common.actions.cancel")}
             </Button>
             <Button
               variant="destructive"
@@ -854,7 +1083,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
               disabled={isRemoving}
               testID="remove-host-confirm"
             >
-              Remove
+              {t("settings.host.connections.removeAction")}
             </Button>
           </View>
         </AdaptiveModalSheet>
@@ -862,6 +1091,527 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
     </SettingsSection>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Terminal Profiles
+// ---------------------------------------------------------------------------
+
+function generateProfileId(): string {
+  return `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function parseArgsString(raw: string): string[] | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+interface ProfileDraft {
+  name: string;
+  command: string;
+  args: string;
+}
+
+const EMPTY_PROFILE_DRAFT: ProfileDraft = { name: "", command: "", args: "" };
+
+interface TerminalProfileEditModalProps {
+  visible: boolean;
+  title: string;
+  initialDraft: ProfileDraft;
+  onClose: () => void;
+  onSave: (draft: ProfileDraft) => void;
+}
+
+function TerminalProfileEditModal({
+  visible,
+  title,
+  initialDraft,
+  onClose,
+  onSave,
+}: TerminalProfileEditModalProps) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(initialDraft.name);
+  const [command, setCommand] = useState(initialDraft.command);
+  const [args, setArgs] = useState(initialDraft.args);
+  const sheetHeader = useMemo<SheetHeader>(() => ({ title }), [title]);
+
+  useEffect(() => {
+    if (!visible) return;
+    setName(initialDraft.name);
+    setCommand(initialDraft.command);
+    setArgs(initialDraft.args);
+  }, [visible, initialDraft.name, initialDraft.command, initialDraft.args]);
+
+  const handleSave = useCallback(() => {
+    onSave({ name, command, args });
+  }, [onSave, name, command, args]);
+
+  const canSave = name.trim().length > 0 && command.trim().length > 0;
+
+  return (
+    <AdaptiveModalSheet
+      visible={visible}
+      header={sheetHeader}
+      onClose={onClose}
+      testID="terminal-profile-edit-modal"
+      desktopMaxWidth={480}
+    >
+      <View style={profileModalStyles.body}>
+        <View style={profileModalStyles.fieldGroup}>
+          <Text style={profileModalStyles.fieldLabel}>
+            {t("settings.host.terminalProfiles.nameLabel")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialDraft.name}
+            resetKey={visible ? "open" : "closed"}
+            onChangeText={setName}
+            placeholder={t("settings.host.terminalProfiles.namePlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="terminal-profile-name-input"
+          />
+        </View>
+        <View style={profileModalStyles.fieldGroup}>
+          <Text style={profileModalStyles.fieldLabel}>
+            {t("settings.host.terminalProfiles.commandLabel")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialDraft.command}
+            resetKey={visible ? "open" : "closed"}
+            onChangeText={setCommand}
+            placeholder={t("settings.host.terminalProfiles.commandPlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="terminal-profile-command-input"
+          />
+        </View>
+        <View style={profileModalStyles.fieldGroup}>
+          <Text style={profileModalStyles.fieldLabel}>
+            {t("settings.host.terminalProfiles.argsLabel")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialDraft.args}
+            resetKey={visible ? "open" : "closed"}
+            onChangeText={setArgs}
+            placeholder={t("settings.host.terminalProfiles.argsPlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="terminal-profile-args-input"
+          />
+          <Text style={profileModalStyles.fieldHint}>
+            {t("settings.host.terminalProfiles.argsHint")}
+          </Text>
+        </View>
+        <View style={profileModalStyles.actions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            style={profileModalStyles.actionButton}
+            onPress={onClose}
+          >
+            {t("common.actions.cancel")}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            style={profileModalStyles.actionButton}
+            onPress={handleSave}
+            disabled={!canSave}
+            testID="terminal-profile-save-button"
+          >
+            {t("settings.host.terminalProfiles.save")}
+          </Button>
+        </View>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
+interface TerminalProfileRowProps {
+  profile: TerminalProfile;
+  isFirst: boolean;
+  isLast: boolean;
+  onEdit: (id: string) => void;
+  onRemove: (id: string) => void;
+  onMoveUp: (id: string) => void;
+  onMoveDown: (id: string) => void;
+}
+
+function TerminalProfileRow({
+  profile,
+  isFirst,
+  isLast,
+  onEdit,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+}: TerminalProfileRowProps) {
+  const { t } = useTranslation();
+
+  const handleEdit = useCallback(() => onEdit(profile.id), [onEdit, profile.id]);
+  const handleRemove = useCallback(() => onRemove(profile.id), [onRemove, profile.id]);
+  const handleMoveUp = useCallback(() => onMoveUp(profile.id), [onMoveUp, profile.id]);
+  const handleMoveDown = useCallback(() => onMoveDown(profile.id), [onMoveDown, profile.id]);
+
+  const commandText =
+    profile.args && profile.args.length > 0
+      ? `${profile.command} ${profile.args.join(" ")}`
+      : profile.command;
+
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, !isFirst && settingsStyles.rowBorder, terminalProfileStyles.row],
+    [isFirst],
+  );
+
+  const icon = getTerminalProfileIcon(profile);
+
+  return (
+    <View style={rowStyle} testID={`terminal-profile-row-${profile.id}`}>
+      <View style={terminalProfileStyles.iconWrapper}>
+        {icon ? (
+          <ThemedDynamicProviderIcon
+            iconKey={icon}
+            size={ICON_SIZE.md}
+            uniProps={mutedColorMapping}
+          />
+        ) : (
+          <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+        )}
+      </View>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {profile.name}
+        </Text>
+        <Text style={settingsStyles.rowHint} numberOfLines={1}>
+          {commandText}
+        </Text>
+      </View>
+      <View style={terminalProfileStyles.rowActions}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={moveUpIcon}
+          onPress={handleMoveUp}
+          disabled={isFirst}
+          accessibilityLabel={t("settings.host.terminalProfiles.moveUp")}
+          testID={`terminal-profile-move-up-${profile.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={moveDownIcon}
+          onPress={handleMoveDown}
+          disabled={isLast}
+          accessibilityLabel={t("settings.host.terminalProfiles.moveDown")}
+          testID={`terminal-profile-move-down-${profile.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={editProfileIcon}
+          onPress={handleEdit}
+          accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
+          testID={`terminal-profile-edit-${profile.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={removeProfileIcon}
+          onPress={handleRemove}
+          accessibilityLabel={t("settings.host.terminalProfiles.remove")}
+          testID={`terminal-profile-remove-${profile.id}`}
+        />
+      </View>
+    </View>
+  );
+}
+
+function TerminalProfilesSection({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const [editingProfile, setEditingProfile] = useState<{
+    id: string;
+    draft: ProfileDraft;
+  } | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const profiles = useMemo(
+    () => (config ? resolveTerminalProfiles(config.terminalProfiles) : null),
+    [config],
+  );
+
+  const saveProfiles = useCallback(
+    async (next: TerminalProfile[]) => {
+      setIsSaving(true);
+      try {
+        await patchConfig({ terminalProfiles: next });
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [patchConfig, t],
+  );
+
+  const handleAddOpen = useCallback(() => setIsAdding(true), []);
+  const handleAddClose = useCallback(() => setIsAdding(false), []);
+
+  const handleAddSave = useCallback(
+    (draft: ProfileDraft) => {
+      const current = profiles ? [...profiles] : [];
+      const next: TerminalProfile[] = [
+        ...current,
+        {
+          id: generateProfileId(),
+          name: draft.name.trim(),
+          command: draft.command.trim(),
+          args: parseArgsString(draft.args),
+        },
+      ];
+      setIsAdding(false);
+      void saveProfiles(next);
+    },
+    [profiles, saveProfiles],
+  );
+
+  const handleEditOpen = useCallback(
+    (id: string) => {
+      const profile = profiles?.find((p) => p.id === id);
+      if (!profile) return;
+      setEditingProfile({
+        id,
+        draft: {
+          name: profile.name,
+          command: profile.command,
+          args: profile.args ? profile.args.join(" ") : "",
+        },
+      });
+    },
+    [profiles],
+  );
+
+  const handleEditClose = useCallback(() => setEditingProfile(null), []);
+
+  const handleEditSave = useCallback(
+    (draft: ProfileDraft) => {
+      if (!editingProfile || !profiles) return;
+      const next: TerminalProfile[] = profiles.map((p) =>
+        p.id === editingProfile.id
+          ? {
+              ...p,
+              name: draft.name.trim(),
+              command: draft.command.trim(),
+              args: parseArgsString(draft.args),
+            }
+          : p,
+      );
+      setEditingProfile(null);
+      void saveProfiles(next);
+    },
+    [editingProfile, profiles, saveProfiles],
+  );
+
+  const handleRemove = useCallback(
+    (id: string) => {
+      const profile = profiles?.find((p) => p.id === id);
+      if (!profile) return;
+      void confirmDialog({
+        title: t("settings.host.terminalProfiles.removeConfirmTitle"),
+        message: t("settings.host.terminalProfiles.removeConfirmMessage", {
+          name: profile.name,
+        }),
+        confirmLabel: t("settings.host.terminalProfiles.remove"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      }).then((confirmed) => {
+        if (!confirmed || !profiles) return;
+        void saveProfiles(profiles.filter((p) => p.id !== id));
+        return;
+      });
+    },
+    [profiles, saveProfiles, t],
+  );
+
+  const handleMoveUp = useCallback(
+    (id: string) => {
+      if (!profiles) return;
+      const index = profiles.findIndex((p) => p.id === id);
+      if (index <= 0) return;
+      const next = [...profiles];
+      const [item] = next.splice(index, 1);
+      next.splice(index - 1, 0, item);
+      void saveProfiles(next);
+    },
+    [profiles, saveProfiles],
+  );
+
+  const handleMoveDown = useCallback(
+    (id: string) => {
+      if (!profiles) return;
+      const index = profiles.findIndex((p) => p.id === id);
+      if (index < 0 || index >= profiles.length - 1) return;
+      const next = [...profiles];
+      const [item] = next.splice(index, 1);
+      next.splice(index + 1, 0, item);
+      void saveProfiles(next);
+    },
+    [profiles, saveProfiles],
+  );
+
+  const addButton = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={addProfileIcon}
+        onPress={handleAddOpen}
+        disabled={isSaving || !isConnected || !profiles}
+        testID="terminal-profiles-add-button"
+      />
+    ),
+    [handleAddOpen, isSaving, isConnected, profiles],
+  );
+
+  if (!isConnected) {
+    return (
+      <View style={settingsStyles.card} testID="terminal-profiles-unavailable">
+        <View style={terminalProfileStyles.emptyCard}>
+          <Text style={terminalProfileStyles.emptyText}>
+            {t("settings.host.terminalProfiles.unavailable")}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <SettingsSection
+        title={t("settings.host.terminalProfiles.sectionTitle")}
+        trailing={addButton}
+        testID="terminal-profiles-section"
+      >
+        <View style={settingsStyles.card} testID="terminal-profiles-card">
+          {profiles && profiles.length > 0 ? (
+            profiles.map((profile, index) => (
+              <TerminalProfileRow
+                key={profile.id}
+                profile={profile}
+                isFirst={index === 0}
+                isLast={index === profiles.length - 1}
+                onEdit={handleEditOpen}
+                onRemove={handleRemove}
+                onMoveUp={handleMoveUp}
+                onMoveDown={handleMoveDown}
+              />
+            ))
+          ) : (
+            <View style={terminalProfileStyles.emptyCard}>
+              <Text style={terminalProfileStyles.emptyText}>
+                {t("settings.host.terminalProfiles.emptyState")}
+              </Text>
+            </View>
+          )}
+        </View>
+      </SettingsSection>
+
+      <TerminalProfileEditModal
+        visible={isAdding}
+        title={t("settings.host.terminalProfiles.addProfileTitle")}
+        initialDraft={EMPTY_PROFILE_DRAFT}
+        onClose={handleAddClose}
+        onSave={handleAddSave}
+      />
+
+      {editingProfile ? (
+        <TerminalProfileEditModal
+          visible
+          title={t("settings.host.terminalProfiles.editProfileTitle")}
+          initialDraft={editingProfile.draft}
+          onClose={handleEditClose}
+          onSave={handleEditSave}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function HostTerminalsPage({ serverId }: { serverId: string }) {
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
+      <TerminalProfilesSection serverId={serverId} />
+    </View>
+  );
+}
+
+const terminalProfileStyles = StyleSheet.create((theme) => ({
+  row: {
+    gap: theme.spacing[2],
+    minHeight: 56,
+  },
+  iconWrapper: {
+    width: theme.iconSize.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 0,
+  },
+  emptyCard: {
+    padding: theme.spacing[4],
+    alignItems: "center",
+  },
+  emptyText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+}));
+
+const profileModalStyles = StyleSheet.create((theme) => ({
+  body: {
+    gap: theme.spacing[4],
+    paddingBottom: theme.spacing[2],
+  },
+  fieldGroup: {
+    gap: theme.spacing[1.5],
+  },
+  fieldLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  fieldHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginTop: theme.spacing[2],
+  },
+  actionButton: {
+    flex: 1,
+  },
+}));
 
 const styles = StyleSheet.create((theme) => ({
   identityEditButton: {

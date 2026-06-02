@@ -139,17 +139,18 @@ class StartupAssertions {
     this.page = page;
   }
 
-  async expectsReconnectWelcome(): Promise<this> {
-    await expect(this.page.getByTestId("welcome-screen")).toBeVisible({ timeout: 15_000 });
-    await expect(this.page.getByTestId("welcome-open-settings")).toBeVisible();
-    await expect(this.page.getByTestId("welcome-direct-connection")).toBeVisible();
-    await expect(this.page.getByTestId("welcome-paste-pairing-link")).toBeVisible();
-    await expect(this.page.getByTestId("welcome-scan-qr")).toHaveCount(0);
+  async expectsSavedHostShell(input: { label: string }): Promise<this> {
+    await expect(this.page.getByText(input.label, { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(this.page.getByRole("button", { name: "Add project" })).toBeVisible();
+    await expect(this.page.getByRole("button", { name: "Home" })).toBeVisible();
+    await expect(this.page.getByRole("button", { name: "Settings" })).toBeVisible();
+    await expect(this.page.getByTestId("welcome-screen")).toHaveCount(0);
     return this;
   }
 
-  async expectsNoSavedHostStatus(input: { label: string }): Promise<this> {
-    await expect(this.page.getByText(input.label, { exact: true })).toHaveCount(0);
+  async expectsNoSavedHostErrorStatus(): Promise<this> {
     await expect(this.page.getByText("Connection error", { exact: true })).toHaveCount(0);
     await expect(this.page.getByText("Offline", { exact: true })).toHaveCount(0);
     return this;

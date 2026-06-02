@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
@@ -24,6 +25,7 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import type { Href } from "expo-router";
 
 export function OpenProjectScreen({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const router = useRouter();
   const openDesktopAgentList = usePanelStore((s) => s.openDesktopAgentList);
   const openProjectPicker = useOpenProjectPicker(serverId);
@@ -76,31 +78,31 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
         <View style={styles.tiles}>
           <HomeTile
             icon={FolderOpen}
-            title="Add a project"
-            description="Open a folder on your machine"
+            title={t("openProject.tiles.addProject.title")}
+            description={t("openProject.tiles.addProject.description")}
             onPress={handleOpenPicker}
             testID="open-project-submit"
             accent
           />
           <HomeTile
             icon={Inbox}
-            title="Import session"
-            description="Bring in recent external CLI sessions"
+            title={t("openProject.tiles.importSession.title")}
+            description={t("openProject.tiles.importSession.description")}
             onPress={handleOpenImportSession}
             testID="open-project-import-session"
           />
           <HomeTile
             icon={Plug}
-            title="Setup providers"
-            description="Configure Claude Code, Codex, and more"
+            title={t("openProject.tiles.setupProviders.title")}
+            description={t("openProject.tiles.setupProviders.description")}
             onPress={handleOpenProviders}
             testID="open-project-setup-providers"
           />
           {isLocalDaemon ? (
             <HomeTile
               icon={Smartphone}
-              title="Pair device"
-              description="Connect your phone to this daemon"
+              title={t("openProject.tiles.pairDevice.title")}
+              description={t("openProject.tiles.pairDevice.description")}
               onPress={handleOpenPairDevice}
               testID="open-project-pair-device"
             />

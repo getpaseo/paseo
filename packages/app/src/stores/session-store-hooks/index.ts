@@ -3,11 +3,13 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import {
   composeWorkspaceStructure,
+  selectHasHydratedWorkspaces,
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
   selectResolveWorkspaceIdByCwd,
   selectWorkspace,
+  selectWorkspaceExists,
   selectWorkspaceExecutionAuthority,
   selectWorkspaceFields,
   selectWorkspaceKeys,
@@ -51,6 +53,22 @@ export function useWorkspaceFields<T>(
     useSessionStore,
     (state) => selectWorkspaceFields(state, serverId, workspaceId, project),
     workspaceEqualityFns.deep,
+  );
+}
+
+export function useWorkspaceExists(serverId: string | null, workspaceId: string | null): boolean {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectWorkspaceExists(state, serverId, workspaceId),
+    workspaceEqualityFns.identity,
+  );
+}
+
+export function useHasHydratedWorkspaces(serverId: string | null): boolean {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectHasHydratedWorkspaces(state, serverId),
+    workspaceEqualityFns.identity,
   );
 }
 

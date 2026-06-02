@@ -1,5 +1,6 @@
 import { type DesktopHostBridge, getDesktopHost } from "@/desktop/host";
 import { isNative, isWeb } from "@/constants/platform";
+import { i18n } from "@/i18n/i18next";
 
 export type DesktopPermissionKind = "notifications" | "microphone";
 
@@ -97,24 +98,26 @@ function mapNotificationPermissionString(permission: string): DesktopPermissionS
   if (permission === "granted") {
     return status({
       state: "granted",
-      detail: "Notifications are allowed by the OS.",
+      detail: i18n.t("desktop.permissions.notifications.allowed"),
     });
   }
   if (permission === "denied") {
     return status({
       state: "denied",
-      detail: "Notifications are denied in system settings.",
+      detail: i18n.t("desktop.permissions.notifications.denied"),
     });
   }
   if (permission === "default") {
     return status({
       state: "prompt",
-      detail: "Notifications have not been granted yet.",
+      detail: i18n.t("desktop.permissions.notifications.notGranted"),
     });
   }
   return status({
     state: "unknown",
-    detail: `Unexpected notification permission state: ${permission}`,
+    detail: i18n.t("desktop.permissions.notifications.unexpectedState", {
+      state: permission,
+    }),
   });
 }
 
@@ -127,7 +130,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (!env.isWeb) {
       return status({
         state: "unavailable",
-        detail: "Desktop notification status is only available on web runtime.",
+        detail: i18n.t("desktop.permissions.notifications.webOnly"),
       });
     }
 
@@ -138,8 +141,8 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
         return status({
           state: supported ? "granted" : "unavailable",
           detail: supported
-            ? "Desktop notifications are supported."
-            : "Desktop notifications are not supported on this platform.",
+            ? i18n.t("desktop.permissions.notifications.supported")
+            : i18n.t("desktop.permissions.notifications.unsupported"),
         });
       } catch {
         // Fall through to web API check
@@ -153,7 +156,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
 
     return status({
       state: "unavailable",
-      detail: "Web Notification API is unavailable in this environment.",
+      detail: i18n.t("desktop.permissions.notifications.apiUnavailable"),
     });
   }
 
@@ -161,7 +164,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (!env.isWeb) {
       return status({
         state: "unavailable",
-        detail: "Desktop microphone status is only available on web runtime.",
+        detail: i18n.t("desktop.permissions.microphone.webOnly"),
       });
     }
 
@@ -169,7 +172,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (!webNavigator) {
       return status({
         state: "unavailable",
-        detail: "Navigator is unavailable in this environment.",
+        detail: i18n.t("desktop.permissions.microphone.navigatorUnavailable"),
       });
     }
 
@@ -180,36 +183,39 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
         if (result?.state === "granted") {
           return status({
             state: "granted",
-            detail: "Microphone access is granted.",
+            detail: i18n.t("desktop.permissions.microphone.granted"),
           });
         }
         if (result?.state === "denied") {
           return status({
             state: "denied",
-            detail: "Microphone access is denied in system settings.",
+            detail: i18n.t("desktop.permissions.microphone.denied"),
           });
         }
         if (result?.state === "prompt") {
           return status({
             state: "prompt",
-            detail: "Microphone permission has not been granted yet.",
+            detail: i18n.t("desktop.permissions.microphone.notGranted"),
           });
         }
         return status({
           state: "unknown",
-          detail: `Unexpected microphone permission state: ${result?.state ?? "unknown"}`,
+          detail: i18n.t("desktop.permissions.microphone.unexpectedState", {
+            state: result?.state ?? "unknown",
+          }),
         });
       } catch (error) {
         if (isPermissionsQueryRuntimeUnsupported(error)) {
           return status({
             state: "unknown",
-            detail:
-              "Microphone status API is unavailable in this runtime. Use Request to check access.",
+            detail: i18n.t("desktop.permissions.microphone.statusApiUnavailable"),
           });
         }
         return status({
           state: "unknown",
-          detail: `Failed to query microphone status: ${getErrorMessage(error)}`,
+          detail: i18n.t("desktop.permissions.microphone.queryFailed", {
+            message: getErrorMessage(error),
+          }),
         });
       }
     }
@@ -217,13 +223,13 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (typeof webNavigator.mediaDevices?.getUserMedia !== "function") {
       return status({
         state: "unavailable",
-        detail: "Microphone capture is unavailable in this environment.",
+        detail: i18n.t("desktop.permissions.microphone.captureUnavailable"),
       });
     }
 
     return status({
       state: "unknown",
-      detail: "Permission status API is unavailable. Use Request to check access.",
+      detail: i18n.t("desktop.permissions.microphone.permissionApiUnavailable"),
     });
   }
 
@@ -231,7 +237,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (!env.isWeb) {
       return status({
         state: "unavailable",
-        detail: "Desktop notification requests are only available on web runtime.",
+        detail: i18n.t("desktop.permissions.notifications.requestsWebOnly"),
       });
     }
 
@@ -246,14 +252,16 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
       } catch (error) {
         return status({
           state: "unknown",
-          detail: `Failed to request notification permission: ${getErrorMessage(error)}`,
+          detail: i18n.t("desktop.permissions.notifications.requestFailed", {
+            message: getErrorMessage(error),
+          }),
         });
       }
     }
 
     return status({
       state: "unavailable",
-      detail: "Web Notification API requestPermission() is unavailable.",
+      detail: i18n.t("desktop.permissions.notifications.requestUnavailable"),
     });
   }
 
@@ -261,7 +269,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (!env.isWeb) {
       return status({
         state: "unavailable",
-        detail: "Desktop microphone requests are only available on web runtime.",
+        detail: i18n.t("desktop.permissions.microphone.requestsWebOnly"),
       });
     }
 
@@ -269,7 +277,7 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
     if (!webNavigator || typeof webNavigator.mediaDevices?.getUserMedia !== "function") {
       return status({
         state: "unavailable",
-        detail: "Microphone capture API is unavailable in this environment.",
+        detail: i18n.t("desktop.permissions.microphone.captureApiUnavailable"),
       });
     }
 
@@ -287,18 +295,20 @@ export function createDesktopPermissions(env: DesktopPermissionEnvironment): Des
       if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError") {
         return status({
           state: "denied",
-          detail: "Microphone permission was denied by the user or system.",
+          detail: i18n.t("desktop.permissions.microphone.requestDenied"),
         });
       }
       if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
         return status({
           state: "unavailable",
-          detail: "No microphone device was found.",
+          detail: i18n.t("desktop.permissions.microphone.noDevice"),
         });
       }
       return status({
         state: "unknown",
-        detail: `Failed to request microphone permission: ${getErrorMessage(error)}`,
+        detail: i18n.t("desktop.permissions.microphone.requestFailed", {
+          message: getErrorMessage(error),
+        }),
       });
     }
   }

@@ -6,6 +6,7 @@ import {
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
+  InvalidGitBranchNameError,
   getScriptConfigs,
   getWorktreeSetupCommands,
   getWorktreeTerminalSpecs,
@@ -270,6 +271,26 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
     });
 
+    it("checks out an existing local branch whose name contains uppercase letters and dots", async () => {
+      execFileSync("git", ["branch", "release/1.1.15"], { cwd: repoDir });
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "release-worktree",
+        source: { kind: "checkout-branch", branchName: "release/1.1.15" },
+        runSetup: true,
+        paseoHome,
+      });
+
+      expect(existsSync(result.worktreePath)).toBe(true);
+      const currentBranch = execFileSync("git", ["branch", "--show-current"], {
+        cwd: result.worktreePath,
+      })
+        .toString()
+        .trim();
+      expect(currentBranch).toBe("release/1.1.15");
+    });
+
     it("throws a typed error when checking out a branch already checked out in the main repo", async () => {
       let caughtError: unknown;
       try {
@@ -338,6 +359,51 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
       expect(metadata).toMatchObject({ baseRefName: "main" });
+    });
+
+    it("fetches a GitHub PR branch when the head ref contains uppercase letters and dots", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      const remoteCloneDir = join(tempDir, "remote-clone");
+      execFileSync("git", ["clone", "--bare", repoDir, remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+
+      execFileSync("git", ["clone", remoteDir, remoteCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: remoteCloneDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: remoteCloneDir });
+      execFileSync("git", ["checkout", "-b", "Feature.X"], { cwd: remoteCloneDir });
+      writeFileSync(join(remoteCloneDir, "file.txt"), "from-uppercase-pr\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: remoteCloneDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "uppercase pr branch"], {
+        cwd: remoteCloneDir,
+      });
+      const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: remoteCloneDir })
+        .toString()
+        .trim();
+      execFileSync("git", ["push", "origin", "Feature.X"], { cwd: remoteCloneDir });
+      execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/43/head", prHead]);
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "pr-43",
+        source: {
+          kind: "checkout-github-pr",
+          githubPrNumber: 43,
+          headRef: "Feature.X",
+          baseRefName: "main",
+        },
+        runSetup: true,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe(
+        "from-uppercase-pr\n",
+      );
+      const currentBranch = execFileSync("git", ["branch", "--show-current"], {
+        cwd: result.worktreePath,
+      })
+        .toString()
+        .trim();
+      expect(currentBranch).toBe("Feature.X");
     });
 
     it("prefers origin/{branch} over local {branch} when both exist", async () => {
@@ -423,6 +489,42 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
           worktreeSlug: "test",
         }),
       ).rejects.toThrow("Invalid branch name");
+    });
+
+    it("throws a typed error when checking out an invalid existing branch name", async () => {
+      let caughtError: unknown;
+      try {
+        await createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "invalid-existing-branch",
+          source: { kind: "checkout-branch", branchName: "bad..name" },
+          runSetup: true,
+          paseoHome,
+        });
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(InvalidGitBranchNameError);
+      expect((caughtError as InvalidGitBranchNameError).branchName).toBe("bad..name");
+    });
+
+    it("throws a typed error when checking out a ref that is valid but not a branch name", async () => {
+      let caughtError: unknown;
+      try {
+        await createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "invalid-option-like-branch",
+          source: { kind: "checkout-branch", branchName: "-bad" },
+          runSetup: true,
+          paseoHome,
+        });
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(InvalidGitBranchNameError);
+      expect((caughtError as InvalidGitBranchNameError).branchName).toBe("-bad");
     });
 
     it("handles branch name collision by adding suffix", async () => {

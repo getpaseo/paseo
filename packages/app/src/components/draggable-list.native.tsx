@@ -29,6 +29,7 @@ export function DraggableList<T>({
   useDragHandle: _useDragHandle = false,
   refreshing,
   onRefresh,
+  extraData,
   simultaneousGestureRef,
   waitFor,
   onDragBegin: onDragBeginProp,
@@ -116,6 +117,7 @@ export function DraggableList<T>({
       ListEmptyComponent={ListEmptyComponent}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
       scrollEnabled={scrollEnabled}
+      extraData={extraData}
       simultaneousHandlers={simultaneousHandlers}
       // Higher activation distance reduces accidental drag capture while nested
       // lists are inside a scroll container.

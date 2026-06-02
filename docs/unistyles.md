@@ -88,6 +88,8 @@ Do not split a component into plain and Unistyles variants just to handle one hi
 
 When a reusable component has a prop whose whole job is dynamic geometry, make that prop the seam. For example, `FloatingSurface.frameStyle` and `FloatingScrollView.style` own their own escape hatch so menu, tooltip, hover-card, and combobox callers can stay declarative instead of knowing about Unistyles internals.
 
+Do not flatten a caller-provided style array and pass the flattened object back to a React Native component. Unistyles style entries carry `unistyles_*` metadata; flattening two entries produces one object with multiple metadata keys and triggers the runtime warning: "use array syntax instead of object syntax." Preserve caller styles as arrays, and only flatten the dynamic geometry value you explicitly own. If that owned value was flattened from a mixed style prop, strip `unistyles_*` metadata before sending it through `inlineUnistylesStyle`.
+
 ## Main Gotcha: `contentContainerStyle`
 
 `ScrollView.contentContainerStyle` is the canonical trap. It looks like a style prop, but it is not the same prop that Unistyles' remapped native component registers by default. The upstream tutorial calls this out directly in its [ScrollView Background Issue](https://www.unistyl.es/v3/tutorial/settings-screen#scrollview-background-issue) section.
@@ -333,7 +335,7 @@ For paint-layer bugs, use high-contrast probes:
 3. Screenshot the simulator and sample pixels to see which color fills the area.
 4. Remove the probes before committing.
 
-The welcome-screen investigation used this approach to prove the white layer was the `ScrollView` content container. Deep-dive evidence is in [welcome-theme-split-research.md](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md).
+The welcome-screen investigation used this approach to prove the white layer was the `ScrollView` content container.
 
 ## References
 
@@ -347,4 +349,3 @@ The welcome-screen investigation used this approach to prove the white layer was
 - [GitHub issue #550: ScrollView sticky-header theme updates](https://github.com/jpudysz/react-native-unistyles/issues/550)
 - [GitHub issue #817: `UnistylesRuntime.themeName` does not re-render](https://github.com/jpudysz/react-native-unistyles/issues/817)
 - [GitHub issue #1030: `Image.tintColor` and native style update edge case](https://github.com/jpudysz/react-native-unistyles/issues/1030)
-- [Local research note: welcome theme split](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md)

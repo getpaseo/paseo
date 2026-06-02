@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
-import {
-  normalizeWorkspaceDescriptor,
-  useSessionStore,
-  type WorkspaceDescriptor,
-} from "@/stores/session-store";
+import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
-import { useWorkspaceStructure } from "@/stores/session-store-hooks";
+import { useHostProjects } from "@/projects/host-projects";
+import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
-  buildSidebarProjectsFromStructure,
+  buildSidebarProjectsFromHostProjects,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
@@ -21,6 +21,7 @@ import {
 export {
   appendMissingOrderKeys,
   applyStoredOrdering,
+  buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
@@ -34,7 +35,10 @@ export {
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
+  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  agents?: Map<string, Agent>;
 }): SidebarWorkspaceEntry {
+  const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -45,7 +49,8 @@ export function createSidebarWorkspaceEntry(input: {
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
-    statusBucket: input.workspace.status,
+    statusBucket: effectiveStatus.status,
+    statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(input.workspace.githubRuntime?.pullRequest),
@@ -54,6 +59,110 @@ export function createSidebarWorkspaceEntry(input: {
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };
+}
+
+interface EffectiveWorkspaceStatus {
+  status: WorkspaceDescriptor["status"];
+  enteredAt: Date | null;
+}
+
+interface WorkspaceAgentActivity extends EffectiveWorkspaceStatus {}
+
+function deriveEffectiveWorkspaceStatus(input: {
+  serverId: string;
+  workspace: WorkspaceDescriptor;
+  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  agents?: Map<string, Agent>;
+}): EffectiveWorkspaceStatus {
+  if (input.workspace.status !== "done") {
+    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+  }
+
+  const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
+    serverId: input.serverId,
+    workspaceId: input.workspace.id,
+    pendingCreateAttempts: input.pendingCreateAttempts,
+  });
+  if (pendingStartedAt) {
+    return { status: "running", enteredAt: pendingStartedAt };
+  }
+
+  const rootAgentActivity = getRootAgentWorkspaceActivity({
+    workspace: input.workspace,
+    agents: input.agents,
+  });
+  if (rootAgentActivity && rootAgentActivity.status !== "done") {
+    return rootAgentActivity;
+  }
+
+  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+}
+
+function getPendingInitialAgentCreateStartedAt(input: {
+  serverId: string;
+  workspaceId: string;
+  pendingCreateAttempts: Record<string, PendingCreateAttempt> | undefined;
+}): Date | null {
+  let latestStartedAt: Date | null = null;
+  for (const pending of Object.values(input.pendingCreateAttempts ?? {})) {
+    if (pending.serverId !== input.serverId) continue;
+    if (pending.workspaceId !== input.workspaceId) continue;
+    if (pending.lifecycle === "abandoned") continue;
+    const startedAt = new Date(pending.timestamp);
+    if (!latestStartedAt || startedAt > latestStartedAt) {
+      latestStartedAt = startedAt;
+    }
+  }
+  return latestStartedAt;
+}
+
+function getRootAgentWorkspaceActivity(input: {
+  workspace: WorkspaceDescriptor;
+  agents: Map<string, Agent> | undefined;
+}): WorkspaceAgentActivity | null {
+  const workspaceDirectory = normalizeWorkspacePath(input.workspace.workspaceDirectory);
+  if (!workspaceDirectory) {
+    return null;
+  }
+
+  let latest: WorkspaceAgentActivity | null = null;
+  for (const agent of input.agents?.values() ?? []) {
+    if (agent.archivedAt || agent.parentAgentId) continue;
+    if (normalizeWorkspacePath(agent.cwd) !== workspaceDirectory) continue;
+    const status = deriveSidebarStateBucket({
+      status: agent.status,
+      pendingPermissionCount: agent.pendingPermissions.length,
+      requiresAttention: agent.requiresAttention,
+      attentionReason: agent.attentionReason,
+    });
+    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
+    if (!latest || enteredAt > (latest.enteredAt ?? new Date(0))) {
+      latest = { status, enteredAt };
+    }
+  }
+  return latest;
+}
+
+export function useSidebarWorkspaceEntry(
+  serverId: string | null,
+  workspaceId: string | null,
+): SidebarWorkspaceEntry | null {
+  const pendingCreateAttempts = useCreateFlowStore((state) => state.pendingByDraftId);
+  const agents = useSessionStore((state) =>
+    serverId ? state.sessions[serverId]?.agents : undefined,
+  );
+  const projectWorkspaceEntry = useCallback(
+    (workspace: WorkspaceDescriptor): SidebarWorkspaceEntry =>
+      createSidebarWorkspaceEntry({
+        serverId: serverId ?? "",
+        workspace,
+        pendingCreateAttempts,
+        agents,
+      }),
+    [agents, pendingCreateAttempts, serverId],
+  );
+
+  return useWorkspaceFields(serverId, workspaceId, projectWorkspaceEntry);
 }
 
 const EMPTY_ORDER: string[] = [];
@@ -65,10 +174,6 @@ export interface SidebarWorkspacesListResult {
   isInitialLoad: boolean;
   isRevalidating: boolean;
   refreshAll: () => void;
-}
-
-function toWorkspaceDescriptor(payload: WorkspaceDescriptorPayload): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor(payload);
 }
 
 export function useSidebarWorkspacesList(options?: {
@@ -88,7 +193,7 @@ export function useSidebarWorkspacesList(options?: {
   const hasHydratedWorkspaces = useSessionStore((state) =>
     isActive && serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
   );
-  const workspaceStructure = useWorkspaceStructure(isActive ? serverId : null);
+  const hostProjects = useHostProjects(isActive ? serverId : null);
 
   const connectionStatus = useSyncExternalStore(
     (onStoreChange) =>
@@ -110,14 +215,13 @@ export function useSidebarWorkspacesList(options?: {
   );
 
   const projects = useMemo(() => {
-    if (!serverId || workspaceStructure.projects.length === 0) {
+    if (!serverId || hostProjects.length === 0) {
       return EMPTY_PROJECTS;
     }
-    return buildSidebarProjectsFromStructure({
-      serverId,
-      projects: workspaceStructure.projects,
+    return buildSidebarProjectsFromHostProjects({
+      projects: hostProjects,
     });
-  }, [serverId, workspaceStructure]);
+  }, [hostProjects, serverId]);
 
   useEffect(() => {
     if (!serverId) {
@@ -155,24 +259,16 @@ export function useSidebarWorkspacesList(options?: {
     }
     void (async () => {
       const next = new Map<string, WorkspaceDescriptor>();
-      let cursor: string | null = null;
       try {
-        while (true) {
-          const payload = await client.fetchWorkspaces({
-            sort: [{ key: "activity_at", direction: "desc" }],
-            page: cursor ? { limit: 200, cursor } : { limit: 200 },
-          });
-          for (const entry of payload.entries) {
-            const workspace = toWorkspaceDescriptor(entry);
-            if (shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
-              continue;
-            }
-            next.set(workspace.id, workspace);
+        const workspaces = await fetchAllWorkspaceDescriptors({
+          client,
+          sort: [{ key: "activity_at", direction: "desc" }],
+        });
+        for (const workspace of workspaces) {
+          if (shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
+            continue;
           }
-          if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) {
-            break;
-          }
-          cursor = payload.pageInfo.nextCursor;
+          next.set(workspace.id, workspace);
         }
         const store = useSessionStore.getState();
         store.setWorkspaces(serverId, next);
@@ -180,7 +276,6 @@ export function useSidebarWorkspacesList(options?: {
       } catch (error) {
         console.error("[WorkspaceFetch][sidebar-refresh] failed", {
           serverId,
-          cursor,
           error,
         });
         // ignore explicit refresh failures; hook keeps existing data

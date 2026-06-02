@@ -5,6 +5,7 @@ import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 export function ProviderSettingsHost() {
   const serverId = useProviderSettingsStore((state) => state.serverId);
   const provider = useProviderSettingsStore((state) => state.provider);
+  const visible = useProviderSettingsStore((state) => state.visible);
   const close = useProviderSettingsStore((state) => state.close);
 
   const handleClose = useCallback(() => {
@@ -19,7 +20,7 @@ export function ProviderSettingsHost() {
     <ProviderDiagnosticSheet
       provider={provider}
       serverId={serverId}
-      visible
+      visible={visible}
       onClose={handleClose}
     />
   );

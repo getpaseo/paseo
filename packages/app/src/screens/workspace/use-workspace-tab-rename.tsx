@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { type QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
+import { useTranslation } from "react-i18next";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
@@ -31,6 +32,7 @@ export function useWorkspaceTabRename(
   input: UseWorkspaceTabRenameInput,
 ): UseWorkspaceTabRenameResult {
   const { client, normalizedServerId, queryClient, terminalsData, terminalsQueryKey } = input;
+  const { t } = useTranslation();
   const [renamingTab, setRenamingTab] = useState<RenamingTabState | null>(null);
 
   const handleRenameTab = useCallback(
@@ -57,7 +59,7 @@ export function useWorkspaceTabRename(
     async (nextTitle: string) => {
       if (!renamingTab) return;
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const trimmed = nextTitle.trim();
       if (renamingTab.kind === "terminal") {
@@ -79,7 +81,7 @@ export function useWorkspaceTabRename(
         queryKey: ["allAgents", normalizedServerId],
       });
     },
-    [client, normalizedServerId, queryClient, renamingTab, terminalsQueryKey],
+    [client, normalizedServerId, queryClient, renamingTab, terminalsQueryKey, t],
   );
 
   const handleRenameModalClose = useCallback(() => {
@@ -105,7 +107,11 @@ export function WorkspaceTabRenameModal({
   onClose,
   onSubmit,
 }: WorkspaceTabRenameModalProps) {
-  const title = renamingTab?.kind === "terminal" ? "Rename terminal" : "Rename agent";
+  const { t } = useTranslation();
+  const title =
+    renamingTab?.kind === "terminal"
+      ? t("workspace.tabs.menu.renameTerminal")
+      : t("workspace.tabs.menu.renameAgent");
   const initialValue = renamingTab?.currentTitle ?? "";
   const testID = renamingTab
     ? `workspace-tab-rename-modal-${renamingTab.kind}-${renamingTab.id}`
@@ -115,7 +121,7 @@ export function WorkspaceTabRenameModal({
       visible={renamingTab !== null}
       title={title}
       initialValue={initialValue}
-      submitLabel="Rename"
+      submitLabel={t("workspace.tabs.menu.rename")}
       maxLength={200}
       onClose={onClose}
       onSubmit={onSubmit}

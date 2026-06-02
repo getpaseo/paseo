@@ -1,12 +1,16 @@
 import type {
   DesktopAppUpdateCheckResult,
+  DesktopAppUpdateCheckIntent,
   DesktopAppUpdateInstallResult,
   DesktopReleaseChannel,
 } from "@/desktop/updates/desktop-updates";
 import type { DesktopAppUpdaterPort } from "@/desktop/updates/desktop-app-updater";
 
 export interface FakeDesktopAppUpdaterPort extends DesktopAppUpdaterPort {
-  readonly recordedChecks: Array<{ releaseChannel: DesktopReleaseChannel }>;
+  readonly recordedChecks: Array<{
+    releaseChannel: DesktopReleaseChannel;
+    intent: DesktopAppUpdateCheckIntent;
+  }>;
   readonly recordedInstalls: Array<{ releaseChannel: DesktopReleaseChannel }>;
   nextCheckResult(result: DesktopAppUpdateCheckResult): void;
   deferNextCheck(): {
@@ -53,7 +57,10 @@ function buildInstallResult(
 }
 
 export function createFakeDesktopAppUpdaterPort(): FakeDesktopAppUpdaterPort {
-  const recordedChecks: Array<{ releaseChannel: DesktopReleaseChannel }> = [];
+  const recordedChecks: Array<{
+    releaseChannel: DesktopReleaseChannel;
+    intent: DesktopAppUpdateCheckIntent;
+  }> = [];
   const recordedInstalls: Array<{ releaseChannel: DesktopReleaseChannel }> = [];
   const checkOutcomes: CheckOutcome[] = [];
   const installOutcomes: InstallOutcome[] = [];

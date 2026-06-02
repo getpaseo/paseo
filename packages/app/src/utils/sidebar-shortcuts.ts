@@ -2,6 +2,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import { isSidebarProjectFlattened } from "./sidebar-project-row-model";
 
 export interface SidebarShortcutWorkspaceTarget {
@@ -37,7 +38,37 @@ export function buildSidebarShortcutModel(input: {
 
     for (const workspace of project.workspaces) {
       if (shortcutTargets.length >= maxShortcuts) {
-        continue;
+        break;
+      }
+
+      const shortcutNumber = shortcutTargets.length + 1;
+      shortcutTargets.push(createShortcutTarget(workspace));
+      shortcutIndexByWorkspaceKey.set(workspace.workspaceKey, shortcutNumber);
+    }
+  }
+
+  return { shortcutTargets, shortcutIndexByWorkspaceKey };
+}
+
+export function buildStatusSidebarShortcutModel(input: {
+  workspaces: SidebarWorkspaceEntry[];
+  projectNamesByKey: Map<string, string>;
+  collapsedStatusGroupKeys?: ReadonlySet<string>;
+  shortcutLimit?: number;
+}): SidebarShortcutModel {
+  const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
+  const groups = buildStatusGroups(input.workspaces, input.projectNamesByKey);
+  const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
+  const shortcutIndexByWorkspaceKey = new Map<string, number>();
+
+  for (const group of groups) {
+    if (input.collapsedStatusGroupKeys?.has(group.bucket)) {
+      continue;
+    }
+
+    for (const workspace of group.rows) {
+      if (shortcutTargets.length >= maxShortcuts) {
+        break;
       }
 
       const shortcutNumber = shortcutTargets.length + 1;

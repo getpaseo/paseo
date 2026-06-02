@@ -1,6 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
+import { i18n as testI18n } from "@/i18n/i18next";
 import React, { type ReactElement } from "react";
 import { act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,6 +9,8 @@ import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
+
+void testI18n;
 
 const { theme, startWorkspaceScriptMock } = vi.hoisted(() => {
   const hoistedTheme = {

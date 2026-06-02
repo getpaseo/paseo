@@ -78,8 +78,11 @@ const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
 const NO_WORKSPACE_MATCH_TIER = 5;
-const WORKSPACE_IGNORED_DIRECTORY_NAMES = new Set([
+const IGNORED_SUGGESTION_DIRECTORY_NAMES = new Set([
   "node_modules",
+  "venv",
+  "env",
+  "virtualenv",
   "dist",
   "build",
   "target",
@@ -824,7 +827,9 @@ async function listChildDirectories(input: {
   );
   const candidates = dirents.filter(
     (dirent) =>
-      !isHiddenDirectoryName(dirent.name) && (dirent.isDirectory() || dirent.isSymbolicLink()),
+      !isHiddenDirectoryName(dirent.name) &&
+      !isIgnoredSuggestionDirectoryName(dirent.name) &&
+      (dirent.isDirectory() || dirent.isSymbolicLink()),
   );
   const resolved = await Promise.all(
     candidates.map(async (dirent) => {
@@ -864,7 +869,7 @@ async function listWorkspaceChildEntries(input: {
   );
   const candidates = dirents.filter(
     (dirent) =>
-      !isHiddenDirectoryName(dirent.name) && !isIgnoredWorkspaceDirectoryName(dirent.name),
+      !isHiddenDirectoryName(dirent.name) && !isIgnoredSuggestionDirectoryName(dirent.name),
   );
   const resolved = await Promise.all(
     candidates.map(async (dirent) => {
@@ -955,8 +960,8 @@ function isHiddenDirectoryName(name: string): boolean {
   return name.startsWith(".");
 }
 
-function isIgnoredWorkspaceDirectoryName(name: string): boolean {
-  return WORKSPACE_IGNORED_DIRECTORY_NAMES.has(name);
+function isIgnoredSuggestionDirectoryName(name: string): boolean {
+  return IGNORED_SUGGESTION_DIRECTORY_NAMES.has(name);
 }
 
 function setDirectoryListCache(cacheKey: string, entry: DirectoryListCacheEntry): void {

@@ -2,7 +2,7 @@
 title: Configuration
 description: Configure Paseo via config.json, environment variables, and CLI overrides.
 nav: Configuration
-order: 10
+order: 14
 ---
 
 # Configuration

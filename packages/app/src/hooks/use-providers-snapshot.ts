@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { AgentProvider, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { queryClient as singletonQueryClient } from "@/query/query-client";
+import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import {
   isProvidersSnapshotHomeScope,
   normalizeProvidersSnapshotCwd,
@@ -51,6 +53,10 @@ export async function refreshAndApplyProvidersSnapshot(input: {
   );
   const snapshot = await fetchProvidersSnapshot({ client: input.client, cwd: input.cwd });
   input.queryClient.setQueryData(providersSnapshotQueryKey(input.serverId, input.cwd), snapshot);
+  void input.queryClient.invalidateQueries({
+    queryKey: agentCommandsQueryRoot(input.serverId),
+    exact: false,
+  });
   if (isProvidersSnapshotHomeScope(input.cwd)) {
     void input.queryClient.invalidateQueries({
       queryKey: providersSnapshotQueryRoot(input.serverId),
@@ -73,6 +79,10 @@ export function applyProvidersSnapshotUpdate(input: {
     entries: input.message.payload.entries,
     generatedAt: input.message.payload.generatedAt,
     requestId: "providers_snapshot_update",
+  });
+  void input.queryClient.invalidateQueries({
+    queryKey: agentCommandsQueryRoot(input.serverId),
+    exact: false,
   });
 }
 
@@ -112,6 +122,7 @@ export function useProvidersSnapshot(
   serverId: string | null,
   options: UseProvidersSnapshotOptions = {},
 ): UseProvidersSnapshotResult {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
@@ -129,7 +140,7 @@ export function useProvidersSnapshot(
     staleTime: 60_000,
     queryFn: async () => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return fetchProvidersSnapshot({ client, cwd });
     },

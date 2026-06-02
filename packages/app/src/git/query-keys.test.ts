@@ -5,8 +5,8 @@ import {
   checkoutPrStatusQueryKey,
   checkoutStatusQueryKey,
   invalidateCheckoutGitQueriesForClient,
-  prPaneTimelineQueryKey,
 } from "@/git/query-keys";
+import { prPaneTimelineQueryKey } from "@/git/pull-request-panel/query-keys";
 
 describe("checkout query keys", () => {
   const serverId = "server-1";

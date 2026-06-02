@@ -1,6 +1,7 @@
 import { isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import { isWeb } from "@/constants/platform";
+import { i18n } from "@/i18n/i18next";
 
 export interface DesktopAppUpdateCheckResult {
   hasUpdate: boolean;
@@ -23,6 +24,7 @@ export interface DesktopRuntimeInfo {
 }
 
 export type DesktopReleaseChannel = "stable" | "beta";
+export type DesktopAppUpdateCheckIntent = "automatic" | "manual";
 
 export interface LocalDaemonUpdateResult {
   exitCode: number;
@@ -99,10 +101,15 @@ export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo> {
 
 export async function checkDesktopAppUpdate({
   releaseChannel,
+  intent,
 }: {
   releaseChannel: DesktopReleaseChannel;
+  intent: DesktopAppUpdateCheckIntent;
 }): Promise<DesktopAppUpdateCheckResult> {
-  const result = await invokeDesktopCommand<unknown>("check_app_update", { releaseChannel });
+  const result = await invokeDesktopCommand<unknown>("check_app_update", {
+    releaseChannel,
+    intent,
+  });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while checking desktop updates.");
   }
@@ -130,7 +137,7 @@ export async function installDesktopAppUpdate({
   return {
     installed: result.installed === true,
     version: toStringOrNull(result.version),
-    message: toStringOrNull(result.message) ?? "Update completed.",
+    message: toStringOrNull(result.message) ?? i18n.t("desktop.updates.status.installed"),
   };
 }
 

@@ -1,19 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
   FetchRecentProviderSessionEntry,
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import { Inbox, RotateCw } from "lucide-react-native";
+import { ChevronDown, Inbox, Layers, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
+import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { i18n } from "@/i18n/i18next";
 import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
@@ -63,8 +65,10 @@ function buildSessionsQueriesConfig(args: {
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   cwd: string | null | undefined;
+  hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, sessionsQueryRoot, visible, client, cwd } = args;
+  const { providersToFetch, sessionsQueryRoot, visible, client, cwd, hostDisconnectedMessage } =
+    args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
@@ -72,7 +76,7 @@ function buildSessionsQueriesConfig(args: {
     enabled,
     queryFn: async () => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
       }
       return await client.fetchRecentProviderSessions({
         ...(cwd ? { cwd } : {}),
@@ -88,6 +92,7 @@ interface SheetStatusMessagesProps {
   isSnapshotUnsupported: boolean;
   hasNoImportableProviders: boolean;
   isLoadingSessions: boolean;
+  hasRows: boolean;
   allQueriesErrored: boolean;
   erroredProviderLabels: ReadonlyArray<string>;
   importErrored: boolean;
@@ -98,38 +103,42 @@ function SheetStatusMessages({
   isSnapshotUnsupported,
   hasNoImportableProviders,
   isLoadingSessions,
+  hasRows,
   allQueriesErrored,
   erroredProviderLabels,
   importErrored,
 }: SheetStatusMessagesProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   if (!isClientReady) {
-    return <Text style={styles.statusText}>Connect to a host to import sessions</Text>;
+    return <Text style={styles.statusText}>{t("importSession.status.connectHost")}</Text>;
   }
   if (isSnapshotUnsupported) {
-    return <Text style={styles.statusText}>Update the host to import sessions.</Text>;
+    return <Text style={styles.statusText}>{t("importSession.status.updateHost")}</Text>;
   }
   return (
     <>
       {hasNoImportableProviders ? (
-        <Text style={styles.statusText}>No importable providers are enabled.</Text>
+        <Text style={styles.statusText}>{t("importSession.status.noProviders")}</Text>
       ) : null}
-      {isLoadingSessions ? (
+      {isLoadingSessions && !hasRows ? (
         <View style={styles.statusRow}>
           <LoadingSpinner color={theme.colors.foregroundMuted} />
-          <Text style={styles.statusText}>Loading recent sessions...</Text>
+          <Text style={styles.statusText}>{t("importSession.status.loading")}</Text>
         </View>
       ) : null}
       {allQueriesErrored ? (
-        <Text style={styles.statusText}>Could not load recent sessions.</Text>
+        <Text style={styles.statusText}>{t("importSession.status.failedAll")}</Text>
       ) : null}
       {!allQueriesErrored && erroredProviderLabels.length > 0 ? (
         <Text style={styles.statusText}>
-          Could not load sessions for {erroredProviderLabels.join(", ")}.
+          {t("importSession.status.failedProviders", {
+            providers: erroredProviderLabels.join(", "),
+          })}
         </Text>
       ) : null}
       {importErrored ? (
-        <Text style={styles.statusText}>Could not import selected session.</Text>
+        <Text style={styles.statusText}>{t("importSession.status.failedImport")}</Text>
       ) : null}
     </>
   );
@@ -137,6 +146,7 @@ function SheetStatusMessages({
 
 function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPress: () => void }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const pressableStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.refreshButton,
@@ -148,7 +158,7 @@ function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPre
     <Pressable
       onPress={onPress}
       disabled={isRefreshing}
-      accessibilityLabel="Refresh sessions"
+      accessibilityLabel={t("importSession.actions.refresh")}
       accessibilityRole="button"
       testID="import-session-refresh"
       style={pressableStyle}
@@ -176,25 +186,6 @@ function SheetEmptyState({ title }: { title: string }) {
   );
 }
 
-function buildProviderFilterOptions(
-  providers: ReadonlyArray<string>,
-  providerLabelById: ReadonlyMap<string, string>,
-): SegmentedControlOption<string>[] {
-  const options: SegmentedControlOption<string>[] = [
-    { value: ALL_FILTER_VALUE, label: "All", testID: "import-session-filter-all" },
-  ];
-  for (const provider of providers) {
-    const ProviderIcon = getProviderIcon(provider);
-    options.push({
-      value: provider,
-      label: providerLabelById.get(provider) ?? provider,
-      testID: `import-session-filter-${provider}`,
-      icon: ({ color, size }) => <ProviderIcon color={color} size={size} />,
-    });
-  }
-  return options;
-}
-
 function ImportSessionSheetRow({
   entry,
   disabled,
@@ -209,6 +200,7 @@ function ImportSessionSheetRow({
   onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
   const lastActivity = formatTimeAgo(new Date(entry.lastActivityAt));
@@ -246,7 +238,9 @@ function ImportSessionSheetRow({
           <Text style={styles.rowTitle} numberOfLines={1}>
             {title}
           </Text>
-          <Text style={styles.rowMeta}>{importing ? "Importing..." : lastActivity}</Text>
+          <Text style={styles.rowMeta}>
+            {importing ? t("importSession.row.importing") : lastActivity}
+          </Text>
         </View>
         <Text style={styles.rowPreview} numberOfLines={2}>
           {promptPreview}
@@ -270,7 +264,9 @@ export function ImportSessionSheet({
   onImportedAgent,
   onImported,
 }: ImportSessionSheetProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { theme } = useUnistyles();
 
   const { entries: snapshotEntries, supportsSnapshot } = useProvidersSnapshot(serverId, {
     cwd,
@@ -300,8 +296,9 @@ export function ImportSessionSheet({
         visible,
         client,
         cwd,
+        hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, sessionsQueryRoot, visible, client, cwd],
+    [providersToFetch, sessionsQueryRoot, visible, client, cwd, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -315,6 +312,8 @@ export function ImportSessionSheet({
   const filterProviders = useMemo(() => [...(providersToFetch ?? [])].sort(), [providersToFetch]);
 
   const [selectedProvider, setSelectedProvider] = useState<string>(ALL_FILTER_VALUE);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterAnchorRef = useRef<View>(null);
 
   useEffect(() => {
     if (
@@ -330,24 +329,85 @@ export function ImportSessionSheet({
     return aggregatedEntries.filter((entry) => entry.providerId === selectedProvider);
   }, [aggregatedEntries, selectedProvider]);
 
-  const filterOptions = useMemo(
-    () => buildProviderFilterOptions(filterProviders, providerLabelById),
-    [filterProviders, providerLabelById],
+  const filterComboboxOptions = useMemo<ComboboxOption[]>(
+    () => [
+      { id: ALL_FILTER_VALUE, label: t("importSession.filters.all") },
+      ...filterProviders.map((provider) => ({
+        id: provider,
+        label: providerLabelById.get(provider) ?? provider,
+      })),
+    ],
+    [filterProviders, providerLabelById, t],
+  );
+
+  const selectedProviderLabel = useMemo(
+    () =>
+      filterComboboxOptions.find((opt) => opt.id === selectedProvider)?.label ??
+      t("importSession.filters.all"),
+    [filterComboboxOptions, selectedProvider, t],
+  );
+
+  const handleFilterOpen = useCallback(() => setIsFilterOpen(true), []);
+
+  const filterTriggerStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.filterTrigger,
+      Boolean(hovered) && styles.filterTriggerHovered,
+      pressed && styles.filterTriggerPressed,
+    ],
+    [],
+  );
+
+  const handleFilterSelect = useCallback((id: string) => {
+    setSelectedProvider(id);
+    setIsFilterOpen(false);
+  }, []);
+
+  const filterOptionIcons = useMemo(() => {
+    const map = new Map<string, React.ReactNode>();
+    map.set(ALL_FILTER_VALUE, <Layers size={14} color={theme.colors.foregroundMuted} />);
+    for (const provider of filterProviders) {
+      const ProviderIcon = getProviderIcon(provider);
+      map.set(provider, <ProviderIcon size={14} color={theme.colors.foregroundMuted} />);
+    }
+    return map;
+  }, [filterProviders, theme.colors.foregroundMuted]);
+
+  const renderFilterOption = useCallback(
+    ({
+      option,
+      selected,
+      active,
+      onPress,
+    }: {
+      option: ComboboxOption;
+      selected: boolean;
+      active: boolean;
+      onPress: () => void;
+    }) => (
+      <ComboboxItem
+        label={option.label}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+        leadingSlot={filterOptionIcons.get(option.id)}
+      />
+    ),
+    [filterOptionIcons],
   );
 
   const importMutation = useMutation({
     mutationFn: async (entry: FetchRecentProviderSessionEntry) => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const effectiveCwd = cwd ?? entry.cwd;
-      if (!effectiveCwd) {
+      if (!entry.cwd) {
         throw new Error("Session is missing a working directory");
       }
       const agent = await client.importAgent({
         providerId: entry.providerId,
         providerHandleId: entry.providerHandleId,
-        cwd: effectiveCwd,
+        cwd: entry.cwd,
       });
       return agent;
     },
@@ -384,10 +444,10 @@ export function ImportSessionSheet({
 
   const header = useMemo<SheetHeader>(
     () => ({
-      title: "Import session",
+      title: t("importSession.title"),
       actions: <RefreshAction isRefreshing={isRefreshing} onPress={handleRefresh} />,
     }),
-    [isRefreshing, handleRefresh],
+    [isRefreshing, handleRefresh, t],
   );
 
   const isSnapshotUnsupported = !supportsSnapshot;
@@ -423,25 +483,48 @@ export function ImportSessionSheet({
       snapPoints={IMPORT_SHEET_SNAP_POINTS}
     >
       {showFilter ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          <SegmentedControl
-            testID="import-session-filters"
-            size="sm"
-            options={filterOptions}
+        <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
+          <Pressable
+            onPress={handleFilterOpen}
+            style={filterTriggerStyle}
+            testID="import-session-filter-trigger"
+            accessibilityRole="button"
+            accessibilityLabel={`Filter: ${selectedProviderLabel}`}
+          >
+            {selectedProvider === ALL_FILTER_VALUE ? (
+              <Layers size={14} color={theme.colors.foregroundMuted} />
+            ) : (
+              (() => {
+                const ProviderIcon = getProviderIcon(selectedProvider);
+                return <ProviderIcon size={14} color={theme.colors.foregroundMuted} />;
+              })()
+            )}
+            <Text style={styles.filterTriggerText} numberOfLines={1}>
+              {selectedProviderLabel}
+            </Text>
+            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+          </Pressable>
+          <Combobox
+            options={filterComboboxOptions}
             value={selectedProvider}
-            onValueChange={setSelectedProvider}
+            onSelect={handleFilterSelect}
+            renderOption={renderFilterOption}
+            searchable={false}
+            title="Filter by provider"
+            open={isFilterOpen}
+            onOpenChange={setIsFilterOpen}
+            anchorRef={filterAnchorRef}
+            desktopPlacement="bottom-start"
+            desktopPreventInitialFlash
           />
-        </ScrollView>
+        </View>
       ) : null}
       <SheetStatusMessages
         isClientReady={Boolean(client)}
         isSnapshotUnsupported={isSnapshotUnsupported}
         hasNoImportableProviders={hasNoImportableProviders}
         isLoadingSessions={isLoadingSessions}
+        hasRows={visibleEntries.length > 0}
         allQueriesErrored={allQueriesErrored}
         erroredProviderLabels={erroredProviderLabels}
         importErrored={importMutation.isError}
@@ -466,9 +549,31 @@ export function ImportSessionSheet({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  filterRow: {
-    flexDirection: "row",
+  filterTriggerWrap: {
     paddingBottom: theme.spacing[2],
+  },
+  filterTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    alignSelf: "flex-start",
+    paddingVertical: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  filterTriggerHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  filterTriggerPressed: {
+    backgroundColor: theme.colors.surface3,
+  },
+  filterTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
   list: {
     gap: theme.spacing[1],
