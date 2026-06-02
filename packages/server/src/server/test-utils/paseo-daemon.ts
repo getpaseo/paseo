@@ -33,6 +33,7 @@ interface TestPaseoDaemonOptions {
   dictationFinalTimeoutMs?: number;
   auth?: PaseoDaemonConfig["auth"];
   pushNotificationSender?: PushNotificationSender;
+  serviceProxy?: PaseoDaemonConfig["serviceProxy"];
 }
 
 export interface TestPaseoDaemon {
@@ -161,6 +162,7 @@ async function prepareTestDaemonConfig(
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
     pushNotificationSender: options.pushNotificationSender,
+    serviceProxy: options.serviceProxy,
     openai: options.openai,
     speech: options.speech,
     voiceLlmProvider: options.voiceLlmProvider ?? null,

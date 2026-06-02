@@ -1,4 +1,4 @@
-import { buildPublicScriptProxyUrl, buildScriptHostname } from "../utils/script-hostname.js";
+import { projectServiceProxyUrls } from "./service-proxy.js";
 
 export interface WorkspaceServicePeer {
   scriptName: string;
@@ -81,25 +81,13 @@ interface BuildServiceProxyUrlOptions {
 }
 
 function buildServiceProxyUrl(options: BuildServiceProxyUrlOptions): string | null {
-  if (options.serviceProxyPublicBaseUrl) {
-    return buildPublicScriptProxyUrl({
-      projectSlug: options.projectSlug,
-      branchName: options.branchName,
-      scriptName: options.scriptName,
-      publicBaseUrl: options.serviceProxyPublicBaseUrl,
-    });
-  }
-
-  if (options.daemonPort === null || options.daemonPort === undefined) {
-    return null;
-  }
-
-  const hostname = buildScriptHostname({
+  return projectServiceProxyUrls({
     projectSlug: options.projectSlug,
     branchName: options.branchName,
     scriptName: options.scriptName,
-  });
-  return `http://${hostname}:${options.daemonPort}`;
+    daemonPort: options.daemonPort,
+    publicBaseUrl: options.serviceProxyPublicBaseUrl,
+  }).proxyUrl;
 }
 
 function isLoopbackListenHost(host: string | null | undefined): boolean {
