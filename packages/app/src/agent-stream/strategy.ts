@@ -32,6 +32,11 @@ export type StreamNearBottomInput = StreamViewportMetrics & {
   threshold: number;
 };
 
+export type StreamNearHistoryStartInput = StreamViewportMetrics & {
+  offsetY: number;
+  threshold: number;
+};
+
 export interface StreamEdgeSlotProps {
   ListHeaderComponent?: ReactElement | ComponentType<unknown> | null;
   ListHeaderComponentStyle?: StyleProp<ViewStyle>;
@@ -277,6 +282,29 @@ export function isNearBottomForStreamRenderStrategy(
     contentHeight: params.contentHeight,
     viewportHeight: params.viewportHeight,
   });
+}
+
+export function isNearHistoryStartForForwardStream(input: StreamNearHistoryStartInput): boolean {
+  return input.offsetY <= input.threshold;
+}
+
+export function isNearHistoryStartForInvertedStream(input: StreamNearHistoryStartInput): boolean {
+  return input.contentHeight - input.viewportHeight - input.offsetY <= input.threshold;
+}
+
+export function isNearHistoryStartForStreamRenderStrategy(
+  params: StreamNearHistoryStartInput & { strategy: StreamStrategy },
+): boolean {
+  const input = {
+    offsetY: params.offsetY,
+    threshold: params.threshold,
+    contentHeight: params.contentHeight,
+    viewportHeight: params.viewportHeight,
+  };
+  if (params.strategy.getFlatListInverted()) {
+    return isNearHistoryStartForInvertedStream(input);
+  }
+  return isNearHistoryStartForForwardStream(input);
 }
 
 export function getBottomOffsetForStreamRenderStrategy(

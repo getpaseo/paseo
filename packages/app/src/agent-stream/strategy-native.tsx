@@ -24,6 +24,7 @@ import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./
 import {
   createStreamStrategy,
   isNearBottomForStreamRenderStrategy,
+  isNearHistoryStartForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
 } from "./strategy";
 
@@ -149,6 +150,31 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     scrollToBottom,
   });
 
+  const maybeLoadOlderHistory = useStableEvent(() => {
+    const metrics = streamViewportMetricsRef.current;
+    if (
+      !historyStartReadyRef.current ||
+      !hasOlderHistory ||
+      isLoadingOlderHistory ||
+      metrics.viewportMeasuredForKey !== metrics.containerKey ||
+      metrics.contentMeasuredForKey !== metrics.containerKey ||
+      metrics.viewportHeight <= 0
+    ) {
+      return;
+    }
+    if (
+      isNearHistoryStartForStreamRenderStrategy({
+        strategy,
+        offsetY: metrics.offsetY,
+        threshold: HISTORY_START_THRESHOLD_PX,
+        contentHeight: metrics.contentHeight,
+        viewportHeight: metrics.viewportHeight,
+      })
+    ) {
+      onNearHistoryStart();
+    }
+  });
+
   useEffect(() => {
     streamViewportMetricsRef.current = {
       containerKey: "native-virtualized",
@@ -165,11 +191,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     historyStartReadyRef.current = false;
     const frame = requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
+      maybeLoadOlderHistory();
     });
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [agentId, clearNativeViewportSettling]);
+  }, [agentId, clearNativeViewportSettling, maybeLoadOlderHistory]);
+
+  useEffect(() => {
+    maybeLoadOlderHistory();
+  }, [hasOlderHistory, isLoadingOlderHistory, maybeLoadOlderHistory]);
 
   useEffect(() => {
     const keyboardEvents = [
@@ -241,17 +272,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     });
     onNearBottomChange(nearBottom);
 
-    const distanceFromOldestEdge =
-      streamViewportMetricsRef.current.contentHeight -
-      streamViewportMetricsRef.current.viewportHeight -
-      contentOffset.y;
-    if (
-      historyStartReadyRef.current &&
-      hasOlderHistory &&
-      distanceFromOldestEdge <= HISTORY_START_THRESHOLD_PX
-    ) {
-      onNearHistoryStart();
-    }
+    maybeLoadOlderHistory();
 
     if (programmaticScrollEventBudgetRef.current > 0 && contentOffset.y <= 8) {
       programmaticScrollEventBudgetRef.current -= 1;
@@ -288,6 +309,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousViewportHeight,
       viewportHeight,
     });
+    maybeLoadOlderHistory();
   });
 
   const handleContentSizeChange = useStableEvent((_width: number, height: number) => {
@@ -303,6 +325,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousContentHeight,
       contentHeight: nextContentHeight,
     });
+    maybeLoadOlderHistory();
   });
 
   const renderItem = useStableEvent(

@@ -10,9 +10,10 @@ import React, {
 } from "react";
 import { ActivityIndicator } from "react-native";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
-import { createStreamStrategy } from "./strategy";
+import { createStreamStrategy, isNearHistoryStartForForwardStream } from "./strategy";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
@@ -258,14 +259,47 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scheduleStickToBottom();
   }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
 
-  const updateScrollMetrics = useCallback(() => {
-    const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer) {
-      onNearBottomChange(true);
-      return;
-    }
-    syncNearBottom(scrollContainer, onNearBottomChange);
-  }, [onNearBottomChange]);
+  const maybeLoadOlderHistory = useStableEvent(
+    (options: { useActualScrollOffset?: boolean } = {}) => {
+      const scrollContainer = scrollContainerRef.current;
+      if (
+        !scrollContainer ||
+        !historyStartReadyRef.current ||
+        !hasOlderHistory ||
+        isLoadingOlderHistory ||
+        scrollContainer.clientHeight <= 0
+      ) {
+        return;
+      }
+      const offsetY =
+        options.useActualScrollOffset || !followOutputRef.current
+          ? scrollContainer.scrollTop
+          : Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      if (
+        isNearHistoryStartForForwardStream({
+          offsetY,
+          threshold: HISTORY_START_THRESHOLD_PX,
+          contentHeight: scrollContainer.scrollHeight,
+          viewportHeight: scrollContainer.clientHeight,
+        })
+      ) {
+        onNearHistoryStart();
+      }
+    },
+  );
+
+  const updateScrollMetrics = useCallback(
+    (options: { useActualScrollOffset?: boolean } = {}) => {
+      const scrollContainer = scrollContainerRef.current;
+      if (!scrollContainer) {
+        onNearBottomChange(true);
+        return;
+      }
+      syncNearBottom(scrollContainer, onNearBottomChange);
+      maybeLoadOlderHistory(options);
+    },
+    [maybeLoadOlderHistory, onNearBottomChange],
+  );
 
   const handleDomScroll = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -294,25 +328,23 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
-    updateScrollMetrics();
-    if (
-      historyStartReadyRef.current &&
-      hasOlderHistory &&
-      currentScrollTop <= HISTORY_START_THRESHOLD_PX
-    ) {
-      onNearHistoryStart();
-    }
-  }, [cancelPendingStickToBottom, hasOlderHistory, onNearHistoryStart, updateScrollMetrics]);
+    updateScrollMetrics({ useActualScrollOffset: true });
+  }, [cancelPendingStickToBottom, updateScrollMetrics]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
+      maybeLoadOlderHistory();
     });
     return () => {
       window.cancelAnimationFrame(frame);
       historyStartReadyRef.current = false;
     };
-  }, [props.agentId]);
+  }, [maybeLoadOlderHistory, props.agentId]);
+
+  useEffect(() => {
+    maybeLoadOlderHistory();
+  }, [hasOlderHistory, isLoadingOlderHistory, maybeLoadOlderHistory]);
 
   useLayoutEffect(() => {
     if (!isActivationReady) {

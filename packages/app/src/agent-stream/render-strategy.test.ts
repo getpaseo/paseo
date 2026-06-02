@@ -10,6 +10,7 @@ import {
   getStreamNeighborIndex,
   getStreamNeighborItem,
   isNearBottomForStreamRenderStrategy,
+  isNearHistoryStartForStreamRenderStrategy,
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
@@ -295,6 +296,70 @@ describe("scroll/bottom calculations", () => {
         contentHeight: 1000,
       }),
     ).toBe(680);
+  });
+
+  it("treats short forward-stream content as already near the history start", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      isNearHistoryStartForStreamRenderStrategy({
+        strategy,
+        offsetY: 0,
+        viewportHeight: 400,
+        contentHeight: 200,
+        threshold: 96,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats short inverted-stream content as already near the history start", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      isNearHistoryStartForStreamRenderStrategy({
+        strategy,
+        offsetY: 0,
+        viewportHeight: 400,
+        contentHeight: 200,
+        threshold: 96,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps longer streams away from the history start until the oldest edge is close", () => {
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const inverted = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      isNearHistoryStartForStreamRenderStrategy({
+        strategy: forward,
+        offsetY: 240,
+        viewportHeight: 400,
+        contentHeight: 1000,
+        threshold: 96,
+      }),
+    ).toBe(false);
+    expect(
+      isNearHistoryStartForStreamRenderStrategy({
+        strategy: inverted,
+        offsetY: 240,
+        viewportHeight: 400,
+        contentHeight: 1000,
+        threshold: 96,
+      }),
+    ).toBe(false);
   });
 });
 
