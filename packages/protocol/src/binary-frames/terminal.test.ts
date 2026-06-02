@@ -91,24 +91,26 @@ describe("terminal binary frames", () => {
     ).toBeNull();
   });
 
-  it("rejects unknown fields in resize and snapshot payloads", () => {
+  it("ignores unknown fields in resize and snapshot payloads", () => {
+    // Protocol schemas are non-strict: unknown keys are stripped, not rejected, so a
+    // new daemon can add fields without breaking an old client's parse.
     expect(
       decodeTerminalResizePayload(
         new TextEncoder().encode(JSON.stringify({ rows: 24, cols: 80, extra: true })),
       ),
-    ).toBeNull();
-    expect(
-      decodeTerminalSnapshotPayload(
-        new TextEncoder().encode(
-          JSON.stringify({
-            rows: 1,
-            cols: 1,
-            grid: [[{ char: "A", extra: true }]],
-            scrollback: [],
-            cursor: { row: 0, col: 1 },
-          }),
-        ),
+    ).toEqual({ rows: 24, cols: 80 });
+
+    const snapshot = decodeTerminalSnapshotPayload(
+      new TextEncoder().encode(
+        JSON.stringify({
+          rows: 1,
+          cols: 1,
+          grid: [[{ char: "A", extra: true }]],
+          scrollback: [],
+          cursor: { row: 0, col: 1 },
+        }),
       ),
-    ).toBeNull();
+    );
+    expect(snapshot?.grid[0]?.[0]).toEqual({ char: "A" });
   });
 });

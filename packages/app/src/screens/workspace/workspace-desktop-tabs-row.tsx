@@ -62,6 +62,7 @@ import {
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { Theme } from "@/styles/theme";
+import { RenderProfile } from "@/utils/render-profiler";
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
@@ -148,7 +149,6 @@ interface WorkspaceDesktopTabsRowProps {
   tabs: WorkspaceDesktopTabRowItem[];
   normalizedServerId: string;
   normalizedWorkspaceId: string;
-  setHoveredTabKey: Dispatch<SetStateAction<string | null>>;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -255,7 +255,6 @@ function TabChip({
   presentation,
   tooltipLabel,
   resolvedTab,
-  setHoveredTabKey,
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
@@ -273,7 +272,6 @@ function TabChip({
   presentation: WorkspaceTabPresentation;
   tooltipLabel: string;
   resolvedTab: WorkspaceDesktopTabActions;
-  setHoveredTabKey: Dispatch<SetStateAction<string | null>>;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -311,13 +309,11 @@ function TabChip({
 
   const handleTabHoverIn = useCallback(() => {
     setHovered(true);
-    setHoveredTabKey(tab.key);
-  }, [setHoveredTabKey, tab.key]);
+  }, []);
 
   const handleTabHoverOut = useCallback(() => {
     setHovered(false);
-    setHoveredTabKey((current) => (current === tab.key ? null : current));
-  }, [setHoveredTabKey, tab.key]);
+  }, []);
 
   const handleNavigateTab = useCallback(() => {
     onNavigateTab(tab.tabId);
@@ -328,14 +324,12 @@ function TabChip({
   }, []);
 
   const handleCloseButtonHoverIn = useCallback(() => {
-    setHoveredTabKey(tab.key);
     setHoveredCloseTabKey(tab.key);
-  }, [setHoveredTabKey, setHoveredCloseTabKey, tab.key]);
+  }, [setHoveredCloseTabKey, tab.key]);
 
   const handleCloseButtonHoverOut = useCallback(() => {
-    setHoveredTabKey((current) => (current === tab.key ? null : current));
     setHoveredCloseTabKey((current) => (current === tab.key ? null : current));
-  }, [setHoveredTabKey, setHoveredCloseTabKey, tab.key]);
+  }, [setHoveredCloseTabKey, tab.key]);
 
   const handleCloseButtonPress = useCallback(
     (event: { stopPropagation?: () => void }) => {
@@ -466,7 +460,6 @@ export function WorkspaceDesktopTabsRow({
   tabs,
   normalizedServerId,
   normalizedWorkspaceId,
-  setHoveredTabKey,
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
@@ -613,7 +606,6 @@ export function WorkspaceDesktopTabsRow({
           resolvedTabWidth={resolvedTabWidth}
           showLabel={showLabel}
           showCloseButton={shouldShowCloseButton}
-          setHoveredTabKey={setHoveredTabKey}
           setHoveredCloseTabKey={setHoveredCloseTabKey}
           onNavigateTab={onNavigateTab}
           onCloseTab={onCloseTab}
@@ -640,7 +632,6 @@ export function WorkspaceDesktopTabsRow({
       onReloadAgent,
       onRenameTab,
       setHoveredCloseTabKey,
-      setHoveredTabKey,
       tabDropPreviewIndex,
       tabs.length,
     ],
@@ -656,7 +647,7 @@ export function WorkspaceDesktopTabsRow({
     [layout.requiresHorizontalScrollFallback],
   );
 
-  return (
+  const row = (
     <View
       style={styles.tabsContainer}
       testID="workspace-tabs-row"
@@ -787,8 +778,9 @@ export function WorkspaceDesktopTabsRow({
       </View>
     </View>
   );
-}
 
+  return <RenderProfile id="WorkspaceDesktopTabsRow">{row}</RenderProfile>;
+}
 function ResolvedDesktopTabChip({
   item,
   isFocused,
@@ -807,7 +799,6 @@ function ResolvedDesktopTabChip({
   resolvedTabWidth,
   showLabel,
   showCloseButton,
-  setHoveredTabKey,
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
@@ -832,7 +823,6 @@ function ResolvedDesktopTabChip({
   resolvedTabWidth: number;
   showLabel: boolean;
   showCloseButton: boolean;
-  setHoveredTabKey: Dispatch<SetStateAction<string | null>>;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -896,7 +886,6 @@ function ResolvedDesktopTabChip({
               presentation={presentation}
               tooltipLabel={tooltipLabel}
               resolvedTab={resolvedTab}
-              setHoveredTabKey={setHoveredTabKey}
               setHoveredCloseTabKey={setHoveredCloseTabKey}
               onNavigateTab={onNavigateTab}
               onCloseTab={onCloseTab}

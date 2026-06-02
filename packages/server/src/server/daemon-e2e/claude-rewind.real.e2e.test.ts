@@ -1,13 +1,16 @@
 import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pino from "pino";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 import {
   closeRewindSession,
   fetchTimelineItems,
@@ -114,7 +117,7 @@ async function launchClaudeRewindSession(
   const agent = await harness.client.createAgent({
     cwd,
     title,
-    ...getFullAccessConfig("claude"),
+    ...getRealProviderConfig("claude"),
   });
 
   return { agentId: agent.id, cwd };
@@ -212,12 +215,17 @@ function assertTimeline(items: AgentTimelineItem[], expectedKept: ClaudeTurnSpec
 }
 
 describe("daemon E2E (real claude) - rewind", () => {
+  let canRun = false;
   let harness: ClaudeRewindHarness;
 
   beforeAll(async () => {
+    canRun = await canRunRealProvider("claude");
+    if (!canRun) {
+      return;
+    }
     const logger = pino({ level: "silent" });
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({
@@ -235,9 +243,16 @@ describe("daemon E2E (real claude) - rewind", () => {
     await harness?.daemon.close().catch(() => undefined);
   });
 
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test.each(MATRIX)(
     "$name",
     async (scenario) => {
+      if (!harness) throw new Error("Claude rewind harness was not initialized");
       const session = await launchClaudeRewindSession(
         harness,
         `claude-rewind-${scenario.mode}-${scenario.turnCount}-${scenario.rewindTurn}`,

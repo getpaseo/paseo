@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { darkHighlightColors, lightHighlightColors } from "@getpaseo/highlight";
 
 export const baseColors = {
@@ -485,16 +486,48 @@ export const OPACITY = {
   100: 1,
 } as const;
 
-const commonTheme = {
+// Platform default font stacks — copied verbatim from constants/theme.ts `Fonts`
+// (sans -> ui, mono -> mono). These seed the dynamic `fontFamily` theme token and
+// are the fallback an empty user-supplied family resolves to at apply time.
+export const DEFAULT_UI_FONT_STACK: string = Platform.select({
+  ios: "system-ui",
+  default: "normal",
+  web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+});
+
+export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
+  ios: "ui-monospace",
+  default: "monospace",
+  web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+});
+
+// `fontSize`, `fontFamily`, and `lineHeight` are deliberately widened to plain
+// `number`/`string` (not narrowed by `as const`) so the appearance updater can patch
+// them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
+// literal types.
+interface CommonTheme {
+  spacing: typeof SPACING;
+  fontSize: Record<keyof typeof FONT_SIZE, number>;
+  fontFamily: { ui: string; mono: string };
+  lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
+  iconSize: typeof ICON_SIZE;
+  fontWeight: typeof FONT_WEIGHT;
+  borderRadius: typeof BORDER_RADIUS;
+  borderWidth: typeof BORDER_WIDTH;
+  opacity: typeof OPACITY;
+}
+
+const commonTheme: CommonTheme = {
   spacing: SPACING,
   fontSize: FONT_SIZE,
+  fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },
   lineHeight: LINE_HEIGHT,
   iconSize: ICON_SIZE,
   fontWeight: FONT_WEIGHT,
   borderRadius: BORDER_RADIUS,
   borderWidth: BORDER_WIDTH,
   opacity: OPACITY,
-} as const;
+};
 
 const darkShadow = {
   sm: {

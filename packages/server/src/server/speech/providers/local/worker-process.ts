@@ -16,6 +16,7 @@ import type {
   LocalSpeechWorkerRequest,
   LocalSpeechWorkerToParentMessage,
 } from "./worker-protocol.js";
+import { bufferToWorkerBytes, workerBytesToBuffer } from "./worker-bytes.js";
 
 process.title = "Paseo Voice";
 
@@ -251,7 +252,7 @@ function handleSessionRequest(message: LocalSpeechWorkerSessionRequest): void {
   const session = sessions.get(message.sessionId);
   switch (message.type) {
     case "session.append":
-      session?.appendPcm16(message.audio);
+      session?.appendPcm16(workerBytesToBuffer(message.audio));
       break;
     case "session.commit":
       if (session && "commit" in session) {
@@ -284,13 +285,16 @@ async function handleRequest(message: LocalSpeechWorkerRequest): Promise<void> {
     for await (const chunk of result.stream) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
-    sendOk(message.requestId, { audio: Buffer.concat(chunks), format: result.format });
+    sendOk(message.requestId, {
+      audio: bufferToWorkerBytes(Buffer.concat(chunks)),
+      format: result.format,
+    });
     return;
   }
 
   if (message.type === "stt.transcribe") {
     const result = await getSttProvider(message.config, message.model).transcribeAudio(
-      message.audio,
+      workerBytesToBuffer(message.audio),
       message.format,
     );
     sendOk(message.requestId, result);

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { computeResizeHandleSizes } from "@/components/resize-handle-sizes";
 
 export interface ResizeHandleProps {
   direction: "horizontal" | "vertical";
@@ -13,8 +14,14 @@ export interface ResizeHandleProps {
 interface PointerState {
   containerSize: number;
   pointerStart: number;
-  leftSize: number;
-  rightSize: number;
+}
+
+function resetWindowHorizontalScroll() {
+  // Clamp any browser scroll introduced while dragging past the viewport edge.
+  if (window.scrollX === 0) {
+    return;
+  }
+  window.scrollTo(0, window.scrollY);
 }
 
 export function ResizeHandle({
@@ -25,7 +32,8 @@ export function ResizeHandle({
   onResizeSplit,
 }: ResizeHandleProps) {
   const { theme } = useUnistyles();
-  const pointerStateRef = useRef<PointerState | null>(null);
+  const pointerStatesRef = useRef(new Map<number, PointerState>());
+  const cursorBeforeDragRef = useRef<string | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [active, setActive] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -34,7 +42,11 @@ export function ResizeHandle({
   const handlePointerDown = useCallback(
     (event: RNPointerEvent) => {
       const hitAreaElement = event.currentTarget as unknown as HTMLElement | null;
-      const containerElement = hitAreaElement?.parentElement?.parentElement ?? null;
+      if (!hitAreaElement) {
+        return;
+      }
+
+      const containerElement = hitAreaElement.parentElement?.parentElement ?? null;
       if (!containerElement) {
         return;
       }
@@ -45,51 +57,83 @@ export function ResizeHandle({
         return;
       }
 
+      const pointerId = event.nativeEvent.pointerId;
+      if (pointerStatesRef.current.has(pointerId)) {
+        return;
+      }
+
       setDragging(true);
 
-      pointerStateRef.current = {
+      pointerStatesRef.current.set(pointerId, {
         containerSize,
         pointerStart:
           direction === "horizontal" ? event.nativeEvent.clientX : event.nativeEvent.clientY,
-        leftSize: sizes[index] ?? 0,
-        rightSize: sizes[index + 1] ?? 0,
-      };
+      });
 
-      const previousCursor = document.body.style.cursor;
+      if (pointerStatesRef.current.size === 1) {
+        cursorBeforeDragRef.current = document.body.style.cursor;
+      }
       const nextCursor = direction === "horizontal" ? "col-resize" : "row-resize";
       document.body.style.cursor = nextCursor;
       event.preventDefault();
+      event.stopPropagation();
+      const pointerCaptureElement = hitAreaElement;
+      pointerCaptureElement.setPointerCapture?.(pointerId);
+      resetWindowHorizontalScroll();
 
       function cleanup() {
-        pointerStateRef.current = null;
-        setDragging(false);
-        document.body.style.cursor = previousCursor;
+        pointerStatesRef.current.delete(pointerId);
+        setDragging(pointerStatesRef.current.size > 0);
+        if (pointerStatesRef.current.size === 0) {
+          document.body.style.cursor = cursorBeforeDragRef.current ?? "";
+          cursorBeforeDragRef.current = null;
+        }
+        if (pointerCaptureElement.hasPointerCapture?.(pointerId)) {
+          pointerCaptureElement.releasePointerCapture(pointerId);
+        }
+        resetWindowHorizontalScroll();
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerUp);
       }
 
       function handlePointerMove(moveEvent: PointerEvent) {
-        const pointerState = pointerStateRef.current;
+        if (moveEvent.pointerId !== pointerId) {
+          return;
+        }
+
+        const pointerState = pointerStatesRef.current.get(pointerId);
         if (!pointerState) {
           return;
         }
 
+        moveEvent.preventDefault();
+        resetWindowHorizontalScroll();
         const pointerCurrent = direction === "horizontal" ? moveEvent.clientX : moveEvent.clientY;
         const deltaRatio =
           (pointerCurrent - pointerState.pointerStart) / pointerState.containerSize;
 
-        const nextSizes = sizes.slice();
-        nextSizes[index] = pointerState.leftSize + deltaRatio;
-        nextSizes[index + 1] = pointerState.rightSize - deltaRatio;
-        onResizeSplit(groupId, nextSizes);
+        onResizeSplit(
+          groupId,
+          computeResizeHandleSizes({
+            sizes,
+            index,
+            deltaRatio,
+          }),
+        );
       }
 
-      function handlePointerUp() {
+      function handlePointerUp(upEvent: PointerEvent) {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+
         cleanup();
       }
 
       window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp, { once: true });
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerUp);
     },
     [direction, groupId, index, onResizeSplit, sizes],
   );
@@ -130,6 +174,7 @@ export function ResizeHandle({
       direction === "horizontal" ? styles.hitAreaHorizontal : styles.hitAreaVertical,
       {
         cursor: direction === "horizontal" ? "col-resize" : "row-resize",
+        touchAction: "none",
       } as object,
     ],
     [direction],

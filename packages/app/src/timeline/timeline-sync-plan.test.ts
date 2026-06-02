@@ -18,7 +18,7 @@ describe("timeline sync planning", () => {
     expect(plan).toEqual({
       direction: "tail",
       limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
+      projection: "projected",
     });
   });
 
@@ -32,7 +32,7 @@ describe("timeline sync planning", () => {
       direction: "after",
       cursor: { epoch: "epoch-1", seq: 42 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
+      projection: "projected",
     });
   });
 
@@ -45,7 +45,7 @@ describe("timeline sync planning", () => {
       direction: "after",
       cursor: { epoch: "epoch-1", seq: 100 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
+      projection: "projected",
     });
   });
 
@@ -55,7 +55,7 @@ describe("timeline sync planning", () => {
     expect(plan).toEqual({
       direction: "tail",
       limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
+      projection: "projected",
     });
   });
 
@@ -66,7 +66,7 @@ describe("timeline sync planning", () => {
       direction: "before",
       cursor: { epoch: "epoch-1", seq: 25 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
+      projection: "projected",
     });
   });
 
@@ -82,7 +82,7 @@ describe("timeline sync planning", () => {
       direction: "after",
       cursor: { epoch: "epoch-1", seq: 200 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
-      projection: "canonical",
+      projection: "projected",
     });
   });
 

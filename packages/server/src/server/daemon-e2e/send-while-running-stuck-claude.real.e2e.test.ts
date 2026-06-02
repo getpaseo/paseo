@@ -6,8 +6,11 @@ import pino from "pino";
 
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 import { applyAgentInputProcessingTransition } from "./send-while-running-stuck-test-utils.js";
 
 function tmpCwd(): string {
@@ -18,7 +21,7 @@ describe("daemon E2E (real claude) - send while running recovery", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -31,7 +34,7 @@ describe("daemon E2E (real claude) - send while running recovery", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
 
@@ -47,7 +50,7 @@ describe("daemon E2E (real claude) - send while running recovery", () => {
       const agent = await primary.createAgent({
         cwd,
         title: "stuck-repro-real-claude",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await primary.sendMessage(

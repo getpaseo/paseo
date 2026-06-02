@@ -1,15 +1,17 @@
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
-import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
-import { ClaudeAgentClient } from "./agent.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+} from "../../../daemon-e2e/real-provider-test-config.js";
 
 // Real-Claude contract coverage: validates slash command shape from a live Claude CLI session.
 describe("claude agent commands contract (real)", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -19,9 +21,7 @@ describe("claude agent commands contract (real)", () => {
   });
 
   test("lists slash commands with the expected contract", async () => {
-    const client = new ClaudeAgentClient({
-      logger: pino({ level: "silent" }),
-    });
+    const client = createRealProviderClient("claude", pino({ level: "silent" }));
     const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),

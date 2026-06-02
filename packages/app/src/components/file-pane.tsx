@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
@@ -19,6 +18,7 @@ import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
@@ -172,14 +172,14 @@ const codeLineStyles = StyleSheet.create((theme) => ({
   },
   gutterText: {
     color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     lineHeight: theme.fontSize.code * 1.45,
     opacity: 0.4,
     userSelect: "none",
   },
   lineText: {
-    fontFamily: Fonts.mono,
+    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     lineHeight: theme.fontSize.code * 1.45,
     flex: 1,
@@ -296,7 +296,7 @@ function FilePreviewBody({
       lineNumber: index + 1,
     }));
     const codeLines = (
-      <View>
+      <View dataSet={CODE_SURFACE_DATASET}>
         {keyedLines.map(({ key, tokens, lineNumber }) => (
           <CodeLine
             key={key}

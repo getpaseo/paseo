@@ -12,7 +12,7 @@ A loop is a worker/verifier cycle: launch a worker → check verification → re
 
 ## Prerequisites
 
-Read the **paseo** skill for orchestration preferences — worker and verifier providers come from preferences unless the user names them.
+Read the **paseo** skill. Before choosing worker or verifier providers, read `~/.paseo/orchestration-preferences.json` unless the user explicitly named providers in this request. Do not start the loop until you have read it.
 
 Loops are a CLI primitive: `paseo loop run`. Manage with `paseo loop ls`, `paseo loop inspect <id>`, `paseo loop logs <id>`, `paseo loop stop <id>`.
 

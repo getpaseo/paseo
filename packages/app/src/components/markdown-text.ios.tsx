@@ -1,19 +1,39 @@
 import { useMemo, type ReactNode } from "react";
-import type { StyleProp, TextStyle, ViewStyle } from "react-native";
+import type { StyleProp, TextProps, TextStyle, ViewStyle } from "react-native";
 import { UITextView } from "react-native-uitextview";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
+  // Links route through this span too (see assistant-file-links/link.tsx). A
+  // plain <Text> nested in the paragraph UITextView is dropped, so the link
+  // must be a UITextView span to be visible. onPress is forwarded best-effort:
+  // react-native-uitextview nulls onPress on the root native view, so reliable
+  // tap-to-open is still tracked by #21 — but visible+selectable text beats an
+  // invisible link.
+  onPress?: TextProps["onPress"];
+  accessibilityRole?: TextProps["accessibilityRole"];
 }
 
 // Inline span backed by UITextView so iOS gets native word-selection handles.
 // Used inside MarkdownParagraphView (which is also a UITextView on iOS); the
 // library's TextAncestorContext hoists these into UITextViewChild nodes so
 // selection drags can cross sibling spans (e.g. plain text → **bold** → code).
-export function MarkdownTextSpan({ style, children }: MarkdownTextSpanProps) {
+export function MarkdownTextSpan({
+  style,
+  children,
+  onPress,
+  accessibilityRole,
+}: MarkdownTextSpanProps) {
   return (
-    <UITextView uiTextView selectable style={style}>
+    <UITextView
+      uiTextView
+      selectable
+      style={style}
+      onPress={onPress}
+      accessibilityRole={accessibilityRole}
+    >
       {children}
     </UITextView>
   );

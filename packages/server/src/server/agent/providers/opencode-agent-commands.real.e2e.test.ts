@@ -1,18 +1,21 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
-import { isCommandAvailable } from "../../../utils/executable.js";
-import { OpenCodeAgentClient } from "./opencode-agent.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+  getRealProviderConfig,
+} from "../../daemon-e2e/real-provider-test-config.js";
 
-const BIG_PICKLE_MODEL = "opencode/big-pickle";
+const OPENCODE_REAL_TEST_MODEL = getRealProviderConfig("opencode").model;
 const logger = pino({ level: "silent" });
 
 describe("opencode agent commands contract (real)", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isCommandAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {
@@ -26,13 +29,11 @@ describe("opencode agent commands contract (real)", () => {
   });
 
   test("lists slash commands with the expected contract", async () => {
-    expect(await isCommandAvailable("opencode")).toBe(true);
-
-    const client = new OpenCodeAgentClient(logger);
+    const client = createRealProviderClient("opencode", logger);
     const session = await client.createSession({
       provider: "opencode",
       cwd: process.cwd(),
-      model: BIG_PICKLE_MODEL,
+      model: OPENCODE_REAL_TEST_MODEL,
       modeId: "plan",
     });
 
@@ -57,13 +58,11 @@ describe("opencode agent commands contract (real)", () => {
   }, 60_000);
 
   test("executes a slash command without arguments", async () => {
-    expect(await isCommandAvailable("opencode")).toBe(true);
-
-    const client = new OpenCodeAgentClient(logger);
+    const client = createRealProviderClient("opencode", logger);
     const session = await client.createSession({
       provider: "opencode",
       cwd: process.cwd(),
-      model: BIG_PICKLE_MODEL,
+      model: OPENCODE_REAL_TEST_MODEL,
       modeId: "plan",
     });
 

@@ -13,6 +13,7 @@ import {
 export interface ScheduleCreateOptions extends ScheduleCommandOptions {
   every?: string;
   cron?: string;
+  timezone?: string;
   name?: string;
   target?: string;
   provider?: string;
@@ -34,6 +35,7 @@ export async function runCreateCommand(
     prompt,
     every: options.every,
     cron: options.cron,
+    timezone: options.timezone,
     name: options.name,
     target: options.target,
     provider: options.provider,

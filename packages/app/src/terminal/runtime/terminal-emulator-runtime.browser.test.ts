@@ -14,6 +14,7 @@ vi.mock("@xterm/addon-webgl", () => ({
 interface TerminalSize {
   rows: number;
   cols: number;
+  shouldClaim: boolean;
 }
 
 interface TerminalKeyRecord {
@@ -198,6 +199,15 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(window.__paseoTerminal?.options.scrollback).toBe(42_000);
   });
 
+  it("does not claim PTY ownership from passive mount refits", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    expect(mounted.sizes[0]?.shouldClaim).toBe(false);
+  });
+
   it("reports a larger PTY size when the terminal container grows", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 360, height: 180 });
@@ -220,6 +230,7 @@ describe("terminal emulator runtime in a real browser", () => {
     const grownSize = latestSize(mounted.sizes);
     expect(grownSize.cols).toBeGreaterThan(initialSize.cols);
     expect(grownSize.rows).toBeGreaterThan(initialSize.rows);
+    expect(grownSize.shouldClaim).toBe(true);
   });
 
   it("refreshes visible rows on a forced same-size resize", async () => {

@@ -4,8 +4,11 @@ import {
   APP_SETTINGS_KEY,
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_UI_FONT_SIZE,
   loadAppSettingsFromStorage,
   loadSettingsFromStorage,
+  parseClampedFontSize,
   parseTerminalScrollbackLines,
   saveAppSettings,
   type SettingsDeps,
@@ -87,10 +90,8 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result).toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
       theme: "dark",
-      sendBehavior: "interrupt",
-      serviceUrlBehavior: "ask",
-      terminalScrollbackLines: 10_000,
     });
     expect(deps.storage.entries.get(APP_SETTINGS_KEY)).toBe(JSON.stringify(result));
   });
@@ -126,12 +127,8 @@ describe("loadSettingsFromStorage", () => {
     const result = await loadSettingsFromStorage(deps);
 
     expect(result).toEqual({
+      ...DEFAULT_APP_SETTINGS,
       theme: "light",
-      manageBuiltInDaemon: true,
-      sendBehavior: "interrupt",
-      serviceUrlBehavior: "ask",
-      terminalScrollbackLines: 10_000,
-      releaseChannel: "stable",
     });
   });
 
@@ -172,10 +169,8 @@ describe("loadSettingsFromStorage", () => {
       { manageBuiltInDaemon: false, releaseChannel: "beta" },
     ]);
     expect(result).toEqual({
+      ...DEFAULT_APP_SETTINGS,
       theme: "light",
-      sendBehavior: "interrupt",
-      serviceUrlBehavior: "ask",
-      terminalScrollbackLines: 10_000,
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
     });
@@ -194,12 +189,8 @@ describe("loadSettingsFromStorage", () => {
 
     expect(desktop.migrationsApplied).toEqual([]);
     expect(result).toEqual({
+      ...DEFAULT_APP_SETTINGS,
       theme: "light",
-      sendBehavior: "interrupt",
-      serviceUrlBehavior: "ask",
-      terminalScrollbackLines: 10_000,
-      manageBuiltInDaemon: true,
-      releaseChannel: "stable",
     });
   });
 });
@@ -232,5 +223,148 @@ describe("parseTerminalScrollbackLines", () => {
   it("clamps negative values to the minimum and rejects non-numeric strings", () => {
     expect(parseTerminalScrollbackLines("-10")).toBe(0);
     expect(parseTerminalScrollbackLines("abc")).toBeNull();
+  });
+});
+
+describe("appearance settings", () => {
+  it("defaults the appearance fields when an old blob omits them", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: "dark" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.uiFontFamily).toBe("");
+    expect(result.monoFontFamily).toBe("");
+    expect(result.uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
+    expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
+    expect(result.syntaxTheme).toBe("one");
+  });
+
+  it("clamps the UI font size into range and rejects non-numeric values", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 999 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).uiFontSize).toBe(24);
+
+    const low = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 8 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(low)).uiFontSize).toBe(11);
+
+    const bogus = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: "abc" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(bogus)).uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
+  });
+
+  it("clamps the code font size into range and rejects non-numeric values", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ codeFontSize: 999 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).codeFontSize).toBe(22);
+
+    const low = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ codeFontSize: 8 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(low)).codeFontSize).toBe(9);
+
+    const bogus = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ codeFontSize: "abc" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(bogus)).codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
+  });
+
+  it("trims an accepted font family", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontFamily: "  Menlo  " }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).uiFontFamily).toBe("Menlo");
+  });
+
+  it("keeps an explicit empty font family as the default sentinel", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontFamily: "" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).uiFontFamily).toBe("");
+  });
+
+  it("rejects a font family containing CSS-breaking characters", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontFamily: "a;b{c}" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).uiFontFamily).toBe("");
+  });
+
+  it("rejects an over-length font family", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontFamily: "a".repeat(201) }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).uiFontFamily).toBe("");
+  });
+
+  it("accepts a known syntax theme id", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ syntaxTheme: "dracula" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("dracula");
+  });
+
+  it("drops a removed syntax theme id back to the default", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ syntaxTheme: "auto" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("one");
+  });
+
+  it("drops an unknown syntax theme id back to the default", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ syntaxTheme: "bogus" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).syntaxTheme).toBe("one");
+  });
+});
+
+describe("parseClampedFontSize", () => {
+  it("clamps to the bounds and rejects non-numeric strings", () => {
+    expect(parseClampedFontSize(999, { min: 11, max: 24 })).toBe(24);
+    expect(parseClampedFontSize(8, { min: 11, max: 24 })).toBe(11);
+    expect(parseClampedFontSize("15", { min: 11, max: 24 })).toBe(15);
+    expect(parseClampedFontSize("abc", { min: 11, max: 24 })).toBeNull();
   });
 });

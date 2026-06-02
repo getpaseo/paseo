@@ -320,12 +320,12 @@ async function fetchTimelineEpoch(handle: AgentHandle): Promise<string | undefin
   const client = handle.client as SeedDaemonClient & {
     fetchAgentTimeline: (
       agentId: string,
-      options?: { direction?: "head" | "tail"; projection?: "canonical"; limit?: number },
+      options?: { direction?: "head" | "tail"; projection?: "projected"; limit?: number },
     ) => Promise<{ epoch?: string }>;
   };
   const timeline = await client.fetchAgentTimeline(handle.agentId, {
     direction: "tail",
-    projection: "canonical",
+    projection: "projected",
     limit: 0,
   });
   return timeline.epoch;

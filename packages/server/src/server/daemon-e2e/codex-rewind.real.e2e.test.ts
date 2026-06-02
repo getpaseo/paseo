@@ -1,13 +1,16 @@
 import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pino from "pino";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 import {
   closeRewindSession,
   fetchTimelineItems,
@@ -84,7 +87,7 @@ async function launchCodexRewindSession(
   const agent = await harness.client.createAgent({
     cwd,
     title,
-    ...getFullAccessConfig("codex"),
+    ...getRealProviderConfig("codex"),
   });
 
   return { agentId: agent.id, cwd, scratchPath };
@@ -142,12 +145,17 @@ async function askCodexToEditFile(
 }
 
 describe("daemon E2E (real codex) - rewind", () => {
+  let canRun = false;
   let harness: CodexRewindHarness;
 
   beforeAll(async () => {
+    canRun = await canRunRealProvider("codex");
+    if (!canRun) {
+      return;
+    }
     const logger = pino({ level: "silent" });
     const daemon = await createTestPaseoDaemon({
-      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      agentClients: createRealProviderClients(["codex"], logger),
       logger,
     });
     const client = new DaemonClient({
@@ -165,7 +173,14 @@ describe("daemon E2E (real codex) - rewind", () => {
     await harness?.daemon.close().catch(() => undefined);
   });
 
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test("rewinds a real Codex conversation after a single edit turn while leaving the file edit on disk", async () => {
+    if (!harness) throw new Error("Codex rewind harness was not initialized");
     const session = await launchCodexRewindSession(harness, "codex-rewind-single-edit-real");
 
     try {

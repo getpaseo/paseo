@@ -5,10 +5,13 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-claude-thinking-memory-"));
@@ -48,7 +51,7 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -61,7 +64,7 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -81,7 +84,7 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
       const agent = await client.createAgent({
         cwd,
         title: "claude-thinking-memory-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
         model: model.id,
       });
 

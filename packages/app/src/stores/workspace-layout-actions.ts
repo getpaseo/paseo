@@ -1,5 +1,6 @@
 import invariant from "tiny-invariant";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import { MIN_SPLIT_SIZE } from "@/stores/workspace-layout-constants";
 import { defaultWorkspaceLayoutIds } from "@/stores/workspace-layout-ids";
 import type { WorkspaceLayoutNodeIdPrefix } from "@/stores/workspace-layout-ids";
 import {
@@ -208,7 +209,6 @@ export interface WorkspaceTabSnapshot {
 }
 
 const DEFAULT_PANE_ID = "main";
-const MIN_SPLIT_SIZE = 0.1;
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {

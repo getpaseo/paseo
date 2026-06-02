@@ -11,13 +11,23 @@ Each agent runs in its own git worktree, a separate directory on a separate bran
 
 ## Layout and workflow
 
-Worktrees live under `$PASEO_HOME/worktrees/`, grouped by a hash of the source checkout path. Each worktree gets a random slug; the branch name is chosen when you first launch an agent.
+Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a random slug; the branch name is chosen when you first launch an agent.
 
 ```
 ~/.paseo/worktrees/
 └── 1vnnm9k3/               # hash of source checkout path
     ├── tidy-fox/           # worktree slug (branch set on first agent)
     └── bold-owl/
+```
+
+With a custom root, Paseo keeps the same hashed layout under that directory:
+
+```json
+{
+  "worktrees": {
+    "root": "/mnt/fast/paseo-worktrees"
+  }
+}
 ```
 
 1. Create a worktree, Paseo runs your setup hooks

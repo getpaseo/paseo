@@ -231,6 +231,7 @@ export type DaemonLifecycleIntent =
 export interface PaseoDaemonConfig {
   listen: string;
   paseoHome: string;
+  worktreesRoot?: string;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
@@ -248,6 +249,11 @@ export interface PaseoDaemonConfig {
   relayPublicEndpoint?: string;
   relayUseTls?: boolean;
   relayPublicUseTls?: boolean;
+  serviceProxy?: {
+    enabled: boolean;
+    listen: string;
+    publicBaseUrl: string | null;
+  };
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
@@ -333,7 +339,13 @@ export async function createPaseoDaemon(
   const scriptRouteStore = new ScriptRouteStore();
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
   const configuredHostnames = config.hostnames ?? config.allowedHosts;
+  const serviceProxyPublicBaseUrl =
+    config.serviceProxy?.enabled && config.serviceProxy.publicBaseUrl
+      ? config.serviceProxy.publicBaseUrl
+      : null;
   let wsServer: VoiceAssistantWebSocketServer | null = null;
+  let serviceProxyHttpServer: ReturnType<typeof createHTTPServer> | null = null;
+  let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     routeStore: scriptRouteStore,
     onChange: createScriptStatusEmitter({
@@ -347,6 +359,7 @@ export async function createPaseoDaemon(
       resolveWorkspaceDirectory: async (workspaceId) =>
         (await workspaceRegistry?.get(workspaceId))?.cwd ?? null,
       logger,
+      serviceProxyPublicBaseUrl,
     }),
   });
   const handleBranchChange = createBranchChangeRouteHandler({
@@ -500,6 +513,30 @@ export async function createPaseoDaemon(
   });
   httpServer.on("upgrade", scriptProxyUpgradeHandler);
 
+  if (config.serviceProxy?.enabled) {
+    const serviceProxyTarget = parseListenString(config.serviceProxy.listen);
+    const serviceProxyApp = express();
+    serviceProxyApp.set("trust proxy", true);
+    serviceProxyApp.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
+    serviceProxyApp.use((_req, res) => {
+      res.status(404).send("404 Not Found");
+    });
+    serviceProxyHttpServer = createHTTPServer(serviceProxyApp);
+    const serviceProxyUpgradeHandler = createScriptProxyUpgradeHandler({
+      routeStore: scriptRouteStore,
+      logger,
+    });
+    serviceProxyHttpServer.on("upgrade", (req, socket, head) => {
+      const hostHeader = req.headers.host;
+      if (!hostHeader || !scriptRouteStore.findRoute(hostHeader)) {
+        socket.destroy();
+        return;
+      }
+      serviceProxyUpgradeHandler(req, socket as import("node:net").Socket, head);
+    });
+    serviceProxyListenTarget = serviceProxyTarget;
+  }
+
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
   const projectRegistry = new FileBackedProjectRegistry(
     path.join(config.paseoHome, "projects", "projects.json"),
@@ -518,6 +555,7 @@ export async function createPaseoDaemon(
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
     deps: {
       github,
     },
@@ -657,6 +695,7 @@ export async function createPaseoDaemon(
 
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
     daemonConfigStore,
     workspaceGitService,
     github,
@@ -694,6 +733,7 @@ export async function createPaseoDaemon(
           return createPaseoWorktreeWorkflow(
             {
               paseoHome: config.paseoHome,
+              worktreesRoot: config.worktreesRoot,
               createPaseoWorktree: async (workflowInput, workflowOptions) => {
                 return createRegisteredPaseoWorktree(workflowInput, {
                   github,
@@ -733,6 +773,7 @@ export async function createPaseoDaemon(
                 boundListenTarget?.type === "tcp" ? boundListenTarget.port : null,
               getDaemonTcpHost: () =>
                 boundListenTarget?.type === "tcp" ? boundListenTarget.host : null,
+              serviceProxyPublicBaseUrl,
               onScriptsChanged: null,
             },
             input,
@@ -740,6 +781,7 @@ export async function createPaseoDaemon(
           );
         },
         paseoHome: config.paseoHome,
+        worktreesRoot: config.worktreesRoot,
         callerAgentId,
         enableVoiceTools: false,
         resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
@@ -965,6 +1007,7 @@ export async function createPaseoDaemon(
             providerSnapshotManager,
             {
               listen: formatListenTarget(boundListenTarget ?? listenTarget),
+              worktreesRoot: config.worktreesRoot,
               relay: {
                 enabled: relayEnabled,
                 endpoint: relayEndpoint,
@@ -973,6 +1016,7 @@ export async function createPaseoDaemon(
                 publicUseTls: relayPublicUseTls,
               },
             },
+            serviceProxyPublicBaseUrl,
           );
 
           if (relayEnabled) {
@@ -1019,6 +1063,41 @@ export async function createPaseoDaemon(
       }
     });
 
+    if (serviceProxyHttpServer && serviceProxyListenTarget) {
+      const proxyServer = serviceProxyHttpServer;
+      const proxyTarget = serviceProxyListenTarget;
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          proxyServer.off("listening", onListening);
+          reject(err);
+        };
+        const onListening = () => {
+          proxyServer.off("error", onError);
+          serviceProxyListenTarget = resolveBoundListenTarget(proxyTarget, proxyServer);
+          logger.info(
+            {
+              listen: formatListenTarget(serviceProxyListenTarget),
+              publicBaseUrl: serviceProxyPublicBaseUrl,
+              elapsed: elapsed(),
+            },
+            "Service proxy listening",
+          );
+          resolve();
+        };
+        proxyServer.once("error", onError);
+        proxyServer.once("listening", onListening);
+
+        if (proxyTarget.type === "tcp") {
+          proxyServer.listen(proxyTarget.port, proxyTarget.host);
+        } else {
+          if (proxyTarget.type === "socket" && existsSync(proxyTarget.path)) {
+            unlinkSync(proxyTarget.path);
+          }
+          proxyServer.listen(proxyTarget.path);
+        }
+      });
+    }
+
     // Start speech service after listening so synchronous Sherpa native
     // model loading doesn't block the server from accepting connections.
     speechService.start();
@@ -1038,6 +1117,18 @@ export async function createPaseoDaemon(
     await relayTransport?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();
+    }
+    if (serviceProxyHttpServer) {
+      serviceProxyHttpServer.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        serviceProxyHttpServer?.close(() => resolve());
+      });
+      if (
+        serviceProxyListenTarget?.type === "socket" &&
+        existsSync(serviceProxyListenTarget.path)
+      ) {
+        unlinkSync(serviceProxyListenTarget.path);
+      }
     }
     // Force-drop remaining sockets so httpServer.close() resolves promptly.
     // We've already closed wsServer (which sent ws-layer close frames) and

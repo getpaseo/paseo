@@ -4,10 +4,13 @@ import path from "node:path";
 import pino from "pino";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-claude-autonomous-wake-"));
@@ -427,7 +430,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -440,7 +443,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -454,7 +457,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-abc-a",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
@@ -513,7 +516,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -527,7 +530,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-abc-b",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
@@ -586,7 +589,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -600,7 +603,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-abc-c",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
@@ -652,7 +655,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -666,7 +669,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-wake-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(
@@ -710,7 +713,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -724,7 +727,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-followup-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(
@@ -755,7 +758,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const wsUrl = `ws://127.0.0.1:${daemon.port}/ws`;
@@ -770,7 +773,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-hang-repro-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       for (let cycle = 0; cycle < 20; cycle += 1) {
@@ -858,7 +861,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -872,7 +875,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-background-repro-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
@@ -930,7 +933,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -944,7 +947,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-race-stress-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       for (let cycle = 0; cycle < 20; cycle += 1) {
@@ -1016,7 +1019,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -1030,7 +1033,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       const agent = await client.createAgent({
         cwd,
         title: "claude-transcript-parity-race",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);

@@ -6,13 +6,16 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentPersistenceHandle, AgentTimelineItem } from "../agent/agent-sdk-types.js";
-import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 import type { FetchRecentProviderSessionEntry } from "../../client/daemon-client.js";
 
-const OPENCODE_REAL_TEST_MODEL = "opencode/big-pickle";
+const OPENCODE_REAL_TEST_MODEL = getRealProviderConfig("opencode").model;
 const OPENCODE_REAL_TEST_TIMEOUT_MS = 180_000;
 
 function tmpCwd(): string {
@@ -25,7 +28,7 @@ async function withConnectedOpenCodeDaemon(
 ): Promise<void> {
   const logger = pino({ level: "silent" });
   const daemon = await createTestPaseoDaemon({
-    agentClients: { opencode: new OpenCodeAgentClient(logger) },
+    agentClients: createRealProviderClients(["opencode"], logger),
     logger,
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -112,7 +115,7 @@ describe("daemon E2E (real opencode) - persisted import resume", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {

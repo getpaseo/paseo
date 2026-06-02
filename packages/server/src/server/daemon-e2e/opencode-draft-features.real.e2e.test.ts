@@ -5,12 +5,11 @@ import path from "node:path";
 import pino from "pino";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import type { PersistedAgentDescriptor } from "../agent/agent-sdk-types.js";
-import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
+import type { AgentClient, PersistedAgentDescriptor } from "../agent/agent-sdk-types.js";
 import { OpenCodeServerManager } from "../agent/providers/opencode/server-manager.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { isProviderAvailable } from "./agent-configs.js";
+import { canRunRealProvider, createRealProviderClient } from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "daemon-real-opencode-draft-features-"));
@@ -18,7 +17,7 @@ function tmpCwd(): string {
 }
 
 async function withConnectedOpenCodeDaemon(
-  provider: OpenCodeAgentClient,
+  provider: AgentClient,
   run: (context: { client: DaemonClient }) => Promise<void>,
 ): Promise<void> {
   const logger = pino({ level: "silent" });
@@ -41,7 +40,7 @@ async function withConnectedOpenCodeDaemon(
 }
 
 async function deletePersistedSessions(
-  provider: OpenCodeAgentClient,
+  provider: AgentClient,
   sessions: ReadonlyArray<PersistedAgentDescriptor>,
 ): Promise<void> {
   await Promise.all(
@@ -56,7 +55,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {
@@ -67,12 +66,12 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
 
   test("listing draft features does not leave an OpenCode provider session behind", async () => {
     const logger = pino({ level: "silent" });
-    const provider = new OpenCodeAgentClient(logger);
+    const provider = createRealProviderClient("opencode", logger);
     const cwd = tmpCwd();
     let after: PersistedAgentDescriptor[] = [];
 
     try {
-      expect(await provider.listPersistedAgents({ cwd })).toEqual([]);
+      expect(await provider.listPersistedAgents?.({ cwd })).toEqual([]);
 
       await withConnectedOpenCodeDaemon(provider, async ({ client }) => {
         const response = await client.listProviderFeatures({
@@ -85,7 +84,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
         expect(response.features ?? []).toEqual([]);
       });
 
-      after = await provider.listPersistedAgents({ cwd });
+      after = (await provider.listPersistedAgents?.({ cwd })) ?? [];
     } finally {
       await deletePersistedSessions(provider, after);
       rmSync(cwd, { recursive: true, force: true });
@@ -97,12 +96,12 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
 
   test("listing draft commands does not leave an OpenCode provider session behind", async () => {
     const logger = pino({ level: "silent" });
-    const provider = new OpenCodeAgentClient(logger);
+    const provider = createRealProviderClient("opencode", logger);
     const cwd = tmpCwd();
     let after: PersistedAgentDescriptor[] = [];
 
     try {
-      expect(await provider.listPersistedAgents({ cwd })).toEqual([]);
+      expect(await provider.listPersistedAgents?.({ cwd })).toEqual([]);
 
       await withConnectedOpenCodeDaemon(provider, async ({ client }) => {
         const response = await client.listCommands("draft-opencode-agent", {
@@ -116,7 +115,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
         expect(response.commands.length).toBeGreaterThan(0);
       });
 
-      after = await provider.listPersistedAgents({ cwd });
+      after = (await provider.listPersistedAgents?.({ cwd })) ?? [];
     } finally {
       await deletePersistedSessions(provider, after);
       rmSync(cwd, { recursive: true, force: true });

@@ -54,6 +54,20 @@ Agent providers, both the first-class ones Paseo ships with and custom entries y
 
 See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Paseo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
 
+## Worktrees
+
+New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new worktrees somewhere else, set `worktrees.root`:
+
+```json
+{
+  "worktrees": {
+    "root": "/mnt/fast/paseo-worktrees"
+  }
+}
+```
+
+Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
+
 ## Voice
 
 Voice is configured through `features.dictation` and `features.voiceMode`, with provider credentials under `providers`.

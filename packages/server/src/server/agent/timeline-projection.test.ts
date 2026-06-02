@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { AgentTimelineRow } from "./agent-manager.js";
 import {
   projectTimelineRows,
+  selectProjectedTimelinePage,
   selectTimelineWindowByProjectedLimit,
 } from "./timeline-projection.js";
 
@@ -436,58 +437,178 @@ describe("selectTimelineWindowByProjectedLimit", () => {
     });
   });
 
-  test("can enforce a hard projected limit when tool lifecycle collapsing is disabled", () => {
+  test("tail limit treats a repeated running tool call as one projected item", () => {
     const rows: AgentTimelineRow[] = [
-      {
-        seq: 1,
-        timestamp: "2026-02-13T00:00:00.000Z",
+      ...Array.from({ length: 6 }, (_, index) => ({
+        seq: index + 1,
+        timestamp: `2026-02-13T00:00:00.00${index}Z`,
+        item: { type: "assistant_message" as const, text: `old ${index}` },
+      })),
+      ...Array.from({ length: 20 }, (_, index) => ({
+        seq: index + 7,
+        timestamp: `2026-02-13T00:00:01.0${index}Z`,
         item: {
-          type: "tool_call",
+          type: "tool_call" as const,
           callId: "call_1",
           name: "shell",
-          status: "running",
+          status: "running" as const,
           error: null,
           detail: {
-            type: "unknown",
-            input: { cmd: "pwd" },
-            output: null,
+            type: "unknown" as const,
+            input: { cmd: "sleep 10" },
+            output: { progress: index },
           },
         },
-      },
-      {
-        seq: 2,
-        timestamp: "2026-02-13T00:00:00.100Z",
-        item: { type: "assistant_message", text: "work" },
-      },
-      {
-        seq: 3,
-        timestamp: "2026-02-13T00:00:00.200Z",
-        item: {
-          type: "tool_call",
-          callId: "call_1",
-          name: "shell",
-          status: "completed",
-          error: null,
-          detail: {
-            type: "unknown",
-            input: { cmd: "pwd" },
-            output: { stdout: "/tmp" },
-          },
-        },
-      },
+      })),
     ];
 
     const selected = selectTimelineWindowByProjectedLimit({
       rows,
       direction: "tail",
-      limit: 1,
-      collapseToolLifecycle: false,
+      limit: 100,
     });
 
-    expect(selected.minSeq).toBe(3);
-    expect(selected.maxSeq).toBe(3);
-    expect(selected.selectedRows.map((row) => row.seq)).toEqual([3]);
-    expect(selected.projectedEntries).toHaveLength(1);
-    expect(selected.projectedEntries[0]?.item.type).toBe("tool_call");
+    const tools = selected.projectedEntries.filter((entry) => entry.item.type === "tool_call");
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.collapsed).toContain("tool_lifecycle");
+    expect(selected.projectedEntries).toHaveLength(2);
+  });
+});
+
+describe("selectProjectedTimelinePage", () => {
+  function toolRow(seq: number, status: "running" | "completed"): AgentTimelineRow {
+    return {
+      seq,
+      timestamp: new Date(1000 + seq).toISOString(),
+      item: {
+        type: "tool_call",
+        callId: "call_1",
+        name: "shell",
+        status,
+        error: null,
+        detail: {
+          type: "unknown",
+          input: { cmd: "sleep 10" },
+          output: status === "completed" ? { stdout: "done" } : null,
+        },
+      },
+    };
+  }
+
+  test("tail page returns full projected items instead of tool lifecycle deltas", () => {
+    const rows: AgentTimelineRow[] = [
+      { seq: 1, timestamp: "2026-02-13T00:00:00.000Z", item: { type: "user_message", text: "go" } },
+      ...Array.from({ length: 120 }, (_, index) => toolRow(index + 2, "running")),
+    ];
+
+    const page = selectProjectedTimelinePage({ rows, direction: "tail", limit: 100 });
+
+    expect(page.entries.map((entry) => entry.item.type)).toEqual(["user_message", "tool_call"]);
+    expect(page.entries[1]?.collapsed).toContain("tool_lifecycle");
+    expect(page.entries[1]?.sourceSeqRanges).toEqual([{ startSeq: 2, endSeq: 121 }]);
+    expect(page.startSeq).toBe(1);
+    expect(page.endSeq).toBe(121);
+    expect(page.hasNewer).toBe(false);
+  });
+
+  test("after page includes a full projected tool item when only its update is new", () => {
+    const rows: AgentTimelineRow[] = [
+      toolRow(10, "running"),
+      {
+        seq: 11,
+        timestamp: "2026-02-13T00:00:00.011Z",
+        item: { type: "assistant_message", text: "working" },
+      },
+      toolRow(250, "completed"),
+    ];
+
+    const page = selectProjectedTimelinePage({
+      rows,
+      direction: "after",
+      cursorSeq: 249,
+      limit: 100,
+    });
+
+    expect(page.entries).toHaveLength(1);
+    expect(page.entries[0]?.item.type).toBe("tool_call");
+    expect(page.entries[0]?.seqStart).toBe(10);
+    expect(page.entries[0]?.seqEnd).toBe(250);
+    expect(page.entries[0]?.sourceSeqRanges).toEqual([
+      { startSeq: 10, endSeq: 10 },
+      { startSeq: 250, endSeq: 250 },
+    ]);
+    expect(page.startSeq).toBe(250);
+    expect(page.endSeq).toBe(250);
+  });
+
+  test("after page cursor advances only through contiguously covered seqs", () => {
+    const rows: AgentTimelineRow[] = [
+      toolRow(1, "running"),
+      ...Array.from({ length: 498 }, (_, index) => ({
+        seq: index + 2,
+        timestamp: new Date(2000 + index).toISOString(),
+        item: { type: "user_message" as const, text: `middle ${index + 2}` },
+      })),
+      toolRow(500, "completed"),
+      ...Array.from({ length: 101 }, (_, index) => ({
+        seq: index + 501,
+        timestamp: new Date(3000 + index).toISOString(),
+        item: { type: "user_message" as const, text: `later ${index + 501}` },
+      })),
+    ];
+
+    const page = selectProjectedTimelinePage({
+      rows,
+      direction: "after",
+      cursorSeq: 0,
+      limit: 100,
+    });
+
+    expect(page.entries[0]?.item.type).toBe("tool_call");
+    expect(
+      page.entries.some((entry) => entry.item.type === "user_message" && entry.seqStart === 101),
+    ).toBe(false);
+    expect(page.endSeq).toBe(100);
+    expect(page.hasNewer).toBe(true);
+  });
+
+  test("before page includes a wide tool whose earlier source range is before the cursor", () => {
+    const rows: AgentTimelineRow[] = [
+      toolRow(1, "running"),
+      ...Array.from({ length: 498 }, (_, index) => ({
+        seq: index + 2,
+        timestamp: new Date(2000 + index).toISOString(),
+        item: { type: "user_message" as const, text: `middle ${index + 2}` },
+      })),
+      toolRow(500, "completed"),
+    ];
+
+    const page = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 500,
+      limit: 100,
+    });
+
+    expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
+    expect(page.endSeq).toBeLessThan(500);
+    expect(page.hasOlder).toBe(true);
+  });
+
+  test("tail page includes a wide tool when its completion is the newest seq", () => {
+    const rows: AgentTimelineRow[] = [
+      toolRow(1, "running"),
+      ...Array.from({ length: 499 }, (_, index) => ({
+        seq: index + 2,
+        timestamp: new Date(2000 + index).toISOString(),
+        item: { type: "user_message" as const, text: `middle ${index + 2}` },
+      })),
+      toolRow(501, "completed"),
+    ];
+
+    const page = selectProjectedTimelinePage({ rows, direction: "tail", limit: 100 });
+
+    expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
+    expect(page.endSeq).toBe(501);
   });
 });

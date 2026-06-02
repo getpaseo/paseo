@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type ReactElement } from "react";
+import { memo, useCallback, useMemo, useRef, type ReactElement } from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -43,7 +43,7 @@ interface SortableItemProps<T> {
   useDragHandle: boolean;
 }
 
-function SortableItem<T>({
+function SortableItemInner<T>({
   id,
   item,
   index,
@@ -117,6 +117,8 @@ function SortableItem<T>({
     </div>
   );
 }
+
+const SortableItem = memo(SortableItemInner) as typeof SortableItemInner;
 
 export function DraggableList<T>({
   data,

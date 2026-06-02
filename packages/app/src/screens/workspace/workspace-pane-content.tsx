@@ -6,9 +6,11 @@ import {
   PaneProvider,
   type PaneContextValue,
 } from "@/panels/pane-context";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { RenderProfile } from "@/utils/render-profiler";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 
 export interface WorkspacePaneContentModel {
@@ -78,6 +80,40 @@ export function WorkspacePaneContent({
   onFocusPane,
 }: WorkspacePaneContentProps) {
   const { Component, key, paneContextValue } = content;
+  const openTab = useStableEvent(paneContextValue.openTab);
+  const closeCurrentTab = useStableEvent(paneContextValue.closeCurrentTab);
+  const retargetCurrentTab = useStableEvent(paneContextValue.retargetCurrentTab);
+  const openFileInWorkspace = useStableEvent(paneContextValue.openFileInWorkspace);
+  const openImportSheet = useStableEvent(paneContextValue.openImportSheet);
+  const openArchivedSheet = useStableEvent(paneContextValue.openArchivedSheet);
+  const stablePaneContextValue = useMemo(
+    () => ({
+      serverId: paneContextValue.serverId,
+      workspaceId: paneContextValue.workspaceId,
+      tabId: paneContextValue.tabId,
+      target: paneContextValue.target,
+      openTab,
+      closeCurrentTab,
+      retargetCurrentTab,
+      openFileInWorkspace,
+      openImportSheet,
+      openArchivedSheet,
+      archivedSessionCount: paneContextValue.archivedSessionCount,
+    }),
+    [
+      closeCurrentTab,
+      openArchivedSheet,
+      openFileInWorkspace,
+      openImportSheet,
+      openTab,
+      paneContextValue.archivedSessionCount,
+      paneContextValue.serverId,
+      paneContextValue.tabId,
+      paneContextValue.target,
+      paneContextValue.workspaceId,
+      retargetCurrentTab,
+    ],
+  );
   const paneFocusValue = useMemo(
     () =>
       createPaneFocusContextValue({
@@ -89,10 +125,14 @@ export function WorkspacePaneContent({
   );
 
   return (
-    <PaneProvider value={paneContextValue}>
-      <PaneFocusProvider value={paneFocusValue}>
-        <Component key={key} />
-      </PaneFocusProvider>
-    </PaneProvider>
+    <RenderProfile
+      id={`WorkspacePaneContent:${paneContextValue.target.kind}:${paneContextValue.tabId}`}
+    >
+      <PaneProvider value={stablePaneContextValue}>
+        <PaneFocusProvider value={paneFocusValue}>
+          <Component key={key} />
+        </PaneFocusProvider>
+      </PaneProvider>
+    </RenderProfile>
   );
 }

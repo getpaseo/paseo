@@ -93,6 +93,22 @@
               },
               "additionalProperties": false
             },
+            "serviceProxy": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "listen": {
+                  "type": "string"
+                },
+                "publicBaseUrl": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              },
+              "additionalProperties": false
+            },
             "auth": {
               "type": "object",
               "properties": {
@@ -111,6 +127,16 @@
           "properties": {
             "baseUrl": {
               "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "worktrees": {
+          "type": "object",
+          "properties": {
+            "root": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false

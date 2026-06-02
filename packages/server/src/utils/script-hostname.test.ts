@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildScriptHostname } from "./script-hostname.js";
+import {
+  buildPublicScriptHostname,
+  buildPublicScriptProxyUrl,
+  buildScriptHostname,
+} from "./script-hostname.js";
 
 describe("buildScriptHostname", () => {
   it("builds default branch hostnames with script and project labels", () => {
@@ -67,5 +71,56 @@ describe("buildScriptHostname", () => {
         scriptName: "---",
       }),
     ).toBe("untitled.untitled.untitled.localhost");
+  });
+});
+
+describe("buildPublicScriptHostname", () => {
+  it("uses one combined service label under the configured public base host", () => {
+    expect(
+      buildPublicScriptHostname({
+        publicBaseUrl: "https://services.example.com",
+        projectSlug: "paseo",
+        branchName: "feature-auth",
+        scriptName: "web",
+      }),
+    ).toBe("web--feature-auth--paseo.services.example.com");
+  });
+
+  it("omits default branch names from the public service label", () => {
+    expect(
+      buildPublicScriptHostname({
+        publicBaseUrl: "https://services.example.com",
+        projectSlug: "paseo",
+        branchName: "main",
+        scriptName: "web",
+      }),
+    ).toBe("web--paseo.services.example.com");
+  });
+
+  it("caps the public service label to the DNS label length limit", () => {
+    const hostname = buildPublicScriptHostname({
+      publicBaseUrl: "https://services.example.com",
+      projectSlug: "project-".repeat(10),
+      branchName: "branch-".repeat(10),
+      scriptName: "script-".repeat(10),
+    });
+    const [serviceLabel] = hostname.split(".");
+
+    expect(serviceLabel.length).toBeLessThanOrEqual(63);
+    expect(serviceLabel).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
+    expect(hostname).toBe(`${serviceLabel}.services.example.com`);
+  });
+});
+
+describe("buildPublicScriptProxyUrl", () => {
+  it("preserves the configured public base protocol and port", () => {
+    expect(
+      buildPublicScriptProxyUrl({
+        publicBaseUrl: "https://services.example.com:8443/base-is-ignored",
+        projectSlug: "paseo",
+        branchName: "feature-auth",
+        scriptName: "web",
+      }),
+    ).toBe("https://web--feature-auth--paseo.services.example.com:8443");
   });
 });

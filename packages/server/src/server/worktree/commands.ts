@@ -39,6 +39,7 @@ export interface CreatePaseoWorktreeCommandDependencies<
   Result extends CreatePaseoWorktreeResult = CreatePaseoWorktreeResult,
 > {
   paseoHome?: string;
+  worktreesRoot?: string;
   createPaseoWorktreeWorkflow?: CreatePaseoWorktreeWorkflow<Result>;
 }
 
@@ -47,6 +48,7 @@ export type CreatePaseoWorktreeCommandInput = Omit<
   "paseoHome" | "runSetup"
 > & {
   paseoHome?: string;
+  worktreesRoot?: string;
 };
 
 export type CreatePaseoWorktreeCommandResult<Result extends CreatePaseoWorktreeResult> =
@@ -73,6 +75,7 @@ export async function createPaseoWorktreeCommand<Result extends CreatePaseoWorkt
       ...input,
       runSetup: false,
       paseoHome: input.paseoHome ?? dependencies.paseoHome,
+      worktreesRoot: input.worktreesRoot ?? dependencies.worktreesRoot,
     });
     return { ok: true, createdWorktree };
   } catch (error) {
@@ -118,6 +121,7 @@ export async function archivePaseoWorktreeCommand(
   const resolvedTarget = await resolveArchiveTarget(dependencies, input);
   const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
     paseoHome: dependencies.paseoHome,
+    worktreesRoot: dependencies.worktreesRoot,
   });
 
   if (!ownership.allowed) {
@@ -134,6 +138,7 @@ export async function archivePaseoWorktreeCommand(
     targetPath: resolvedTarget.targetPath,
     repoRoot,
     worktreesRoot: ownership.worktreeRoot,
+    worktreesBaseRoot: dependencies.worktreesRoot,
     requestId: input.requestId,
   });
 
@@ -184,6 +189,10 @@ async function resolveWorktreeSlugPath(
   repoRoot: string,
   worktreeSlug: string,
 ): Promise<string> {
-  const worktreesRoot = await getPaseoWorktreesRoot(repoRoot, dependencies.paseoHome);
+  const worktreesRoot = await getPaseoWorktreesRoot(
+    repoRoot,
+    dependencies.paseoHome,
+    dependencies.worktreesRoot,
+  );
   return join(worktreesRoot, worktreeSlug);
 }

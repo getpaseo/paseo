@@ -46,6 +46,7 @@ interface CreateAgentCommandDependencies {
   agentStorage: AgentStorage;
   logger: Logger;
   paseoHome?: string;
+  worktreesRoot?: string;
   workspaceGitService?: Pick<
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
@@ -93,6 +94,7 @@ export interface CreateAgentFromMcpInput {
   mode?: string;
   background: boolean;
   notifyOnFinish: boolean;
+  detached?: boolean;
   callerAgentId?: string;
   callerContext?: {
     lockedCwd?: string;
@@ -256,11 +258,12 @@ async function resolveMcpCreateAgent(
       parent: parentAgent,
     });
 
-  const labels = mergeLabels(
-    input.callerAgentId,
-    input.callerContext?.childAgentDefaultLabels,
-    input.labels,
-  );
+  const labels = mergeLabels({
+    callerAgentId: input.callerAgentId,
+    detached: input.detached ?? false,
+    childAgentDefaultLabels: input.callerContext?.childAgentDefaultLabels,
+    labels: input.labels,
+  });
 
   const trimmedPrompt = input.initialPrompt.trim();
   return {
@@ -417,6 +420,7 @@ async function resolveMcpCwd(params: {
       ...(params.initialPrompt ? { firstAgentContext: { prompt: params.initialPrompt } } : {}),
       runSetup: false,
       paseoHome: dependencies.paseoHome,
+      worktreesRoot: dependencies.worktreesRoot,
     },
     createPaseoWorktree: dependencies.createPaseoWorktree,
     resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
@@ -469,15 +473,21 @@ async function createMcpWorktree(
   }
 }
 
-function mergeLabels(
-  callerAgentId: string | undefined,
-  childAgentDefaultLabels: Record<string, string> | undefined,
-  labels: Record<string, string> | undefined,
-): Record<string, string> | undefined {
+function mergeLabels(params: {
+  callerAgentId: string | undefined;
+  detached: boolean;
+  childAgentDefaultLabels: Record<string, string> | undefined;
+  labels: Record<string, string> | undefined;
+}): Record<string, string> | undefined {
   const mergedLabels = {
-    ...(callerAgentId ? { [PARENT_AGENT_ID_LABEL]: callerAgentId } : {}),
-    ...childAgentDefaultLabels,
-    ...labels,
+    ...(!params.detached && params.callerAgentId
+      ? { [PARENT_AGENT_ID_LABEL]: params.callerAgentId }
+      : {}),
+    ...params.childAgentDefaultLabels,
+    ...params.labels,
   };
+  if (params.detached) {
+    delete mergedLabels[PARENT_AGENT_ID_LABEL];
+  }
   return Object.keys(mergedLabels).length > 0 ? mergedLabels : undefined;
 }

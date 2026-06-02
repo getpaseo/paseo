@@ -102,7 +102,7 @@ describe("file transfer binary frames", () => {
     });
   });
 
-  it("rejects malformed metadata and unknown metadata fields", () => {
+  it("rejects malformed metadata but ignores unknown metadata fields", () => {
     expect(
       decodeFileTransferFrame(
         encodeFileTransferFrame({
@@ -135,7 +135,18 @@ describe("file transfer binary frames", () => {
     new DataView(encoded.buffer).setUint16(2 + requestId.byteLength, json.byteLength);
     encoded.set(json, 4 + requestId.byteLength);
 
-    expect(decodeFileTransferFrame(encoded)).toBeNull();
+    // Non-strict: the unknown `extra` key is stripped and the frame still decodes.
+    expect(decodeFileTransferFrame(encoded)).toEqual({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-1",
+      metadata: {
+        mime: "image/png",
+        size: 1,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+      payload: new Uint8Array(),
+    });
   });
 
   it("rejects malformed request id prefixes and frame tails", () => {

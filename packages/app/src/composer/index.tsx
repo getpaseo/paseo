@@ -140,6 +140,10 @@ function resolveIsDesktopWebBreakpoint(isMobile: boolean): boolean {
   return isWeb && !isMobile;
 }
 
+function resolveCompactLayout(override: boolean | undefined, formFactor: boolean): boolean {
+  return override ?? formFactor;
+}
+
 function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean): string {
   return isDesktopWebBreakpoint ? DESKTOP_MESSAGE_PLACEHOLDER : MOBILE_MESSAGE_PLACEHOLDER;
 }
@@ -190,6 +194,7 @@ function renderContextWindowMeter(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
+  showPercentage: boolean,
 ): ReactElement | null {
   if (contextWindowMaxTokens === null || contextWindowUsedTokens === null) {
     return null;
@@ -199,6 +204,7 @@ function renderContextWindowMeter(
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
+      showPercentage={showPercentage}
     />
   );
 }
@@ -206,13 +212,13 @@ function renderContextWindowMeter(
 function resolveContextWindowPlacement(
   meter: ReactElement | null,
   isMobile: boolean,
-): { beforeVoiceContent: ReactNode; footerRight: ReactNode } {
+): { beforeVoiceContent: ReactNode; footerInlineContent: ReactNode } {
   if (isMobile) {
-    return { beforeVoiceContent: null, footerRight: meter };
+    return { beforeVoiceContent: null, footerInlineContent: meter };
   }
   return {
     beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{meter}</View>,
-    footerRight: null,
+    footerInlineContent: null,
   };
 }
 
@@ -221,14 +227,22 @@ interface RenderLeftContentArgs {
   agentId: string;
   serverId: string;
   focusInput: () => void;
+  isCompactLayout: boolean;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
-  const { agentControls, agentId, serverId, focusInput } = args;
+  const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} />;
+    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
   }
-  return <AgentControls agentId={agentId} serverId={serverId} onDropdownClose={focusInput} />;
+  return (
+    <AgentControls
+      agentId={agentId}
+      serverId={serverId}
+      onDropdownClose={focusInput}
+      isCompactLayout={isCompactLayout}
+    />
+  );
 }
 
 interface RenderAttachmentTrayArgs {
@@ -238,13 +252,18 @@ interface RenderAttachmentTrayArgs {
   handleRemoveAttachment: (index: number) => void;
 }
 
-function renderComposerFooter(footer: ReactNode, footerRight: ReactNode): ReactElement | null {
-  if (!footer && !footerRight) return null;
+function renderComposerFooter(
+  footer: ReactNode,
+  footerInlineContent: ReactNode,
+): ReactElement | null {
+  if (!footer && !footerInlineContent) return null;
   return (
     <View style={styles.footer}>
       <View style={styles.footerContent}>
-        <View style={styles.footerLeft}>{footer}</View>
-        <View style={styles.footerRight}>{footerRight}</View>
+        <View style={styles.footerLeft}>
+          {footer}
+          {footerInlineContent}
+        </View>
       </View>
     </View>
   );
@@ -667,6 +686,8 @@ interface ComposerProps {
   footer?: ReactNode;
   /** When true, a parent wrapper owns the keyboard shift, so the composer skips its own. */
   externalKeyboardShift?: boolean;
+  /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
+  isCompactLayout?: boolean;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -862,6 +883,7 @@ export function Composer({
   inputWrapperStyle,
   footer,
   externalKeyboardShift,
+  isCompactLayout: isCompactLayoutOverride,
 }: ComposerProps) {
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
@@ -892,9 +914,11 @@ export function Composer({
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
-  const isMobile = useIsCompactFormFactor();
-  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isMobile);
-  const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
+  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
+  const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
+  const messagePlaceholder = resolveMessagePlaceholder(isDesktopLayout);
   const userInput = value;
   const setUserInput = onChangeText;
   const {
@@ -1430,7 +1454,7 @@ export function Composer({
         isAgentRunning={isAgentRunning}
         hasSendableContent={hasSendableContent}
         isProcessing={isProcessing}
-        isCompact={isMobile}
+        isCompact={isCompactLayout}
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
         isConnected={isConnected}
@@ -1448,7 +1472,7 @@ export function Composer({
       hasSendableContent,
       isAgentRunning,
       isConnected,
-      isMobile,
+      isCompactLayout,
       isProcessing,
       isVoiceModeForAgent,
       isVoiceSwitching,
@@ -1468,12 +1492,13 @@ export function Composer({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
+        isCompactLayout,
       ),
-    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd],
+    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isCompactLayout],
   );
-  const { beforeVoiceContent, footerRight } = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, isMobile),
-    [contextWindowMeter, isMobile],
+  const { beforeVoiceContent, footerInlineContent } = useMemo(
+    () => resolveContextWindowPlacement(contextWindowMeter, isCompactLayout),
+    [contextWindowMeter, isCompactLayout],
   );
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
@@ -1540,8 +1565,8 @@ export function Composer({
   );
 
   const leftContent = useMemo(
-    () => renderLeftContent({ agentControls, agentId, serverId, focusInput }),
-    [agentId, focusInput, serverId, agentControls],
+    () => renderLeftContent({ agentControls, agentId, serverId, focusInput, isCompactLayout }),
+    [agentId, focusInput, serverId, agentControls, isCompactLayout],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
@@ -1718,7 +1743,7 @@ export function Composer({
           </View>
         </View>
       </View>
-      {renderComposerFooter(footer, footerRight)}
+      {renderComposerFooter(footer, footerInlineContent)}
     </Animated.View>
   );
 }
@@ -1760,6 +1785,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
       md: -theme.spacing[3],
     },
     alignItems: "center",
+    paddingBottom: {
+      xs: 0,
+      md: theme.spacing[2],
+    },
   },
   footerContent: {
     width: "100%",
@@ -1782,21 +1811,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
+    gap: theme.spacing[1],
     // On mobile, cancel the leading glyph's internal padding (chip paddingHorizontal)
     // so its icon aligns to the composer border before the footer inset is applied.
     marginLeft: {
       xs: -theme.spacing[2],
-      md: 0,
-    },
-  },
-  footerRight: {
-    flexShrink: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    // On mobile, cancel the trailing glyph's internal inset (28px box around a 16px
-    // ring) so its right edge aligns to the composer border before the footer inset.
-    marginRight: {
-      xs: -6,
       md: 0,
     },
   },

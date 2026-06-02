@@ -19,6 +19,7 @@ import type { AgentStorage } from "./agent-storage.js";
 
 interface CreateAgentLifecycleDispatchDependencies {
   paseoHome: string;
+  worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   github: GitHubService;
@@ -106,6 +107,7 @@ export class CreateAgentLifecycleDispatch {
       firstAgentContext,
       runSetup: false,
       paseoHome: this.dependencies.paseoHome,
+      worktreesRoot: this.dependencies.worktreesRoot,
     } as const;
 
     switch (target.mode) {
@@ -191,6 +193,7 @@ export class CreateAgentLifecycleDispatch {
   }): Promise<void> {
     const ownership = await isPaseoOwnedWorktreeCwd(options.worktreePath, {
       paseoHome: this.dependencies.paseoHome,
+      worktreesRoot: this.dependencies.worktreesRoot,
     });
     if (!ownership.allowed) {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
@@ -199,6 +202,7 @@ export class CreateAgentLifecycleDispatch {
     await archivePaseoWorktree(
       {
         paseoHome: this.dependencies.paseoHome,
+        worktreesRoot: this.dependencies.worktreesRoot,
         github: this.dependencies.github,
         workspaceGitService: this.dependencies.workspaceGitService,
         agentManager: this.dependencies.agentManager,
@@ -215,6 +219,7 @@ export class CreateAgentLifecycleDispatch {
         targetPath: options.worktreePath,
         repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
         worktreesRoot: ownership.worktreeRoot,
+        worktreesBaseRoot: this.dependencies.worktreesRoot,
         requestId: randomUUID(),
       },
     );

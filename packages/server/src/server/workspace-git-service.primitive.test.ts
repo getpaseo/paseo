@@ -879,6 +879,53 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     github.dispose?.();
   });
 
+  test("GitHub self-heal polling uses the fork PR head branch instead of the owner-prefixed local branch", async () => {
+    const retainCurrentPullRequestStatusPoll = vi.fn(() => ({ unsubscribe: vi.fn() }));
+    const github = {
+      ...createGitHubServiceStub(),
+      retainCurrentPullRequestStatusPoll,
+    };
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) =>
+      createCheckoutFacts(cwd, {
+        currentBranch: "fork-owner/open-button-targets-active-file",
+        branchRemoteName: "paseo-pr-1285",
+        branchMergeRef: "refs/heads/open-button-targets-active-file",
+        trackedOriginBranch: "paseo-pr-1285/open-button-targets-active-file",
+        pullRequestLookupTarget: {
+          headRef: "open-button-targets-active-file",
+          headRepositoryOwner: "fork-owner",
+        },
+      }),
+    );
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, {
+        currentBranch: "fork-owner/open-button-targets-active-file",
+        remoteUrl: "git@github.com:getpaseo/paseo.git",
+      }),
+    );
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      github,
+    });
+
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(retainCurrentPullRequestStatusPoll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: REPO_CWD,
+          headRef: "open-button-targets-active-file",
+          headRepositoryOwner: "fork-owner",
+        }),
+      );
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("settled GitHub self-heal reads stay on the slow poll window without refreshing git", async () => {
     let nowMs = 0;
     const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];

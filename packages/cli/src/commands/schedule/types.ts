@@ -8,6 +8,7 @@ export type ScheduleCadence =
   | {
       type: "cron";
       expression: string;
+      timezone?: string;
     };
 
 export type ScheduleTarget =

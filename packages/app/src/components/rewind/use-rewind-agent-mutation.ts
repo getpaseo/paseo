@@ -47,7 +47,7 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
           : undefined;
         await input.client.fetchAgentTimeline(input.agentId, {
           direction: "tail",
-          projection: "canonical",
+          projection: "projected",
           ...(cursor ? { cursor: { epoch: cursor.epoch, seq: cursor.endSeq } } : {}),
         });
       }

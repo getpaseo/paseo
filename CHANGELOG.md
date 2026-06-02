@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.1.88 - 2026-06-01
+
+### Added
+
+- **Choose an app theme from the new Appearance settings**
+- **Set a custom interface font**
+- **Set a custom code font**
+- **Adjust the interface text size**
+- **Adjust the code text size**
+- **Choose a syntax highlighting theme**
+- **Keep cron schedules aligned to a chosen time zone** ([#1232](https://github.com/getpaseo/paseo/pull/1232) by [@damselem](https://github.com/damselem))
+
+### Improved
+
+- Settings now has a flatter sidebar with a host picker
+- Workspace tab switching is faster
+- Compact composers now show context usage as a percentage
+- Agent terminals opened in workspace subdirectories now appear with the rest of the workspace terminals
+- macOS displays can idle normally while the desktop app is open ([#1242](https://github.com/getpaseo/paseo/pull/1242) by [@fireblue](https://github.com/fireblue))
+- Large generated diffs now show a clear too-large placeholder instead of trying to render the whole file
+
+### Fixed
+
+- Chat history catches up correctly around long-running tool updates
+- Terminal panes keep the right size after splitting or resizing panes
+- Restored terminal snapshots reflow correctly after the pane size changes
+- Workspace scripts menus keep the right size after launching a service
+- iOS chat messages no longer hide inline links, URLs, or linked file paths ([#1257](https://github.com/getpaseo/paseo/pull/1257) by [@outofrange-consulting](https://github.com/outofrange-consulting))
+
+## 0.1.87 - 2026-05-30
+
+### Added
+
+- Permission prompts from OpenCode subagents now surface in Paseo so you can approve or deny them
+
+### Fixed
+
+- Fixed an intermittent Android crash while animated views were drawing
+- Fixed mobile bottom sheets not reopening after being dismissed
+
+## 0.1.86 - 2026-05-29
+
+### Added
+
+- **Launch Grok (xAI) as a coding agent**
+- **Fast mode for Claude Opus**
+- **Multilingual local dictation with the new Parakeet v3 speech model**
+
+### Improved
+
+- Edit, Write, and Read tool calls are now syntax-highlighted
+- The model selector shows the error when a provider fails to load
+- The About page shows the versions of connected host daemons
+- Refresh git diffs on demand with a new refresh button
+- Previews can open readable files outside the current workspace
+- Projects without an icon now show a colored icon instead of a grey placeholder
+- Auto-generated agent titles and worktree branch names now use your configured provider fallbacks ([#1219](https://github.com/getpaseo/paseo/pull/1219) by [@mcowger](https://github.com/mcowger))
+- Local dictation keeps its speech models out of the daemon, lowering its memory use
+
+### Fixed
+
+- On mobile, the whole composer now stays above the keyboard so the subagents track and draft pills no longer hide behind it
+- The mobile agent timeline now catches up fully after reconnecting, so no messages go missing
+- The slash command menu no longer shows /clear twice
+
 ## 0.1.85 - 2026-05-29
 
 ### Added

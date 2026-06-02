@@ -23,6 +23,7 @@ import type {
   LocalSpeechWorkerResponse,
   LocalSpeechWorkerToParentMessage,
 } from "./worker-protocol.js";
+import { bufferToWorkerBytes, workerBytesToBuffer } from "./worker-bytes.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
@@ -125,7 +126,7 @@ export class LocalSpeechWorkerClient {
       text,
     });
     return {
-      stream: Readable.from([result.audio]),
+      stream: Readable.from([workerBytesToBuffer(result.audio)]),
       format: result.format,
     };
   }
@@ -135,7 +136,7 @@ export class LocalSpeechWorkerClient {
       type: "stt.transcribe",
       config: this.config,
       model: "voice",
-      audio,
+      audio: bufferToWorkerBytes(audio),
       format,
     });
   }
@@ -164,7 +165,11 @@ export class LocalSpeechWorkerClient {
   }
 
   appendSessionAudio(sessionId: string, audio: Buffer): void {
-    void this.sendRequest({ type: "session.append", sessionId, audio }).catch((err) => {
+    void this.sendRequest({
+      type: "session.append",
+      sessionId,
+      audio: bufferToWorkerBytes(audio),
+    }).catch((err) => {
       this.emitSessionError(sessionId, err);
     });
   }

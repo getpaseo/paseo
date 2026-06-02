@@ -4,6 +4,7 @@ import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -37,7 +38,11 @@ import {
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  COMPACT_FORM_FACTOR_WIDTH,
+  MAX_CONTENT_WIDTH,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 
@@ -422,7 +427,11 @@ export function WorkspaceDraftAgentTab({
     };
   }, [pendingAutoSubmit, pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
+    COMPACT_FORM_FACTOR_WIDTH,
+    { initialIsBelow: isCompactFormFactor },
+  );
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd: composerState.workingDir,
@@ -443,14 +452,14 @@ export function WorkspaceDraftAgentTab({
       };
       openFileExplorerForCheckout({
         checkout,
-        isCompact,
+        isCompact: isCompactFormFactor,
       });
       setExplorerTabForCheckout({
         ...checkout,
         tab: "changes",
       });
     },
-    [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
+    [isCompactFormFactor, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
   );
 
   const {
@@ -672,10 +681,14 @@ export function WorkspaceDraftAgentTab({
   );
   const composerFooter = useMemo(
     () =>
-      isCompact ? (
-        <DraftAgentModeControl placement="footer" {...composerAgentControls} />
+      isCompactComposerLayout ? (
+        <DraftAgentModeControl
+          placement="footer"
+          {...composerAgentControls}
+          isCompactLayout={isCompactComposerLayout}
+        />
       ) : undefined,
-    [isCompact, composerAgentControls],
+    [isCompactComposerLayout, composerAgentControls],
   );
 
   return (
@@ -709,7 +722,7 @@ export function WorkspaceDraftAgentTab({
           )}
         </View>
 
-        <ReanimatedAnimated.View style={inputAreaWrapperStyle}>
+        <ReanimatedAnimated.View style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
           <DraftComposerPillRow
             importPillPress={importPillPress}
             archivedPillPress={archivedPillPress}
@@ -737,6 +750,7 @@ export function WorkspaceDraftAgentTab({
             commandDraftConfig={composerState.commandDraftConfig}
             agentControls={composerAgentControls}
             footer={composerFooter}
+            isCompactLayout={isCompactComposerLayout}
           />
         </ReanimatedAnimated.View>
       </View>

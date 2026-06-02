@@ -5,7 +5,7 @@ import type {
   WorkspaceScriptPayload,
 } from "@getpaseo/protocol/messages";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { buildScriptHostname } from "../utils/script-hostname.js";
+import { buildPublicScriptProxyUrl, buildScriptHostname } from "../utils/script-hostname.js";
 import { getScriptConfigs, isServiceScript, readPaseoConfig } from "../utils/worktree.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";
@@ -23,6 +23,7 @@ interface BuildWorkspaceScriptPayloadsOptions {
   routeStore: ScriptRouteStore;
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null;
+  serviceProxyPublicBaseUrl?: string | null;
   gitMetadata?: {
     projectSlug: string;
     currentBranch: string | null;
@@ -52,11 +53,26 @@ function resolveDaemonPort(daemonPort: number | null | (() => number | null)): n
   return daemonPort;
 }
 
-function toServiceProxyUrl(hostname: string, daemonPort: number | null): string | null {
-  if (daemonPort === null) {
+function toServiceProxyUrl(params: {
+  hostname: string;
+  daemonPort: number | null;
+  serviceProxyPublicBaseUrl?: string | null;
+  projectSlug: string;
+  branchName: string | null;
+  scriptName: string;
+}): string | null {
+  if (params.serviceProxyPublicBaseUrl) {
+    return buildPublicScriptProxyUrl({
+      projectSlug: params.projectSlug,
+      branchName: params.branchName,
+      scriptName: params.scriptName,
+      publicBaseUrl: params.serviceProxyPublicBaseUrl,
+    });
+  }
+  if (params.daemonPort === null) {
     return null;
   }
-  return `http://${hostname}:${daemonPort}`;
+  return `http://${params.hostname}:${params.daemonPort}`;
 }
 
 function toWireHealth(health: ScriptHealthState | null): WorkspaceScriptPayload["health"] {
@@ -82,6 +98,7 @@ interface BuildPayloadContext {
   projectSlug: string;
   branchName: string | null;
   daemonPort: number | null;
+  serviceProxyPublicBaseUrl?: string | null;
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }
 
@@ -110,7 +127,17 @@ function buildConfiguredScriptPayload(
     type,
     hostname,
     port: type === "service" ? (routeEntry?.port ?? configuredPort) : null,
-    proxyUrl: type === "service" ? toServiceProxyUrl(hostname, ctx.daemonPort) : null,
+    proxyUrl:
+      type === "service"
+        ? toServiceProxyUrl({
+            hostname,
+            daemonPort: ctx.daemonPort,
+            serviceProxyPublicBaseUrl: ctx.serviceProxyPublicBaseUrl,
+            projectSlug: ctx.projectSlug,
+            branchName: ctx.branchName,
+            scriptName,
+          })
+        : null,
     lifecycle: runtimeEntry?.lifecycle ?? "stopped",
     health: type === "service" ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null) : null,
     exitCode: runtimeEntry?.exitCode ?? null,
@@ -138,7 +165,17 @@ function buildOrphanRuntimePayload(
     type,
     hostname,
     port: type === "service" ? (routeEntry?.port ?? null) : null,
-    proxyUrl: type === "service" ? toServiceProxyUrl(hostname, ctx.daemonPort) : null,
+    proxyUrl:
+      type === "service"
+        ? toServiceProxyUrl({
+            hostname,
+            daemonPort: ctx.daemonPort,
+            serviceProxyPublicBaseUrl: ctx.serviceProxyPublicBaseUrl,
+            projectSlug: ctx.projectSlug,
+            branchName: ctx.branchName,
+            scriptName: runtimeEntry.scriptName,
+          })
+        : null,
     lifecycle: runtimeEntry.lifecycle,
     health:
       type === "service" && routeEntry ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null) : null,
@@ -170,6 +207,7 @@ export function buildWorkspaceScriptPayloads(
     projectSlug,
     branchName,
     daemonPort: options.daemonPort,
+    serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
     resolveHealth: options.resolveHealth,
   };
 
@@ -210,6 +248,7 @@ export function createScriptStatusEmitter({
   routeStore,
   runtimeStore,
   daemonPort,
+  serviceProxyPublicBaseUrl,
   resolveWorkspaceDirectory,
   logger,
 }: {
@@ -217,6 +256,7 @@ export function createScriptStatusEmitter({
   routeStore: ScriptRouteStore;
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null | (() => number | null);
+  serviceProxyPublicBaseUrl?: string | null;
   resolveWorkspaceDirectory: (workspaceId: string) => string | null | Promise<string | null>;
   logger: Logger;
 }): (workspaceId: string, scripts: ScriptHealthEntry[]) => void {
@@ -239,6 +279,7 @@ export function createScriptStatusEmitter({
         routeStore,
         runtimeStore,
         daemonPort: resolvedDaemonPort,
+        serviceProxyPublicBaseUrl,
         resolveHealth: (hostname) => scriptHealthByHostname.get(hostname) ?? null,
       });
 

@@ -53,9 +53,16 @@ type SessionTimelineSeqCursor =
 
 type SessionTimelineSeqDecision = "accept" | "drop_stale" | "drop_epoch" | "gap" | "init";
 
+interface TimelineSeqRange {
+  startSeq: number;
+  endSeq: number;
+}
+
 interface TimelineResponseEntry {
   seqStart: number;
   seqEnd: number;
+  sourceSeqRanges?: TimelineSeqRange[];
+  collapsed?: string[];
   provider: string;
   item: Record<string, unknown>;
   timestamp: string;
@@ -96,6 +103,7 @@ export interface ProcessTimelineResponseOutput {
 interface TimelineUnit {
   seq: number;
   seqEnd: number;
+  sourceSeqRanges: TimelineSeqRange[];
   event: AgentStreamEventPayload;
   timestamp: Date;
 }
@@ -376,44 +384,56 @@ function acceptIncrementalTimelineUnits(args: {
   currentCursor: TimelineCursor | undefined;
 }): IncrementalAcceptResult {
   const { timelineUnits, payload, currentCursor } = args;
-  const acceptedUnits: TimelineUnit[] = [];
-  let cursor: TimelineCursor | undefined = currentCursor;
-  let gapCursor: { epoch: string; endSeq: number } | null = null;
+  const firstUnit = timelineUnits[0];
+  const lastUnit = timelineUnits[timelineUnits.length - 1];
+  const responseStartSeq = payload.startCursor?.seq ?? firstUnit?.seq;
+  const responseEndSeq = payload.endCursor?.seq ?? lastUnit?.seqEnd;
 
-  for (const unit of timelineUnits) {
-    const decision: SessionTimelineSeqDecision = classifySessionTimelineSeq({
-      cursor: cursor ? { epoch: cursor.epoch, endSeq: cursor.endSeq } : null,
-      epoch: payload.epoch,
-      seq: unit.seq,
-    });
-
-    if (decision === "gap") {
-      gapCursor = cursor ? { epoch: cursor.epoch, endSeq: cursor.endSeq } : null;
-      break;
-    }
-    if (decision === "drop_stale") {
-      if (cursor && unit.seqEnd > cursor.endSeq) {
-        gapCursor = { epoch: cursor.epoch, endSeq: cursor.endSeq };
-        break;
-      }
-      continue;
-    }
-    if (decision === "drop_epoch") {
-      continue;
-    }
-
-    acceptedUnits.push(unit);
-    if (decision === "init") {
-      cursor = { epoch: payload.epoch, startSeq: unit.seq, endSeq: unit.seqEnd };
-      continue;
-    }
-    if (!cursor) {
-      continue;
-    }
-    cursor = { ...cursor, endSeq: unit.seqEnd };
+  if (responseStartSeq === undefined || responseEndSeq === undefined) {
+    return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
   }
 
-  return { acceptedUnits, cursor, gapCursor };
+  if (!currentCursor) {
+    return {
+      acceptedUnits: timelineUnits,
+      cursor: { epoch: payload.epoch, startSeq: responseStartSeq, endSeq: responseEndSeq },
+      gapCursor: null,
+    };
+  }
+
+  if (currentCursor.epoch !== payload.epoch) {
+    return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
+  }
+
+  if (
+    (!payload.startCursor || !payload.endCursor) &&
+    responseStartSeq <= currentCursor.endSeq &&
+    responseEndSeq > currentCursor.endSeq
+  ) {
+    return {
+      acceptedUnits: [],
+      cursor: currentCursor,
+      gapCursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
+    };
+  }
+
+  if (responseEndSeq <= currentCursor.endSeq) {
+    return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
+  }
+
+  if (responseStartSeq > currentCursor.endSeq + 1) {
+    return {
+      acceptedUnits: [],
+      cursor: currentCursor,
+      gapCursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
+    };
+  }
+
+  return {
+    acceptedUnits: timelineUnits,
+    cursor: { ...currentCursor, endSeq: responseEndSeq },
+    gapCursor: null,
+  };
 }
 
 function acceptOlderTimelineUnits(args: {
@@ -426,16 +446,21 @@ function acceptOlderTimelineUnits(args: {
     return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
   }
 
-  const acceptedUnits = timelineUnits.filter((unit) => unit.seqEnd < currentCursor.startSeq);
-  if (acceptedUnits.length === 0) {
-    return { acceptedUnits, cursor: currentCursor, gapCursor: null };
+  const firstUnit = timelineUnits[0];
+  const lastUnit = timelineUnits[timelineUnits.length - 1];
+  const responseStartSeq = payload.startCursor?.seq ?? firstUnit?.seq;
+  const responseEndSeq = payload.endCursor?.seq ?? lastUnit?.seqEnd;
+  if (
+    responseStartSeq === undefined ||
+    responseEndSeq === undefined ||
+    responseEndSeq >= currentCursor.startSeq
+  ) {
+    return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
   }
 
-  const firstAccepted = acceptedUnits[0];
-  const startSeq = payload.startCursor?.seq ?? firstAccepted?.seq ?? currentCursor.startSeq;
   return {
-    acceptedUnits,
-    cursor: { ...currentCursor, startSeq },
+    acceptedUnits: timelineUnits,
+    cursor: { ...currentCursor, startSeq: responseStartSeq },
     gapCursor: null,
   };
 }
@@ -478,6 +503,32 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
     },
     ...currentTail.slice(1),
   ];
+}
+
+function replaceLiveAssistantWithProjectedText(params: {
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+}): StreamItem[] | null {
+  const { head, event, timestamp } = params;
+  if (event.type !== "timeline" || event.item.type !== "assistant_message") {
+    return null;
+  }
+  const index = head.findLastIndex((item) => item.kind === "assistant_message");
+  const current = head[index];
+  if (!current || current.kind !== "assistant_message") {
+    return null;
+  }
+  if (!event.item.text.startsWith(current.text)) {
+    return null;
+  }
+  const next = [...head];
+  next[index] = {
+    ...current,
+    text: event.item.text,
+    timestamp,
+  };
+  return next;
 }
 
 function applyTimelineIncrementalPath(args: {
@@ -523,6 +574,15 @@ function applyTimelineIncrementalPath(args: {
       nextTail = mergePrependedCanonicalTail(olderTail, currentTail);
     } else if (currentHead.length > 0) {
       for (const { event, timestamp } of acceptedUnits) {
+        const replacedHead = replaceLiveAssistantWithProjectedText({
+          head: nextHead,
+          event,
+          timestamp,
+        });
+        if (replacedHead) {
+          nextHead = replacedHead;
+          continue;
+        }
         const applied = applyStreamEvent({
           tail: nextTail,
           head: nextHead,
@@ -597,6 +657,10 @@ export function processTimelineResponse(
   const timelineUnits = payload.entries.map((entry) => ({
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
+    sourceSeqRanges:
+      entry.sourceSeqRanges && entry.sourceSeqRanges.length > 0
+        ? entry.sourceSeqRanges
+        : [{ startSeq: entry.seqStart, endSeq: entry.seqEnd }],
     event: {
       type: "timeline",
       provider: entry.provider,

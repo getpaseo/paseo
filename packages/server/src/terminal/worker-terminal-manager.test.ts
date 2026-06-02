@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
@@ -330,6 +330,24 @@ it("starts the default shell through the worker and accepts quoted commands", as
   await waitForCondition(() => existsSync(markerPath), 10000);
 
   expect(readFileSync(markerPath, "utf8")).toBe("shell-ok");
+});
+
+it("lists subdirectory terminals when querying the workspace root", async () => {
+  const rootCwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-subdir-root-"));
+  const subdirCwd = join(rootCwd, "apps", "mobile");
+  mkdirSync(subdirCwd, { recursive: true });
+  temporaryDirs.push(rootCwd);
+  manager = createWorkerTerminalManager();
+  const created = trackTerminal(
+    await manager.createTerminal({
+      cwd: subdirCwd,
+      ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+    }),
+  );
+
+  const rootTerminals = await manager.getTerminals(rootCwd);
+
+  expect(rootTerminals.map((terminal) => terminal.id)).toEqual([created.id]);
 });
 
 it("removes worker terminals after killAndWait", async () => {

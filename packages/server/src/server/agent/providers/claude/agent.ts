@@ -32,6 +32,7 @@ import {
 import { getClaudeModelsWithSettings, normalizeClaudeRuntimeModelId } from "./models.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
+import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
 import {
   buildBinaryDiagnosticRows,
   formatDiagnosticStatus,
@@ -51,6 +52,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -361,6 +363,7 @@ interface ClaudeOptionsLogSummary {
   hasStderrHandler: boolean;
   pathToClaudeCodeExecutable: string | null;
   persistSession: boolean | null;
+  fastMode: boolean | null;
 }
 
 const MAX_RECENT_STDERR_CHARS = 4000;
@@ -409,7 +412,25 @@ function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogS
         ? options.pathToClaudeCodeExecutable
         : null,
     persistSession: typeof options.persistSession === "boolean" ? options.persistSession : null,
+    fastMode: readClaudeFastModeSetting(options.settings),
   };
+}
+
+function readClaudeFastModeSetting(settings: ClaudeOptions["settings"]): boolean | null {
+  if (!settings || typeof settings === "string") {
+    return null;
+  }
+  return typeof settings.fastMode === "boolean" ? settings.fastMode : null;
+}
+
+function mergeClaudeSettings(
+  settings: ClaudeOptions["settings"],
+  updates: NonNullable<Exclude<ClaudeOptions["settings"], string>>,
+): ClaudeOptions["settings"] {
+  if (!settings || typeof settings === "string") {
+    return settings ?? updates;
+  }
+  return { ...settings, ...updates };
 }
 
 function isToolResultTextBlock(value: unknown): value is { type: "text"; text: string } {
@@ -1319,6 +1340,14 @@ export class ClaudeAgentClient implements AgentClient {
     return await getClaudeModelsWithSettings(this.logger);
   }
 
+  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    const claudeConfig = this.assertConfig(config);
+    return buildClaudeFeatures({
+      modelId: claudeConfig.model,
+      fastModeEnabled: claudeConfig.featureValues?.fast_mode === true,
+    });
+  }
+
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
@@ -1629,6 +1658,13 @@ class ClaudeAgentSession implements AgentSession {
     return this.claudeSessionId;
   }
 
+  get features(): AgentFeature[] {
+    return buildClaudeFeatures({
+      modelId: this.config.model,
+      fastModeEnabled: this.config.featureValues?.fast_mode === true,
+    });
+  }
+
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     if (this.cachedRuntimeInfo) {
       return { ...this.cachedRuntimeInfo };
@@ -1829,6 +1865,9 @@ class ClaudeAgentSession implements AgentSession {
     const activeQuery = await this.ensureQuery();
     await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
+    if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
+      await this.applyFastModeFeature(false, activeQuery);
+    }
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
     this.cachedRuntimeInfo = null;
@@ -1850,6 +1889,33 @@ class ClaudeAgentSession implements AgentSession {
       throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
     }
     this.queryRestartNeeded = true;
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId !== "fast_mode") {
+      throw new Error(`Unknown Claude feature: ${featureId}`);
+    }
+
+    const enabled = Boolean(value);
+    if (enabled && !claudeModelSupportsFastMode(this.config.model)) {
+      throw new Error(
+        `Claude fast mode is not available for model '${this.config.model ?? "default"}'`,
+      );
+    }
+
+    await this.applyFastModeFeature(enabled);
+  }
+
+  private async applyFastModeFeature(enabled: boolean, query?: Query): Promise<void> {
+    this.config.featureValues = {
+      ...this.config.featureValues,
+      fast_mode: enabled,
+    };
+    const activeQuery = query ?? this.query;
+    if (activeQuery) {
+      await activeQuery.applyFlagSettings({ fastMode: enabled });
+    }
+    this.cachedRuntimeInfo = null;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -2389,6 +2455,10 @@ class ClaudeAgentSession implements AgentSession {
         queryFactory: this.queryFactory,
       },
     );
+    const fastMode = this.resolveFastModeSetting();
+    if (fastMode !== null) {
+      await this.query.applyFlagSettings({ fastMode });
+    }
     // Do not kick off background control-plane queries here. Methods like
     // supportedCommands()/setPermissionMode() may execute immediately after
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
@@ -2482,6 +2552,7 @@ class ClaudeAgentSession implements AgentSession {
     const { thinking, effort } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
     const extraClaudeOptions = this.config.extra?.claude;
+    const fastModeOptions = this.buildFastModeOptions(extraClaudeOptions);
     const sdkEnv = this.buildSdkEnv(extraClaudeOptions);
     assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
 
@@ -2534,6 +2605,7 @@ class ClaudeAgentSession implements AgentSession {
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
       ...extraClaudeOptions,
+      ...fastModeOptions,
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -2556,6 +2628,23 @@ class ClaudeAgentSession implements AgentSession {
       ];
     }
     return base;
+  }
+
+  private buildFastModeOptions(
+    extraClaudeOptions: Partial<ClaudeOptions> | undefined,
+  ): Pick<ClaudeOptions, "settings"> | Record<string, never> {
+    const fastMode = this.resolveFastModeSetting();
+    if (fastMode === null) {
+      return {};
+    }
+    return { settings: mergeClaudeSettings(extraClaudeOptions?.settings, { fastMode }) };
+  }
+
+  private resolveFastModeSetting(): boolean | null {
+    if (!claudeModelSupportsFastMode(this.config.model)) {
+      return null;
+    }
+    return this.config.featureValues?.fast_mode === true;
   }
 
   private normalizeMcpServers(
