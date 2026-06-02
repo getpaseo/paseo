@@ -237,6 +237,15 @@ export const en = {
     actions: {
       refresh: "Refresh sessions",
     },
+    preview: {
+      untitledSession: "Untitled session",
+      noPrompt: "No prompt preview",
+    },
+    empty: {
+      noRecent: "No recent sessions to import.",
+      alreadyImported: "All recent sessions are already imported.",
+      noProviderSessions: "No {{provider}} sessions found.",
+    },
     row: {
       importing: "Importing...",
     },
@@ -640,6 +649,12 @@ export const en = {
     },
     sections: {
       sessions: "Sessions",
+    },
+    worktreeSetup: {
+      title: "Set up worktree scripts",
+      description:
+        "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
+      openProjectSettings: "Open project settings",
     },
     project: {
       actions: {

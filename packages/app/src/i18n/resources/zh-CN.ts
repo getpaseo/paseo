@@ -238,6 +238,15 @@ export const zhCN: TranslationResources = {
     actions: {
       refresh: "刷新会话",
     },
+    preview: {
+      untitledSession: "未命名会话",
+      noPrompt: "没有 prompt 预览",
+    },
+    empty: {
+      noRecent: "没有可导入的最近会话。",
+      alreadyImported: "所有最近会话都已导入。",
+      noProviderSessions: "没有找到 {{provider}} 会话。",
+    },
     row: {
       importing: "正在导入...",
     },
@@ -628,6 +637,11 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "会话",
+    },
+    worktreeSetup: {
+      title: "设置 worktree scripts",
+      description: "添加 setup 命令，让新的 worktree 自动安装依赖并完成准备。",
+      openProjectSettings: "打开 project 设置",
     },
     project: {
       actions: {

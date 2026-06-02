@@ -1,5 +1,6 @@
 import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import { i18n } from "@/i18n/i18next";
 
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
@@ -97,11 +98,15 @@ export function getSessionTitle(entry: FetchRecentProviderSessionEntry): string 
   if (firstPromptPreview) {
     return firstPromptPreview;
   }
-  return "Untitled session";
+  return i18n.t("importSession.preview.untitledSession");
 }
 
 export function getPromptPreview(entry: FetchRecentProviderSessionEntry): string {
-  return entry.lastPromptPreview?.trim() || entry.firstPromptPreview?.trim() || "No prompt preview";
+  return (
+    entry.lastPromptPreview?.trim() ||
+    entry.firstPromptPreview?.trim() ||
+    i18n.t("importSession.preview.noPrompt")
+  );
 }
 
 export interface EmptyStateInputs {
@@ -132,10 +137,16 @@ export function computeEmptyState(input: EmptyStateInputs): {
   const isFilteredEmpty = input.selectedProvider !== ALL_FILTER_VALUE && input.aggregatedCount > 0;
   if (isFilteredEmpty) {
     const label = input.providerLabelById.get(input.selectedProvider) ?? input.selectedProvider;
-    return { showEmptyState, emptyStateTitle: `No ${label} sessions found.` };
+    return {
+      showEmptyState,
+      emptyStateTitle: i18n.t("importSession.empty.noProviderSessions", { provider: label }),
+    };
   }
   if (input.totalAlreadyImportedCount > 0) {
-    return { showEmptyState, emptyStateTitle: "All recent sessions are already imported." };
+    return {
+      showEmptyState,
+      emptyStateTitle: i18n.t("importSession.empty.alreadyImported"),
+    };
   }
-  return { showEmptyState, emptyStateTitle: "No recent sessions to import." };
+  return { showEmptyState, emptyStateTitle: i18n.t("importSession.empty.noRecent") };
 }

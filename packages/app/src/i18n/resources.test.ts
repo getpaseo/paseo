@@ -276,4 +276,19 @@ describe("translation resources", () => {
       "Workspace setup composer state is required",
     );
   });
+
+  it("includes view-model and policy utility keys for the Batch 4N migration", () => {
+    expect(en.importSession.preview.untitledSession).toBe("Untitled session");
+    expect(en.importSession.preview.noPrompt).toBe("No prompt preview");
+    expect(en.importSession.empty.noRecent).toBe("No recent sessions to import.");
+    expect(en.importSession.empty.alreadyImported).toBe(
+      "All recent sessions are already imported.",
+    );
+    expect(en.importSession.empty.noProviderSessions).toBe("No {{provider}} sessions found.");
+    expect(en.sidebar.worktreeSetup.title).toBe("Set up worktree scripts");
+    expect(en.sidebar.worktreeSetup.description).toBe(
+      "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
+    );
+    expect(en.sidebar.worktreeSetup.openProjectSettings).toBe("Open project settings");
+  });
 });
