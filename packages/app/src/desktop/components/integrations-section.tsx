@@ -1,4 +1,6 @@
 import { useCallback, useMemo } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -8,16 +10,34 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { shouldUseDesktopDaemon, type SkillsStatus } from "@/desktop/daemon/desktop-daemon";
+import {
+  shouldUseDesktopDaemon,
+  type SkillOp,
+  type SkillsStatus,
+} from "@/desktop/daemon/desktop-daemon";
 import { useCliInstall, useSkillsStatus } from "@/desktop/hooks/use-install-status";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
-const UNINSTALL_MESSAGE =
-  "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex.";
+
+const OP_KIND_ORDER: Record<SkillOp["kind"], number> = { add: 0, update: 1, delete: 2 };
+const OP_KIND_LABEL_KEY: Record<SkillOp["kind"], string> = {
+  add: "settings.integrations.operations.add",
+  update: "settings.integrations.operations.update",
+  delete: "settings.integrations.operations.delete",
+};
+
+function formatUpdateMessage(ops: readonly SkillOp[], t: TFunction): string {
+  const sorted = [...ops].sort((a, b) => {
+    const kindOrder = OP_KIND_ORDER[a.kind] - OP_KIND_ORDER[b.kind];
+    return kindOrder !== 0 ? kindOrder : a.name.localeCompare(b.name);
+  });
+  return sorted.map((op) => `${t(OP_KIND_LABEL_KEY[op.kind])} ${op.name}`).join("\n");
+}
 
 export function IntegrationsSection() {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const showSection = shouldUseDesktopDaemon();
   const {
@@ -56,20 +76,30 @@ export function IntegrationsSection() {
 
   const handleUpdateSkills = useCallback(async () => {
     if (isSkillsWorking) return;
+    const ops = skillsStatus?.ops ?? [];
+    const confirmed = await confirmDialog({
+      title: t("settings.integrations.skills.updateTitle"),
+      message:
+        ops.length > 0
+          ? formatUpdateMessage(ops, t)
+          : t("settings.integrations.skills.updateFallback"),
+      confirmLabel: t("settings.integrations.actions.update"),
+    });
+    if (!confirmed) return;
     await updateSkills();
-  }, [isSkillsWorking, updateSkills]);
+  }, [isSkillsWorking, skillsStatus, t, updateSkills]);
 
   const handleUninstallSkills = useCallback(async () => {
     if (isSkillsWorking) return;
     const confirmed = await confirmDialog({
-      title: "Uninstall Paseo skills?",
-      message: UNINSTALL_MESSAGE,
-      confirmLabel: "Uninstall",
+      title: t("settings.integrations.skills.uninstallTitle"),
+      message: t("settings.integrations.skills.uninstallMessage"),
+      confirmLabel: t("settings.integrations.actions.uninstall"),
       destructive: true,
     });
     if (!confirmed) return;
     await uninstallSkills();
-  }, [isSkillsWorking, uninstallSkills]);
+  }, [isSkillsWorking, t, uninstallSkills]);
 
   const handleOpenCliDocs = useCallback(() => {
     void openExternalUrl(CLI_DOCS_URL);
@@ -94,9 +124,9 @@ export function IntegrationsSection() {
           textStyle={settingsStyles.sectionHeaderLinkText}
           style={settingsStyles.sectionHeaderLink}
           onPress={handleOpenCliDocs}
-          accessibilityLabel="Open CLI documentation"
+          accessibilityLabel={t("settings.integrations.docs.openCli")}
         >
-          CLI docs
+          {t("settings.integrations.docs.cli")}
         </Button>
         <Button
           variant="ghost"
@@ -105,13 +135,13 @@ export function IntegrationsSection() {
           textStyle={settingsStyles.sectionHeaderLinkText}
           style={settingsStyles.sectionHeaderLink}
           onPress={handleOpenSkillsDocs}
-          accessibilityLabel="Open skills documentation"
+          accessibilityLabel={t("settings.integrations.docs.openSkills")}
         >
-          Skills docs
+          {t("settings.integrations.docs.skills")}
         </Button>
       </View>
     ),
-    [arrowIcon, handleOpenCliDocs, handleOpenSkillsDocs],
+    [arrowIcon, handleOpenCliDocs, handleOpenSkillsDocs, t],
   );
 
   if (!showSection) {
@@ -121,20 +151,24 @@ export function IntegrationsSection() {
   const skillsState = skillsStatus?.state ?? null;
 
   return (
-    <SettingsSection title="Integrations" trailing={trailing}>
+    <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <View style={styles.rowTitleRow}>
               <Terminal size={theme.iconSize.md} color={theme.colors.foreground} />
-              <Text style={settingsStyles.rowTitle}>Command line</Text>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.integrations.commandLine.title")}
+              </Text>
             </View>
-            <Text style={settingsStyles.rowHint}>Control and script agents from your terminal</Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.integrations.commandLine.description")}
+            </Text>
           </View>
           {cliStatus?.installed ? (
             <View style={styles.installedLabel}>
               <Check size={14} color={theme.colors.foregroundMuted} />
-              <Text style={styles.mutedText}>Installed</Text>
+              <Text style={styles.mutedText}>{t("settings.integrations.actions.installed")}</Text>
             </View>
           ) : (
             <Button
@@ -143,7 +177,9 @@ export function IntegrationsSection() {
               onPress={handleInstallCli}
               disabled={isInstallingCli}
             >
-              {isInstallingCli ? "Installing..." : "Install"}
+              {isInstallingCli
+                ? t("settings.integrations.actions.installing")
+                : t("settings.integrations.actions.install")}
             </Button>
           )}
         </View>
@@ -151,12 +187,12 @@ export function IntegrationsSection() {
           <View style={settingsStyles.rowContent}>
             <View style={styles.rowTitleRow}>
               <Blocks size={theme.iconSize.md} color={theme.colors.foreground} />
-              <Text style={settingsStyles.rowTitle}>Orchestration skills</Text>
+              <Text style={settingsStyles.rowTitle}>{t("settings.integrations.skills.title")}</Text>
             </View>
             <Text style={settingsStyles.rowHint}>
               {skillsState === "drift"
-                ? "Update available"
-                : "Teach your agents to orchestrate through the CLI"}
+                ? t("settings.integrations.skills.updateAvailable")
+                : t("settings.integrations.skills.description")}
             </Text>
           </View>
           <SkillsActions
@@ -181,6 +217,7 @@ interface SkillsActionsProps {
 }
 
 function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: SkillsActionsProps) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
 
   if (state === "up-to-date") {
@@ -188,10 +225,10 @@ function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: S
       <View style={styles.actionsRow}>
         <View style={styles.installedLabel}>
           <Check size={14} color={theme.colors.foregroundMuted} />
-          <Text style={styles.mutedText}>Installed</Text>
+          <Text style={styles.mutedText}>{t("settings.integrations.actions.installed")}</Text>
         </View>
         <Button variant="outline" size="sm" onPress={onUninstall} disabled={isWorking}>
-          Uninstall
+          {t("settings.integrations.actions.uninstall")}
         </Button>
       </View>
     );
@@ -201,10 +238,12 @@ function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: S
     return (
       <View style={styles.actionsRow}>
         <Button variant="outline" size="sm" onPress={onUpdate} disabled={isWorking}>
-          {isWorking ? "Working..." : "Update"}
+          {isWorking
+            ? t("settings.integrations.actions.working")
+            : t("settings.integrations.actions.update")}
         </Button>
         <Button variant="outline" size="sm" onPress={onUninstall} disabled={isWorking}>
-          Uninstall
+          {t("settings.integrations.actions.uninstall")}
         </Button>
       </View>
     );
@@ -212,7 +251,9 @@ function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: S
 
   return (
     <Button variant="outline" size="sm" onPress={onInstall} disabled={isWorking}>
-      {isWorking ? "Installing..." : "Install"}
+      {isWorking
+        ? t("settings.integrations.actions.installing")
+        : t("settings.integrations.actions.install")}
     </Button>
   );
 }
