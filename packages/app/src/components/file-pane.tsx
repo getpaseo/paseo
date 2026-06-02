@@ -729,7 +729,10 @@ export function FilePane({
     enabled: Boolean(client && readTarget),
     queryFn: async () => {
       if (!client || !readTarget) {
-        return { file: null as ExplorerFile | null, error: "Host is not connected" };
+        return {
+          file: null as ExplorerFile | null,
+          error: t("workspace.terminal.hostDisconnected"),
+        };
       }
       try {
         const file = await client.readFile(readTarget.cwd, readTarget.path);

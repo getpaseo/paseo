@@ -4,6 +4,7 @@ import { Terminal } from "lucide-react-native";
 import { Text, View } from "react-native";
 import invariant from "tiny-invariant";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
+import { i18n } from "@/i18n/i18next";
 import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
@@ -61,8 +62,10 @@ function useTerminalPanelDescriptor(
     terminalsQuery.data?.terminals.find((entry) => entry.id === target.terminalId) ?? null;
 
   return {
-    label: trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ?? "Terminal",
-    subtitle: "Terminal",
+    label:
+      trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ??
+      i18n.t("workspace.tabs.fallback.terminal"),
+    subtitle: i18n.t("workspace.tabs.fallback.terminal"),
     titleState: "ready",
     icon: Terminal,
     statusBucket: null,

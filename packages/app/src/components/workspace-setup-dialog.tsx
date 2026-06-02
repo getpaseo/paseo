@@ -399,8 +399,8 @@ export function WorkspaceSetupDialog() {
   );
 
   const sheetHeader = useMemo<SheetHeader>(
-    () => ({ title: "Create workspace", subtitle: subtitleContent }),
-    [subtitleContent],
+    () => ({ title: t("workspaceSetup.title"), subtitle: subtitleContent }),
+    [subtitleContent, t],
   );
 
   if (!pendingWorkspaceSetup || !sourceDirectory) {

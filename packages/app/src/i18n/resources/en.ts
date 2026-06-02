@@ -45,6 +45,8 @@ export const en = {
       actions: "Actions",
       agents: "Agents",
       newAgent: "New agent",
+      openProject: "Open project",
+      home: "Home",
     },
   },
   composer: {
@@ -1003,6 +1005,7 @@ export const en = {
     dialogFilterName: "Images",
   },
   workspaceSetup: {
+    title: "Create workspace",
     errors: {
       failedCreateWorktree: "Failed to create worktree",
       failedOpenProject: "Failed to open project",

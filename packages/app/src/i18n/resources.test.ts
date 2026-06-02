@@ -34,6 +34,8 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.actions).toBe("Actions");
     expect(en.shell.commandCenter.agents).toBe("Agents");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
+    expect(en.shell.commandCenter.openProject).toBe("Open project");
+    expect(en.shell.commandCenter.home).toBe("Home");
   });
 
   it("includes composer and agent workflow keys for the Batch 2 migration", () => {
@@ -276,6 +278,7 @@ describe("translation resources", () => {
     expect(en.workspaceSetup.errors.composerStateRequired).toBe(
       "Workspace setup composer state is required",
     );
+    expect(en.workspaceSetup.title).toBe("Create workspace");
   });
 
   it("includes view-model and policy utility keys for the Batch 4N migration", () => {

@@ -47,6 +47,8 @@ export const zhCN: TranslationResources = {
       actions: "操作",
       agents: "Agents",
       newAgent: "新建 Agent",
+      openProject: "打开项目",
+      home: "首页",
     },
   },
   composer: {
@@ -983,6 +985,7 @@ export const zhCN: TranslationResources = {
     dialogFilterName: "图片",
   },
   workspaceSetup: {
+    title: "创建 workspace",
     errors: {
       failedCreateWorktree: "创建 worktree 失败",
       failedOpenProject: "打开 project 失败",
