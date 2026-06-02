@@ -501,6 +501,7 @@ export const zhCN: TranslationResources = {
         open: "打开",
         chooseEditor: "选择编辑器",
         openIn: "在 {{target}} 中打开 workspace",
+        openFileIn: "在 {{target}} 中打开 {{fileName}}",
         failedOpen: "打开 workspace 失败",
       },
       pr: {

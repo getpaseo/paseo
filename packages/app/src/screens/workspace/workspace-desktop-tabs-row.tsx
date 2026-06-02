@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
   DraggableListDragHandleProps,
@@ -61,6 +62,7 @@ import {
   buildWorkspaceDesktopTabActions,
   type WorkspaceDesktopTabActions,
   type WorkspaceTabMenuEntry,
+  type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { Theme } from "@/styles/theme";
@@ -223,20 +225,23 @@ interface WorkspaceDesktopTabsRowProps {
   showPaneSplitActions?: boolean;
 }
 
-function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
+function getFallbackTabLabel(
+  tab: WorkspaceTabDescriptor,
+  labels: { newAgent: string; setup: string; terminal: string; agent: string },
+): string {
   if (tab.target.kind === "draft") {
-    return "New Agent";
+    return labels.newAgent;
   }
   if (tab.target.kind === "setup") {
-    return "Setup";
+    return labels.setup;
   }
   if (tab.target.kind === "terminal") {
-    return "Terminal";
+    return labels.terminal;
   }
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
-  return "Agent";
+  return labels.agent;
 }
 
 function useMiddleClickClose(onClose: () => void) {
@@ -533,6 +538,7 @@ export function WorkspaceDesktopTabsRow({
   tabDropPreviewIndex = null,
   showPaneSplitActions = true,
 }: WorkspaceDesktopTabsRowProps) {
+  const { t } = useTranslation();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const newTerminalKeys = useShortcutKeys("workspace-terminal-new");
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
@@ -571,13 +577,38 @@ export function WorkspaceDesktopTabsRow({
     [inlineAddButtonWidth, tabsActionsWidth],
   );
 
+  const fallbackTabLabels = useMemo(
+    () => ({
+      newAgent: t("workspace.tabs.fallback.newAgent"),
+      setup: t("workspace.tabs.fallback.setup"),
+      terminal: t("workspace.tabs.fallback.terminal"),
+      agent: t("workspace.tabs.fallback.agent"),
+    }),
+    [t],
+  );
+  const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
+    () => ({
+      copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
+      copyAgentId: t("workspace.tabs.menu.copyAgentId"),
+      rename: t("workspace.tabs.menu.rename"),
+      closeAbove: t("workspace.tabs.menu.closeAbove"),
+      closeBelow: t("workspace.tabs.menu.closeBelow"),
+      closeLeft: t("workspace.tabs.menu.closeLeft"),
+      closeRight: t("workspace.tabs.menu.closeRight"),
+      closeOthers: t("workspace.tabs.menu.closeOthers"),
+      reloadAgent: t("workspace.tabs.menu.reloadAgent"),
+      reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
+      close: t("workspace.tabs.menu.close"),
+    }),
+    [t],
+  );
   const tabLabelLengths = useMemo(
     () =>
       tabs.map((tab) => {
-        const label = getFallbackTabLabel(tab.tab);
+        const label = getFallbackTabLabel(tab.tab, fallbackTabLabels);
         return label.length;
       }),
-    [tabs],
+    [fallbackTabLabels, tabs],
   );
 
   const { layout } = useWorkspaceTabLayout({
@@ -664,6 +695,7 @@ export function WorkspaceDesktopTabsRow({
           setHoveredCloseTabKey={setHoveredCloseTabKey}
           onNavigateTab={onNavigateTab}
           onCloseTab={onCloseTab}
+          labels={tabMenuLabels}
           dragHandleProps={dragHandleProps}
           showDropIndicatorBefore={showDropIndicatorBefore}
           showDropIndicatorAfter={showDropIndicatorAfter}
@@ -687,6 +719,7 @@ export function WorkspaceDesktopTabsRow({
       onReloadAgent,
       onRenameTab,
       setHoveredCloseTabKey,
+      tabMenuLabels,
       tabDropPreviewIndex,
       tabs.length,
     ],
@@ -739,14 +772,14 @@ export function WorkspaceDesktopTabsRow({
             testID="workspace-new-agent-tab"
             onPress={handleCreateAgentTab}
             accessibilityRole="button"
-            accessibilityLabel="New agent tab"
+            accessibilityLabel={t("workspace.tabs.actions.newAgent")}
             style={newTabActionButtonStyle}
           >
             <ThemedSquarePen size={14} uniProps={mutedColorMapping} />
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
             <View style={styles.newTabTooltipRow}>
-              <Text style={styles.newTabTooltipText}>New agent tab</Text>
+              <Text style={styles.newTabTooltipText}>{t("workspace.tabs.actions.newAgent")}</Text>
               {newTabKeys ? (
                 <Shortcut chord={newTabKeys} style={styles.newTabTooltipShortcut} />
               ) : null}
@@ -760,7 +793,9 @@ export function WorkspaceDesktopTabsRow({
             disabled={terminalDisabled}
             accessibilityRole="button"
             accessibilityLabel={
-              isWaitingOnTerminalReadiness ? "Preparing terminal tab" : "New terminal tab"
+              isWaitingOnTerminalReadiness
+                ? t("workspace.tabs.actions.preparingTerminal")
+                : t("workspace.tabs.actions.newTerminal")
             }
             style={newTerminalActionButtonStyle}
           >
@@ -769,7 +804,9 @@ export function WorkspaceDesktopTabsRow({
           <TooltipContent side="bottom" align="center" offset={8}>
             <View style={styles.newTabTooltipRow}>
               <Text style={styles.newTabTooltipText}>
-                {isWaitingOnTerminalReadiness ? "Preparing terminal..." : "New terminal tab"}
+                {isWaitingOnTerminalReadiness
+                  ? t("workspace.tabs.actions.preparingTerminalTooltip")
+                  : t("workspace.tabs.actions.newTerminal")}
               </Text>
               {newTerminalKeys ? (
                 <Shortcut chord={newTerminalKeys} style={styles.newTabTooltipShortcut} />
@@ -783,14 +820,16 @@ export function WorkspaceDesktopTabsRow({
               testID="workspace-new-browser"
               onPress={handleCreateBrowser}
               accessibilityRole="button"
-              accessibilityLabel="New browser tab"
+              accessibilityLabel={t("workspace.tabs.actions.newBrowser")}
               style={newTabActionButtonStyle}
             >
               <ThemedGlobe size={14} uniProps={mutedColorMapping} />
             </TooltipTrigger>
             <TooltipContent side="bottom" align="center" offset={8}>
               <View style={styles.newTabTooltipRow}>
-                <Text style={styles.newTabTooltipText}>New browser tab</Text>
+                <Text style={styles.newTabTooltipText}>
+                  {t("workspace.tabs.actions.newBrowser")}
+                </Text>
               </View>
             </TooltipContent>
           </Tooltip>
@@ -801,14 +840,16 @@ export function WorkspaceDesktopTabsRow({
               <TooltipTrigger
                 onPress={onSplitRight}
                 accessibilityRole="button"
-                accessibilityLabel="Split pane right"
+                accessibilityLabel={t("workspace.tabs.actions.splitRight")}
                 style={newTabActionButtonStyle}
               >
                 <ThemedColumns2 size={14} uniProps={mutedColorMapping} />
               </TooltipTrigger>
               <TooltipContent side="bottom" align="center" offset={8}>
                 <View style={styles.newTabTooltipRow}>
-                  <Text style={styles.newTabTooltipText}>Split pane right</Text>
+                  <Text style={styles.newTabTooltipText}>
+                    {t("workspace.tabs.actions.splitRight")}
+                  </Text>
                   {splitRightKeys ? (
                     <Shortcut chord={splitRightKeys} style={styles.newTabTooltipShortcut} />
                   ) : null}
@@ -819,14 +860,16 @@ export function WorkspaceDesktopTabsRow({
               <TooltipTrigger
                 onPress={onSplitDown}
                 accessibilityRole="button"
-                accessibilityLabel="Split pane down"
+                accessibilityLabel={t("workspace.tabs.actions.splitDown")}
                 style={newTabActionButtonStyle}
               >
                 <ThemedRows2 size={14} uniProps={mutedColorMapping} />
               </TooltipTrigger>
               <TooltipContent side="bottom" align="center" offset={8}>
                 <View style={styles.newTabTooltipRow}>
-                  <Text style={styles.newTabTooltipText}>Split pane down</Text>
+                  <Text style={styles.newTabTooltipText}>
+                    {t("workspace.tabs.actions.splitDown")}
+                  </Text>
                   {splitDownKeys ? (
                     <Shortcut chord={splitDownKeys} style={styles.newTabTooltipShortcut} />
                   ) : null}
@@ -862,6 +905,7 @@ function ResolvedDesktopTabChip({
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
+  labels,
   dragHandleProps,
   showDropIndicatorBefore,
   showDropIndicatorAfter,
@@ -886,10 +930,12 @@ function ResolvedDesktopTabChip({
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  labels: WorkspaceTabMenuLabels;
   dragHandleProps: DraggableListDragHandleProps | undefined;
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
 }) {
+  const { t } = useTranslation();
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
@@ -904,6 +950,7 @@ function ResolvedDesktopTabChip({
         onCloseTabsToLeft,
         onCloseTabsToRight,
         onCloseOtherTabs,
+        labels,
       }),
     [
       index,
@@ -914,6 +961,7 @@ function ResolvedDesktopTabChip({
       onCloseTabsToRight,
       onCopyAgentId,
       onCopyResumeCommand,
+      labels,
       onReloadAgent,
       onRenameTab,
       tabCount,
@@ -928,7 +976,9 @@ function ResolvedDesktopTabChip({
     >
       {(presentation) => {
         const tooltipLabel =
-          presentation.titleState === "loading" ? "Loading agent title" : presentation.label;
+          presentation.titleState === "loading"
+            ? t("workspace.tabs.loadingAgentTitle")
+            : presentation.label;
 
         return (
           <View style={styles.tabSlot}>

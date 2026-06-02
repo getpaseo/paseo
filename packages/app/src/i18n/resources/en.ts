@@ -513,6 +513,7 @@ export const en = {
         open: "Open",
         chooseEditor: "Choose editor",
         openIn: "Open workspace in {{target}}",
+        openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "Failed to open workspace",
       },
       pr: {
