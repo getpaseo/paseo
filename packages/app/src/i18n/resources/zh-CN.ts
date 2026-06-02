@@ -8,6 +8,7 @@ export const zhCN: TranslationResources = {
       back: "返回",
       cancel: "取消",
       close: "关闭",
+      copy: "复制",
       dismiss: "关闭",
       retry: "重试",
       search: "搜索",
@@ -21,6 +22,7 @@ export const zhCN: TranslationResources = {
       downloadFailed: "下载失败",
     },
     errors: {
+      error: "错误",
       unableToSave: "无法保存",
       nameRequired: "名称必填",
     },
@@ -755,6 +757,54 @@ export const zhCN: TranslationResources = {
       title: "正在退出 Paseo...",
       detail: "正在停止本地 daemon。",
     },
+    daemon: {
+      title: "Daemon",
+      status: {
+        title: "状态",
+        builtInOnly: "这里只显示内置桌面 daemon",
+        running: "running",
+        notRunning: "not running",
+        pid: "PID {{pid}}",
+      },
+      management: {
+        title: "管理内置 daemon",
+        hint: "让 Paseo 启动和停止内置 daemon",
+        pauseTitle: "暂停内置 daemon",
+        pauseMessage:
+          "这会立即停止内置 daemon。连接到内置 daemon 的运行中 agents 和 terminals 会被停止。",
+        pauseAndStop: "暂停并停止",
+        registrationFailed:
+          "内置 daemon 已启动，但 Paseo 无法保存 localhost 连接。请关闭后重新开启 daemon 管理，或手动添加 localhost。",
+        pausedStopFailed: "内置 daemon 管理已暂停，但 Paseo 无法停止 daemon。",
+        updateFailed: "无法更新内置 daemon 管理设置。",
+      },
+      keepRunning: {
+        title: "退出后保持 daemon 运行",
+        hint: "退出 Paseo 后 daemon 会继续运行",
+      },
+      logs: {
+        title: "日志文件",
+        modalTitle: "Daemon 日志",
+        unavailable: "日志路径不可用",
+        empty: "（日志文件为空）",
+        copied: "日志路径已复制。",
+        copyFailed: "无法复制日志路径。",
+        open: "打开日志",
+        copyPath: "复制路径",
+      },
+      fullStatus: {
+        title: "完整状态",
+        modalTitle: "Daemon 状态",
+        hint: "运行 `paseo daemon status` 并显示输出",
+        view: "查看状态",
+        copied: "状态已复制到剪贴板。",
+        fetchFailed: "获取 daemon 状态失败：{{message}}",
+      },
+      advancedSettings: "高级设置",
+      openAdvancedSettings: "打开 daemon 高级设置",
+      versionMismatch: "App 和 daemon 版本不匹配。请将两者更新到相同版本，以获得最佳体验。",
+      loadFailed: "无法加载桌面 daemon 状态。",
+    },
     updates: {
       status: {
         checking: "正在检查 app 更新...",
@@ -829,6 +879,18 @@ export const zhCN: TranslationResources = {
         body: "如果你能看到这条通知，说明桌面通知可用。",
         notDelivered: "通知未送达。请检查 System Settings > Notifications。",
         failed: "发送通知失败。",
+      },
+    },
+    integrations: {
+      cli: {
+        statusFailed: "无法检查 CLI 安装状态。",
+        installFailed: "无法安装 Paseo CLI。",
+      },
+      skills: {
+        statusFailed: "无法检查编排 skills 状态。",
+        installFailed: "无法安装编排 skills。",
+        updateFailed: "无法更新编排 skills。",
+        uninstallFailed: "无法卸载编排 skills。",
       },
     },
   },

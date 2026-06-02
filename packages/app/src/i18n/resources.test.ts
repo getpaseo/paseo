@@ -384,4 +384,27 @@ describe("translation resources", () => {
     expect(en.desktop.permissions.testNotification.title).toBe("Paseo notification test");
     expect(en.desktop.permissions.testNotification.failed).toBe("Failed to send notification.");
   });
+
+  it("includes desktop daemon settings keys for the Batch 4S migration", () => {
+    expect(en.desktop.daemon.title).toBe("Daemon");
+    expect(en.desktop.daemon.status.title).toBe("Status");
+    expect(en.desktop.daemon.status.builtInOnly).toBe(
+      "Only the built-in desktop daemon is shown here",
+    );
+    expect(en.desktop.daemon.status.notRunning).toBe("not running");
+    expect(en.desktop.daemon.status.pid).toBe("PID {{pid}}");
+    expect(en.desktop.daemon.management.pauseTitle).toBe("Pause built-in daemon");
+    expect(en.desktop.daemon.management.pauseAndStop).toBe("Pause and stop");
+    expect(en.desktop.daemon.logs.modalTitle).toBe("Daemon logs");
+    expect(en.desktop.daemon.logs.unavailable).toBe("Log path unavailable");
+    expect(en.desktop.daemon.fullStatus.modalTitle).toBe("Daemon status");
+    expect(en.desktop.daemon.fullStatus.fetchFailed).toBe(
+      "Failed to fetch daemon status: {{message}}",
+    );
+    expect(en.desktop.daemon.loadFailed).toBe("Unable to load desktop daemon status.");
+    expect(en.desktop.integrations.cli.installFailed).toBe("Unable to install the Paseo CLI.");
+    expect(en.desktop.integrations.skills.installFailed).toBe(
+      "Unable to install orchestration skills.",
+    );
+  });
 });

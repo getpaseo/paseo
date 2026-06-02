@@ -15,6 +15,7 @@ import {
   useDesktopIpcErrorReporter,
   useDesktopIpcQueryErrorToast,
 } from "@/desktop/hooks/desktop-ipc-error";
+import { i18n } from "@/i18n/i18next";
 
 const CLI_INSTALL_STATUS_QUERY_KEY = ["desktop", "integrations", "cli-install-status"] as const;
 const SKILLS_STATUS_QUERY_KEY = ["desktop", "integrations", "skills-status"] as const;
@@ -42,7 +43,7 @@ export function useCliInstall(): DesktopInstallHookResult {
   const { data: installStatus, error: statusError, isLoading, refetch } = statusQuery;
   useDesktopIpcQueryErrorToast({
     error: statusQuery.error,
-    message: "Unable to check CLI install status.",
+    message: i18n.t("desktop.integrations.cli.statusFailed"),
     logLabel: "[Integrations] Failed to load CLI status",
   });
 
@@ -51,7 +52,7 @@ export function useCliInstall(): DesktopInstallHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to install the Paseo CLI.",
+        message: i18n.t("desktop.integrations.cli.installFailed"),
         logLabel: "[Integrations] Failed to install CLI",
       });
     },
@@ -101,7 +102,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
   const { data: status, error: statusError, isLoading, refetch } = statusQuery;
   useDesktopIpcQueryErrorToast({
     error: statusQuery.error,
-    message: "Unable to check orchestration skills status.",
+    message: i18n.t("desktop.integrations.skills.statusFailed"),
     logLabel: "[Integrations] Failed to load skills status",
   });
 
@@ -117,7 +118,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to install orchestration skills.",
+        message: i18n.t("desktop.integrations.skills.installFailed"),
         logLabel: "[Integrations] Failed to install skills",
       });
     },
@@ -129,7 +130,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to update orchestration skills.",
+        message: i18n.t("desktop.integrations.skills.updateFailed"),
         logLabel: "[Integrations] Failed to update skills",
       });
     },
@@ -141,7 +142,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to uninstall orchestration skills.",
+        message: i18n.t("desktop.integrations.skills.uninstallFailed"),
         logLabel: "[Integrations] Failed to uninstall skills",
       });
     },

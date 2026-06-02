@@ -16,6 +16,7 @@ import {
 } from "@/desktop/daemon/daemon-management-error";
 import { useDesktopIpcErrorReporter } from "@/desktop/hooks/desktop-ipc-error";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
+import { i18n } from "@/i18n/i18next";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { upsertDesktopDaemonConnection } from "@/runtime/daemon-start-service";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -50,11 +51,10 @@ export function useBuiltInDaemonManagement(
         const result = await executeDaemonManagementToggle(wasManagingDaemon, daemonStatus, {
           confirm: () =>
             confirmDialog({
-              title: "Pause built-in daemon",
-              message:
-                "This will stop the built-in daemon immediately. Running agents and terminals connected to the built-in daemon will be stopped.",
-              confirmLabel: "Pause and stop",
-              cancelLabel: "Cancel",
+              title: i18n.t("desktop.daemon.management.pauseTitle"),
+              message: i18n.t("desktop.daemon.management.pauseMessage"),
+              confirmLabel: i18n.t("desktop.daemon.management.pauseAndStop"),
+              cancelLabel: i18n.t("common.actions.cancel"),
               destructive: true,
             }),
           persistSettings: (next) => updateSettings(next) as Promise<void>,
