@@ -976,6 +976,7 @@ export const en = {
       },
     },
     shortcuts: {
+      dialogTitle: "Shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
       capturePrompt: "Press shortcut...",
       actions: {
@@ -1031,6 +1032,9 @@ export const en = {
         sendMessage: "Send message",
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
+      },
+      helpNotes: {
+        showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
       },
     },
     integrations: {

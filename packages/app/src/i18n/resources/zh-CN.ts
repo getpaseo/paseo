@@ -959,6 +959,7 @@ export const zhCN: TranslationResources = {
       },
     },
     shortcuts: {
+      dialogTitle: "快捷键",
       unavailableOnMobile: "键盘快捷键仅在桌面端可用",
       capturePrompt: "按下快捷键...",
       actions: {
@@ -1014,6 +1015,9 @@ export const zhCN: TranslationResources = {
         sendMessage: "发送消息",
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
+      },
+      helpNotes: {
+        showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",
       },
     },
     integrations: {

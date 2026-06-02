@@ -141,4 +141,13 @@ describe("translation resources", () => {
     expect(en.diffViewer.empty).toBe("No changes to display");
     expect(en.serviceUrl.title).toBe("Open service URL");
   });
+
+  it("includes keyboard shortcut help keys for the Batch 4G migration", () => {
+    expect(en.settings.shortcuts.dialogTitle).toBe("Shortcuts");
+    expect(en.settings.shortcuts.sections.tabsPanes).toBe("Tabs & Panes");
+    expect(en.settings.shortcuts.help.toggleCommandCenter).toBe("Toggle command center");
+    expect(en.settings.shortcuts.helpNotes.showKeyboardShortcuts).toBe(
+      "Available when focus is not in a text field or terminal.",
+    );
+  });
 });
