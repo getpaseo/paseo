@@ -63,8 +63,12 @@ import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-
 import { WorkspaceGitActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
-import { ArchivedSessionsSheet } from "@/components/archived-sessions-sheet";
+import {
+  ArchivedSessionsSheet,
+  selectArchivedAgentsForCwd,
+} from "@/components/archived-sessions-sheet";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { useAgentHistory } from "@/hooks/use-agent-history";
 import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import { useToast } from "@/contexts/toast-context";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
@@ -1550,6 +1554,20 @@ function WorkspaceScreenContent({
   const closeArchivedSheet = useCallback(() => {
     setIsArchivedSheetVisible(false);
   }, []);
+  // Read agent-history data from the React Query cache only — `enabled: false`
+  // suppresses any fetch from a focused workspace screen. The cache is
+  // populated by the archived-sessions sheet (when opened) and by the sidebar
+  // Sessions screen, so the pill stays hidden until the user has touched one
+  // of those entry points. That keeps every workspace activation cheap while
+  // still letting the count drive the pill once data is available.
+  const { agents: cachedAgentHistory } = useAgentHistory({
+    serverId: normalizedServerId,
+    enabled: false,
+  });
+  const archivedSessionCount = useMemo(
+    () => selectArchivedAgentsForCwd(cachedAgentHistory, workspaceDirectory).length,
+    [cachedAgentHistory, workspaceDirectory],
+  );
 
   // Warm the workspace-scoped provider snapshot so the model picker is ready when opened.
   useProvidersSnapshot(normalizedServerId, {
@@ -2874,8 +2892,10 @@ function WorkspaceScreenContent({
         },
         onOpenImportSheet: openImportSheet,
         onOpenArchivedSheet: openArchivedSheet,
+        archivedSessionCount,
       }),
     [
+      archivedSessionCount,
       handleCloseTabById,
       handleOpenFileFromChat,
       handleOpenFileFromChatInSidePane,

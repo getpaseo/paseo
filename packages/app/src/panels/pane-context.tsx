@@ -14,6 +14,7 @@ export interface PaneContextValue {
   openFileInWorkspace: (request: WorkspaceFileOpenRequest) => void;
   openImportSheet: () => void;
   openArchivedSheet: () => void;
+  archivedSessionCount: number;
 }
 
 export interface PaneFocusContextValue {
