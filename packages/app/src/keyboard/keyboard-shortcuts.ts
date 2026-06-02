@@ -31,6 +31,7 @@ export interface KeyboardShortcutHelpRow {
   labelKey: string;
   keys: ShortcutKey[];
   note?: string;
+  noteKey?: string;
 }
 
 export type ShortcutSectionId = "navigation" | "tabs-panes" | "projects" | "panels" | "agent-input";
@@ -156,6 +157,10 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "message-input-send": "settings.shortcuts.help.sendMessage",
   "message-input-queue": "settings.shortcuts.help.queueMessage",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+};
+
+const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
+  "show-shortcuts": "settings.shortcuts.helpNotes.showKeyboardShortcuts",
 };
 
 // --- Binding definitions ---
@@ -1397,6 +1402,7 @@ export function buildKeyboardShortcutHelpSections(
       labelKey: SHORTCUT_HELP_LABEL_KEYS[help.id] ?? help.label,
       keys: help.keys,
       ...(help.note ? { note: help.note } : {}),
+      ...(SHORTCUT_HELP_NOTE_KEYS[help.id] ? { noteKey: SHORTCUT_HELP_NOTE_KEYS[help.id] } : {}),
     });
   }
 
