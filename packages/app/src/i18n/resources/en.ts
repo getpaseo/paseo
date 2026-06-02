@@ -641,6 +641,13 @@ export const en = {
       },
     },
   },
+  onboarding: {
+    title: "Welcome to Paseo",
+    subtitle: "Connect your computer to get started",
+    actions: {
+      settings: "Settings",
+    },
+  },
   modelSelector: {
     title: "Select provider",
     selectModel: "Select model",
@@ -693,6 +700,48 @@ export const en = {
         description: "Encrypted relay connection.",
       },
     },
+    direct: {
+      title: "Direct connection",
+      helper: "Enter the address of a Paseo server.",
+      fields: {
+        host: "Host",
+        port: "Port",
+        password: "Password",
+        optional: "Optional",
+        useSsl: "Use SSL",
+        connectionUri: "Connection URI",
+      },
+      advanced: {
+        label: "Advanced",
+        show: "Show advanced",
+        hide: "Hide advanced",
+      },
+      passwordVisibility: {
+        show: "Show password",
+        hide: "Hide password",
+      },
+      actions: {
+        cancel: "Cancel",
+        connect: "Connect",
+        connecting: "Connecting...",
+      },
+      errors: {
+        hostRequired: "Host is required",
+        invalidPort: "Port must be between 1 and 65535",
+        invalidConnection: "Invalid connection",
+        failedTitle: "Connection failed",
+        failedToConnect: "We failed to connect to {{endpoint}}.",
+        noAdditionalDetails: "{{detail}} (no additional details provided)",
+        timedOut: "Connection timed out. Check the host/port and your network.",
+        refused: "Connection refused. Is the server running at this address?",
+        hostNotFound: "Host not found. Check the hostname and try again.",
+        hostUnreachable: "Host is unreachable. Check your network and firewall.",
+        tlsError:
+          "TLS error. Direct connections use SSL only when a TLS terminator is in front of the daemon.",
+        unableToConnect: "Unable to connect. Check the host/port and that the daemon is reachable.",
+        details: "Details: {{detail}}",
+      },
+    },
     link: {
       title: "Paste pairing link",
       helper: "Paste the pairing link from your server.",
@@ -712,6 +761,30 @@ export const en = {
         pair: "Pair",
         pairing: "Pairing...",
       },
+    },
+    scan: {
+      title: "Scan QR",
+      webUnavailableTitle: "Not available on web",
+      webUnavailableBody:
+        'QR scanning is not supported in the web build. Use "Paste link" instead.',
+      backToSettings: "Back to Settings",
+      cameraPermissionTitle: "Camera permission",
+      cameraPermissionBody: "Allow camera access to scan the pairing QR code from your daemon.",
+      grantPermission: "Grant permission",
+      pairing: "Pairing...",
+      unableToPair: "Unable to pair host",
+      errorTitle: "Error",
+    },
+    device: {
+      loadingOffer: "Loading pairing offer...",
+      failedToLoadOffer: "Failed to load pairing offer.",
+      relayDisabled: "Relay is not enabled. Enable relay to pair a device.",
+      unavailable: "Pairing offer unavailable.",
+      hint: "Scan this QR code with Paseo on your phone, or copy the link below.",
+      qrUnavailable: "QR code unavailable.",
+      retry: "Retry",
+      copy: "Copy",
+      copied: "Copied",
     },
   },
   panels: {

@@ -124,4 +124,13 @@ describe("translation resources", () => {
     expect(en.pairing.link.title).toBe("Paste pairing link");
     expect(en.pairing.connectionMethods.direct.title).toBe("Direct connection");
   });
+
+  it("includes onboarding and direct connection keys for the Batch 4E migration", () => {
+    expect(en.onboarding.title).toBe("Welcome to Paseo");
+    expect(en.onboarding.actions.settings).toBe("Settings");
+    expect(en.pairing.direct.title).toBe("Direct connection");
+    expect(en.pairing.direct.fields.host).toBe("Host");
+    expect(en.pairing.scan.title).toBe("Scan QR");
+    expect(en.pairing.device.copy).toBe("Copy");
+  });
 });
