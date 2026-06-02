@@ -1622,6 +1622,60 @@ export const AssistantMessage = memo(function AssistantMessage({
           {children}
         </MarkdownInheritedText>
       ),
+      // Emphasis (bold / italic / strikethrough) must render through
+      // MarkdownTextSpan rather than react-native-markdown-display's default
+      // rules. On iOS the paragraph is a native UITextView that only draws text
+      // from UITextViewChild nodes (which MarkdownTextSpan produces); the default
+      // strong/em/s rules wrap children in a plain RN <Text>, which the
+      // UITextView drops — so bold/italic text silently disappears. The actual
+      // weight/style still reaches the leaf text via inheritedStyles (AstRenderer
+      // derives it from the parent strong/em/s node), so the wrapper just has to
+      // keep the subtree inside UITextViewChild nodes. See issue #1287.
+      strong: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.strong}
+        >
+          {children}
+        </MarkdownInheritedText>
+      ),
+      em: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.em}
+        >
+          {children}
+        </MarkdownInheritedText>
+      ),
+      s: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.s}
+        >
+          {children}
+        </MarkdownInheritedText>
+      ),
       code_block: (
         node: ASTNode,
         _children: ReactNode[],

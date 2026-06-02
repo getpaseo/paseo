@@ -1,10 +1,19 @@
 import { useMemo, type ReactNode } from "react";
-import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import {
+  Text,
+  View,
+  type StyleProp,
+  type TextProps,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  onPress?: TextProps["onPress"];
+  accessibilityRole?: TextProps["accessibilityRole"];
   children: ReactNode;
 }
 
@@ -13,9 +22,20 @@ interface MarkdownTextSpanProps {
 // react-native-uitextview: its transitive import of codegenNativeComponent
 // pulls in setUpReactDevTools, which doesn't resolve under Metro's web
 // target in dev mode.
-export function MarkdownTextSpan({ style, monoSurface, children }: MarkdownTextSpanProps) {
+export function MarkdownTextSpan({
+  style,
+  monoSurface,
+  onPress,
+  accessibilityRole,
+  children,
+}: MarkdownTextSpanProps) {
   return (
-    <Text dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined} style={style}>
+    <Text
+      dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
+      accessibilityRole={accessibilityRole}
+      onPress={onPress}
+      style={style}
+    >
       {children}
     </Text>
   );

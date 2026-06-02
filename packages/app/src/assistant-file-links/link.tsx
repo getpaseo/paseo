@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
+import { MarkdownTextSpan } from "@/components/markdown-text";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -57,16 +58,22 @@ export function AssistantMarkdownLink({
   );
 
   if (isNative) {
+    // Route the text through MarkdownTextSpan, not a plain RN <Text>. On iOS the
+    // assistant paragraph is a native UITextView that only renders UITextViewChild
+    // nodes; a bare <Text> here (e.g. inline-code file links / autolinks, whose
+    // children are a raw string) produces no UITextViewChild and renders empty.
+    // MarkdownTextSpan is a UITextView on iOS and a selectable <Text> on Android.
+    // See issue #1287. (data-pmono is a web-only font marker — not needed here.)
     return (
       <FileLinkHoverTooltip filePath={tooltipPath}>
-        <Text
+        <MarkdownTextSpan
           accessibilityRole="link"
-          dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
+          monoSurface={monoSurface}
           onPress={onPress}
           style={style}
         >
           {children}
-        </Text>
+        </MarkdownTextSpan>
       </FileLinkHoverTooltip>
     );
   }

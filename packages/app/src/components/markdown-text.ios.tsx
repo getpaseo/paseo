@@ -1,10 +1,12 @@
 import { useMemo, type ReactNode } from "react";
-import type { StyleProp, TextStyle, ViewStyle } from "react-native";
+import type { StyleProp, TextProps, TextStyle, ViewStyle } from "react-native";
 import { UITextView } from "react-native-uitextview";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  onPress?: TextProps["onPress"];
+  accessibilityRole?: TextProps["accessibilityRole"];
   children: ReactNode;
 }
 
@@ -12,9 +14,23 @@ interface MarkdownTextSpanProps {
 // Used inside MarkdownParagraphView (which is also a UITextView on iOS); the
 // library's TextAncestorContext hoists these into UITextViewChild nodes so
 // selection drags can cross sibling spans (e.g. plain text → **bold** → code).
-export function MarkdownTextSpan({ style, children }: MarkdownTextSpanProps) {
+// Inline links route their text through here too (rather than a plain RN
+// <Text>), so file-link / autolink inline code stays a UITextViewChild and
+// renders instead of vanishing inside the paragraph UITextView (issue #1287).
+export function MarkdownTextSpan({
+  style,
+  onPress,
+  accessibilityRole,
+  children,
+}: MarkdownTextSpanProps) {
   return (
-    <UITextView uiTextView selectable style={style}>
+    <UITextView
+      uiTextView
+      selectable
+      accessibilityRole={accessibilityRole}
+      onPress={onPress}
+      style={style}
+    >
       {children}
     </UITextView>
   );

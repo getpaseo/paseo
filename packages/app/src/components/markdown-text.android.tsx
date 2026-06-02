@@ -1,18 +1,32 @@
 import { useMemo, type ReactNode } from "react";
-import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import {
+  Text,
+  View,
+  type StyleProp,
+  type TextProps,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  onPress?: TextProps["onPress"];
+  accessibilityRole?: TextProps["accessibilityRole"];
   children: ReactNode;
 }
 
 // Android's <Text selectable> enables per-text-node selection natively. Each
 // sibling Text is its own selection scope — drag can't span across siblings
 // (that requires a single UITextView ancestor and is iOS-only).
-export function MarkdownTextSpan({ style, children }: MarkdownTextSpanProps) {
+export function MarkdownTextSpan({
+  style,
+  onPress,
+  accessibilityRole,
+  children,
+}: MarkdownTextSpanProps) {
   return (
-    <Text selectable style={style}>
+    <Text selectable accessibilityRole={accessibilityRole} onPress={onPress} style={style}>
       {children}
     </Text>
   );
