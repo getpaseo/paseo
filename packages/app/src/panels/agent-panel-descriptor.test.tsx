@@ -41,4 +41,33 @@ describe("buildDraftPanelDescriptor", () => {
       statusBucket: null,
     });
   });
+
+  it("uses injected labels for draft descriptor chrome", () => {
+    const idleDescriptor = buildDraftPanelDescriptor({
+      isCreating: false,
+      icon: TestIcon,
+      labels: {
+        newAgent: "新建 Agent",
+        creatingAgent: "正在创建 Agent",
+      },
+    });
+    const creatingDescriptor = buildDraftPanelDescriptor({
+      isCreating: true,
+      pendingPrompt: "   ",
+      icon: TestIcon,
+      labels: {
+        newAgent: "新建 Agent",
+        creatingAgent: "正在创建 Agent",
+      },
+    });
+
+    expect(idleDescriptor).toMatchObject({
+      label: "新建 Agent",
+      subtitle: "新建 Agent",
+    });
+    expect(creatingDescriptor).toMatchObject({
+      label: "新建 Agent",
+      subtitle: "正在创建 Agent",
+    });
+  });
 });
