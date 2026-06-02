@@ -150,4 +150,23 @@ describe("translation resources", () => {
       "Available when focus is not in a text field or terminal.",
     );
   });
+
+  it("includes sessions and agent list keys for the Batch 4H migration", () => {
+    expect(en.sessions.title).toBe("Sessions");
+    expect(en.sessions.empty).toBe("No sessions yet");
+    expect(en.sessions.actions.loadMore).toBe("Load more");
+    expect(en.agentList.fallbackTitle).toBe("New session");
+    expect(en.agentList.dateSections.today).toBe("Today");
+    expect(en.agentList.dateSections.older).toBe("Older");
+    expect(en.agentList.status.initializing).toBe("Starting");
+    expect(en.agentList.status.running).toBe("Running");
+    expect(en.agentList.badges.archived).toBe("Archived");
+    expect(en.agentList.badges.pending).toBe("{{count}} pending");
+    expect(en.agentList.badges.attention).toBe("Attention");
+    expect(en.agentList.archiveSheet.hostOffline).toBe("Host offline");
+    expect(en.agentList.archiveSheet.runningAgent).toBe(
+      "This agent is still running. Archiving it will stop the agent.",
+    );
+    expect(en.agentList.archiveSheet.archive).toBe("Archive");
+  });
 });

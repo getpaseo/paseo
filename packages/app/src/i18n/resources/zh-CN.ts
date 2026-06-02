@@ -147,6 +147,40 @@ export const zhCN: TranslationResources = {
       showAgainWhenReachable: "Host 可访问后将再次显示此 Agent。",
     },
   },
+  sessions: {
+    title: "会话",
+    empty: "还没有会话",
+    actions: {
+      loadMore: "加载更多",
+    },
+  },
+  agentList: {
+    fallbackTitle: "新会话",
+    dateSections: {
+      today: "今天",
+      yesterday: "昨天",
+      thisWeek: "本周",
+      thisMonth: "本月",
+      older: "更早",
+    },
+    status: {
+      initializing: "正在启动",
+      idle: "空闲",
+      running: "运行中",
+      error: "错误",
+      closed: "已关闭",
+    },
+    badges: {
+      archived: "已归档",
+      pending: "{{count}} 个待处理",
+      attention: "需要注意",
+    },
+    archiveSheet: {
+      hostOffline: "Host 离线",
+      runningAgent: "此 Agent 仍在运行。归档会停止该 Agent。",
+      archive: "归档",
+    },
+  },
   importSession: {
     title: "导入会话",
     filters: {

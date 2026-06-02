@@ -146,6 +146,40 @@ export const en = {
       showAgainWhenReachable: "We will show this agent again as soon as the host is reachable.",
     },
   },
+  sessions: {
+    title: "Sessions",
+    empty: "No sessions yet",
+    actions: {
+      loadMore: "Load more",
+    },
+  },
+  agentList: {
+    fallbackTitle: "New session",
+    dateSections: {
+      today: "Today",
+      yesterday: "Yesterday",
+      thisWeek: "This week",
+      thisMonth: "This month",
+      older: "Older",
+    },
+    status: {
+      initializing: "Starting",
+      idle: "Idle",
+      running: "Running",
+      error: "Error",
+      closed: "Closed",
+    },
+    badges: {
+      archived: "Archived",
+      pending: "{{count}} pending",
+      attention: "Attention",
+    },
+    archiveSheet: {
+      hostOffline: "Host offline",
+      runningAgent: "This agent is still running. Archiving it will stop the agent.",
+      archive: "Archive",
+    },
+  },
   importSession: {
     title: "Import session",
     filters: {
