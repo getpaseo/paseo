@@ -115,4 +115,13 @@ describe("translation resources", () => {
     expect(en.newWorkspace.refPicker.searchPlaceholder).toBe("Search branches and PRs");
     expect(en.openProject.tiles.addProject.title).toBe("Add a project");
   });
+
+  it("includes provider selector and pairing keys for the Batch 4D migration", () => {
+    expect(en.modelSelector.title).toBe("Select provider");
+    expect(en.modelSelector.favorites).toBe("Favorites");
+    expect(en.providerCatalog.title).toBe("Add provider");
+    expect(en.providerCatalog.actions.installInstructions).toBe("Install instructions");
+    expect(en.pairing.link.title).toBe("Paste pairing link");
+    expect(en.pairing.connectionMethods.direct.title).toBe("Direct connection");
+  });
 });

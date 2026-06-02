@@ -627,6 +627,79 @@ export const zhCN: TranslationResources = {
       },
     },
   },
+  modelSelector: {
+    title: "选择 provider",
+    selectModel: "选择模型",
+    selectedModel: "选择模型（{{model}}）",
+    loading: "正在加载...",
+    loadingShort: "正在加载",
+    loadingSelector: "正在加载模型选择器...",
+    error: "错误",
+    defaultModel: "默认",
+    favorites: "收藏",
+    favoriteModel: "收藏模型",
+    unfavoriteModel: "取消收藏模型",
+    modelCount: "{{count}} 个模型",
+    modelCountPlural: "{{count}} 个模型",
+    retry: "重试",
+    retrying: "正在重试...",
+    noMatches: "没有匹配的模型",
+    searchPlaceholder: "搜索模型...",
+    openProviderSettings: "打开 {{provider}} 设置",
+  },
+  providerCatalog: {
+    title: "添加 provider",
+    search: "搜索 providers",
+    noProviders: "未找到 providers",
+    actions: {
+      add: "添加",
+      adding: "正在添加",
+      installed: "已安装",
+      cancel: "取消",
+      installInstructions: "安装说明",
+      installInstructionsFor: "{{provider}} 安装说明",
+    },
+    errors: {
+      unableToInstall: "无法安装 provider",
+    },
+  },
+  pairing: {
+    connectionMethods: {
+      title: "添加连接",
+      direct: {
+        title: "直接连接",
+        description: "本地网络或 VPN。",
+      },
+      scanQr: {
+        title: "扫描二维码",
+        description: "加密 relay 连接。",
+      },
+      pasteLink: {
+        title: "粘贴配对链接",
+        description: "加密 relay 连接。",
+      },
+    },
+    link: {
+      title: "粘贴配对链接",
+      helper: "粘贴来自 server 的配对链接。",
+      label: "配对链接",
+      errors: {
+        required: "请粘贴配对链接（.../#offer=...）",
+        missingOffer: "链接必须包含 #offer=...",
+        emptyOffer: "Offer payload 为空",
+        invalid: "无效的配对链接",
+        unableToPair: "无法配对 host",
+      },
+      alert: {
+        failedTitle: "配对失败",
+      },
+      actions: {
+        cancel: "取消",
+        pair: "配对",
+        pairing: "正在配对...",
+      },
+    },
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",

@@ -641,6 +641,79 @@ export const en = {
       },
     },
   },
+  modelSelector: {
+    title: "Select provider",
+    selectModel: "Select model",
+    selectedModel: "Select model ({{model}})",
+    loading: "Loading...",
+    loadingShort: "Loading",
+    loadingSelector: "Loading model selector...",
+    error: "Error",
+    defaultModel: "Default",
+    favorites: "Favorites",
+    favoriteModel: "Favorite model",
+    unfavoriteModel: "Unfavorite model",
+    modelCount: "{{count}} model",
+    modelCountPlural: "{{count}} models",
+    retry: "Retry",
+    retrying: "Retrying...",
+    noMatches: "No models match your search",
+    searchPlaceholder: "Search models...",
+    openProviderSettings: "Open {{provider}} settings",
+  },
+  providerCatalog: {
+    title: "Add provider",
+    search: "Search providers",
+    noProviders: "No providers found",
+    actions: {
+      add: "Add",
+      adding: "Adding",
+      installed: "Installed",
+      cancel: "Cancel",
+      installInstructions: "Install instructions",
+      installInstructionsFor: "{{provider}} install instructions",
+    },
+    errors: {
+      unableToInstall: "Unable to install provider",
+    },
+  },
+  pairing: {
+    connectionMethods: {
+      title: "Add connection",
+      direct: {
+        title: "Direct connection",
+        description: "Local network or VPN.",
+      },
+      scanQr: {
+        title: "Scan QR code",
+        description: "Encrypted relay connection.",
+      },
+      pasteLink: {
+        title: "Paste pairing link",
+        description: "Encrypted relay connection.",
+      },
+    },
+    link: {
+      title: "Paste pairing link",
+      helper: "Paste the pairing link from your server.",
+      label: "Pairing link",
+      errors: {
+        required: "Paste a pairing link (.../#offer=...)",
+        missingOffer: "Link must include #offer=...",
+        emptyOffer: "Offer payload is empty",
+        invalid: "Invalid pairing link",
+        unableToPair: "Unable to pair host",
+      },
+      alert: {
+        failedTitle: "Pairing failed",
+      },
+      actions: {
+        cancel: "Cancel",
+        pair: "Pair",
+        pairing: "Pairing...",
+      },
+    },
+  },
   panels: {
     draft: {
       newAgent: "New Agent",
