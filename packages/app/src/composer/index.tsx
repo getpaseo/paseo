@@ -228,12 +228,19 @@ interface RenderLeftContentArgs {
   serverId: string;
   focusInput: () => void;
   isCompactLayout: boolean;
+  compactLevel: number;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
-  const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
+  const { agentControls, agentId, serverId, focusInput, isCompactLayout, compactLevel } = args;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
+    return (
+      <DraftAgentControls
+        {...agentControls}
+        isCompactLayout={isCompactLayout}
+        compactLevel={compactLevel}
+      />
+    );
   }
   return (
     <AgentControls
@@ -241,6 +248,7 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
       serverId={serverId}
       onDropdownClose={focusInput}
       isCompactLayout={isCompactLayout}
+      compactLevel={compactLevel}
     />
   );
 }
@@ -688,6 +696,11 @@ interface ComposerProps {
   externalKeyboardShift?: boolean;
   /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
   isCompactLayout?: boolean;
+  /**
+   * Progressive compact level (0–2) for composer controls.
+   * Level 0: full text badges. Level 1: icon-only. Level 2: minimal.
+   */
+  compactLevel?: number;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -884,6 +897,7 @@ export function Composer({
   footer,
   externalKeyboardShift,
   isCompactLayout: isCompactLayoutOverride,
+  compactLevel = 0,
 }: ComposerProps) {
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
@@ -1565,8 +1579,16 @@ export function Composer({
   );
 
   const leftContent = useMemo(
-    () => renderLeftContent({ agentControls, agentId, serverId, focusInput, isCompactLayout }),
-    [agentId, focusInput, serverId, agentControls, isCompactLayout],
+    () =>
+      renderLeftContent({
+        agentControls,
+        agentId,
+        serverId,
+        focusInput,
+        isCompactLayout,
+        compactLevel,
+      }),
+    [agentId, focusInput, serverId, agentControls, isCompactLayout, compactLevel],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {

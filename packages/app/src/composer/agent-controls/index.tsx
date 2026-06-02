@@ -98,6 +98,12 @@ interface ControlledAgentControlsProps {
   desktopExtras?: ReactNode;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
+  /**
+   * Progressive compact level (0–2) for desktop mode narrowing.
+   * Level 0: full text badges. Level 1: icon-only. Level 2: minimal.
+   * Ignored when isCompact is true (sheet mode).
+   */
+  compactLevel?: number;
 }
 
 export interface DraftAgentControlsProps {
@@ -126,6 +132,7 @@ export interface DraftAgentControlsProps {
   disabled?: boolean;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
+  compactLevel?: number;
 }
 
 interface AgentControlsProps {
@@ -133,6 +140,7 @@ interface AgentControlsProps {
   serverId: string;
   onDropdownClose?: () => void;
   isCompactLayout?: boolean;
+  compactLevel?: number;
 }
 
 function findOptionLabel(
@@ -413,6 +421,7 @@ function ControlledAgentControls({
   desktopExtras,
   modelSelectorServerId = null,
   isCompactLayout,
+  compactLevel = 0,
 }: ControlledAgentControlsProps) {
   const { theme } = useUnistyles();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -618,6 +627,13 @@ function ControlledAgentControls({
           renderThinkingOption={renderThinkingOption}
           extras={desktopExtras}
           modelSelectorServerId={modelSelectorServerId}
+          compactLevel={compactLevel}
+          activeSheet={activeSheet}
+          handleOpenSheet={handleOpenSheet}
+          handleCloseSheet={handleCloseSheet}
+          handleSelectThinkingAndClose={handleSelectThinkingAndClose}
+          ProviderIcon={ProviderIcon}
+          handleSheetModelSelect={handleSheetModelSelect}
         />
       ) : (
         <SheetAgentControlsContent
@@ -703,6 +719,97 @@ interface DesktopAgentControlsContentProps {
   }) => ReactElement;
   extras?: ReactNode;
   modelSelectorServerId: string | null;
+  compactLevel?: number;
+  /** Sheet-related props for compactLevel >= 2 minimal features button. */
+  activeSheet?: ActiveSheet;
+  handleOpenSheet?: (sheet: Exclude<ActiveSheet, null>) => void;
+  handleCloseSheet?: () => void;
+  handleSelectThinkingAndClose?: (thinkingOptionId: string) => void;
+  ProviderIcon?: ReturnType<typeof getProviderIcon> | null;
+  handleSheetModelSelect?: (providerId: string, modelId: string) => void;
+}
+
+interface DesktopFeaturesSectionProps {
+  compactLevel: number;
+  features?: AgentFeature[];
+  disabled: boolean;
+  openSelector: AgentControlSelector | null;
+  handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
+  onSetFeature?: (featureId: string, value: unknown) => void;
+  activeSheet?: ActiveSheet;
+  handleOpenSheet?: (sheet: Exclude<ActiveSheet, null>) => void;
+  handleCloseSheet?: () => void;
+}
+
+function DesktopFeaturesSection({
+  compactLevel,
+  features,
+  disabled,
+  openSelector,
+  handleOpenChange,
+  onSetFeature,
+  activeSheet,
+  handleOpenSheet,
+  handleCloseSheet,
+}: DesktopFeaturesSectionProps) {
+  const { theme } = useUnistyles();
+  const handleOpenFeatures = useCallback(() => handleOpenSheet?.("features"), [handleOpenSheet]);
+  const featuresAnchorRef = useRef<View | null>(null);
+  const handleFeaturesRef = useCallback((r: View | null) => {
+    featuresAnchorRef.current = r;
+  }, []);
+
+  const hasFeatures = Boolean(features && features.length > 0);
+  const minimal = compactLevel >= 2;
+  const iconOnly = compactLevel >= 1;
+
+  if (minimal || !hasFeatures) return null;
+
+  if (iconOnly && handleOpenSheet && handleCloseSheet && activeSheet !== undefined) {
+    return (
+      <>
+        <Pressable
+          ref={handleFeaturesRef}
+          onPress={handleOpenFeatures}
+          disabled={disabled}
+          style={styles.modeIconBadge}
+          accessibilityRole="button"
+          accessibilityLabel="Open agent features"
+          testID="agent-controls-features"
+        >
+          <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+        </Pressable>
+        <AdaptiveModalSheet
+          header={FEATURES_SHEET_HEADER}
+          visible={activeSheet === "features"}
+          onClose={handleCloseSheet}
+          testID="agent-features-sheet"
+        >
+          {(features ?? []).map((feature) => (
+            <SheetFeatureItem
+              key={`feature-${feature.id}`}
+              feature={feature}
+              disabled={disabled}
+              openSelector={openSelector}
+              handleOpenChange={handleOpenChange}
+              onSetFeature={onSetFeature}
+            />
+          ))}
+        </AdaptiveModalSheet>
+      </>
+    );
+  }
+
+  return features?.map((feature) => (
+    <DesktopFeatureItem
+      key={`feature-${feature.id}`}
+      feature={feature}
+      disabled={disabled}
+      openSelector={openSelector}
+      handleOpenChange={handleOpenChange}
+      onSetFeature={onSetFeature}
+    />
+  ));
 }
 
 const DESKTOP_SEARCH_THRESHOLD = 6;
@@ -751,25 +858,92 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     renderThinkingOption,
     extras,
     modelSelectorServerId,
+    compactLevel = 0,
+    activeSheet,
+    handleOpenSheet,
+    handleCloseSheet,
+    handleSelectThinkingAndClose: _handleSelectThinkingAndClose,
+    ProviderIcon,
+    handleSheetModelSelect,
   } = props;
+
+  const iconOnly = compactLevel >= 1;
+
+  const providerIconPressableStyle = useCallback(
+    ({ pressed, hovered }: PressableStateCallbackType) => [
+      styles.modeIconBadge,
+      hovered && styles.modeBadgeHovered,
+      (pressed || openSelector === "provider") && styles.modeBadgePressed,
+      disabled && styles.disabledBadge,
+    ],
+    [openSelector, disabled],
+  );
+
+  const thinkingIconPressableStyle = useCallback(
+    ({ pressed, hovered }: PressableStateCallbackType) => [
+      styles.modeIconBadge,
+      hovered && styles.modeBadgeHovered,
+      (pressed || openSelector === "thinking") && styles.modeBadgePressed,
+      disabled && styles.disabledBadge,
+    ],
+    [openSelector, disabled],
+  );
+
+  const compactModelTrigger = useMemo(() => {
+    if (!iconOnly || !handleSheetModelSelect) return undefined;
+    return ({
+      selectedModelLabel: _selectedModelLabel,
+    }: {
+      selectedModelLabel: string;
+      onPress: () => void;
+      disabled: boolean;
+      isOpen: boolean;
+    }) => (
+      <View pointerEvents="none" style={styles.prefsButton} testID="agent-controls-model">
+        {ProviderIcon ? (
+          <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
+        ) : null}
+        <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      </View>
+    );
+  }, [
+    iconOnly,
+    handleSheetModelSelect,
+    ProviderIcon,
+    theme.iconSize,
+    theme.colors.foregroundMuted,
+  ]);
 
   return (
     <>
       {providerOptions && providerOptions.length > 0 ? (
         <>
-          <Pressable
-            ref={providerAnchorRef}
-            collapsable={false}
-            disabled={disabled || !canSelectProvider}
-            onPress={handleProviderPress}
-            style={providerPressableStyle}
-            accessibilityRole="button"
-            accessibilityLabel="Select agent provider"
-            testID="agent-provider-selector"
-          >
-            <Text style={styles.modeBadgeText}>{displayProvider}</Text>
-            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </Pressable>
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger asChild triggerRefProp="ref">
+              <Pressable
+                ref={providerAnchorRef}
+                collapsable={false}
+                disabled={disabled || !canSelectProvider}
+                onPress={handleProviderPress}
+                style={iconOnly ? providerIconPressableStyle : providerPressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel="Select agent provider"
+                testID="agent-provider-selector"
+              >
+                {iconOnly && ProviderIcon ? (
+                  <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <Text style={styles.modeBadgeText}>{displayProvider}</Text>
+                )}
+                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            </TooltipTrigger>
+            {iconOnly ? (
+              <TooltipContent side="top" align="center" offset={8}>
+                <Text style={styles.tooltipText}>{displayProvider}</Text>
+              </TooltipContent>
+            ) : null}
+          </Tooltip>
           <Combobox
             options={comboboxProviderOptions}
             value={selectedProviderId ?? ""}
@@ -801,6 +975,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 onRetryProvider={onRetryModelProvider}
                 isRetryingProvider={isRetryingModelProvider}
                 serverId={modelSelectorServerId}
+                renderTrigger={compactModelTrigger}
               />
             </View>
           </TooltipTrigger>
@@ -819,18 +994,24 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 collapsable={false}
                 disabled={disabled || !canSelectThinking}
                 onPress={handleThinkingPress}
-                style={thinkingPressableStyle}
+                style={iconOnly ? thinkingIconPressableStyle : thinkingPressableStyle}
                 accessibilityRole="button"
                 accessibilityLabel={`Select thinking option (${displayThinking})`}
                 testID="agent-thinking-selector"
               >
                 <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                <Text style={styles.modeBadgeText}>{displayThinking}</Text>
-                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                {iconOnly ? null : (
+                  <>
+                    <Text style={styles.modeBadgeText}>{displayThinking}</Text>
+                    <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                  </>
+                )}
               </Pressable>
             </TooltipTrigger>
             <TooltipContent side="top" align="center" offset={8}>
-              <Text style={styles.tooltipText}>{getAgentControlHint("thinking")}</Text>
+              <Text style={styles.tooltipText}>
+                {iconOnly ? displayThinking : getAgentControlHint("thinking")}
+              </Text>
             </TooltipContent>
           </Tooltip>
           <Combobox
@@ -849,16 +1030,17 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 
       {extras}
 
-      {features?.map((feature) => (
-        <DesktopFeatureItem
-          key={`feature-${feature.id}`}
-          feature={feature}
-          disabled={disabled}
-          openSelector={openSelector}
-          handleOpenChange={handleOpenChange}
-          onSetFeature={onSetFeature}
-        />
-      ))}
+      <DesktopFeaturesSection
+        compactLevel={compactLevel}
+        features={features}
+        disabled={disabled}
+        openSelector={openSelector}
+        handleOpenChange={handleOpenChange}
+        onSetFeature={onSetFeature}
+        activeSheet={activeSheet}
+        handleOpenSheet={handleOpenSheet}
+        handleCloseSheet={handleCloseSheet}
+      />
     </>
   );
 }
@@ -1351,6 +1533,7 @@ export const AgentControls = memo(function AgentControls({
   serverId,
   onDropdownClose,
   isCompactLayout,
+  compactLevel,
 }: AgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
@@ -1530,9 +1713,10 @@ export const AgentControls = memo(function AgentControls({
         agentId={agentId}
         placement="toolbar"
         isCompactLayout={isCompactLayout}
+        hideLabel={compactLevel >= 1}
       />
     ),
-    [serverId, agentId, isCompactLayout],
+    [serverId, agentId, isCompactLayout, compactLevel],
   );
 
   if (!agent) {
@@ -1562,6 +1746,7 @@ export const AgentControls = memo(function AgentControls({
       desktopExtras={modeChip}
       modelSelectorServerId={serverId}
       isCompactLayout={isCompactLayout}
+      compactLevel={compactLevel}
     />
   );
 });
@@ -1592,6 +1777,7 @@ export function DraftAgentControls({
   disabled = false,
   modelSelectorServerId = null,
   isCompactLayout,
+  compactLevel = 0,
 }: DraftAgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -1642,6 +1828,7 @@ export function DraftAgentControls({
         onSelectMode={onSelectMode}
         disabled={disabled}
         isCompactLayout={isCompactLayout}
+        hideLabel={compactLevel >= 1}
       />
     ),
     [
@@ -1652,6 +1839,7 @@ export function DraftAgentControls({
       onSelectMode,
       disabled,
       isCompactLayout,
+      compactLevel,
     ],
   );
 
@@ -1687,6 +1875,7 @@ export function DraftAgentControls({
             disabled={disabled}
             desktopExtras={draftModeChip}
             isCompactLayout={isCompactLayout}
+            compactLevel={compactLevel}
           />
         ) : null}
       </View>

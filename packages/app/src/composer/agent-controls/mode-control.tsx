@@ -21,6 +21,7 @@ import {
 } from "lucide-react-native";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -93,6 +94,8 @@ interface AgentModeControlViewProps {
   selectedModeId: string | null | undefined;
   onSelectMode: (modeId: string) => void;
   disabled?: boolean;
+  /** When true, hides the mode label and chevron (icon-only for narrow panes). */
+  hideLabel?: boolean;
 }
 
 function normalizeSearchQuery(value: string): string {
@@ -106,6 +109,7 @@ function AgentModeControlView({
   selectedModeId,
   onSelectMode,
   disabled = false,
+  hideLabel = false,
 }: AgentModeControlViewProps) {
   const { theme } = useUnistyles();
   const anchorRef = useRef<View>(null);
@@ -170,12 +174,12 @@ function AgentModeControlView({
 
   const pressableStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType) => [
-      styles.chip,
+      hideLabel ? styles.iconChip : styles.chip,
       hovered && styles.chipHovered,
       (pressed || open) && styles.chipPressed,
       disabled && styles.chipDisabled,
     ],
-    [open, disabled],
+    [open, disabled, hideLabel],
   );
 
   const labelStyle = styles.chipLabel;
@@ -196,20 +200,33 @@ function AgentModeControlView({
 
   return (
     <>
-      <Pressable
-        ref={anchorRef}
-        collapsable={false}
-        disabled={disabled}
-        onPress={handlePress}
-        style={pressableStyle}
-        accessibilityRole="button"
-        accessibilityLabel={`Select agent mode (${selectedModeLabel})`}
-        testID="mode-control"
-      >
-        {Icon ? <Icon size={theme.iconSize.md} color={iconColor} /> : null}
-        <Text style={labelStyle}>{selectedModeLabel}</Text>
-        <ChevronDown size={theme.iconSize.sm} color={iconColor} />
-      </Pressable>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            ref={anchorRef}
+            collapsable={false}
+            disabled={disabled}
+            onPress={handlePress}
+            style={pressableStyle}
+            accessibilityRole="button"
+            accessibilityLabel={`Select agent mode (${selectedModeLabel})`}
+            testID="mode-control"
+          >
+            {Icon ? <Icon size={theme.iconSize.md} color={iconColor} /> : null}
+            {hideLabel ? null : (
+              <>
+                <Text style={labelStyle}>{selectedModeLabel}</Text>
+                <ChevronDown size={theme.iconSize.sm} color={iconColor} />
+              </>
+            )}
+          </Pressable>
+        </TooltipTrigger>
+        {hideLabel ? (
+          <TooltipContent side="top" align="center" offset={8}>
+            <Text style={styles.tooltipText}>{selectedModeLabel}</Text>
+          </TooltipContent>
+        ) : null}
+      </Tooltip>
       <Combobox
         options={options}
         value={selectedMode.id}
@@ -236,6 +253,8 @@ interface AgentModeControlProps {
   agentId: string;
   placement: AgentModeControlPlacement;
   isCompactLayout?: boolean;
+  /** When true, hides the mode label and chevron (icon-only for narrow panes). */
+  hideLabel?: boolean;
 }
 
 export const AgentModeControl = memo(function AgentModeControl({
@@ -243,6 +262,7 @@ export const AgentModeControl = memo(function AgentModeControl({
   agentId,
   placement,
   isCompactLayout,
+  hideLabel,
 }: AgentModeControlProps) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
@@ -294,6 +314,7 @@ export const AgentModeControl = memo(function AgentModeControl({
       selectedModeId={slice.currentModeId}
       onSelectMode={handleSelectMode}
       disabled={!client}
+      hideLabel={hideLabel}
     />
   );
 });
@@ -307,6 +328,8 @@ export interface DraftAgentModeControlProps {
   disabled?: boolean;
   placement: AgentModeControlPlacement;
   isCompactLayout?: boolean;
+  /** When true, hides the mode label and chevron (icon-only for narrow panes). */
+  hideLabel?: boolean;
 }
 
 export function DraftAgentModeControl({
@@ -318,6 +341,7 @@ export function DraftAgentModeControl({
   disabled,
   placement,
   isCompactLayout,
+  hideLabel,
 }: DraftAgentModeControlProps) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
@@ -331,6 +355,7 @@ export function DraftAgentModeControl({
       selectedModeId={selectedMode}
       onSelectMode={onSelectMode}
       disabled={disabled}
+      hideLabel={hideLabel}
     />
   );
 }
@@ -358,5 +383,18 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
+  },
+  iconChip: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+    borderRadius: theme.borderRadius.full,
+  },
+  tooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
   },
 }));

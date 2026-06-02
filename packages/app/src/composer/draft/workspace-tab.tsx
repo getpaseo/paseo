@@ -40,6 +40,7 @@ import type { UserMessageImageAttachment } from "@/types/stream";
 import {
   COMPACT_FORM_FACTOR_WIDTH,
   MAX_CONTENT_WIDTH,
+  useComposerCompactLevel,
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -386,9 +387,19 @@ export function WorkspaceDraftAgentTab({
   }, [pendingAutoSubmit, pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
   const isCompactFormFactor = useIsCompactFormFactor();
-  const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
+  const { onLayout: onCompactLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_FORM_FACTOR_WIDTH,
     { initialIsBelow: isCompactFormFactor },
+  );
+  const { onLayout: onLevelLayout, level: composerCompactLevel } = useComposerCompactLevel({
+    initialLevel: isCompactFormFactor ? 2 : 0,
+  });
+  const onInputAreaLayout = useCallback(
+    (e: import("react-native").LayoutChangeEvent) => {
+      onCompactLayout(e);
+      onLevelLayout(e);
+    },
+    [onCompactLayout, onLevelLayout],
   );
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
@@ -706,6 +717,7 @@ export function WorkspaceDraftAgentTab({
             agentControls={composerAgentControls}
             footer={composerFooter}
             isCompactLayout={isCompactComposerLayout}
+            compactLevel={composerCompactLevel}
           />
         </ReanimatedAnimated.View>
       </View>

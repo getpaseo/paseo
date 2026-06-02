@@ -22,7 +22,11 @@ import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
-import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  COMPACT_FORM_FACTOR_WIDTH,
+  useComposerCompactLevel,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
@@ -1319,9 +1323,19 @@ function ActiveAgentComposer({
 }) {
   const insets = useSafeAreaInsets();
   const isCompactFormFactor = useIsCompactFormFactor();
-  const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
+  const { onLayout: onCompactLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_FORM_FACTOR_WIDTH,
     { initialIsBelow: isCompactFormFactor },
+  );
+  const { onLayout: onLevelLayout, level: composerCompactLevel } = useComposerCompactLevel({
+    initialLevel: isCompactFormFactor ? 2 : 0,
+  });
+  const onInputAreaLayout = useCallback(
+    (e: import("react-native").LayoutChangeEvent) => {
+      onCompactLayout(e);
+      onLevelLayout(e);
+    },
+    [onCompactLayout, onLevelLayout],
   );
   const paneContext = usePaneContext();
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
@@ -1460,6 +1474,7 @@ function ActiveAgentComposer({
         onClientSlashCommand={handleClientSlashCommand}
         footer={composerFooter}
         isCompactLayout={isCompactComposerLayout}
+        compactLevel={composerCompactLevel}
       />
     </ReanimatedAnimated.View>
   );
