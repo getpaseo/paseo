@@ -53,4 +53,17 @@ describe("translation resources", () => {
     expect(en.agentPanel.states.notFound).toBe("Agent not found");
     expect(en.panels.draft.newAgent).toBe("New Agent");
   });
+
+  it("includes Settings expansion keys for the Batch 3A migration", () => {
+    expect(en.settings.diagnostics.title).toBe("Diagnostics");
+    expect(en.settings.about.title).toBe("About");
+    expect(en.settings.about.releaseChannel.label).toBe("Release channel");
+    expect(en.settings.appearance.theme.title).toBe("Theme");
+    expect(en.settings.appearance.fonts.interfaceFont).toBe("Interface font");
+    expect(en.settings.shortcuts.actions.rebind).toBe("Rebind");
+    expect(en.settings.integrations.commandLine.title).toBe("Command line");
+    expect(en.settings.integrations.skills.updateAvailable).toBe("Update available");
+    expect(en.settings.permissions.notifications).toBe("Notifications");
+    expect(en.settings.permissions.actions.request).toBe("Request");
+  });
 });
