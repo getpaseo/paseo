@@ -408,6 +408,7 @@ export const en = {
         title: "Connections",
         removeTitle: "Remove connection",
         removeMessage: "Remove {{name}}? This cannot be undone.",
+        removeAction: "Remove",
         removeErrorTitle: "Error",
         removeErrorMessage: "Unable to remove connection",
         timeout: "Timeout",
@@ -432,6 +433,12 @@ export const en = {
           accessibilityLabel: "Append system prompt",
           placeholder: "Always keep replies concise.",
         },
+      },
+      agents: {
+        unavailable: "Connect to this host to manage agents",
+      },
+      workspaces: {
+        unavailable: "Connect to this host to manage workspaces",
       },
       daemon: {
         rename: {
@@ -463,10 +470,16 @@ export const en = {
         dangerZone: "Danger zone",
         remove: {
           title: "Remove host",
+          localTitle: "Remove localhost connection",
           hint: "Removes this host and its saved connections from this device",
+          localHint: "Removes localhost from this device and stops the built-in daemon",
+          localConfirmTitle: "Remove localhost connection and stop daemon?",
           confirmMessage: "Remove {{name}}? This will delete its saved connections.",
+          localConfirmMessage:
+            "This will remove the localhost connection, turn off built-in daemon management, and stop the managed daemon. Remote hosts remain connected.",
           errorTitle: "Error",
           errorMessage: "Unable to remove host",
+          localErrorMessage: "Unable to remove localhost connection",
         },
       },
     },
@@ -477,6 +490,7 @@ export const en = {
       enableProvider: "Enable {{name}}",
       unavailable: "Connect to this host to see providers",
       loading: "Loading...",
+      addErrorTitle: "Unable to add provider",
       updateErrorTitle: "Unable to update provider",
       statuses: {
         disabled: "Disabled",

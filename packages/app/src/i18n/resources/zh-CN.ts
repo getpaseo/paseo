@@ -407,6 +407,7 @@ export const zhCN: TranslationResources = {
         title: "连接",
         removeTitle: "移除连接",
         removeMessage: "移除 {{name}}？此操作无法撤销。",
+        removeAction: "移除",
         removeErrorTitle: "错误",
         removeErrorMessage: "无法移除连接",
         timeout: "超时",
@@ -431,6 +432,12 @@ export const zhCN: TranslationResources = {
           accessibilityLabel: "追加 system prompt",
           placeholder: "始终保持回复简洁。",
         },
+      },
+      agents: {
+        unavailable: "连接到这个 Host 以管理 Agent",
+      },
+      workspaces: {
+        unavailable: "连接到这个 Host 以管理 Workspace",
       },
       daemon: {
         rename: {
@@ -457,10 +464,16 @@ export const zhCN: TranslationResources = {
         dangerZone: "危险区域",
         remove: {
           title: "移除 Host",
+          localTitle: "移除 localhost 连接",
           hint: "从此设备移除这个 Host 及其已保存连接",
+          localHint: "从此设备移除 localhost，并停止内置 Daemon",
+          localConfirmTitle: "移除 localhost 连接并停止 Daemon？",
           confirmMessage: "移除 {{name}}？这会删除其已保存连接。",
+          localConfirmMessage:
+            "这会移除 localhost 连接、关闭内置 Daemon 管理，并停止托管 Daemon。远程 Host 会保持连接。",
           errorTitle: "错误",
           errorMessage: "无法移除 Host",
+          localErrorMessage: "无法移除 localhost 连接",
         },
       },
     },
@@ -471,6 +484,7 @@ export const zhCN: TranslationResources = {
       enableProvider: "启用 {{name}}",
       unavailable: "连接到这个 Host 以查看 Providers",
       loading: "正在加载...",
+      addErrorTitle: "无法添加 Provider",
       updateErrorTitle: "无法更新 Provider",
       statuses: {
         disabled: "已禁用",
