@@ -10,6 +10,14 @@ export const en = {
       dismiss: "Dismiss",
       retry: "Retry",
       search: "Search",
+      select: "Select",
+    },
+    placeholders: {
+      search: "Search...",
+    },
+    empty: {
+      noResults: "No results found",
+      noOptionsMatchSearch: "No options match your search.",
     },
     states: {
       loading: "Loading...",
@@ -1198,11 +1206,13 @@ export const en = {
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
+      failedToLoadPreview: "Failed to load file preview",
     },
   },
   toolCallDetails: {
     error: "Error",
     empty: "No additional details available",
+    subAgentActivity: "Sub-agent activity",
   },
   review: {
     comment: {

@@ -424,4 +424,13 @@ describe("translation resources", () => {
     expect(en.agentControls.model.unknown).toBe("Unknown model");
     expect(en.panels.draft.creatingAgent).toBe("Creating agent");
   });
+
+  it("includes shared default utility keys for the Batch 4U migration", () => {
+    expect(en.common.actions.select).toBe("Select");
+    expect(en.common.placeholders.search).toBe("Search...");
+    expect(en.common.empty.noResults).toBe("No results found");
+    expect(en.common.empty.noOptionsMatchSearch).toBe("No options match your search.");
+    expect(en.toolCallDetails.subAgentActivity).toBe("Sub-agent activity");
+    expect(en.panels.file.failedToLoadPreview).toBe("Failed to load file preview");
+  });
 });

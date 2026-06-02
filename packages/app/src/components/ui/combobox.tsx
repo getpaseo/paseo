@@ -23,6 +23,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -1240,15 +1241,15 @@ export function Combobox({
   renderOption,
   onSearchQueryChange,
   searchable = true,
-  placeholder = "Search...",
+  placeholder,
   searchPlaceholder,
-  emptyText = "No options match your search.",
+  emptyText,
   allowCustomValue = false,
   customValuePrefix = "Use",
   customValueDescription,
   customValueKind,
   optionsPosition = "below-search",
-  title = "Select",
+  title,
   header,
   mobileChildrenScrollEnabled = true,
   presentation,
@@ -1263,7 +1264,11 @@ export function Combobox({
   anchorRef,
   children,
 }: ComboboxProps): ReactElement | null {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const resolvedPlaceholder = placeholder ?? t("common.placeholders.search");
+  const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
+  const resolvedTitle = title ?? t("common.actions.select");
   const isMobile = useIsCompactFormFactor();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
@@ -1519,7 +1524,7 @@ export function Combobox({
     [],
   );
 
-  const effectiveSearchPlaceholder = searchPlaceholder ?? placeholder;
+  const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;
   const hasChildren = Boolean(children);
 
   if (isMobile) {
@@ -1531,7 +1536,7 @@ export function Combobox({
         handleSheetDismiss={handleSheetDismiss}
         handleIndicatorStyle={handleIndicatorStyle}
         titleColor={titleColor}
-        title={title}
+        title={resolvedTitle}
         header={header}
         onClose={handleClose}
         stickyHeader={stickyHeader}
@@ -1547,7 +1552,7 @@ export function Combobox({
         orderedVisibleOptions={orderedVisibleOptions}
         value={value}
         activeIndex={activeIndex}
-        emptyText={emptyText}
+        emptyText={resolvedEmptyText}
         handleSelect={handleSelect}
         renderOption={renderOption}
       >
@@ -1580,7 +1585,7 @@ export function Combobox({
       orderedVisibleOptions={orderedVisibleOptions}
       value={value}
       activeIndex={activeIndex}
-      emptyText={emptyText}
+      emptyText={resolvedEmptyText}
       handleSelect={handleSelect}
       renderOption={renderOption}
       hasChildren={hasChildren}

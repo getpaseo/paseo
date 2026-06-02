@@ -12,6 +12,14 @@ export const zhCN: TranslationResources = {
       dismiss: "关闭",
       retry: "重试",
       search: "搜索",
+      select: "选择",
+    },
+    placeholders: {
+      search: "搜索...",
+    },
+    empty: {
+      noResults: "没有结果",
+      noOptionsMatchSearch: "没有匹配搜索的选项。",
     },
     states: {
       loading: "加载中...",
@@ -1176,11 +1184,13 @@ export const zhCN: TranslationResources = {
       noPreview: "没有可用预览",
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
+      failedToLoadPreview: "加载文件预览失败",
     },
   },
   toolCallDetails: {
     error: "错误",
     empty: "没有可用的更多详情",
+    subAgentActivity: "Sub-agent 活动",
   },
   review: {
     comment: {

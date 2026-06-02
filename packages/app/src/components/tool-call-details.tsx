@@ -9,6 +9,7 @@ import {
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { i18n } from "@/i18n/i18next";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
@@ -245,7 +246,7 @@ function resolveSubAgentFallbackHeader(
   if (subAgentType && description) {
     return `${subAgentType}: ${description}`;
   }
-  return subAgentType ?? description ?? "Sub-agent activity";
+  return subAgentType ?? description ?? i18n.t("toolCallDetails.subAgentActivity");
 }
 
 interface SubAgentDetailProps {

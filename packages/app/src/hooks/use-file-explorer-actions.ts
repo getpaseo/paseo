@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useSessionStore, type AgentFileExplorerState } from "@/stores/session-store";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { i18n } from "@/i18n/i18next";
 
 function createExplorerState(): AgentFileExplorerState {
   return {
@@ -218,7 +219,8 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: error instanceof Error ? error.message : "Failed to load file preview",
+          lastError:
+            error instanceof Error ? error.message : i18n.t("panels.file.failedToLoadPreview"),
           pendingRequest: null,
         }));
       }
