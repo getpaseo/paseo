@@ -4,6 +4,7 @@ import {
   persistAppSettings,
   type ServiceUrlBehavior,
 } from "@/hooks/use-settings";
+import { i18n } from "@/i18n/i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 export interface OpenServiceUrlOptions {
@@ -36,11 +37,11 @@ async function resolveBehavior(url: string): Promise<Exclude<ServiceUrlBehavior,
     return "external";
   }
 
-  const result = await askWithCheckbox(`Open ${url}?`, {
-    title: "Open service URL",
-    okLabel: "In Paseo",
-    cancelLabel: "External browser",
-    checkboxLabel: "Don't ask again",
+  const result = await askWithCheckbox(i18n.t("serviceUrl.message", { url }), {
+    title: i18n.t("serviceUrl.title"),
+    okLabel: i18n.t("serviceUrl.inPaseo"),
+    cancelLabel: i18n.t("serviceUrl.externalBrowser"),
+    checkboxLabel: i18n.t("serviceUrl.dontAskAgain"),
   });
 
   const choice: Exclude<ServiceUrlBehavior, "ask"> = result.confirmed ? "in-app" : "external";
