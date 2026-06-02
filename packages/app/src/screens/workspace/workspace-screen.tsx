@@ -15,6 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
+import { i18n } from "@/i18n/i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   CopyX,
@@ -1597,7 +1598,7 @@ function useWorkspaceCheckoutStatus(input: {
     enabled: isCheckoutQueryEnabled,
     queryFn: async () => {
       if (!input.client || !input.workspaceDirectory) {
-        throw new Error("Host is not connected");
+        throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
       }
       return await input.client.getCheckoutStatus(input.workspaceDirectory);
     },
@@ -2666,7 +2667,7 @@ function WorkspaceScreenContent({
 
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
-      toast.error("Workspace path not available");
+      toast.error(t("workspace.header.toasts.workspacePathUnavailable"));
       return;
     }
 
@@ -2680,7 +2681,7 @@ function WorkspaceScreenContent({
 
   const handleCopyBranchName = useCallback(async () => {
     if (!currentBranchName) {
-      toast.error("Branch name not available");
+      toast.error(t("workspace.header.toasts.branchNameUnavailable"));
       return;
     }
 

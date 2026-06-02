@@ -467,6 +467,7 @@ export const en = {
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",
+        branchNameUnavailable: "Branch name not available",
         terminalQueued: "Preparing workspace, opening terminal when ready...",
         workspacePathCopiedLabel: "Workspace path",
         branchNameCopiedLabel: "Branch name",
@@ -931,6 +932,13 @@ export const en = {
         updateFailed: "Unable to update orchestration skills.",
         uninstallFailed: "Unable to uninstall orchestration skills.",
       },
+    },
+  },
+  startup: {
+    logs: {
+      loading: "Loading daemon logs...",
+      unavailable: "No daemon logs available.",
+      loadFailed: "Unable to load daemon logs: {{message}}",
     },
   },
   openProject: {

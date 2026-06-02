@@ -467,6 +467,7 @@ export const zhCN: TranslationResources = {
       },
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",
+        branchNameUnavailable: "分支名称不可用",
         terminalQueued: "正在准备 workspace，Terminal 准备好后会打开...",
         workspacePathCopiedLabel: "Workspace 路径",
         branchNameCopiedLabel: "分支名称",
@@ -912,6 +913,13 @@ export const zhCN: TranslationResources = {
         updateFailed: "无法更新编排 skills。",
         uninstallFailed: "无法卸载编排 skills。",
       },
+    },
+  },
+  startup: {
+    logs: {
+      loading: "正在加载 daemon 日志...",
+      unavailable: "没有可用的 daemon 日志。",
+      loadFailed: "无法加载 daemon 日志：{{message}}",
     },
   },
   openProject: {

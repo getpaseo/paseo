@@ -115,7 +115,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: "Workspace is unavailable",
+          lastError: i18n.t("workspace.fileExplorer.states.unavailable"),
           pendingRequest: null,
         }));
         return false;
@@ -125,7 +125,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: "Host is not connected",
+          lastError: i18n.t("workspace.terminal.hostDisconnected"),
           pendingRequest: null,
         }));
         return false;
@@ -180,7 +180,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: "Workspace is unavailable",
+          lastError: i18n.t("workspace.fileExplorer.states.unavailable"),
           pendingRequest: null,
         }));
         return;
@@ -190,7 +190,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: "Host is not connected",
+          lastError: i18n.t("workspace.terminal.hostDisconnected"),
           pendingRequest: null,
         }));
         return;
@@ -231,10 +231,10 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   const requestFileDownloadToken = useCallback(
     async (path: string) => {
       if (!normalizedWorkspaceRoot) {
-        throw new Error("Workspace is unavailable");
+        throw new Error(i18n.t("workspace.fileExplorer.states.unavailable"));
       }
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
       }
       const payload = await client.requestDownloadToken(normalizedWorkspaceRoot, path);
       if (payload.error) {

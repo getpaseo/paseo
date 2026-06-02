@@ -433,4 +433,11 @@ describe("translation resources", () => {
     expect(en.toolCallDetails.subAgentActivity).toBe("Sub-agent activity");
     expect(en.panels.file.failedToLoadPreview).toBe("Failed to load file preview");
   });
+
+  it("includes remaining local wrapper keys for the Batch 4W migration", () => {
+    expect(en.workspace.header.toasts.branchNameUnavailable).toBe("Branch name not available");
+    expect(en.startup.logs.loading).toBe("Loading daemon logs...");
+    expect(en.startup.logs.unavailable).toBe("No daemon logs available.");
+    expect(en.startup.logs.loadFailed).toBe("Unable to load daemon logs: {{message}}");
+  });
 });

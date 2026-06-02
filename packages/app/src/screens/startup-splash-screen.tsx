@@ -11,6 +11,7 @@ import Animated, {
 import MaskedView from "@react-native-masked-view/masked-view";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import * as Clipboard from "expo-clipboard";
+import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -297,6 +298,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const webScrollbarStyle = useWebScrollbarStyle();
   const errorScrollViewStyle = useMemo(
@@ -339,7 +341,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
         }
         const message = error instanceof Error ? error.message : String(error);
         setDaemonLogs(null);
-        setLogsError(`Unable to load daemon logs: ${message}`);
+        setLogsError(t("startup.logs.loadFailed", { message }));
       })
       .finally(() => {
         if (!isCancelled) {
@@ -350,11 +352,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     return () => {
       isCancelled = true;
     };
-  }, [isError]);
+  }, [isError, t]);
 
   const logsText = useMemo(() => {
     if (isLoadingLogs) {
-      return "Loading daemon logs...";
+      return t("startup.logs.loading");
     }
     if (daemonLogs?.contents) {
       return daemonLogs.contents;
@@ -362,8 +364,8 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     if (logsError) {
       return logsError;
     }
-    return "No daemon logs available.";
-  }, [daemonLogs?.contents, isLoadingLogs, logsError]);
+    return t("startup.logs.unavailable");
+  }, [daemonLogs?.contents, isLoadingLogs, logsError, t]);
 
   const handleCopyLogs = useCallback(() => {
     const payload = daemonLogs?.logPath
