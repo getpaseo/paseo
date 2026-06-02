@@ -2,15 +2,19 @@ import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agen
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
+export type AgentControlHintKey =
+  | "agentControls.hints.thinking"
+  | "agentControls.hints.model"
+  | "agentControls.hints.mode";
 
-export function getAgentControlHint(selector: ExplainedAgentControl): string {
+export function getAgentControlHintKey(selector: ExplainedAgentControl): AgentControlHintKey {
   switch (selector) {
     case "thinking":
-      return "Thinking mode";
+      return "agentControls.hints.thinking";
     case "model":
-      return "Change model";
+      return "agentControls.hints.model";
     case "mode":
-      return "Change permission mode";
+      return "agentControls.hints.mode";
     default:
       throw new Error("unreachable");
   }
@@ -143,17 +147,19 @@ function resolveModelDisplay(
   selectedModel: AgentModelDefinition | null,
   preferredModelId: string | null,
   fallbackModel: AgentModelDefinition | null,
+  unknownModelLabel: string,
 ): { activeModelId: string | null; displayModel: string } {
   return {
     activeModelId: selectedModel?.id ?? preferredModelId ?? null,
     displayModel:
-      selectedModel?.label ?? preferredModelId ?? fallbackModel?.label ?? "Unknown model",
+      selectedModel?.label ?? preferredModelId ?? fallbackModel?.label ?? unknownModelLabel,
   };
 }
 
 function resolveThinkingDisplay(
   effectiveThinking: ThinkingOption | null,
   selectedThinkingId: string | null,
+  unknownThinkingLabel: string,
 ): string {
   if (effectiveThinking) {
     return formatThinkingOptionLabel(effectiveThinking);
@@ -163,7 +169,7 @@ function resolveThinkingDisplay(
     return formatThinkingOptionLabel({ id: selectedThinkingId });
   }
 
-  return "Unknown";
+  return unknownThinkingLabel;
 }
 
 export function resolveAgentModelSelection(input: {
@@ -171,8 +177,16 @@ export function resolveAgentModelSelection(input: {
   runtimeModelId: string | null | undefined;
   configuredModelId: string | null | undefined;
   explicitThinkingOptionId: string | null | undefined;
+  fallbackLabels?: {
+    unknownModel: string;
+    unknownThinking: string;
+  };
 }) {
   const { models, runtimeModelId, configuredModelId, explicitThinkingOptionId } = input;
+  const fallbackLabels = input.fallbackLabels ?? {
+    unknownModel: "Unknown model",
+    unknownThinking: "Unknown",
+  };
   const normalizedRuntimeModelId = normalizeModelId(runtimeModelId);
   const normalizedConfiguredModelId = normalizeModelId(configuredModelId);
 
@@ -189,13 +203,18 @@ export function resolveAgentModelSelection(input: {
     selectedModel,
     preferredModelId,
     fallbackModel,
+    fallbackLabels.unknownModel,
   );
 
   const thinkingOptions = selectedModel?.thinkingOptions ?? null;
   const resolvedThinkingId = resolveThinkingId(explicitThinkingOptionId, selectedModel);
   const effectiveThinking = resolveEffectiveThinking(thinkingOptions, resolvedThinkingId);
   const selectedThinkingId = effectiveThinking?.id ?? null;
-  const displayThinking = resolveThinkingDisplay(effectiveThinking, selectedThinkingId);
+  const displayThinking = resolveThinkingDisplay(
+    effectiveThinking,
+    selectedThinkingId,
+    fallbackLabels.unknownThinking,
+  );
 
   return {
     selectedModel,

@@ -91,6 +91,9 @@ export const en = {
       select: "Select thinking option",
       selectWithValue: "Select thinking option ({{value}})",
     },
+    model: {
+      unknown: "Unknown model",
+    },
     features: {
       title: "Features",
       open: "Open agent features",

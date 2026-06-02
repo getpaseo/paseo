@@ -93,6 +93,9 @@ export const zhCN: TranslationResources = {
       select: "选择 thinking 选项",
       selectWithValue: "选择 thinking 选项（{{value}}）",
     },
+    model: {
+      unknown: "未知 Model",
+    },
     features: {
       title: "Features",
       open: "打开 Agent features",
