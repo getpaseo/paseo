@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { i18n } from "@/i18n/i18next";
 import {
   getDesktopPermissionSnapshot,
   requestDesktopPermission,
@@ -22,12 +23,12 @@ export interface UseDesktopPermissionsReturn {
 
 const EMPTY_NOTIFICATION_STATUS = {
   state: "unknown" as const,
-  detail: "Notification status has not been checked yet.",
+  detail: i18n.t("desktop.permissions.empty.notifications"),
 };
 
 const EMPTY_MICROPHONE_STATUS = {
   state: "unknown" as const,
-  detail: "Microphone status has not been checked yet.",
+  detail: i18n.t("desktop.permissions.empty.microphone"),
 };
 
 export function useDesktopPermissions(): UseDesktopPermissionsReturn {
@@ -124,16 +125,14 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     setTestNotificationError(null);
     try {
       const sent = await sendOsNotification({
-        title: "Paseo notification test",
-        body: "If you can see this, desktop notifications work.",
+        title: i18n.t("desktop.permissions.testNotification.title"),
+        body: i18n.t("desktop.permissions.testNotification.body"),
       });
       if (!sent) {
-        setTestNotificationError(
-          "Notification was not delivered. Check System Settings > Notifications.",
-        );
+        setTestNotificationError(i18n.t("desktop.permissions.testNotification.notDelivered"));
       }
     } catch {
-      setTestNotificationError("Failed to send notification.");
+      setTestNotificationError(i18n.t("desktop.permissions.testNotification.failed"));
     } finally {
       if (isMountedRef.current) {
         setIsSendingTestNotification(false);

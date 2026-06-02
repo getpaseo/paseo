@@ -804,6 +804,50 @@ export const en = {
       highCpu: "This causes high CPU usage. Download the Apple Silicon build to fix it.",
       download: "Download",
     },
+    permissions: {
+      notifications: {
+        allowed: "Notifications are allowed by the OS.",
+        denied: "Notifications are denied in system settings.",
+        notGranted: "Notifications have not been granted yet.",
+        webOnly: "Desktop notification status is only available on web runtime.",
+        supported: "Desktop notifications are supported.",
+        unsupported: "Desktop notifications are not supported on this platform.",
+        apiUnavailable: "Web Notification API is unavailable in this environment.",
+        requestsWebOnly: "Desktop notification requests are only available on web runtime.",
+        requestUnavailable: "Web Notification API requestPermission() is unavailable.",
+        requestFailed: "Failed to request notification permission: {{message}}",
+        unexpectedState: "Unexpected notification permission state: {{state}}",
+      },
+      microphone: {
+        webOnly: "Desktop microphone status is only available on web runtime.",
+        navigatorUnavailable: "Navigator is unavailable in this environment.",
+        granted: "Microphone access is granted.",
+        denied: "Microphone access is denied in system settings.",
+        notGranted: "Microphone permission has not been granted yet.",
+        unexpectedState: "Unexpected microphone permission state: {{state}}",
+        statusApiUnavailable:
+          "Microphone status API is unavailable in this runtime. Use Request to check access.",
+        queryFailed: "Failed to query microphone status: {{message}}",
+        captureUnavailable: "Microphone capture is unavailable in this environment.",
+        permissionApiUnavailable:
+          "Permission status API is unavailable. Use Request to check access.",
+        requestsWebOnly: "Desktop microphone requests are only available on web runtime.",
+        captureApiUnavailable: "Microphone capture API is unavailable in this environment.",
+        requestDenied: "Microphone permission was denied by the user or system.",
+        noDevice: "No microphone device was found.",
+        requestFailed: "Failed to request microphone permission: {{message}}",
+      },
+      empty: {
+        notifications: "Notification status has not been checked yet.",
+        microphone: "Microphone status has not been checked yet.",
+      },
+      testNotification: {
+        title: "Paseo notification test",
+        body: "If you can see this, desktop notifications work.",
+        notDelivered: "Notification was not delivered. Check System Settings > Notifications.",
+        failed: "Failed to send notification.",
+      },
+    },
   },
   openProject: {
     tiles: {

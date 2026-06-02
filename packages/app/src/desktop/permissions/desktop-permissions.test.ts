@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DesktopHostBridge } from "@/desktop/host";
+import { i18n } from "@/i18n/i18next";
 import {
   createDesktopPermissions,
   type DesktopPermissionEnvironment,
@@ -179,5 +180,29 @@ describe("desktop-permissions", () => {
     const result = await permissions.requestDesktopPermission({ kind: "microphone" });
 
     expect(result.state).toBe("denied");
+  });
+
+  it("uses the active app language for local status details", async () => {
+    await i18n.changeLanguage("zh-CN");
+    try {
+      const permissions = createDesktopPermissions(
+        fakeEnvironment({
+          notification: { permission: "granted" },
+          navigator: {
+            permissions: {
+              query: vi.fn(async () => ({ state: "prompt" })),
+            },
+            mediaDevices: { getUserMedia: vi.fn() },
+          },
+        }),
+      );
+
+      const snapshot = await permissions.getDesktopPermissionSnapshot();
+
+      expect(snapshot.notifications.detail).toBe("系统已允许通知。");
+      expect(snapshot.microphone.detail).toBe("麦克风权限尚未授予。");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
 });

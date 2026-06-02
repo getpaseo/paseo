@@ -360,4 +360,28 @@ describe("translation resources", () => {
     );
     expect(en.desktop.rosetta.download).toBe("Download");
   });
+
+  it("includes desktop permission utility keys for the Batch 4R migration", () => {
+    expect(en.desktop.permissions.notifications.allowed).toBe(
+      "Notifications are allowed by the OS.",
+    );
+    expect(en.desktop.permissions.notifications.denied).toBe(
+      "Notifications are denied in system settings.",
+    );
+    expect(en.desktop.permissions.notifications.unexpectedState).toBe(
+      "Unexpected notification permission state: {{state}}",
+    );
+    expect(en.desktop.permissions.microphone.granted).toBe("Microphone access is granted.");
+    expect(en.desktop.permissions.microphone.statusApiUnavailable).toBe(
+      "Microphone status API is unavailable in this runtime. Use Request to check access.",
+    );
+    expect(en.desktop.permissions.microphone.requestDenied).toBe(
+      "Microphone permission was denied by the user or system.",
+    );
+    expect(en.desktop.permissions.empty.notifications).toBe(
+      "Notification status has not been checked yet.",
+    );
+    expect(en.desktop.permissions.testNotification.title).toBe("Paseo notification test");
+    expect(en.desktop.permissions.testNotification.failed).toBe("Failed to send notification.");
+  });
 });
