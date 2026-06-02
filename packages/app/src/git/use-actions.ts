@@ -1,17 +1,26 @@
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
 import { router, type Href } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useTranslation } from "react-i18next";
 import { type CheckoutGitActionStatus, useCheckoutGitActionsStore } from "@/git/actions-store";
 import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-status-query";
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
-import { buildGitActions, narrowPullRequestState, type GitActions } from "@/git/policy";
+import {
+  buildGitActions,
+  narrowPullRequestState,
+  type GitAction,
+  type GitActions,
+} from "@/git/policy";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
-import { confirmRiskyWorktreeArchive } from "@/git/worktree-archive-warning";
+import {
+  confirmRiskyWorktreeArchive,
+  type WorktreeArchiveWarningLabels,
+} from "@/git/worktree-archive-warning";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -26,18 +35,20 @@ function isActionDisabled(actionsDisabled: boolean, status: CheckoutGitActionSta
 function resolveBranchLabel(input: {
   currentBranch: string | null | undefined;
   notGit: boolean;
+  notRepositoryLabel: string;
+  unknownLabel: string;
 }): string {
   if (input.currentBranch && input.currentBranch !== "HEAD") {
     return input.currentBranch;
   }
   if (input.notGit) {
-    return "Not a git repository";
+    return input.notRepositoryLabel;
   }
-  return "Unknown";
+  return input.unknownLabel;
 }
 
-function formatBaseRefLabel(baseRef: string | undefined): string {
-  if (!baseRef) return "base";
+function formatBaseRefLabel(baseRef: string | undefined, fallbackLabel: string): string {
+  if (!baseRef) return fallbackLabel;
   const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
   return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
 }
@@ -153,6 +164,7 @@ interface UseGitActionsResult {
 }
 
 export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): UseGitActionsResult {
+  const { t } = useTranslation();
   const toast = useToast();
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
@@ -170,10 +182,15 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     cwd,
     enabled: isGit,
   });
-  const baseRefLabel = useMemo(() => formatBaseRefLabel(baseRef), [baseRef]);
+  const baseRefLabel = useMemo(
+    () => formatBaseRefLabel(baseRef, t("workspace.git.diff.base")),
+    [baseRef, t],
+  );
   const branchLabel = resolveBranchLabel({
     currentBranch: gitStatus?.currentBranch,
     notGit,
+    notRepositoryLabel: t("workspace.git.diff.notRepository"),
+    unknownLabel: t("workspace.git.diff.branchUnknown"),
   });
 
   // Ship default persistence
@@ -308,58 +325,58 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const handleCommit = useCallback(() => {
     void runCommit({ serverId, cwd })
       .then(() => {
-        toastActionSuccess("Committed");
+        toastActionSuccess(t("workspace.git.actions.commit.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to commit");
+        toastActionError(err, t("workspace.git.actions.toasts.failedCommit"));
       });
-  }, [cwd, runCommit, serverId, toastActionError, toastActionSuccess]);
+  }, [cwd, runCommit, serverId, t, toastActionError, toastActionSuccess]);
 
   const handlePull = useCallback(() => {
     void runPull({ serverId, cwd })
       .then(() => {
-        toastActionSuccess("Pulled");
+        toastActionSuccess(t("workspace.git.actions.pull.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to pull");
+        toastActionError(err, t("workspace.git.actions.toasts.failedPull"));
       });
-  }, [cwd, runPull, serverId, toastActionError, toastActionSuccess]);
+  }, [cwd, runPull, serverId, t, toastActionError, toastActionSuccess]);
 
   const handlePush = useCallback(() => {
     void runPush({ serverId, cwd })
       .then(() => {
-        toastActionSuccess("Pushed");
+        toastActionSuccess(t("workspace.git.actions.push.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to push");
+        toastActionError(err, t("workspace.git.actions.toasts.failedPush"));
       });
-  }, [cwd, runPush, serverId, toastActionError, toastActionSuccess]);
+  }, [cwd, runPush, serverId, t, toastActionError, toastActionSuccess]);
 
   const handlePullAndPush = useCallback(() => {
     void runPullAndPush({ serverId, cwd })
       .then(() => {
-        toastActionSuccess("Pulled and pushed");
+        toastActionSuccess(t("workspace.git.actions.pullAndPush.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to pull and push");
+        toastActionError(err, t("workspace.git.actions.toasts.failedPullAndPush"));
       });
-  }, [cwd, runPullAndPush, serverId, toastActionError, toastActionSuccess]);
+  }, [cwd, runPullAndPush, serverId, t, toastActionError, toastActionSuccess]);
 
   const handleCreatePr = useCallback(() => {
     void persistShipDefault("pr");
     void runCreatePr({ serverId, cwd })
       .then(() => {
-        toastActionSuccess("PR created");
+        toastActionSuccess(t("workspace.git.actions.createPr.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to create PR");
+        toastActionError(err, t("workspace.git.actions.toasts.failedCreatePr"));
       });
-  }, [cwd, persistShipDefault, runCreatePr, serverId, toastActionError, toastActionSuccess]);
+  }, [cwd, persistShipDefault, runCreatePr, serverId, t, toastActionError, toastActionSuccess]);
 
   const handleMergePr = useCallback(
     (method: CheckoutPrMergeMethod) => {
@@ -367,14 +384,14 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       void runMergePr({ serverId, cwd, method })
         .then(() => {
           setPostShipArchiveSuggested(true);
-          toastActionSuccess("PR merged");
+          toastActionSuccess(t("workspace.git.actions.mergePr.success"));
           return;
         })
         .catch((err) => {
-          toastActionError(err, "Failed to merge PR");
+          toastActionError(err, t("workspace.git.actions.toasts.failedMergePr"));
         });
     },
-    [cwd, persistShipDefault, runMergePr, serverId, toastActionError, toastActionSuccess],
+    [cwd, persistShipDefault, runMergePr, serverId, t, toastActionError, toastActionSuccess],
   );
 
   const handleEnablePrAutoMerge = useCallback(
@@ -382,41 +399,49 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       void persistShipDefault("pr");
       void runEnablePrAutoMerge({ serverId, cwd, method })
         .then(() => {
-          toastActionSuccess("Auto-merge enabled");
+          toastActionSuccess(t("workspace.git.actions.autoMerge.enabled"));
           return;
         })
         .catch((err) => {
-          toastActionError(err, "Failed to enable auto-merge");
+          toastActionError(err, t("workspace.git.actions.toasts.failedEnableAutoMerge"));
         });
     },
-    [cwd, persistShipDefault, runEnablePrAutoMerge, serverId, toastActionError, toastActionSuccess],
+    [
+      cwd,
+      persistShipDefault,
+      runEnablePrAutoMerge,
+      serverId,
+      t,
+      toastActionError,
+      toastActionSuccess,
+    ],
   );
 
   const handleDisablePrAutoMerge = useCallback(() => {
     void runDisablePrAutoMerge({ serverId, cwd })
       .then(() => {
-        toastActionSuccess("Auto-merge disabled");
+        toastActionSuccess(t("workspace.git.actions.autoMerge.disabled"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to disable auto-merge");
+        toastActionError(err, t("workspace.git.actions.toasts.failedDisableAutoMerge"));
       });
-  }, [cwd, runDisablePrAutoMerge, serverId, toastActionError, toastActionSuccess]);
+  }, [cwd, runDisablePrAutoMerge, serverId, t, toastActionError, toastActionSuccess]);
 
   const handleMergeBranch = useCallback(() => {
     if (!baseRef) {
-      toast.error("Base ref unavailable");
+      toast.error(t("workspace.git.actions.toasts.baseRefUnavailable"));
       return;
     }
     void persistShipDefault("merge");
     void runMergeBranch({ serverId, cwd, baseRef })
       .then(() => {
         setPostShipArchiveSuggested(true);
-        toastActionSuccess("Merged");
+        toastActionSuccess(t("workspace.git.actions.mergeBranch.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to merge");
+        toastActionError(err, t("workspace.git.actions.toasts.failedMerge"));
       });
   }, [
     baseRef,
@@ -424,6 +449,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     persistShipDefault,
     runMergeBranch,
     serverId,
+    t,
     toast,
     toastActionError,
     toastActionSuccess,
@@ -431,23 +457,23 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   const handleMergeFromBase = useCallback(() => {
     if (!baseRef) {
-      toast.error("Base ref unavailable");
+      toast.error(t("workspace.git.actions.toasts.baseRefUnavailable"));
       return;
     }
     void runMergeFromBase({ serverId, cwd, baseRef })
       .then(() => {
-        toastActionSuccess("Updated");
+        toastActionSuccess(t("workspace.git.actions.mergeFromBase.success"));
         return;
       })
       .catch((err) => {
-        toastActionError(err, "Failed to merge from base");
+        toastActionError(err, t("workspace.git.actions.toasts.failedMergeFromBase"));
       });
-  }, [baseRef, cwd, runMergeFromBase, serverId, toast, toastActionError, toastActionSuccess]);
+  }, [baseRef, cwd, runMergeFromBase, serverId, t, toast, toastActionError, toastActionSuccess]);
 
   const archiveWorktreeAfterConfirmation = useCallback(async () => {
     const worktreePath = status?.cwd;
     if (!worktreePath) {
-      toast.error("Worktree path unavailable");
+      toast.error(t("workspace.git.actions.toasts.worktreePathUnavailable"));
       return;
     }
 
@@ -456,12 +482,15 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     const workspace = workspaceList.find(
       (candidate) => candidate.workspaceDirectory === worktreePath,
     );
-    const confirmed = await confirmRiskyWorktreeArchive({
-      worktreeName: workspace?.name ?? branchLabel,
-      isDirty: gitStatus?.isDirty,
-      aheadOfOrigin: gitStatus?.aheadOfOrigin,
-      diffStat: workspace?.diffStat ?? null,
-    });
+    const confirmed = await confirmRiskyWorktreeArchive(
+      {
+        worktreeName: workspace?.name ?? branchLabel,
+        isDirty: gitStatus?.isDirty,
+        aheadOfOrigin: gitStatus?.aheadOfOrigin,
+        diffStat: workspace?.diffStat ?? null,
+      },
+      getWorktreeArchiveWarningLabels(t),
+    );
     if (!confirmed) {
       return;
     }
@@ -479,7 +508,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       }) as Href,
     );
     void runArchiveWorktree({ serverId, cwd, worktreePath }).catch((err) => {
-      toastActionError(err, "Failed to archive worktree");
+      toastActionError(err, t("workspace.git.actions.toasts.failedArchive"));
     });
   }, [
     branchLabel,
@@ -489,6 +518,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     runArchiveWorktree,
     serverId,
     status?.cwd,
+    t,
     toast,
     toastActionError,
   ]);
@@ -530,7 +560,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   // Build actions
   const gitActions: GitActions = useMemo(() => {
-    return buildGitActions({
+    const actions = buildGitActions({
       isGit,
       githubFeaturesEnabled,
       githubAutoMergeActionsEnabled,
@@ -646,7 +676,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
         },
       },
     });
+    return translateGitActions(actions, { baseRefLabel, hasPullRequest, t });
   }, [
+    t,
     isGit,
     hasRemote,
     hasPullRequest,
@@ -700,4 +732,264 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   ]);
 
   return { gitActions, branchLabel, isGit };
+}
+
+function translateGitActions(
+  actions: GitActions,
+  input: {
+    baseRefLabel: string;
+    hasPullRequest: boolean;
+    t: (key: string, options?: Record<string, unknown>) => string;
+  },
+): GitActions {
+  return {
+    primary: actions.primary ? translateGitAction(actions.primary, input) : null,
+    secondary: actions.secondary.map((action) => translateGitAction(action, input)),
+    menu: actions.menu.map((action) => translateGitAction(action, input)),
+  };
+}
+
+function translateGitAction(
+  action: GitAction,
+  {
+    baseRefLabel,
+    hasPullRequest,
+    t,
+  }: {
+    baseRefLabel: string;
+    hasPullRequest: boolean;
+    t: (key: string, options?: Record<string, unknown>) => string;
+  },
+): GitAction {
+  const labels = getTranslatedGitActionLabels(action, { baseRefLabel, hasPullRequest, t });
+  return {
+    ...action,
+    ...labels,
+    unavailableMessage: translateGitActionUnavailableMessage(action.unavailableMessage, {
+      baseRefLabel,
+      t,
+    }),
+  };
+}
+
+function getTranslatedGitActionLabels(
+  action: GitAction,
+  {
+    baseRefLabel,
+    hasPullRequest,
+    t,
+  }: {
+    baseRefLabel: string;
+    hasPullRequest: boolean;
+    t: (key: string, options?: Record<string, unknown>) => string;
+  },
+): Pick<GitAction, "label" | "pendingLabel" | "successLabel"> {
+  switch (action.id) {
+    case "commit":
+      return {
+        label: t("workspace.git.actions.commit.label"),
+        pendingLabel: t("workspace.git.actions.commit.pending"),
+        successLabel: t("workspace.git.actions.commit.success"),
+      };
+    case "pull":
+      return {
+        label: t("workspace.git.actions.pull.label"),
+        pendingLabel: t("workspace.git.actions.pull.pending"),
+        successLabel: t("workspace.git.actions.pull.success"),
+      };
+    case "push":
+      return {
+        label: t("workspace.git.actions.push.label"),
+        pendingLabel: t("workspace.git.actions.push.pending"),
+        successLabel: t("workspace.git.actions.push.success"),
+      };
+    case "pull-and-push":
+      return {
+        label: t("workspace.git.actions.pullAndPush.label"),
+        pendingLabel: t("workspace.git.actions.pullAndPush.pending"),
+        successLabel: t("workspace.git.actions.pullAndPush.success"),
+      };
+    case "pr":
+      return hasPullRequest
+        ? {
+            label: t("workspace.git.actions.viewPr"),
+            pendingLabel: t("workspace.git.actions.viewPr"),
+            successLabel: t("workspace.git.actions.viewPr"),
+          }
+        : {
+            label: t("workspace.git.actions.createPr.label"),
+            pendingLabel: t("workspace.git.actions.createPr.pending"),
+            successLabel: t("workspace.git.actions.createPr.success"),
+          };
+    case "merge-pr-squash":
+      return {
+        label: t("workspace.git.actions.mergePr.squash"),
+        pendingLabel: t("workspace.git.actions.mergePr.pending"),
+        successLabel: t("workspace.git.actions.mergePr.success"),
+      };
+    case "merge-pr-merge":
+      return {
+        label: t("workspace.git.actions.mergePr.merge"),
+        pendingLabel: t("workspace.git.actions.mergePr.pending"),
+        successLabel: t("workspace.git.actions.mergePr.success"),
+      };
+    case "merge-pr-rebase":
+      return {
+        label: t("workspace.git.actions.mergePr.rebase"),
+        pendingLabel: t("workspace.git.actions.mergePr.pending"),
+        successLabel: t("workspace.git.actions.mergePr.success"),
+      };
+    case "enable-pr-auto-merge-squash":
+      return {
+        label: t("workspace.git.actions.autoMerge.enableSquash"),
+        pendingLabel: t("workspace.git.actions.autoMerge.enabling"),
+        successLabel: t("workspace.git.actions.autoMerge.enabled"),
+      };
+    case "enable-pr-auto-merge-merge":
+      return {
+        label: t("workspace.git.actions.autoMerge.enableMerge"),
+        pendingLabel: t("workspace.git.actions.autoMerge.enabling"),
+        successLabel: t("workspace.git.actions.autoMerge.enabled"),
+      };
+    case "enable-pr-auto-merge-rebase":
+      return {
+        label: t("workspace.git.actions.autoMerge.enableRebase"),
+        pendingLabel: t("workspace.git.actions.autoMerge.enabling"),
+        successLabel: t("workspace.git.actions.autoMerge.enabled"),
+      };
+    case "disable-pr-auto-merge":
+      return {
+        label: t("workspace.git.actions.autoMerge.enabled"),
+        pendingLabel: t("workspace.git.actions.autoMerge.disabling"),
+        successLabel: t("workspace.git.actions.autoMerge.disabled"),
+      };
+    case "merge-branch":
+      return {
+        label: t("workspace.git.actions.mergeBranch.label"),
+        pendingLabel: t("workspace.git.actions.mergeBranch.pending"),
+        successLabel: t("workspace.git.actions.mergeBranch.success"),
+      };
+    case "merge-from-base":
+      return {
+        label: t("workspace.git.actions.mergeFromBase.label", { baseRef: baseRefLabel }),
+        pendingLabel: t("workspace.git.actions.mergeFromBase.pending"),
+        successLabel: t("workspace.git.actions.mergeFromBase.success"),
+      };
+    case "archive-worktree":
+      return {
+        label: t("workspace.git.actions.archive.label"),
+        pendingLabel: t("workspace.git.actions.archive.pending"),
+        successLabel: t("workspace.git.actions.archive.success"),
+      };
+  }
+}
+
+function translateGitActionUnavailableMessage(
+  message: string | undefined,
+  {
+    baseRefLabel,
+    t,
+  }: {
+    baseRefLabel: string;
+    t: (key: string, options?: Record<string, unknown>) => string;
+  },
+): string | undefined {
+  if (!message) return undefined;
+  const keyByMessage: Record<string, string> = {
+    "View PR isn't available right now because GitHub isn't connected":
+      "workspace.git.actions.unavailable.viewPrNoGithub",
+    "Pull isn't available here because this branch is not connected to a remote yet":
+      "workspace.git.actions.unavailable.pullNoRemote",
+    "Pull isn't available while you have local changes so commit or stash them first":
+      "workspace.git.actions.unavailable.pullDirty",
+    "Pull isn't available because this branch is already up to date":
+      "workspace.git.actions.unavailable.pullUpToDate",
+    "Push isn't available here because this branch is not connected to a remote yet":
+      "workspace.git.actions.unavailable.pushNoRemote",
+    "Push isn't available yet because there are newer changes to bring in first":
+      "workspace.git.actions.unavailable.pushBehind",
+    "Push isn't available because there is nothing new to send":
+      "workspace.git.actions.unavailable.pushNothing",
+    "Pull and push isn't available here because this branch is not connected to a remote yet":
+      "workspace.git.actions.unavailable.pullAndPushNoRemote",
+    "Pull and push isn't available while you have local changes so commit or stash them first":
+      "workspace.git.actions.unavailable.pullAndPushDirty",
+    "Pull and push isn't available because this branch is already in sync":
+      "workspace.git.actions.unavailable.pullAndPushInSync",
+    "Create PR isn't available right now because GitHub isn't connected":
+      "workspace.git.actions.unavailable.createPrNoGithub",
+    "Create PR isn't available because this branch doesn't have any new commits yet":
+      "workspace.git.actions.unavailable.createPrNoCommits",
+    "Merge isn't available because we couldn't determine the base branch":
+      "workspace.git.actions.unavailable.mergeNoBase",
+    "Merge isn't available while you have local changes so commit or stash them first":
+      "workspace.git.actions.unavailable.mergeDirty",
+    "Merge isn't available because this branch doesn't have anything new to merge yet":
+      "workspace.git.actions.unavailable.mergeNothing",
+    "Update isn't available because we couldn't determine the base branch":
+      "workspace.git.actions.unavailable.updateNoBase",
+    "Update isn't available while you have local changes so commit or stash them first":
+      "workspace.git.actions.unavailable.updateDirty",
+    "Archive isn't available here because this workspace was not created as a Paseo worktree":
+      "workspace.git.actions.unavailable.archiveNotWorktree",
+    "Merge PR isn't available right now because GitHub isn't connected":
+      "workspace.git.actions.unavailable.mergePrNoGithub",
+    "Merge PR isn't available because there isn't a pull request yet":
+      "workspace.git.actions.unavailable.mergePrMissing",
+    "Merge PR isn't available because the pull request is still a draft":
+      "workspace.git.actions.unavailable.mergePrDraft",
+    "Merge PR isn't available because the pull request is already merged":
+      "workspace.git.actions.unavailable.mergePrMerged",
+    "Merge PR isn't available because the pull request is closed":
+      "workspace.git.actions.unavailable.mergePrClosed",
+    "Merge PR isn't available because the pull request has conflicts":
+      "workspace.git.actions.unavailable.mergePrConflicts",
+    "Merge PR isn't available here because this repository uses a merge queue":
+      "workspace.git.actions.unavailable.mergePrQueue",
+    "Merge PR isn't available until GitHub reports the pull request is ready to merge":
+      "workspace.git.actions.unavailable.mergePrNotReady",
+    "Auto-merge is enabled, but this account can't disable it":
+      "workspace.git.actions.unavailable.autoMergeCannotDisable",
+  };
+  if (
+    message.startsWith("Update isn't available because this branch is already up to date with ")
+  ) {
+    return t("workspace.git.actions.unavailable.updateCurrent", { baseRef: baseRefLabel });
+  }
+  const key = keyByMessage[message];
+  return key ? t(key) : message;
+}
+
+function getWorktreeArchiveWarningLabels(
+  t: (key: string, options?: Record<string, unknown>) => string,
+): WorktreeArchiveWarningLabels {
+  return {
+    title: (worktreeName) => t("workspace.git.actions.archiveWarning.title", { worktreeName }),
+    confirm: t("workspace.git.actions.archiveWarning.confirm"),
+    cancel: t("workspace.git.actions.archiveWarning.cancel"),
+    uncommittedChanges: t("workspace.git.actions.archiveWarning.uncommittedChanges"),
+    uncommittedChangesWithDiff: (diffStat) =>
+      t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
+    addedLine: (count) =>
+      t(
+        count === 1
+          ? "workspace.git.actions.archiveWarning.addedLine"
+          : "workspace.git.actions.archiveWarning.addedLines",
+        { count },
+      ),
+    deletedLine: (count) =>
+      t(
+        count === 1
+          ? "workspace.git.actions.archiveWarning.deletedLine"
+          : "workspace.git.actions.archiveWarning.deletedLines",
+        { count },
+      ),
+    unpushedCommit: (count) =>
+      t(
+        count === 1
+          ? "workspace.git.actions.archiveWarning.unpushedCommit"
+          : "workspace.git.actions.archiveWarning.unpushedCommits",
+        { count },
+      ),
+  };
 }

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -16,7 +17,6 @@ import {
   MessageSquare,
 } from "lucide-react-native";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { getActivityVerb, getStateLabel } from "@/git/pr-pane-data";
 import type {
   CheckStatus,
   PrPaneActivity,
@@ -35,6 +35,7 @@ function activityPressableStyle({ hovered }: { hovered?: boolean }) {
 
 export function PrPane({ data }: { data: PrPaneData }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const [checksOpen, setChecksOpen] = useState(true);
   const [reviewsOpen, setReviewsOpen] = useState(true);
 
@@ -66,7 +67,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
 
   const stateColor = getStateColor(data.state, theme);
   const StateIcon = getStateIcon(data.state);
-  const stateLabel = getStateLabel(data.state);
+  const stateLabel = t(`workspace.git.pr.states.${data.state}`);
   const stateLabelStyle = useMemo(() => [styles.stateLabel, { color: stateColor }], [stateColor]);
   const keyedActivity = useMemo(
     () => data.activity.map((item, idx) => ({ key: `${item.author}-${item.kind}-${idx}`, item })),
@@ -117,7 +118,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
       <View style={styles.divider} />
 
       <Section
-        title="Checks"
+        title={t("workspace.git.pr.sections.checks")}
         open={checksOpen}
         onToggle={handleToggleChecks}
         summary={
@@ -151,7 +152,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
       <View style={styles.divider} />
 
       <Section
-        title="Reviews"
+        title={t("workspace.git.pr.sections.reviews")}
         open={reviewsOpen}
         onToggle={handleToggleReviews}
         summary={
@@ -266,7 +267,9 @@ function CheckStatusIcon({ status }: { status: CheckStatus }) {
 }
 
 function ActivityRow({ item }: { item: PrPaneActivity }) {
-  const verb = getActivityVerb(item);
+  const { t } = useTranslation();
+  const verb = getTranslatedActivityVerb(item, t);
+  const age = item.age === "just now" ? t("workspace.git.pr.time.justNow") : item.age;
   const handlePress = useCallback(() => {
     void openExternalUrl(item.url);
   }, [item.url]);
@@ -285,7 +288,7 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
             {item.author}
           </Text>
           <Text style={styles.rowMetaMid}>{verb}</Text>
-          <Text style={styles.rowMeta}>{item.age}</Text>
+          <Text style={styles.rowMeta}>{age}</Text>
         </View>
         <Text style={styles.rowBody} numberOfLines={2}>
           {item.body}
@@ -293,6 +296,18 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
       </View>
     </Pressable>
   );
+}
+
+function getTranslatedActivityVerb(
+  item: Pick<PrPaneActivity, "kind" | "reviewState">,
+  t: (key: string) => string,
+): string {
+  if (item.kind === "comment") return t("workspace.git.pr.activity.commented");
+  if (item.reviewState === "approved") return t("workspace.git.pr.activity.approved");
+  if (item.reviewState === "changes_requested") {
+    return t("workspace.git.pr.activity.requestedChanges");
+  }
+  return t("workspace.git.pr.activity.reviewed");
 }
 
 function getStateColor(state: PrState, theme: ReturnType<typeof useUnistyles>["theme"]): string {
