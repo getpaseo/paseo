@@ -184,6 +184,9 @@ import {
 } from "@/workspace/file-open";
 
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
+// Archived-count history stays fresh for 5 minutes: long enough that a single
+// fetch on first workspace focus covers many activations without re-polling.
+const ARCHIVED_COUNT_STALE_TIME_MS = 5 * 60_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
@@ -1554,19 +1557,20 @@ function WorkspaceScreenContent({
   const closeArchivedSheet = useCallback(() => {
     setIsArchivedSheetVisible(false);
   }, []);
-  // Read agent-history data from the React Query cache only — `enabled: false`
-  // suppresses any fetch from a focused workspace screen. The cache is
-  // populated by the archived-sessions sheet (when opened) and by the sidebar
-  // Sessions screen, so the pill stays hidden until the user has touched one
-  // of those entry points. That keeps every workspace activation cheap while
-  // still letting the count drive the pill once data is available.
-  const { agents: cachedAgentHistory } = useAgentHistory({
+  // Fetch agent history once per focused workspace to derive the archived
+  // count that gates the "Archived Sessions(N)" pill. A long staleTime means
+  // the first focus issues a single fetch and subsequent activations read the
+  // cache instead of revalidating — avoiding the per-activation / 30s-poll
+  // cost an eager default-staleTime fetch would incur, while still breaking
+  // the chicken-and-egg where a cache-only read can never populate itself.
+  const { agents: agentHistoryForCount } = useAgentHistory({
     serverId: normalizedServerId,
-    enabled: false,
+    enabled: isRouteFocused,
+    staleTimeMs: ARCHIVED_COUNT_STALE_TIME_MS,
   });
   const archivedSessionCount = useMemo(
-    () => selectArchivedAgentsForCwd(cachedAgentHistory, workspaceDirectory).length,
-    [cachedAgentHistory, workspaceDirectory],
+    () => selectArchivedAgentsForCwd(agentHistoryForCount, workspaceDirectory).length,
+    [agentHistoryForCount, workspaceDirectory],
   );
 
   // Warm the workspace-scoped provider snapshot so the model picker is ready when opened.
