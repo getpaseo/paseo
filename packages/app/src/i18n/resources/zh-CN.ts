@@ -147,10 +147,113 @@ export const zhCN: TranslationResources = {
       showAgainWhenReachable: "Host 可访问后将再次显示此 Agent。",
     },
   },
+  importSession: {
+    title: "导入会话",
+    filters: {
+      all: "全部",
+    },
+    status: {
+      connectHost: "连接到 Host 以导入会话",
+      updateHost: "更新 Host 以导入会话。",
+      noProviders: "没有已启用的可导入 Provider。",
+      loading: "正在加载最近会话...",
+      failedAll: "无法加载最近会话。",
+      failedProviders: "无法加载 {{providers}} 的会话。",
+      failedImport: "无法导入所选会话。",
+    },
+    actions: {
+      refresh: "刷新会话",
+    },
+    row: {
+      importing: "正在导入...",
+    },
+  },
+  workspace: {
+    fileExplorer: {
+      sort: {
+        name: "名称",
+        modified: "修改时间",
+        size: "大小",
+      },
+      context: {
+        size: "大小",
+        modified: "修改时间",
+        copyPath: "复制路径",
+        download: "下载",
+      },
+      actions: {
+        back: "返回",
+        retry: "重试",
+        refresh: "刷新文件",
+        refreshing: "正在刷新文件",
+      },
+      empty: {
+        noFiles: "没有文件",
+      },
+      states: {
+        unavailable: "Workspace 不可用",
+        loading: "正在加载文件...",
+      },
+    },
+    setup: {
+      descriptor: {
+        label: "Setup",
+        completed: "Setup 已完成",
+        failed: "Setup 失败",
+        workspace: "Workspace setup",
+      },
+      status: {
+        running: "正在运行",
+        completed: "已完成",
+        failed: "失败",
+        waiting: "正在等待 setup 输出",
+      },
+      waiting: "正在 setup workspace...",
+      empty: {
+        noCommands: "此 workspace 没有运行 setup 命令。",
+      },
+      accessibility: {
+        noCommands: "此 workspace 没有运行 setup 命令",
+        log: "Workspace setup 日志",
+      },
+      log: {
+        noOutput: "没有输出",
+      },
+    },
+    browser: {
+      unavailable: {
+        title: "浏览器仅桌面端可用",
+        subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
+      },
+      session: "浏览器会话 {{browserId}}",
+      controls: {
+        back: "后退",
+        forward: "前进",
+        stopLoading: "停止加载",
+        refresh: "刷新",
+        browserUrl: "浏览器 URL",
+        enterUrl: "输入 URL",
+        openDevTools: "打开浏览器开发者工具",
+        cancelSelector: "取消元素选择器",
+        selectElement: "选择元素",
+      },
+      errors: {
+        failedToLoad: "页面加载失败",
+        invalidUrl: "浏览器 URL 无效",
+        unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
+      },
+    },
+    terminal: {
+      hostDisconnected: "Host 未连接",
+    },
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",
       creatingAgent: "正在创建 Agent",
+    },
+    file: {
+      executionDirectoryMissing: "未找到 workspace 执行目录。",
     },
   },
   settings: {

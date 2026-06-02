@@ -81,4 +81,20 @@ describe("translation resources", () => {
     expect(en.settings.project.metadata.title).toBe("Metadata generation");
     expect(en.settings.project.actions.save).toBe("Save");
   });
+
+  it("includes workspace and panel keys for the Batch 4A migration", () => {
+    expect(en.importSession.title).toBe("Import session");
+    expect(en.importSession.status.connectHost).toBe("Connect to a host to import sessions");
+    expect(en.importSession.actions.refresh).toBe("Refresh sessions");
+    expect(en.workspace.fileExplorer.sort.name).toBe("Name");
+    expect(en.workspace.fileExplorer.empty.noFiles).toBe("No files");
+    expect(en.workspace.setup.status.running).toBe("Running");
+    expect(en.workspace.setup.empty.noCommands).toBe("No setup commands ran for this workspace.");
+    expect(en.workspace.browser.unavailable.title).toBe("Browser is desktop-only");
+    expect(en.workspace.browser.controls.enterUrl).toBe("Enter URL");
+    expect(en.workspace.terminal.hostDisconnected).toBe("Host is not connected");
+    expect(en.panels.file.executionDirectoryMissing).toBe(
+      "Workspace execution directory not found.",
+    );
+  });
 });

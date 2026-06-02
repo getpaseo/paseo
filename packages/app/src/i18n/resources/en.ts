@@ -146,10 +146,113 @@ export const en = {
       showAgainWhenReachable: "We will show this agent again as soon as the host is reachable.",
     },
   },
+  importSession: {
+    title: "Import session",
+    filters: {
+      all: "All",
+    },
+    status: {
+      connectHost: "Connect to a host to import sessions",
+      updateHost: "Update the host to import sessions.",
+      noProviders: "No importable providers are enabled.",
+      loading: "Loading recent sessions...",
+      failedAll: "Could not load recent sessions.",
+      failedProviders: "Could not load sessions for {{providers}}.",
+      failedImport: "Could not import selected session.",
+    },
+    actions: {
+      refresh: "Refresh sessions",
+    },
+    row: {
+      importing: "Importing...",
+    },
+  },
+  workspace: {
+    fileExplorer: {
+      sort: {
+        name: "Name",
+        modified: "Modified",
+        size: "Size",
+      },
+      context: {
+        size: "Size",
+        modified: "Modified",
+        copyPath: "Copy path",
+        download: "Download",
+      },
+      actions: {
+        back: "Back",
+        retry: "Retry",
+        refresh: "Refresh files",
+        refreshing: "Refreshing files",
+      },
+      empty: {
+        noFiles: "No files",
+      },
+      states: {
+        unavailable: "Workspace is unavailable",
+        loading: "Loading files...",
+      },
+    },
+    setup: {
+      descriptor: {
+        label: "Setup",
+        completed: "Setup completed",
+        failed: "Setup failed",
+        workspace: "Workspace setup",
+      },
+      status: {
+        running: "Running",
+        completed: "Completed",
+        failed: "Failed",
+        waiting: "Waiting for setup output",
+      },
+      waiting: "Setting up workspace...",
+      empty: {
+        noCommands: "No setup commands ran for this workspace.",
+      },
+      accessibility: {
+        noCommands: "No setup commands ran for this workspace",
+        log: "Workspace setup log",
+      },
+      log: {
+        noOutput: "No output",
+      },
+    },
+    browser: {
+      unavailable: {
+        title: "Browser is desktop-only",
+        subtitle: "Open this workspace in Electron to use the built-in browser.",
+      },
+      session: "Browser session {{browserId}}",
+      controls: {
+        back: "Back",
+        forward: "Forward",
+        stopLoading: "Stop loading",
+        refresh: "Refresh",
+        browserUrl: "Browser URL",
+        enterUrl: "Enter URL",
+        openDevTools: "Open browser dev tools",
+        cancelSelector: "Cancel element selector",
+        selectElement: "Select element",
+      },
+      errors: {
+        failedToLoad: "Failed to load page",
+        invalidUrl: "Invalid browser URL",
+        unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
+      },
+    },
+    terminal: {
+      hostDisconnected: "Host is not connected",
+    },
+  },
   panels: {
     draft: {
       newAgent: "New Agent",
       creatingAgent: "Creating agent",
+    },
+    file: {
+      executionDirectoryMissing: "Workspace execution directory not found.",
     },
   },
   settings: {
