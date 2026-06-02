@@ -36,6 +36,20 @@ export interface ProviderSelectionReadiness {
   reason?: string;
 }
 
+export interface ProviderSelectionLabels {
+  defaultModel: string;
+  selectModel: string;
+  loading: string;
+  error: string;
+}
+
+const DEFAULT_PROVIDER_SELECTION_LABELS: ProviderSelectionLabels = {
+  defaultModel: "Default",
+  selectModel: "Select model",
+  loading: "Loading...",
+  error: "Error",
+};
+
 function buildModelRows(
   provider: string,
   providerLabel: string,
@@ -55,13 +69,14 @@ function buildModelRows(
 function buildSyntheticDefaultRow(
   provider: string,
   providerLabel: string,
+  labels: ProviderSelectionLabels,
 ): ProviderSelectionModelRow {
   return {
     favoriteKey: buildFavoriteModelKey({ provider, modelId: "" }),
     provider,
     providerLabel,
     modelId: "",
-    modelLabel: "Default",
+    modelLabel: labels.defaultModel,
     description: undefined,
     isDefault: true,
   };
@@ -71,12 +86,13 @@ function buildModelSelection(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[] | null,
+  labels: ProviderSelectionLabels,
 ): ProviderModelSelection {
   if (models === null) {
     return { kind: "loading" };
   }
   if (models.length === 0) {
-    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
+    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel, labels)] };
   }
   return { kind: "models", rows: buildModelRows(provider, providerLabel, models) };
 }
@@ -84,12 +100,13 @@ function buildModelSelection(
 function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
+  labels: ProviderSelectionLabels,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
+    return buildModelSelection(entry.provider, label, entry.models ?? null, labels);
   }
   if (entry.status === "ready") {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
+    return buildModelSelection(entry.provider, label, entry.models ?? null, labels);
   }
   if (entry.status === "loading") {
     return { kind: "loading" };
@@ -103,7 +120,9 @@ function buildEntryModelSelection(
 export function buildProviderSelectorProviders(input: {
   providerDefinitions: AgentProviderDefinition[];
   modelsByProvider: Map<string, AgentModelDefinition[]>;
+  labels?: Partial<ProviderSelectionLabels>;
 }): ProviderSelectorProvider[] {
+  const labels = { ...DEFAULT_PROVIDER_SELECTION_LABELS, ...input.labels };
   return input.providerDefinitions.map((definition) => ({
     id: definition.id,
     label: definition.label,
@@ -113,13 +132,16 @@ export function buildProviderSelectorProviders(input: {
       input.modelsByProvider.has(definition.id)
         ? (input.modelsByProvider.get(definition.id) ?? [])
         : null,
+      labels,
     ),
   }));
 }
 
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
+  labelsInput?: Partial<ProviderSelectionLabels>,
 ): ProviderSelectorProvider[] {
+  const labels = { ...DEFAULT_PROVIDER_SELECTION_LABELS, ...labelsInput };
   return (entries ?? [])
     .filter((entry) => entry.enabled)
     .map((entry) => {
@@ -127,7 +149,7 @@ export function buildSelectableProviderSelectorProviders(
       return {
         id: entry.provider,
         label,
-        modelSelection: buildEntryModelSelection(entry, label),
+        modelSelection: buildEntryModelSelection(entry, label, labels),
       };
     });
 }
@@ -149,24 +171,26 @@ export function resolveSelectedModelLabel(input: {
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
+  labels?: Partial<ProviderSelectionLabels>;
 }): string {
+  const labels = { ...DEFAULT_PROVIDER_SELECTION_LABELS, ...input.labels };
   const selectedProvider = input.selectedProvider.trim();
   if (!selectedProvider) {
-    return "Select model";
+    return labels.selectModel;
   }
 
   const provider = input.providers.find((entry) => entry.id === selectedProvider);
   if (!provider) {
-    return input.isLoading ? "Loading..." : "Select model";
+    return input.isLoading ? labels.loading : labels.selectModel;
   }
   if (provider.modelSelection.kind === "loading") {
-    return "Loading...";
+    return labels.loading;
   }
   if (provider.modelSelection.kind === "error") {
-    return "Error";
+    return labels.error;
   }
   if (provider.modelSelection.kind !== "models") {
-    return "Select model";
+    return labels.selectModel;
   }
 
   const model = provider.modelSelection.rows.find((entry) => entry.modelId === input.selectedModel);
@@ -175,7 +199,7 @@ export function resolveSelectedModelLabel(input: {
     model?.modelLabel ??
     defaultModel?.modelLabel ??
     provider.modelSelection.rows[0]?.modelLabel ??
-    "Select model"
+    labels.selectModel
   );
 }
 

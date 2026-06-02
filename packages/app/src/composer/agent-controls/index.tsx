@@ -1401,14 +1401,21 @@ export const AgentControls = memo(function AgentControls({
     [agent?.provider, models],
   );
   const agentModelSelectorProviders = useMemo(() => {
+    const labels = {
+      defaultModel: t("modelSelector.defaultModel"),
+      selectModel: t("modelSelector.selectModel"),
+      loading: t("modelSelector.loading"),
+      error: t("modelSelector.error"),
+    };
     if (snapshotSelectedEntry) {
-      return buildSelectableProviderSelectorProviders([snapshotSelectedEntry]);
+      return buildSelectableProviderSelectorProviders([snapshotSelectedEntry], labels);
     }
     return buildProviderSelectorProviders({
       providerDefinitions: agentProviderDefinitions,
       modelsByProvider: agentProviderModels,
+      labels,
     });
-  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
+  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry, t]);
 
   const modelSelection = resolveAgentModelSelection({
     models,
