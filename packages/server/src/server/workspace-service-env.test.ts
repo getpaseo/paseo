@@ -65,9 +65,9 @@ describe("buildWorkspaceServiceEnv", () => {
     ).toEqual({
       HOST: "127.0.0.1",
       PASEO_PORT: "5173",
-      PASEO_URL: "http://daemon.paseo.localhost:6767",
+      PASEO_URL: "http://daemon--paseo.localhost:6767",
       PASEO_SERVICE_DAEMON_PORT: "5173",
-      PASEO_SERVICE_DAEMON_URL: "http://daemon.paseo.localhost:6767",
+      PASEO_SERVICE_DAEMON_URL: "http://daemon--paseo.localhost:6767",
     });
   });
 
@@ -84,9 +84,9 @@ describe("buildWorkspaceServiceEnv", () => {
     ).toEqual({
       HOST: "127.0.0.1",
       PASEO_PORT: "5173",
-      PASEO_URL: "http://daemon.feature-x.paseo.localhost:6767",
+      PASEO_URL: "http://daemon--feature-x--paseo.localhost:6767",
       PASEO_SERVICE_DAEMON_PORT: "5173",
-      PASEO_SERVICE_DAEMON_URL: "http://daemon.feature-x.paseo.localhost:6767",
+      PASEO_SERVICE_DAEMON_URL: "http://daemon--feature-x--paseo.localhost:6767",
     });
   });
 
@@ -137,11 +137,32 @@ describe("buildWorkspaceServiceEnv", () => {
     ).toEqual({
       HOST: "127.0.0.1",
       PASEO_PORT: "5173",
-      PASEO_URL: "http://web.feature-x.paseo.localhost:6767",
+      PASEO_URL: "http://web--feature-x--paseo.localhost:6767",
       PASEO_SERVICE_API_PORT: "4000",
-      PASEO_SERVICE_API_URL: "http://api.feature-x.paseo.localhost:6767",
+      PASEO_SERVICE_API_URL: "http://api--feature-x--paseo.localhost:6767",
       PASEO_SERVICE_WEB_PORT: "5173",
-      PASEO_SERVICE_WEB_URL: "http://web.feature-x.paseo.localhost:6767",
+      PASEO_SERVICE_WEB_URL: "http://web--feature-x--paseo.localhost:6767",
+    });
+  });
+
+  it("uses public service URLs when a public base URL is configured", () => {
+    expect(
+      buildWorkspaceServiceEnv({
+        scriptName: "web",
+        projectSlug: "paseo",
+        branchName: "feature-x",
+        daemonPort: 6767,
+        daemonListenHost: null,
+        serviceProxyPublicBaseUrl: "https://services.example.com",
+        peers: [
+          { scriptName: "api", port: 4000 },
+          { scriptName: "web", port: 5173 },
+        ],
+      }),
+    ).toMatchObject({
+      PASEO_URL: "https://web--feature-x--paseo.services.example.com",
+      PASEO_SERVICE_API_URL: "https://api--feature-x--paseo.services.example.com",
+      PASEO_SERVICE_WEB_URL: "https://web--feature-x--paseo.services.example.com",
     });
   });
 

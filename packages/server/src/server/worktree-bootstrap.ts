@@ -2,7 +2,6 @@ import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
-import { buildPublicScriptHostname, buildScriptHostname } from "../utils/script-hostname.js";
 import {
   getScriptConfigs,
   getWorktreeTerminalSpecs,
@@ -17,7 +16,7 @@ import {
   type WorktreeSetupCommandResult,
   type WorktreeRuntimeEnv,
 } from "../utils/worktree.js";
-import { findFreePort, type ScriptRouteStore } from "./script-proxy.js";
+import { findFreePort, type ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { AgentTimelineItem, ToolCallDetail } from "./agent/agent-sdk-types.js";
 import {
@@ -700,7 +699,7 @@ interface SpawnWorkspaceScriptOptions {
   daemonPort?: number | null;
   daemonListenHost?: string | null;
   serviceProxyPublicBaseUrl?: string | null;
-  routeStore: ScriptRouteStore;
+  serviceProxy: ServiceProxySubsystem;
   runtimeStore: WorkspaceScriptRuntimeStore;
   terminalManager: TerminalManager;
   logger?: Logger;
@@ -724,7 +723,7 @@ async function setupServiceScriptRoute(params: {
   daemonListenHost: string | null | undefined;
   serviceProxyPublicBaseUrl: string | null | undefined;
   existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
-  routeStore: ScriptRouteStore;
+  serviceProxy: ServiceProxySubsystem;
 }): Promise<ServiceScriptSetupResult> {
   const {
     scriptConfigs,
@@ -737,17 +736,8 @@ async function setupServiceScriptRoute(params: {
     daemonListenHost,
     serviceProxyPublicBaseUrl,
     existingRuntimeEntry,
-    routeStore,
+    serviceProxy,
   } = params;
-  const hostname = buildScriptHostname({ projectSlug, branchName, scriptName });
-  const publicHostname = serviceProxyPublicBaseUrl
-    ? buildPublicScriptHostname({
-        projectSlug,
-        branchName,
-        scriptName,
-        publicBaseUrl: serviceProxyPublicBaseUrl,
-      })
-    : null;
 
   const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
   for (const [configuredScriptName, scriptConfig] of scriptConfigs) {
@@ -794,16 +784,15 @@ async function setupServiceScriptRoute(params: {
     peers,
   });
 
-  routeStore.registerRoute({
-    hostname,
-    publicHostname,
-    publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
+  const registeredRoute = serviceProxy.registerWorkspaceService({
     port,
     workspaceId,
     projectSlug,
+    branchName,
     scriptName,
+    publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
   });
-  return { hostname, port, env };
+  return { hostname: registeredRoute.hostname, port, env };
 }
 
 async function acquireWorkspaceScriptTerminal(params: {
@@ -843,7 +832,7 @@ export async function spawnWorkspaceScript(
     daemonPort,
     daemonListenHost,
     serviceProxyPublicBaseUrl,
-    routeStore,
+    serviceProxy,
     runtimeStore,
     terminalManager,
     logger,
@@ -886,7 +875,7 @@ export async function spawnWorkspaceScript(
         daemonListenHost,
         serviceProxyPublicBaseUrl,
         existingRuntimeEntry,
-        routeStore,
+        serviceProxy,
       });
       hostname = serviceSetup.hostname;
       port = serviceSetup.port;
@@ -923,7 +912,7 @@ export async function spawnWorkspaceScript(
       disposeLifecycleListeners = null;
 
       if (input.removeRoute && hostname) {
-        routeStore.removeRouteForWorkspaceScript({ workspaceId, scriptName });
+        serviceProxy.removeWorkspaceService({ workspaceId, scriptName });
       }
       runtimeStore.set({
         workspaceId,
@@ -991,7 +980,7 @@ export async function spawnWorkspaceScript(
   } catch (error) {
     disposeLifecycleListeners?.();
     if (routeRegistered && hostname) {
-      routeStore.removeRoute(hostname);
+      serviceProxy.removeServiceRoutesByHostnames([hostname]);
     }
     if (runtimeRegistered) {
       runtimeStore.remove({ workspaceId, scriptName });
@@ -1014,12 +1003,12 @@ export async function spawnWorkspaceScript(
 
 export function teardownWorktreeScripts(options: {
   hostnames: string[];
-  routeStore: ScriptRouteStore;
+  serviceProxy: Pick<ServiceProxySubsystem, "removeServiceRoutesByHostnames">;
   logger: Logger;
 }): void {
-  const { hostnames, routeStore, logger } = options;
+  const { hostnames, serviceProxy, logger } = options;
+  serviceProxy.removeServiceRoutesByHostnames(hostnames);
   for (const hostname of hostnames) {
-    routeStore.removeRoute(hostname);
     logger.info({ hostname }, "Removed script proxy route");
   }
 }

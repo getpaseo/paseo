@@ -126,11 +126,7 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import type { PersistedConfig } from "./persisted-config.js";
-import {
-  ScriptRouteStore,
-  createScriptProxyMiddleware,
-  createScriptProxyUpgradeHandler,
-} from "./script-proxy.js";
+import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -250,9 +246,8 @@ export interface PaseoDaemonConfig {
   relayUseTls?: boolean;
   relayPublicUseTls?: boolean;
   serviceProxy?: {
-    enabled: boolean;
-    listen: string;
     publicBaseUrl: string | null;
+    standaloneListen: string | null;
   };
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
@@ -282,7 +277,7 @@ export interface PaseoDaemon {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
-  scriptRouteStore: ScriptRouteStore;
+  serviceProxy: ServiceProxySubsystem;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -336,24 +331,25 @@ export async function createPaseoDaemon(
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
 
-  const scriptRouteStore = new ScriptRouteStore();
+  const serviceProxyPublicBaseUrl = config.serviceProxy?.publicBaseUrl
+    ? config.serviceProxy.publicBaseUrl
+    : null;
+  const serviceProxy = createServiceProxySubsystem({
+    logger,
+    publicBaseUrl: serviceProxyPublicBaseUrl,
+  });
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
   const configuredHostnames = config.hostnames ?? config.allowedHosts;
-  const serviceProxyPublicBaseUrl =
-    config.serviceProxy?.enabled && config.serviceProxy.publicBaseUrl
-      ? config.serviceProxy.publicBaseUrl
-      : null;
   let wsServer: VoiceAssistantWebSocketServer | null = null;
-  let serviceProxyHttpServer: ReturnType<typeof createHTTPServer> | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
-    routeStore: scriptRouteStore,
+    serviceProxy,
     onChange: createScriptStatusEmitter({
       sessions: () =>
         wsServer?.listActiveSessions().map((session) => ({
           emit: (message) => session.emitServerMessage(message),
         })) ?? [],
-      routeStore: scriptRouteStore,
+      serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       resolveWorkspaceDirectory: async (workspaceId) =>
@@ -363,12 +359,17 @@ export async function createPaseoDaemon(
     }),
   });
   const handleBranchChange = createBranchChangeRouteHandler({
-    routeStore: scriptRouteStore,
+    serviceProxy,
     onRoutesChanged: (workspaceId) => {
       scriptHealthMonitor.invalidateWorkspace(workspaceId);
     },
     logger,
   });
+
+  // Service proxy classifies service hosts before daemon auth/route fallthrough.
+  // Registered service hosts proxy directly; known service namespaces without a
+  // route return 404 and never reach daemon APIs.
+  app.use(serviceProxy.middleware());
 
   // Host allowlist / DNS rebinding protection (vite-like semantics).
   // For non-TCP (unix sockets), skip host validation.
@@ -418,11 +419,6 @@ export async function createPaseoDaemon(
       logger.warn(context, "Rejected HTTP request with invalid daemon password");
     }),
   );
-
-  // Script proxy — intercepts requests for registered *.localhost hostnames
-  // and forwards them to the corresponding local script port. Placed after
-  // host/CORS/auth checks but before the rest of the routes.
-  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
 
   // Serve static files from public directory
   app.use("/public", express.static(staticDir));
@@ -507,34 +503,10 @@ export async function createPaseoDaemon(
   // VoiceAssistantWebSocketServer attaches its own "upgrade" listener so that
   // script-bound upgrades are forwarded first. The handler is a no-op for
   // requests that don't match a registered script route.
-  const scriptProxyUpgradeHandler = createScriptProxyUpgradeHandler({
-    routeStore: scriptRouteStore,
-    logger,
-  });
-  httpServer.on("upgrade", scriptProxyUpgradeHandler);
+  httpServer.on("upgrade", serviceProxy.upgradeHandler({ passthroughUnknown: true }));
 
-  if (config.serviceProxy?.enabled) {
-    const serviceProxyTarget = parseListenString(config.serviceProxy.listen);
-    const serviceProxyApp = express();
-    serviceProxyApp.set("trust proxy", true);
-    serviceProxyApp.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
-    serviceProxyApp.use((_req, res) => {
-      res.status(404).send("404 Not Found");
-    });
-    serviceProxyHttpServer = createHTTPServer(serviceProxyApp);
-    const serviceProxyUpgradeHandler = createScriptProxyUpgradeHandler({
-      routeStore: scriptRouteStore,
-      logger,
-    });
-    serviceProxyHttpServer.on("upgrade", (req, socket, head) => {
-      const hostHeader = req.headers.host;
-      if (!hostHeader || !scriptRouteStore.findRoute(hostHeader)) {
-        socket.destroy();
-        return;
-      }
-      serviceProxyUpgradeHandler(req, socket as import("node:net").Socket, head);
-    });
-    serviceProxyListenTarget = serviceProxyTarget;
+  if (config.serviceProxy?.standaloneListen) {
+    serviceProxyListenTarget = parseListenString(config.serviceProxy.standaloneListen);
   }
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
@@ -767,7 +739,7 @@ export async function createPaseoDaemon(
               sessionLogger: logger,
               terminalManager,
               archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
-              scriptRouteStore,
+              serviceProxy,
               scriptRuntimeStore,
               getDaemonTcpPort: () =>
                 boundListenTarget?.type === "tcp" ? boundListenTarget.port : null,
@@ -914,194 +886,185 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
 
   const start = async () => {
-    // Start main HTTP server
-    await new Promise<void>((resolve, reject) => {
-      const onError = (err: Error) => {
-        httpServer.off("listening", onListening);
-        reject(err);
-      };
-      const onListening = () => {
-        httpServer.off("error", onError);
-        const logAndResolve = async () => {
-          boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
-          const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
-          agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
-          agentManager.setMcpBaseUrl(agentMcpBaseUrl);
-          daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
-            agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
-          });
-          daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
-            agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");
-          });
-          const relayEnabled = config.relayEnabled ?? true;
-          const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
-          const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-          const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
-          const relayPublicUseTls = config.relayPublicUseTls ?? relayUseTls;
-          const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
-
-          if (boundListenTarget.type === "tcp") {
-            logger.info(
-              {
-                host: boundListenTarget.host,
-                port: boundListenTarget.port,
-                authRequired: !!config.auth?.password,
-                elapsed: elapsed(),
-              },
-              `Server listening on http://${boundListenTarget.host}:${boundListenTarget.port}`,
-            );
-          } else {
-            logger.info(
-              {
-                path: boundListenTarget.path,
-                authRequired: !!config.auth?.password,
-                elapsed: elapsed(),
-              },
-              `Server listening on ${boundListenTarget.path}`,
-            );
-          }
-          if (config.auth?.password) {
-            logger.info("Daemon password authentication enabled");
-          }
-
-          wsServer = new VoiceAssistantWebSocketServer(
-            httpServer,
-            logger,
-            serverId,
-            agentManager,
-            agentStorage,
-            downloadTokenStore,
-            config.paseoHome,
-            daemonConfigStore,
-            mcpBaseUrl,
-            { allowedOrigins, hostnames: configuredHostnames },
-            config.auth,
-            speechService,
-            terminalManager,
-            {
-              finalTimeoutMs: config.dictationFinalTimeoutMs,
-            },
-            daemonVersion,
-            (intent) => {
-              try {
-                config.onLifecycleIntent?.(intent);
-              } catch (error) {
-                logger.error({ err: error, intent }, "Failed to handle daemon lifecycle intent");
-              }
-            },
-            projectRegistry,
-            workspaceRegistry,
-            chatService,
-            loopService,
-            scheduleService,
-            checkoutDiffManager,
-            scriptRouteStore,
-            scriptRuntimeStore,
-            handleBranchChange,
-            () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
-            () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
-            (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
-            workspaceGitService,
-            github,
-            config.pushNotificationSender,
-            providerSnapshotManager,
-            {
-              listen: formatListenTarget(boundListenTarget ?? listenTarget),
-              worktreesRoot: config.worktreesRoot,
-              relay: {
-                enabled: relayEnabled,
-                endpoint: relayEndpoint,
-                publicEndpoint: relayPublicEndpoint,
-                useTls: relayUseTls,
-                publicUseTls: relayPublicUseTls,
-              },
-            },
-            serviceProxyPublicBaseUrl,
-          );
-
-          if (relayEnabled) {
-            const offer = await createConnectionOfferV2({
-              serverId,
-              daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
-              relay: {
-                endpoint: relayPublicEndpoint,
-                useTls: relayPublicUseTls,
-              },
-            });
-
-            encodeOfferToFragmentUrl({ offer, appBaseUrl });
-
-            relayTransport?.stop().catch(() => undefined);
-            relayTransport = startRelayTransport({
-              logger,
-              attachSocket: (ws, metadata) => {
-                if (!wsServer) {
-                  throw new Error("WebSocket server not initialized");
-                }
-                return wsServer.attachExternalSocket(ws, metadata);
-              },
-              relayEndpoint,
-              relayUseTls,
-              serverId,
-              daemonKeyPair: daemonKeyPair.keyPair,
-            });
-          }
-        };
-
-        logAndResolve().then(resolve, reject);
-      };
-      httpServer.once("error", onError);
-      httpServer.once("listening", onListening);
-
-      if (listenTarget.type === "tcp") {
-        httpServer.listen(listenTarget.port, listenTarget.host);
-      } else {
-        if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
-          unlinkSync(listenTarget.path);
-        }
-        httpServer.listen(listenTarget.path);
+    let mainStarted = false;
+    try {
+      if (serviceProxyListenTarget) {
+        const boundServiceProxyTarget = await serviceProxy.startStandalone({
+          listenTarget: serviceProxyListenTarget,
+        });
+        serviceProxyListenTarget = boundServiceProxyTarget;
+        logger.info(
+          {
+            listen: formatListenTarget(serviceProxyListenTarget),
+            publicBaseUrl: serviceProxyPublicBaseUrl,
+            elapsed: elapsed(),
+          },
+          "Service proxy listening",
+        );
       }
-    });
 
-    if (serviceProxyHttpServer && serviceProxyListenTarget) {
-      const proxyServer = serviceProxyHttpServer;
-      const proxyTarget = serviceProxyListenTarget;
+      // Start main HTTP server
       await new Promise<void>((resolve, reject) => {
         const onError = (err: Error) => {
-          proxyServer.off("listening", onListening);
+          httpServer.off("listening", onListening);
           reject(err);
         };
         const onListening = () => {
-          proxyServer.off("error", onError);
-          serviceProxyListenTarget = resolveBoundListenTarget(proxyTarget, proxyServer);
-          logger.info(
-            {
-              listen: formatListenTarget(serviceProxyListenTarget),
-              publicBaseUrl: serviceProxyPublicBaseUrl,
-              elapsed: elapsed(),
-            },
-            "Service proxy listening",
-          );
-          resolve();
-        };
-        proxyServer.once("error", onError);
-        proxyServer.once("listening", onListening);
+          httpServer.off("error", onError);
+          mainStarted = true;
+          const logAndResolve = async () => {
+            boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
+            const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
+            agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
+            agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+            daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
+              agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
+            });
+            daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
+              agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");
+            });
+            const relayEnabled = config.relayEnabled ?? true;
+            const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+            const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
+            const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
+            const relayPublicUseTls = config.relayPublicUseTls ?? relayUseTls;
+            const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
 
-        if (proxyTarget.type === "tcp") {
-          proxyServer.listen(proxyTarget.port, proxyTarget.host);
+            if (boundListenTarget.type === "tcp") {
+              logger.info(
+                {
+                  host: boundListenTarget.host,
+                  port: boundListenTarget.port,
+                  authRequired: !!config.auth?.password,
+                  elapsed: elapsed(),
+                },
+                `Server listening on http://${boundListenTarget.host}:${boundListenTarget.port}`,
+              );
+            } else {
+              logger.info(
+                {
+                  path: boundListenTarget.path,
+                  authRequired: !!config.auth?.password,
+                  elapsed: elapsed(),
+                },
+                `Server listening on ${boundListenTarget.path}`,
+              );
+            }
+            if (config.auth?.password) {
+              logger.info("Daemon password authentication enabled");
+            }
+
+            wsServer = new VoiceAssistantWebSocketServer(
+              httpServer,
+              logger,
+              serverId,
+              agentManager,
+              agentStorage,
+              downloadTokenStore,
+              config.paseoHome,
+              daemonConfigStore,
+              mcpBaseUrl,
+              { allowedOrigins, hostnames: configuredHostnames },
+              config.auth,
+              speechService,
+              terminalManager,
+              {
+                finalTimeoutMs: config.dictationFinalTimeoutMs,
+              },
+              daemonVersion,
+              (intent) => {
+                try {
+                  config.onLifecycleIntent?.(intent);
+                } catch (error) {
+                  logger.error({ err: error, intent }, "Failed to handle daemon lifecycle intent");
+                }
+              },
+              projectRegistry,
+              workspaceRegistry,
+              chatService,
+              loopService,
+              scheduleService,
+              checkoutDiffManager,
+              serviceProxy,
+              scriptRuntimeStore,
+              handleBranchChange,
+              () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+              () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
+              (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
+              workspaceGitService,
+              github,
+              config.pushNotificationSender,
+              providerSnapshotManager,
+              {
+                listen: formatListenTarget(boundListenTarget ?? listenTarget),
+                worktreesRoot: config.worktreesRoot,
+                relay: {
+                  enabled: relayEnabled,
+                  endpoint: relayEndpoint,
+                  publicEndpoint: relayPublicEndpoint,
+                  useTls: relayUseTls,
+                  publicUseTls: relayPublicUseTls,
+                },
+              },
+              serviceProxyPublicBaseUrl,
+            );
+
+            if (relayEnabled) {
+              const offer = await createConnectionOfferV2({
+                serverId,
+                daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
+                relay: {
+                  endpoint: relayPublicEndpoint,
+                  useTls: relayPublicUseTls,
+                },
+              });
+
+              encodeOfferToFragmentUrl({ offer, appBaseUrl });
+
+              relayTransport?.stop().catch(() => undefined);
+              relayTransport = startRelayTransport({
+                logger,
+                attachSocket: (ws, metadata) => {
+                  if (!wsServer) {
+                    throw new Error("WebSocket server not initialized");
+                  }
+                  return wsServer.attachExternalSocket(ws, metadata);
+                },
+                relayEndpoint,
+                relayUseTls,
+                serverId,
+                daemonKeyPair: daemonKeyPair.keyPair,
+              });
+            }
+          };
+
+          logAndResolve().then(resolve, reject);
+        };
+        httpServer.once("error", onError);
+        httpServer.once("listening", onListening);
+
+        if (listenTarget.type === "tcp") {
+          httpServer.listen(listenTarget.port, listenTarget.host);
         } else {
-          if (proxyTarget.type === "socket" && existsSync(proxyTarget.path)) {
-            unlinkSync(proxyTarget.path);
+          if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+            unlinkSync(listenTarget.path);
           }
-          proxyServer.listen(proxyTarget.path);
+          httpServer.listen(listenTarget.path);
         }
       });
-    }
 
-    // Start speech service after listening so synchronous Sherpa native
-    // model loading doesn't block the server from accepting connections.
-    speechService.start();
-    scriptHealthMonitor.start();
+      // Start speech service after listening so synchronous Sherpa native
+      // model loading doesn't block the server from accepting connections.
+      speechService.start();
+      scriptHealthMonitor.start();
+    } catch (error) {
+      await serviceProxy.stopStandalone().catch(() => undefined);
+      if (mainStarted) {
+        httpServer.closeAllConnections();
+        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      }
+      throw error;
+    }
   };
 
   const stop = async () => {
@@ -1118,18 +1081,7 @@ export async function createPaseoDaemon(
     if (wsServer) {
       await wsServer.close();
     }
-    if (serviceProxyHttpServer) {
-      serviceProxyHttpServer.closeAllConnections();
-      await new Promise<void>((resolve) => {
-        serviceProxyHttpServer?.close(() => resolve());
-      });
-      if (
-        serviceProxyListenTarget?.type === "socket" &&
-        existsSync(serviceProxyListenTarget.path)
-      ) {
-        unlinkSync(serviceProxyListenTarget.path);
-      }
-    }
+    await serviceProxy.stopStandalone();
     // Force-drop remaining sockets so httpServer.close() resolves promptly.
     // We've already closed wsServer (which sent ws-layer close frames) and
     // stopped every other service, so anything still attached is a TCP
@@ -1152,7 +1104,7 @@ export async function createPaseoDaemon(
     agentManager,
     agentStorage,
     terminalManager,
-    scriptRouteStore,
+    serviceProxy,
     scriptRuntimeStore,
     start,
     stop,
