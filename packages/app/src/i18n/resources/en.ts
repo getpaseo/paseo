@@ -12,8 +12,14 @@ export const en = {
     states: {
       loading: "Loading...",
       starting: "Starting...",
+      copied: "Copied",
+      copiedLabel: "Copied {{label}}",
       downloadComplete: "Download complete",
       downloadFailed: "Download failed",
+    },
+    errors: {
+      unableToSave: "Unable to save",
+      nameRequired: "Name is required",
     },
   },
   shell: {
@@ -753,6 +759,29 @@ export const en = {
     searchPlaceholder: "Filter branches...",
     empty: "No branches found.",
     title: "Switch branch",
+    uncommittedTitle: "Uncommitted changes",
+    uncommittedMessage: "You have uncommitted changes. Stash them before switching branches?",
+    stashAndSwitch: "Stash & Switch",
+    failedToStash: "Failed to stash changes",
+    failedToSwitch: "Failed to switch branch",
+  },
+  imageAttachmentPicker: {
+    permissionTitle: "Permission required",
+    permissionMessage: "Please allow access to your photo library to attach images.",
+    errorTitle: "Error",
+    failedToSelect: "Failed to select image",
+    dialogTitle: "Attach images",
+    dialogFilterName: "Images",
+  },
+  workspaceSetup: {
+    errors: {
+      failedCreateWorktree: "Failed to create worktree",
+      failedOpenProject: "Failed to open project",
+      selectModel: "Select a model",
+      hostDisconnected: "Host is not connected",
+      pendingRequired: "No workspace setup is pending",
+      composerStateRequired: "Workspace setup composer state is required",
+    },
   },
   onboarding: {
     title: "Welcome to Paseo",

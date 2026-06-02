@@ -246,4 +246,34 @@ describe("translation resources", () => {
     expect(en.toolCallDetails.empty).toBe("No additional details available");
     expect(en.message.actions.openFile).toBe("Open file");
   });
+
+  it("includes hook and modal utility keys for the Batch 4M migration", () => {
+    expect(en.imageAttachmentPicker.permissionTitle).toBe("Permission required");
+    expect(en.imageAttachmentPicker.permissionMessage).toBe(
+      "Please allow access to your photo library to attach images.",
+    );
+    expect(en.imageAttachmentPicker.errorTitle).toBe("Error");
+    expect(en.imageAttachmentPicker.failedToSelect).toBe("Failed to select image");
+    expect(en.imageAttachmentPicker.dialogTitle).toBe("Attach images");
+    expect(en.imageAttachmentPicker.dialogFilterName).toBe("Images");
+    expect(en.common.states.copied).toBe("Copied");
+    expect(en.common.states.copiedLabel).toBe("Copied {{label}}");
+    expect(en.common.errors.unableToSave).toBe("Unable to save");
+    expect(en.common.errors.nameRequired).toBe("Name is required");
+    expect(en.branchSwitcher.uncommittedTitle).toBe("Uncommitted changes");
+    expect(en.branchSwitcher.uncommittedMessage).toBe(
+      "You have uncommitted changes. Stash them before switching branches?",
+    );
+    expect(en.branchSwitcher.stashAndSwitch).toBe("Stash & Switch");
+    expect(en.branchSwitcher.failedToStash).toBe("Failed to stash changes");
+    expect(en.branchSwitcher.failedToSwitch).toBe("Failed to switch branch");
+    expect(en.workspaceSetup.errors.failedCreateWorktree).toBe("Failed to create worktree");
+    expect(en.workspaceSetup.errors.failedOpenProject).toBe("Failed to open project");
+    expect(en.workspaceSetup.errors.selectModel).toBe("Select a model");
+    expect(en.workspaceSetup.errors.hostDisconnected).toBe("Host is not connected");
+    expect(en.workspaceSetup.errors.pendingRequired).toBe("No workspace setup is pending");
+    expect(en.workspaceSetup.errors.composerStateRequired).toBe(
+      "Workspace setup composer state is required",
+    );
+  });
 });

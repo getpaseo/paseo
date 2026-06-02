@@ -14,8 +14,14 @@ export const zhCN: TranslationResources = {
     states: {
       loading: "加载中...",
       starting: "正在开始...",
+      copied: "已复制",
+      copiedLabel: "已复制 {{label}}",
       downloadComplete: "下载完成",
       downloadFailed: "下载失败",
+    },
+    errors: {
+      unableToSave: "无法保存",
+      nameRequired: "名称必填",
     },
   },
   shell: {
@@ -739,6 +745,29 @@ export const zhCN: TranslationResources = {
     searchPlaceholder: "筛选分支...",
     empty: "没有找到分支。",
     title: "切换分支",
+    uncommittedTitle: "未 commit 的变更",
+    uncommittedMessage: "你有未 commit 的变更。切换分支前要先 stash 吗？",
+    stashAndSwitch: "Stash 并切换",
+    failedToStash: "Stash 变更失败",
+    failedToSwitch: "切换分支失败",
+  },
+  imageAttachmentPicker: {
+    permissionTitle: "需要权限",
+    permissionMessage: "请允许访问照片图库以附加图片。",
+    errorTitle: "错误",
+    failedToSelect: "选择图片失败",
+    dialogTitle: "附加图片",
+    dialogFilterName: "图片",
+  },
+  workspaceSetup: {
+    errors: {
+      failedCreateWorktree: "创建 worktree 失败",
+      failedOpenProject: "打开 project 失败",
+      selectModel: "请选择模型",
+      hostDisconnected: "Host 未连接",
+      pendingRequired: "没有待处理的 workspace setup",
+      composerStateRequired: "Workspace setup composer 状态必填",
+    },
   },
   onboarding: {
     title: "欢迎使用 Paseo",

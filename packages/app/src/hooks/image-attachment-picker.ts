@@ -1,4 +1,5 @@
 import type { DesktopDialogBridge } from "@/desktop/host";
+import { i18n } from "@/i18n/i18next";
 import { isAbsolutePath } from "@/utils/path";
 
 export type PickedImageSource = { kind: "file_uri"; uri: string } | { kind: "blob"; blob: Blob };
@@ -85,8 +86,13 @@ export async function openImagePathsWithDesktopDialog(
   const options = {
     directory: false,
     multiple: true,
-    filters: [{ name: "Images", extensions: IMAGE_FILE_EXTENSIONS }],
-    title: "Attach images",
+    filters: [
+      {
+        name: i18n.t("imageAttachmentPicker.dialogFilterName"),
+        extensions: IMAGE_FILE_EXTENSIONS,
+      },
+    ],
+    title: i18n.t("imageAttachmentPicker.dialogTitle"),
   };
 
   const dialogOpen = dialog?.open;

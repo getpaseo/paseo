@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
+import { i18n } from "@/i18n/i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Composer } from "@/composer";
@@ -97,7 +99,9 @@ async function callWorkspaceCreation({
 }
 
 function failureMessageForCreationMethod(method: "create_worktree" | "open_project") {
-  return method === "create_worktree" ? "Failed to create worktree" : "Failed to open project";
+  return method === "create_worktree"
+    ? i18n.t("workspaceSetup.errors.failedCreateWorktree")
+    : i18n.t("workspaceSetup.errors.failedOpenProject");
 }
 
 function buildCreateAgentOptions({
@@ -140,6 +144,7 @@ function buildCreateAgentOptions({
 }
 
 export function WorkspaceSetupDialog() {
+  const { t } = useTranslation();
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
@@ -170,7 +175,7 @@ export function WorkspaceSetupDialog() {
   });
   const composerState = chatDraft.composerState;
   if (!composerState && pendingWorkspaceSetup) {
-    throw new Error("Workspace setup composer state is required");
+    throw new Error(t("workspaceSetup.errors.composerStateRequired"));
   }
 
   const { icon: projectIcon } = useProjectIconQuery({
@@ -218,15 +223,15 @@ export function WorkspaceSetupDialog() {
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
-      throw new Error("Host is not connected");
+      throw new Error(t("workspaceSetup.errors.hostDisconnected"));
     }
     return client;
-  }, [client, isConnected]);
+  }, [client, isConnected, t]);
 
   const ensureWorkspace = useCallback(
     async (input: { cwd: string; attachments: MessagePayload["attachments"] }) => {
       if (!pendingWorkspaceSetup) {
-        throw new Error("No workspace setup is pending");
+        throw new Error(t("workspaceSetup.errors.pendingRequired"));
       }
 
       if (createdWorkspace) {
@@ -259,6 +264,7 @@ export function WorkspaceSetupDialog() {
       mergeWorkspaces,
       pendingWorkspaceSetup,
       setHasHydratedWorkspaces,
+      t,
       withConnectedClient,
     ],
   );
@@ -287,7 +293,7 @@ export function WorkspaceSetupDialog() {
           throw new Error("Workspace setup composer state is required");
         }
         if (!composerState.selectedProvider) {
-          throw new Error("Select a model");
+          throw new Error(t("workspaceSetup.errors.selectModel"));
         }
 
         const wirePayload = splitComposerAttachmentsForSubmit(attachments);
@@ -334,6 +340,7 @@ export function WorkspaceSetupDialog() {
       serverId,
       setAgents,
       ensureWorkspace,
+      t,
       toast,
       withConnectedClient,
     ],
