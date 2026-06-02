@@ -73,6 +73,7 @@ export const en = {
     attachments: {
       addImage: "Add image",
       addIssueOrPr: "Add issue or PR",
+      dropImagesHere: "Drop images here",
       editQueuedMessage: "Edit queued message",
       sendQueuedMessageNow: "Send queued message now",
       openImage: "Open image attachment",
@@ -151,6 +152,10 @@ export const en = {
       reconnectingTo: "Reconnecting to {{serverLabel}}...",
       showAgainWhenReachable: "We will show this agent again as soon as the host is reachable.",
     },
+    archived: {
+      callout: "This agent is archived",
+      unarchive: "Unarchive",
+    },
   },
   sessions: {
     title: "Sessions",
@@ -219,6 +224,13 @@ export const en = {
       title: "Tasks",
       empty: "No tasks yet.",
     },
+    compaction: {
+      loading: "Compacting...",
+      auto: "Context automatically compacted",
+      manual: "Context manually compacted",
+      withTokens: "Context compacted ({{tokens}}K tokens)",
+      completed: "Context compacted",
+    },
   },
   importSession: {
     title: "Import session",
@@ -251,6 +263,15 @@ export const en = {
     },
   },
   workspace: {
+    route: {
+      loading: "Loading workspace",
+      connecting: "Connecting",
+      hostOffline: "{{hostName}} is offline",
+      cannotReachHost: "Cannot reach {{hostName}}",
+      hostStatus: "Host status: {{status}}",
+      missing: "Workspace not found",
+      manageHost: "Manage host",
+    },
     fileExplorer: {
       sort: {
         name: "Name",
@@ -741,6 +762,12 @@ export const en = {
       noMatchingRefs: "No matching refs.",
       searchPlaceholder: "Search branches and PRs",
       title: "Start from",
+    },
+  },
+  desktop: {
+    quitting: {
+      title: "Quitting Paseo...",
+      detail: "Stopping the local daemon.",
     },
   },
   openProject: {

@@ -1,9 +1,11 @@
 import { Text, View } from "react-native";
 import { ArrowLeftToLine, RotateCw, Settings } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { i18n } from "@/i18n/i18next";
 import { formatConnectionStatus } from "@/utils/daemons";
 import type { WorkspaceRouteState } from "@/screens/workspace/workspace-route-state";
 
@@ -45,22 +47,23 @@ function getWorkspaceHostStateTitle(
   state: Extract<WorkspaceRouteState, { kind: "unreachable" }>,
 ): string {
   if (state.connectionStatus === "connecting" || state.connectionStatus === "idle") {
-    return "Connecting";
+    return i18n.t("workspace.route.connecting");
   }
   if (state.connectionStatus === "offline") {
-    return `${state.hostName} is offline`;
+    return i18n.t("workspace.route.hostOffline", { hostName: state.hostName });
   }
-  return `Cannot reach ${state.hostName}`;
+  return i18n.t("workspace.route.cannotReachHost", { hostName: state.hostName });
 }
 
 function WorkspaceConnecting({ hostName }: { hostName: string }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
 
   return (
     <View style={styles.emptyState}>
       <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
       <View style={styles.textStack}>
-        <Text style={styles.title}>Loading workspace</Text>
+        <Text style={styles.title}>{t("workspace.route.loading")}</Text>
         <Text style={styles.description}>{hostName}</Text>
       </View>
     </View>
@@ -77,6 +80,7 @@ function WorkspaceUnreachable({
   onManageHost: () => void;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const canRetry = state.connectionStatus === "offline" || state.connectionStatus === "error";
 
   return (
@@ -89,7 +93,9 @@ function WorkspaceUnreachable({
         <Text style={styles.description}>
           {state.connectionStatus === "connecting" || state.connectionStatus === "idle"
             ? state.hostName
-            : `Host status: ${formatConnectionStatus(state.connectionStatus)}`}
+            : t("workspace.route.hostStatus", {
+                status: formatConnectionStatus(state.connectionStatus),
+              })}
         </Text>
         {state.lastError ? (
           <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -107,10 +113,10 @@ function WorkspaceUnreachable({
       {canRetry ? (
         <View style={styles.actions}>
           <Button size="sm" variant="default" leftIcon={RotateCw} onPress={onRetry}>
-            Retry
+            {t("common.actions.retry")}
           </Button>
           <Button size="sm" variant="outline" leftIcon={Settings} onPress={onManageHost}>
-            Manage host
+            {t("workspace.route.manageHost")}
           </Button>
         </View>
       ) : null}
@@ -119,15 +125,17 @@ function WorkspaceUnreachable({
 }
 
 function WorkspaceMissing({ hostName, onDismiss }: { hostName: string; onDismiss: () => void }) {
+  const { t } = useTranslation();
+
   return (
     <View style={styles.emptyState}>
       <View style={styles.textStack}>
-        <Text style={styles.title}>Workspace not found</Text>
+        <Text style={styles.title}>{t("workspace.route.missing")}</Text>
         <Text style={styles.description}>{hostName}</Text>
       </View>
       <View style={styles.actions}>
         <Button size="sm" variant="default" leftIcon={ArrowLeftToLine} onPress={onDismiss}>
-          Back
+          {t("common.actions.back")}
         </Button>
       </View>
     </View>

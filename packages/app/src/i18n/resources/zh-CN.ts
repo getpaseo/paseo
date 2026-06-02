@@ -75,6 +75,7 @@ export const zhCN: TranslationResources = {
     attachments: {
       addImage: "添加图片",
       addIssueOrPr: "添加 issue 或 PR",
+      dropImagesHere: "将图片拖放到这里",
       editQueuedMessage: "编辑排队消息",
       sendQueuedMessageNow: "立即发送排队消息",
       openImage: "打开图片附件",
@@ -152,6 +153,10 @@ export const zhCN: TranslationResources = {
       reconnectingTo: "正在重新连接 {{serverLabel}}...",
       showAgainWhenReachable: "Host 可访问后将再次显示此 Agent。",
     },
+    archived: {
+      callout: "此 Agent 已归档",
+      unarchive: "取消归档",
+    },
   },
   sessions: {
     title: "会话",
@@ -220,6 +225,13 @@ export const zhCN: TranslationResources = {
       title: "任务",
       empty: "还没有任务。",
     },
+    compaction: {
+      loading: "正在压缩...",
+      auto: "上下文已自动压缩",
+      manual: "上下文已手动压缩",
+      withTokens: "上下文已压缩（{{tokens}}K tokens）",
+      completed: "上下文已压缩",
+    },
   },
   importSession: {
     title: "导入会话",
@@ -252,6 +264,15 @@ export const zhCN: TranslationResources = {
     },
   },
   workspace: {
+    route: {
+      loading: "正在加载 workspace",
+      connecting: "正在连接",
+      hostOffline: "{{hostName}} 已离线",
+      cannotReachHost: "无法连接 {{hostName}}",
+      hostStatus: "Host 状态：{{status}}",
+      missing: "Workspace 未找到",
+      manageHost: "管理 Host",
+    },
     fileExplorer: {
       sort: {
         name: "名称",
@@ -726,6 +747,12 @@ export const zhCN: TranslationResources = {
       noMatchingRefs: "没有匹配的 refs。",
       searchPlaceholder: "搜索分支和 PR",
       title: "起始位置",
+    },
+  },
+  desktop: {
+    quitting: {
+      title: "正在退出 Paseo...",
+      detail: "正在停止本地 daemon。",
     },
   },
   openProject: {

@@ -291,4 +291,23 @@ describe("translation resources", () => {
     );
     expect(en.sidebar.worktreeSetup.openProjectSettings).toBe("Open project settings");
   });
+
+  it("includes remaining small utility chrome keys for the Batch 4O migration", () => {
+    expect(en.workspace.route.loading).toBe("Loading workspace");
+    expect(en.workspace.route.connecting).toBe("Connecting");
+    expect(en.workspace.route.hostOffline).toBe("{{hostName}} is offline");
+    expect(en.workspace.route.cannotReachHost).toBe("Cannot reach {{hostName}}");
+    expect(en.workspace.route.hostStatus).toBe("Host status: {{status}}");
+    expect(en.workspace.route.missing).toBe("Workspace not found");
+    expect(en.message.compaction.loading).toBe("Compacting...");
+    expect(en.message.compaction.auto).toBe("Context automatically compacted");
+    expect(en.message.compaction.manual).toBe("Context manually compacted");
+    expect(en.message.compaction.withTokens).toBe("Context compacted ({{tokens}}K tokens)");
+    expect(en.message.compaction.completed).toBe("Context compacted");
+    expect(en.agentPanel.archived.callout).toBe("This agent is archived");
+    expect(en.agentPanel.archived.unarchive).toBe("Unarchive");
+    expect(en.desktop.quitting.title).toBe("Quitting Paseo...");
+    expect(en.desktop.quitting.detail).toBe("Stopping the local daemon.");
+    expect(en.composer.attachments.dropImagesHere).toBe("Drop images here");
+  });
 });
