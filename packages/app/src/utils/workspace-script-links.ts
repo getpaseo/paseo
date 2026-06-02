@@ -57,10 +57,7 @@ export function resolveWorkspaceScriptLink(input: {
   }
 
   if (activeConnection.type === "relay") {
-    return {
-      openUrl: proxyUrlIsLocalOnly ? null : script.proxyUrl,
-      labelUrl: script.proxyUrl,
-    };
+    return { openUrl: null, labelUrl: script.proxyUrl };
   }
 
   if (activeConnection.type === "directSocket" || activeConnection.type === "directPipe") {

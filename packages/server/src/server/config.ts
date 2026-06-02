@@ -205,14 +205,26 @@ interface ResolvedVoiceLlm {
   model: string | null;
 }
 
+function resolveServiceProxyPublicBaseUrl(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  try {
+    return new URL(value).toString().replace(/\/$/, "");
+  } catch {
+    throw new Error(`Invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: ${value}`);
+  }
+}
+
 function resolveServiceProxyConfig(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): ResolvedServiceProxy {
-  const publicBaseUrl =
+  const publicBaseUrl = resolveServiceProxyPublicBaseUrl(
     env.PASEO_SERVICE_PROXY_PUBLIC_BASE_URL ??
-    persisted.daemon?.serviceProxy?.publicBaseUrl ??
-    null;
+      persisted.daemon?.serviceProxy?.publicBaseUrl ??
+      null,
+  );
   const enabled =
     parseBooleanEnv(env.PASEO_SERVICE_PROXY_ENABLED) ??
     persisted.daemon?.serviceProxy?.enabled ??

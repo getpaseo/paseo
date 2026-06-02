@@ -49,12 +49,16 @@ function registerRoute(
     workspaceId = "workspace-a",
     projectSlug = "paseo",
     scriptName,
+    publicHostname,
+    publicBaseUrl,
   }: {
     hostname: string;
     port: number;
     workspaceId?: string;
     projectSlug?: string;
     scriptName: string;
+    publicHostname?: string | null;
+    publicBaseUrl?: string | null;
   },
 ): void {
   routeStore.registerRoute({
@@ -63,6 +67,8 @@ function registerRoute(
     workspaceId,
     projectSlug,
     scriptName,
+    ...(publicHostname ? { publicHostname } : {}),
+    ...(publicBaseUrl ? { publicBaseUrl } : {}),
   });
 }
 
@@ -149,6 +155,42 @@ describe("script-route-branch-handler", () => {
     handleBranchChange("workspace-a", "feature/auth", "feature/billing");
 
     expect(onRoutesChanged).toHaveBeenCalledWith("workspace-a");
+  });
+
+  it("updates public route aliases from the stored public base URL", () => {
+    const routeStore = new ScriptRouteStore();
+    registerRoute(routeStore, {
+      hostname: "api.feature-auth.paseo.localhost",
+      publicHostname: "api--feature-auth--paseo.services.example.com",
+      publicBaseUrl: "https://services.example.com:8443",
+      port: 3001,
+      scriptName: "api",
+    });
+
+    const onRoutesChanged = vi.fn();
+    const handleBranchChange = createBranchChangeRouteHandler({
+      routeStore,
+      onRoutesChanged,
+    });
+
+    handleBranchChange("workspace-a", "feature/auth", "feature/billing");
+
+    expect(routeStore.findRoute("api--feature-auth--paseo.services.example.com")).toBeNull();
+    expect(routeStore.findRoute("api--feature-billing--paseo.services.example.com")).toEqual({
+      hostname: "api.feature-billing.paseo.localhost",
+      port: 3001,
+    });
+    expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
+      {
+        hostname: "api.feature-billing.paseo.localhost",
+        publicHostname: "api--feature-billing--paseo.services.example.com",
+        publicBaseUrl: "https://services.example.com:8443",
+        port: 3001,
+        workspaceId: "workspace-a",
+        projectSlug: "paseo",
+        scriptName: "api",
+      },
+    ]);
   });
 
   it("updates all services for a workspace when multiple routes are registered", () => {

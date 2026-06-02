@@ -32,12 +32,12 @@ export function createBranchChangeRouteHandler(
         branchName: newBranch,
         scriptName: route.scriptName,
       });
-      const newPublicHostname = route.publicHostname
+      const newPublicHostname = route.publicBaseUrl
         ? buildPublicScriptHostname({
             projectSlug: route.projectSlug,
             branchName: newBranch,
             scriptName: route.scriptName,
-            publicBaseUrl: `http://${route.publicHostname.split(".").slice(1).join(".")}`,
+            publicBaseUrl: route.publicBaseUrl,
           })
         : null;
       if (newHostname !== route.hostname || newPublicHostname !== (route.publicHostname ?? null)) {
@@ -59,6 +59,7 @@ export function createBranchChangeRouteHandler(
       options.routeStore.registerRoute({
         hostname: newHostname,
         publicHostname: newPublicHostname,
+        publicBaseUrl: route.publicBaseUrl ?? null,
         port: route.port,
         workspaceId: route.workspaceId,
         projectSlug: route.projectSlug,

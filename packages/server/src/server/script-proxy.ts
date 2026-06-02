@@ -34,6 +34,7 @@ export interface ScriptRouteEntry extends ScriptRoute {
   projectSlug: string;
   scriptName: string;
   publicHostname?: string | null;
+  publicBaseUrl?: string | null;
 }
 
 export class ScriptRouteStore {
@@ -47,10 +48,12 @@ export class ScriptRouteStore {
       this.removeRoute(previous.hostname);
     }
 
-    const { publicHostname, ...requiredEntry } = entry;
-    const storedEntry: ScriptRouteEntry = publicHostname
-      ? { ...requiredEntry, publicHostname }
-      : requiredEntry;
+    const { publicHostname, publicBaseUrl, ...requiredEntry } = entry;
+    const storedEntry: ScriptRouteEntry = {
+      ...requiredEntry,
+      ...(publicHostname ? { publicHostname } : {}),
+      ...(publicBaseUrl ? { publicBaseUrl } : {}),
+    };
     this.routes.set(storedEntry.hostname, storedEntry);
     for (const alias of this.getRouteHostnames(storedEntry)) {
       const aliasedCanonicalHostname = this.hostnameAliases.get(alias);

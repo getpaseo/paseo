@@ -797,6 +797,7 @@ async function setupServiceScriptRoute(params: {
   routeStore.registerRoute({
     hostname,
     publicHostname,
+    publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
     port,
     workspaceId,
     projectSlug,
