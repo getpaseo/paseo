@@ -4,6 +4,8 @@ import {
   buildPublicServiceProxyUrl,
 } from "../server/service-proxy.js";
 
+// Compatibility boundary for older tests/imports; new service proxy code owns hostname rules.
+
 interface BuildScriptHostnameOptions {
   projectSlug: string;
   branchName: string | null;

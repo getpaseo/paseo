@@ -222,10 +222,12 @@ export function projectRegisteredServiceProxyUrls(options: {
     options.daemonPort === null || options.daemonPort === undefined
       ? null
       : `http://${options.route.hostname}:${options.daemonPort}`;
-  const publicProxyUrl =
-    options.route.publicHostname && options.route.publicBaseUrl
-      ? `${new URL(options.route.publicBaseUrl).protocol}//${options.route.publicHostname}${new URL(options.route.publicBaseUrl).port ? `:${new URL(options.route.publicBaseUrl).port}` : ""}`
-      : null;
+  let publicProxyUrl: string | null = null;
+  if (options.route.publicHostname && options.route.publicBaseUrl) {
+    const base = new URL(options.route.publicBaseUrl);
+    const port = base.port ? `:${base.port}` : "";
+    publicProxyUrl = `${base.protocol}//${options.route.publicHostname}${port}`;
+  }
   return {
     localProxyUrl,
     publicProxyUrl,
@@ -652,7 +654,6 @@ export class ServiceProxyRouteRegistry {
     const { publicHostname, publicBaseUrl, ...requiredEntry } = entry;
     return {
       ...requiredEntry,
-      ...(entry.localHostname ? { localHostname: entry.localHostname } : {}),
       ...(publicHostname ? { publicHostname } : {}),
       ...(publicBaseUrl ? { publicBaseUrl } : {}),
     };
