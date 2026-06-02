@@ -33,4 +33,24 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.agents).toBe("Agents");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
   });
+
+  it("includes composer and agent workflow keys for the Batch 2 migration", () => {
+    expect(en.composer.placeholders.desktop).toBe(
+      "Message the agent, tag @files, or use /commands and /skills",
+    );
+    expect(en.composer.input.addAttachment).toBe("Add attachment");
+    expect(en.composer.input.sendMessage).toBe("Send message");
+    expect(en.composer.voice.startDictation).toBe("Start dictation");
+    expect(en.composer.attachments.addIssueOrPr).toBe("Add issue or PR");
+    expect(en.composer.github.title).toBe("Attach issue or PR");
+    expect(en.agentControls.provider.fallback).toBe("Provider");
+    expect(en.agentControls.hints.model).toBe("Change model");
+    expect(en.agentControls.features.title).toBe("Features");
+    expect(en.agentControls.mode.title).toBe("Mode");
+    expect(en.agentStream.permission.required).toBe("Permission Required");
+    expect(en.agentStream.permission.proposedPlan).toBe("Proposed plan");
+    expect(en.agentPanel.unavailable.selectedHost).toBe("Selected host");
+    expect(en.agentPanel.states.notFound).toBe("Agent not found");
+    expect(en.panels.draft.newAgent).toBe("New Agent");
+  });
 });
