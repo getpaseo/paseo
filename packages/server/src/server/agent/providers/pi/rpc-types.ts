@@ -31,6 +31,10 @@ export type PiAgentMessage =
       content: string | Array<PiTextContent | PiImageContent>;
     }
   | {
+      role: "custom";
+      content: string | Array<PiTextContent | PiImageContent>;
+    }
+  | {
       role: "assistant";
       content: PiAssistantContent[];
       provider?: string;
@@ -75,6 +79,7 @@ export interface PiSessionState {
   thinkingLevel: PiThinkingLevel;
   isStreaming: boolean;
   isCompacting: boolean;
+  autoCompactionEnabled?: boolean;
   sessionFile?: string;
   sessionId: string;
   sessionName?: string;
@@ -107,6 +112,8 @@ export interface PiRpcSlashCommand {
 
 export type PiRpcCommand =
   | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "compact"; customInstructions?: string }
+  | { id?: string; type: "set_auto_compaction"; enabled: boolean }
   | { id?: string; type: "abort" }
   | { id?: string; type: "get_state" }
   | { id?: string; type: "get_messages" }

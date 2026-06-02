@@ -1,4 +1,4 @@
-import { buildScriptHostname } from "../utils/script-hostname.js";
+import { projectServiceProxyUrls } from "./service-proxy.js";
 
 export interface WorkspaceServicePeer {
   scriptName: string;
@@ -11,6 +11,7 @@ export interface BuildWorkspaceServiceEnvOptions {
   branchName: string | null;
   daemonPort: number | null | undefined;
   daemonListenHost: string | null | undefined;
+  serviceProxyPublicBaseUrl?: string | null;
   peers: readonly WorkspaceServicePeer[];
 }
 
@@ -37,26 +38,30 @@ export function buildWorkspaceServiceEnv(
     PASEO_PORT: String(selfPeer.port),
   };
 
-  if (options.daemonPort !== null && options.daemonPort !== undefined) {
-    env.PASEO_URL = buildServiceProxyUrl({
-      projectSlug: options.projectSlug,
-      branchName: options.branchName,
-      scriptName: options.scriptName,
-      daemonPort: options.daemonPort,
-    });
+  const selfProxyUrl = buildServiceProxyUrl({
+    projectSlug: options.projectSlug,
+    branchName: options.branchName,
+    scriptName: options.scriptName,
+    daemonPort: options.daemonPort,
+    serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
+  });
+  if (selfProxyUrl) {
+    env.PASEO_URL = selfProxyUrl;
   }
 
   for (const peer of options.peers) {
     const envName = normalizeServiceEnvName(peer.scriptName);
     env[`PASEO_SERVICE_${envName}_PORT`] = String(peer.port);
 
-    if (options.daemonPort !== null && options.daemonPort !== undefined) {
-      env[`PASEO_SERVICE_${envName}_URL`] = buildServiceProxyUrl({
-        projectSlug: options.projectSlug,
-        branchName: options.branchName,
-        scriptName: peer.scriptName,
-        daemonPort: options.daemonPort,
-      });
+    const peerProxyUrl = buildServiceProxyUrl({
+      projectSlug: options.projectSlug,
+      branchName: options.branchName,
+      scriptName: peer.scriptName,
+      daemonPort: options.daemonPort,
+      serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
+    });
+    if (peerProxyUrl) {
+      env[`PASEO_SERVICE_${envName}_URL`] = peerProxyUrl;
     }
   }
 
@@ -71,16 +76,18 @@ interface BuildServiceProxyUrlOptions {
   projectSlug: string;
   branchName: string | null;
   scriptName: string;
-  daemonPort: number;
+  daemonPort: number | null | undefined;
+  serviceProxyPublicBaseUrl?: string | null;
 }
 
-function buildServiceProxyUrl(options: BuildServiceProxyUrlOptions): string {
-  const hostname = buildScriptHostname({
+function buildServiceProxyUrl(options: BuildServiceProxyUrlOptions): string | null {
+  return projectServiceProxyUrls({
     projectSlug: options.projectSlug,
     branchName: options.branchName,
     scriptName: options.scriptName,
-  });
-  return `http://${hostname}:${options.daemonPort}`;
+    daemonPort: options.daemonPort,
+    publicBaseUrl: options.serviceProxyPublicBaseUrl,
+  }).proxyUrl;
 }
 
 function isLoopbackListenHost(host: string | null | undefined): boolean {

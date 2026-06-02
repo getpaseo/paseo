@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
+import { useTranslation } from "react-i18next";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { useAllAgentsList } from "@/hooks/use-all-agents-list";
@@ -20,6 +21,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { focusWithRetries } from "@/utils/web-focus";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
+import { isWeb } from "@/constants/platform";
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
@@ -51,7 +53,10 @@ function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
 
 interface CommandCenterActionDefinition {
   id: string;
-  title: string;
+  titleKey:
+    | "shell.commandCenter.openProject"
+    | "shell.commandCenter.home"
+    | "sidebar.actions.settings";
   icon?: "plus" | "settings" | "home";
   actionId?: string;
   keywords: string[];
@@ -61,7 +66,7 @@ interface CommandCenterActionDefinition {
 const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   {
     id: "new-agent",
-    title: "Open project",
+    titleKey: "shell.commandCenter.openProject",
     icon: "plus",
     actionId: "new-agent",
     keywords: ["open", "project", "folder", "workspace", "repo"],
@@ -69,24 +74,28 @@ const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   },
   {
     id: "home",
-    title: "Home",
+    titleKey: "shell.commandCenter.home",
     icon: "home",
     keywords: ["home", "start", "import", "session", "pair", "device", "providers"],
     routeKind: "home",
   },
   {
     id: "settings",
-    title: "Settings",
+    titleKey: "sidebar.actions.settings",
     icon: "settings",
     keywords: ["settings", "preferences", "config", "configuration"],
     routeKind: "settings",
   },
 ];
 
-function matchesActionQuery(query: string, action: CommandCenterActionDefinition): boolean {
+function matchesActionQuery(
+  query: string,
+  action: CommandCenterActionDefinition,
+  title: string,
+): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
-  if (action.title.toLowerCase().includes(normalized)) {
+  if (title.toLowerCase().includes(normalized)) {
     return true;
   }
   return action.keywords.some((keyword) => keyword.includes(normalized));
@@ -128,6 +137,7 @@ function resolveActionShortcutKeys(
 }
 
 export function useCommandCenter() {
+  const { t } = useTranslation();
   const pathname = usePathname();
   const routeActiveServerId = useActiveServerId();
   const { overrides } = useKeyboardShortcutOverrides();
@@ -173,7 +183,7 @@ export function useCommandCenter() {
     }
     return COMMAND_CENTER_ACTIONS.filter((action) => {
       if (action.routeKind === "home" && !homeRoute) return false;
-      return matchesActionQuery(query, action);
+      return matchesActionQuery(query, action, t(action.titleKey));
     }).map<CommandCenterActionItem>((action) => {
       let route: Href | undefined;
       if (action.routeKind === "settings") route = settingsRoute;
@@ -181,13 +191,13 @@ export function useCommandCenter() {
       return {
         kind: "action",
         id: action.id,
-        title: action.title,
+        title: t(action.titleKey),
         icon: action.icon,
         route,
         shortcutKeys: resolveActionShortcutKeys(action.actionId, overrides),
       };
     });
-  }, [open, query, settingsRoute, homeRoute, overrides]);
+  }, [open, query, settingsRoute, homeRoute, overrides, t]);
 
   const items = useMemo(() => {
     if (!open) {
@@ -319,33 +329,25 @@ export function useCommandCenter() {
     }
   }, [activeIndex, items.length, open]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    const handler = (event: KeyboardEvent) => {
+  const handleKeyEvent = useCallback(
+    (key: string): boolean => {
+      if (!open) return false;
       const currentItems = itemsRef.current;
-      const key = event.key;
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") {
-        return;
-      }
 
       if (key === "Escape") {
-        event.preventDefault();
         handleCloseRef.current();
-        return;
+        return true;
       }
 
       if (key === "Enter") {
-        if (currentItems.length === 0) return;
-        event.preventDefault();
+        if (currentItems.length === 0) return false;
         const index = Math.max(0, Math.min(activeIndexRef.current, currentItems.length - 1));
         handleSelectItemRef.current(currentItems[index]);
-        return;
+        return true;
       }
 
       if (key === "ArrowDown" || key === "ArrowUp") {
-        if (currentItems.length === 0) return;
-        event.preventDefault();
+        if (currentItems.length === 0) return false;
         setActiveIndex((current) => {
           const delta = key === "ArrowDown" ? 1 : -1;
           const next = current + delta;
@@ -353,13 +355,35 @@ export function useCommandCenter() {
           if (next >= currentItems.length) return 0;
           return next;
         });
+        return true;
+      }
+
+      return false;
+    },
+    [open],
+  );
+
+  useEffect(() => {
+    if (!open || !isWeb) return;
+
+    const handler = (event: KeyboardEvent) => {
+      if (
+        event.key !== "ArrowDown" &&
+        event.key !== "ArrowUp" &&
+        event.key !== "Enter" &&
+        event.key !== "Escape"
+      ) {
+        return;
+      }
+      if (handleKeyEvent(event.key)) {
+        event.preventDefault();
       }
     };
 
     // react-native-web can stop propagation on key events, so listen in capture phase.
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [open]);
+  }, [open, handleKeyEvent]);
 
   return {
     open,
@@ -371,5 +395,6 @@ export function useCommandCenter() {
     items,
     handleClose,
     handleSelectItem,
+    handleKeyEvent,
   };
 }

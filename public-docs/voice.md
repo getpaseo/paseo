@@ -2,7 +2,7 @@
 title: Voice
 description: Paseo voice architecture, local-first model execution, and provider configuration.
 nav: Voice
-order: 9
+order: 13
 ---
 
 # Voice

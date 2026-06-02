@@ -1,4 +1,5 @@
 import { type ReactElement, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Pressable,
@@ -6,10 +7,9 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { EditorTargetDescriptorPayload } from "@getpaseo/protocol/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
@@ -21,18 +21,20 @@ import {
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { buildGitHubBranchTreeUrl } from "@/git/github-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
+import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
 import type { Theme } from "@/styles/theme";
-import { filterTargetsForDaemonLocation } from "./workspace-open-targets";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   cwd: string;
+  activeFile?: WorkspaceFileLocation | null;
   hideLabels?: boolean;
 }
 
@@ -40,7 +42,6 @@ interface OpenTarget {
   id: string;
   label: string;
   icon: ReactElement;
-  requiresLocalDaemon: boolean;
   onOpen: () => Promise<void> | void;
 }
 
@@ -80,95 +81,72 @@ function OpenTargetMenuItem({ target, isPreferred, onOpen }: OpenTargetMenuItemP
 export function WorkspaceOpenInEditorButton({
   serverId,
   cwd,
+  activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
+  const { t } = useTranslation();
   const toast = useToast();
-  const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
+  const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
+    useDesktopOpenTargets({
+      isLocalExecution: isLocalDaemon,
+    });
 
-  const shouldQueryWorkspace =
-    isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
-  const shouldLoadEditorTargets = shouldQueryWorkspace && isLocalDaemon;
-
-  const availableEditorsQuery = useQuery<EditorTargetDescriptorPayload[]>({
-    queryKey: ["available-editors", serverId],
-    enabled: shouldLoadEditorTargets,
-    staleTime: 60_000,
-    retry: false,
-    queryFn: async () => {
-      if (!client) {
-        return [];
-      }
-      try {
-        const payload = await client.listAvailableEditors();
-        return payload.error ? [] : payload.editors;
-      } catch {
-        return [];
-      }
-    },
-  });
-
-  const availableEditors = useMemo(
-    () => availableEditorsQuery.data ?? [],
-    [availableEditorsQuery.data],
+  const resolvedFile = useMemo(
+    () =>
+      activeFile ? resolveWorkspaceFilePaths({ path: activeFile.path, workspaceRoot: cwd }) : null,
+    [activeFile, cwd],
   );
+  const activeFileName = useMemo(
+    () => resolvedFile?.absolutePath.split("/").findLast(Boolean) ?? null,
+    [resolvedFile],
+  );
+
+  const canResolveWorkspace = isWeb && cwd.trim().length > 0 && isAbsolutePath(cwd);
+  const shouldQueryCheckout = canResolveWorkspace && isConnected;
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId,
-    cwd: shouldQueryWorkspace ? cwd : "",
+    cwd: shouldQueryCheckout ? cwd : "",
   });
 
-  const editorTargets = useMemo<OpenTarget[]>(
+  const targets = useMemo<OpenTarget[]>(
     () =>
-      availableEditors.map((editor) => ({
-        id: editor.id,
-        label: editor.label,
-        icon: <ThemedEditorAppIcon editorId={editor.id} size={16} uniProps={mutedColorMapping} />,
-        requiresLocalDaemon: true,
-        onOpen: async () => {
-          if (!client) {
-            throw new Error("Host is not connected");
-          }
-          const payload = await client.openInEditor(cwd, editor.id);
-          if (payload.error) {
-            throw new Error(payload.error);
-          }
-        },
-      })),
-    [availableEditors, client, cwd],
-  );
-
-  const githubTarget = useMemo<OpenTarget | null>(() => {
-    if (!checkoutStatus?.isGit) {
-      return null;
-    }
-    const url = buildGitHubBranchTreeUrl({
-      remoteUrl: checkoutStatus.remoteUrl,
-      branch: checkoutStatus.currentBranch,
-    });
-    if (!url) {
-      return null;
-    }
-    return {
-      id: "github",
-      label: "GitHub",
-      icon: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
-      requiresLocalDaemon: false,
-      onOpen: () => openExternalUrl(url),
-    };
-  }, [checkoutStatus]);
-
-  const targets = useMemo(
-    () =>
-      filterTargetsForDaemonLocation(
-        githubTarget ? [...editorTargets, githubTarget] : editorTargets,
-        {
-          isLocalDaemon,
-        },
-      ),
-    [editorTargets, githubTarget, isLocalDaemon],
+      planWorkspaceOpenTargets({
+        workspaceDirectory: cwd,
+        activeFile,
+        resolvedActiveFile: resolvedFile,
+        desktopTargets: desktopOpenTargets,
+        canUseDesktopBridge: isDesktopOpenAvailable,
+        isLocalExecution: isLocalDaemon,
+        checkoutStatus,
+      }).map((target) => {
+        if (target.source === "github") {
+          return {
+            id: target.id,
+            label: target.label,
+            icon: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+            onOpen: () => openExternalUrl(target.url),
+          };
+        }
+        return {
+          id: target.id,
+          label: target.label,
+          icon: <ThemedEditorAppIcon editorId={target.id} size={16} uniProps={mutedColorMapping} />,
+          onOpen: () => openDesktopTarget(target.openInput),
+        };
+      }),
+    [
+      activeFile,
+      checkoutStatus,
+      cwd,
+      desktopOpenTargets,
+      isDesktopOpenAvailable,
+      isLocalDaemon,
+      resolvedFile,
+    ],
   );
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
@@ -181,7 +159,9 @@ export function WorkspaceOpenInEditorButton({
   const openMutation = useMutation({
     mutationFn: (target: OpenTarget) => Promise.resolve(target.onOpen()),
     onError: (error: unknown) => {
-      toast.error(error instanceof Error ? error.message : "Failed to open workspace");
+      toast.error(
+        error instanceof Error ? error.message : t("workspace.git.openInEditor.failedOpen"),
+      );
     },
   });
 
@@ -216,7 +196,7 @@ export function WorkspaceOpenInEditorButton({
     }
   }, [primaryOption, handleOpenTarget]);
 
-  if (!shouldQueryWorkspace || !primaryOption || targets.length === 0) {
+  if (!canResolveWorkspace || !primaryOption || targets.length === 0) {
     return null;
   }
 
@@ -229,7 +209,16 @@ export function WorkspaceOpenInEditorButton({
           onPress={handlePrimaryPress}
           disabled={openMutation.isPending}
           accessibilityRole="button"
-          accessibilityLabel={`Open workspace in ${primaryOption.label}`}
+          accessibilityLabel={
+            activeFileName
+              ? t("workspace.git.openInEditor.openFileIn", {
+                  fileName: activeFileName,
+                  target: primaryOption.label,
+                })
+              : t("workspace.git.openInEditor.openIn", {
+                  target: primaryOption.label,
+                })
+          }
         >
           {openMutation.isPending ? (
             <ThemedActivityIndicator
@@ -240,7 +229,9 @@ export function WorkspaceOpenInEditorButton({
           ) : (
             <View style={styles.splitButtonContent}>
               {primaryOption.icon}
-              {!hideLabels && <Text style={styles.splitButtonText}>Open</Text>}
+              {!hideLabels && (
+                <Text style={styles.splitButtonText}>{t("workspace.git.openInEditor.open")}</Text>
+              )}
             </View>
           )}
         </Pressable>
@@ -250,7 +241,7 @@ export function WorkspaceOpenInEditorButton({
               testID="workspace-open-in-editor-caret"
               style={caretTriggerStyle}
               accessibilityRole="button"
-              accessibilityLabel="Choose editor"
+              accessibilityLabel={t("workspace.git.openInEditor.chooseEditor")}
             >
               <ThemedChevronDown size={16} uniProps={mutedColorMapping} />
             </DropdownMenuTrigger>

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Terminal } from "lucide-react-native";
 import { Text, View } from "react-native";
 import invariant from "tiny-invariant";
@@ -34,6 +35,7 @@ function useTerminalPanelDescriptor(
   target: { kind: "terminal"; terminalId: string },
   context: { serverId: string; workspaceId: string },
 ): PanelDescriptor {
+  const { t } = useTranslation();
   const client = useSessionStore((state) => state.sessions[context.serverId]?.client ?? null);
   const workspaceAuthority = useWorkspaceExecutionAuthority(context.serverId, context.workspaceId)!;
   const workspaceDirectory = workspaceAuthority.ok
@@ -61,8 +63,10 @@ function useTerminalPanelDescriptor(
     terminalsQuery.data?.terminals.find((entry) => entry.id === target.terminalId) ?? null;
 
   return {
-    label: trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ?? "Terminal",
-    subtitle: "Terminal",
+    label:
+      trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ??
+      t("workspace.tabs.fallback.terminal"),
+    subtitle: t("workspace.tabs.fallback.terminal"),
     titleState: "ready",
     icon: Terminal,
     statusBucket: null,

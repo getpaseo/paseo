@@ -65,6 +65,7 @@ export interface TerminalSessionControllerOptions {
   hasBinaryChannel: () => boolean;
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   sessionLogger: pino.Logger;
+  listTerminalWorkspaceRoots?: () => Promise<readonly string[]>;
   // Whether the connected client can reflow restored snapshots. When true the
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
   // so old (strict-schema) clients still parse the snapshot.
@@ -108,6 +109,7 @@ export class TerminalSessionController {
   private readonly hasBinaryChannel: () => boolean;
   private readonly isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   private readonly sessionLogger: pino.Logger;
+  private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
 
   private readonly subscribedDirectories = new Set<string>();
@@ -124,6 +126,7 @@ export class TerminalSessionController {
     this.hasBinaryChannel = options.hasBinaryChannel;
     this.isPathWithinRoot = options.isPathWithinRoot;
     this.sessionLogger = options.sessionLogger;
+    this.listTerminalWorkspaceRoots = options.listTerminalWorkspaceRoots ?? (async () => []);
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
   }
 
@@ -327,7 +330,7 @@ export class TerminalSessionController {
       return;
     }
     try {
-      const terminals = await this.terminalManager.getTerminals(cwd);
+      const terminals = await this.getTerminalsForWorkspaceRoot(cwd);
       for (const terminal of terminals) {
         this.ensureExitSubscription(terminal);
       }
@@ -359,7 +362,7 @@ export class TerminalSessionController {
     try {
       const terminals =
         typeof msg.cwd === "string"
-          ? await this.terminalManager.getTerminals(msg.cwd)
+          ? await this.getTerminalsForWorkspaceRoot(msg.cwd)
           : await this.getAllTerminalSessions();
       for (const terminal of terminals) {
         this.ensureExitSubscription(terminal);
@@ -395,6 +398,56 @@ export class TerminalSessionController {
       directories.map((cwd) => manager.getTerminals(cwd)),
     );
     return terminalsByDirectory.flat();
+  }
+
+  private async getTerminalsForWorkspaceRoot(cwd: string): Promise<TerminalSession[]> {
+    if (!this.terminalManager) {
+      return [];
+    }
+
+    const terminals = await this.terminalManager.getTerminals(cwd);
+    const workspaceRoots = await this.listTerminalWorkspaceRoots();
+    if (workspaceRoots.length === 0) {
+      return terminals;
+    }
+
+    return terminals.filter((terminal) =>
+      this.terminalBelongsToRoot(cwd, terminal.cwd, workspaceRoots),
+    );
+  }
+
+  private terminalBelongsToRoot(
+    rootCwd: string,
+    terminalCwd: string,
+    workspaceRoots: readonly string[],
+  ): boolean {
+    const ownerRoot = this.resolveTerminalOwnerRoot(terminalCwd, workspaceRoots);
+    if (!ownerRoot) {
+      return this.isPathWithinRoot(rootCwd, terminalCwd);
+    }
+    return this.isSamePath(rootCwd, ownerRoot);
+  }
+
+  private resolveTerminalOwnerRoot(
+    terminalCwd: string,
+    workspaceRoots: readonly string[],
+  ): string | null {
+    let ownerRoot: string | null = null;
+    for (const workspaceRoot of workspaceRoots) {
+      if (!this.isPathWithinRoot(workspaceRoot, terminalCwd)) {
+        continue;
+      }
+      if (!ownerRoot || workspaceRoot.length > ownerRoot.length) {
+        ownerRoot = workspaceRoot;
+      }
+    }
+    return ownerRoot;
+  }
+
+  private isSamePath(firstPath: string, secondPath: string): boolean {
+    return (
+      this.isPathWithinRoot(firstPath, secondPath) && this.isPathWithinRoot(secondPath, firstPath)
+    );
   }
 
   private async handleCreateTerminalRequest(msg: CreateTerminalRequest): Promise<void> {

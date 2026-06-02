@@ -36,6 +36,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/file-icons.md](docs/file-icons.md)                       | Material icon theme integration for the file explorer                                                                          |
 | [docs/providers.md](docs/providers.md)                         | Adding a new agent provider end-to-end                                                                                         |
 | [docs/custom-providers.md](docs/custom-providers.md)           | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |
+| [docs/service-proxy.md](docs/service-proxy.md)                 | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                      |
 | [docs/development.md](docs/development.md)                     | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                     |
 | [docs/rpc-namespacing.md](docs/rpc-namespacing.md)             | WebSocket RPC naming convention — dotted namespaces and `.request`/`.response` pairs                                           |
 | [docs/testing.md](docs/testing.md)                             | TDD workflow, determinism, real dependencies over mocks, test organization                                                     |
@@ -48,7 +49,9 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 ## Quick start
 
 ```bash
-npm run dev                          # Start daemon + Expo in Tmux
+npm run dev                          # Start the dev daemon
+npm run dev:app                      # Start Expo against the dev daemon
+npm run dev:desktop                  # Start Electron desktop dev
 npm run cli -- ls -a -g              # List all agents
 npm run cli -- daemon status         # Check daemon status
 npm run typecheck                    # Always run after changes
@@ -56,6 +59,8 @@ npm run lint                         # Always run after changes
 npm run format                       # Auto-format with Biome
 npm run format:check                 # Check formatting without writing
 ```
+
+Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged desktop app and production-style daemon keep using `~/.paseo` on port `6767`.
 
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 

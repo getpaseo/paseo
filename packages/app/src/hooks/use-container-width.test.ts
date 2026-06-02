@@ -53,4 +53,28 @@ describe("useContainerWidthBelow", () => {
     expect(result.current.isBelow).toBe(false);
     expect(renderCount).toBe(2);
   });
+
+  it("ignores zero-width measurements from hidden mounted content", () => {
+    let renderCount = 0;
+    const { result } = renderHook(() => {
+      renderCount += 1;
+      return useContainerWidthBelow(700, { initialIsBelow: false });
+    });
+
+    expect(result.current.isBelow).toBe(false);
+
+    act(() => {
+      result.current.onLayout(layoutEvent(0));
+    });
+
+    expect(result.current.isBelow).toBe(false);
+    expect(renderCount).toBe(1);
+
+    act(() => {
+      result.current.onLayout(layoutEvent(650));
+    });
+
+    expect(result.current.isBelow).toBe(true);
+    expect(renderCount).toBe(2);
+  });
 });

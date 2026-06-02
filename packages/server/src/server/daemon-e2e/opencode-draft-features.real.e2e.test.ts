@@ -5,7 +5,7 @@ import path from "node:path";
 import pino from "pino";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import type { AgentClient, PersistedAgentDescriptor } from "../agent/agent-sdk-types.js";
+import type { AgentClient, ImportableProviderSession } from "../agent/agent-sdk-types.js";
 import { OpenCodeServerManager } from "../agent/providers/opencode/server-manager.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -41,11 +41,16 @@ async function withConnectedOpenCodeDaemon(
 
 async function deletePersistedSessions(
   provider: AgentClient,
-  sessions: ReadonlyArray<PersistedAgentDescriptor>,
+  sessions: ReadonlyArray<ImportableProviderSession>,
 ): Promise<void> {
   await Promise.all(
     sessions.map(async (session) => {
-      const resumed = await provider.resumeSession(session.persistence);
+      const resumed = await provider.resumeSession({
+        provider: provider.provider,
+        sessionId: session.providerHandleId,
+        nativeHandle: session.providerHandleId,
+        metadata: { provider: provider.provider, cwd: session.cwd },
+      });
       await resumed.close();
     }),
   );
@@ -68,10 +73,10 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
     const logger = pino({ level: "silent" });
     const provider = createRealProviderClient("opencode", logger);
     const cwd = tmpCwd();
-    let after: PersistedAgentDescriptor[] = [];
+    let after: ImportableProviderSession[] = [];
 
     try {
-      expect(await provider.listPersistedAgents?.({ cwd })).toEqual([]);
+      expect(await provider.listImportableSessions?.({ cwd })).toEqual([]);
 
       await withConnectedOpenCodeDaemon(provider, async ({ client }) => {
         const response = await client.listProviderFeatures({
@@ -84,7 +89,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
         expect(response.features ?? []).toEqual([]);
       });
 
-      after = (await provider.listPersistedAgents?.({ cwd })) ?? [];
+      after = (await provider.listImportableSessions?.({ cwd })) ?? [];
     } finally {
       await deletePersistedSessions(provider, after);
       rmSync(cwd, { recursive: true, force: true });
@@ -98,10 +103,10 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
     const logger = pino({ level: "silent" });
     const provider = createRealProviderClient("opencode", logger);
     const cwd = tmpCwd();
-    let after: PersistedAgentDescriptor[] = [];
+    let after: ImportableProviderSession[] = [];
 
     try {
-      expect(await provider.listPersistedAgents?.({ cwd })).toEqual([]);
+      expect(await provider.listImportableSessions?.({ cwd })).toEqual([]);
 
       await withConnectedOpenCodeDaemon(provider, async ({ client }) => {
         const response = await client.listCommands("draft-opencode-agent", {
@@ -115,7 +120,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
         expect(response.commands.length).toBeGreaterThan(0);
       });
 
-      after = (await provider.listPersistedAgents?.({ cwd })) ?? [];
+      after = (await provider.listImportableSessions?.({ cwd })) ?? [];
     } finally {
       await deletePersistedSessions(provider, after);
       rmSync(cwd, { recursive: true, force: true });

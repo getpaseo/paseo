@@ -4,6 +4,7 @@ import { Extrapolation, interpolate, runOnJS, useSharedValue } from "react-nativ
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { isWeb } from "@/constants/platform";
+import { canOpenRightSidebarGesture } from "@/utils/sidebar-animation-state";
 
 interface UseExplorerOpenGestureParams {
   enabled: boolean;
@@ -23,14 +24,19 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
     gestureAnimatingRef,
     openGestureRef,
   } = useExplorerSidebarAnimation();
-  const { openGestureRef: leftOpenGestureRef } = useSidebarAnimation();
+  const {
+    mobilePanelState,
+    gestureAnimatingRef: mobilePanelGestureAnimatingRef,
+    openGestureRef: leftOpenGestureRef,
+  } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
 
   const handleGestureOpen = useCallback(() => {
     gestureAnimatingRef.current = true;
+    mobilePanelGestureAnimatingRef.current = true;
     onOpen();
-  }, [onOpen, gestureAnimatingRef]);
+  }, [onOpen, gestureAnimatingRef, mobilePanelGestureAnimatingRef]);
 
   return useMemo(
     () =>
@@ -58,6 +64,11 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
           const deltaY = touch.absoluteY - touchStartY.value;
           const absDeltaX = Math.abs(deltaX);
           const absDeltaY = Math.abs(deltaY);
+
+          if (!canOpenRightSidebarGesture(mobilePanelState.value, translateX.value, windowWidth)) {
+            stateManager.fail();
+            return;
+          }
 
           // Browser back-swipe owns most of the viewport; keep this gesture on the right edge.
           if (isWeb && touchStartX.value < windowWidth - MOBILE_WEB_EDGE_SWIPE_WIDTH) {
@@ -117,6 +128,7 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
       windowWidth,
       translateX,
       backdropOpacity,
+      mobilePanelState,
       animateToOpen,
       animateToClose,
       isGesturing,

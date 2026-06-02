@@ -11,6 +11,7 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
+import pLimit from "p-limit";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -37,16 +38,19 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
   type ListModelsOptions,
   type ListModesOptions,
-  type ListPersistedAgentsOptions,
   type McpServerConfig,
-  type PersistedAgentDescriptor,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -83,6 +87,7 @@ import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: true,
   supportsReasoningStream: true,
@@ -131,12 +136,19 @@ function resolveOpenCodeCreateConfig(
   input: ResolveAgentCreateConfigInput,
 ): ResolveAgentCreateConfigResult {
   const legacyFullAccess = input.requestedMode === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID;
-  const inheritsUnattended =
-    input.requestedMode === undefined && input.parent?.isUnattended === true;
-  const requestedMode = legacyFullAccess ? OPENCODE_BUILD_MODE_ID : input.requestedMode;
+  const parent = input.parent;
+  const isUnattendedCreate = input.unattended || parent?.isUnattended === true;
+  const inheritsUnattended = input.requestedMode === undefined && isUnattendedCreate;
+  const inheritedOpenCodeMode =
+    inheritsUnattended && parent?.provider === input.provider
+      ? (parent.modeId ?? undefined)
+      : undefined;
+  const requestedMode = legacyFullAccess
+    ? OPENCODE_BUILD_MODE_ID
+    : (input.requestedMode ?? inheritedOpenCodeMode);
   const featureValues =
     legacyFullAccess ||
-    (inheritsUnattended && input.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === undefined)
+    (isUnattendedCreate && input.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === undefined)
       ? withOpenCodeAutoAcceptFeature(input.featureValues, true)
       : input.featureValues;
 
@@ -241,9 +253,21 @@ type OpenCodeMcpConfig =
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
 const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
+const OPENCODE_METADATA_CONCURRENCY = 4;
+const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
-  { name: "compact", description: "Compact the current session", argumentHint: "" },
-  { name: "summarize", description: "Compact the current session", argumentHint: "" },
+  {
+    name: "compact",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "summarize",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
 ];
 const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
   "headers timeout",
@@ -887,10 +911,10 @@ function buildOpenCodeUserTimelineText(prompt: AgentPromptInput): string {
     .join("\n");
 }
 
-async function collectOpenCodePersistedAgentsFromSdk(
-  client: Pick<OpencodeClient, "experimental" | "session">,
-  options?: ListPersistedAgentsOptions,
-): Promise<PersistedAgentDescriptor[]> {
+async function collectOpenCodeImportableSessionsFromSdk(
+  client: Pick<OpencodeClient, "experimental">,
+  options?: ListImportableSessionsOptions,
+): Promise<ImportableProviderSession[]> {
   const limit = options?.limit ?? OPENCODE_PERSISTED_SESSION_LIMIT;
   const sessionListLimit = options?.cwd ? Math.max(limit, OPENCODE_PERSISTED_SESSION_LIMIT) : limit;
   const response = await client.experimental.session.list({
@@ -903,46 +927,19 @@ async function collectOpenCodePersistedAgentsFromSdk(
     throw new Error(`Failed to list OpenCode sessions: ${JSON.stringify(response.error)}`);
   }
 
-  const sessions = response.data ?? [];
   const matchesCwd = options?.cwd ? createPathEquivalenceMatcher(options.cwd) : null;
-  const candidates = sessions
+  return (response.data ?? [])
     .filter((session) => !matchesCwd || matchesCwd(session.directory))
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
-    .slice(0, limit);
-
-  return await Promise.all(
-    candidates.map((session) => buildOpenCodePersistedAgentDescriptor(client, session)),
-  );
-}
-
-async function buildOpenCodePersistedAgentDescriptor(
-  client: Pick<OpencodeClient, "session">,
-  session: OpenCodePersistedSession,
-): Promise<PersistedAgentDescriptor> {
-  const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
-  const timeline = buildOpenCodeSessionTimeline(messages);
-  const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
-  const model = resolveOpenCodePersistedSessionModel(session, messages);
-  return {
-    provider: "opencode",
-    sessionId: session.id,
-    cwd: session.directory,
-    title: normalizeOpenCodeSessionTitle(session.title),
-    lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
-    persistence: {
-      provider: "opencode",
-      sessionId: session.id,
-      nativeHandle: session.id,
-      metadata: {
-        provider: "opencode",
-        cwd: session.directory,
-        title: normalizeOpenCodeSessionTitle(session.title),
-        ...(modeId ? { modeId } : {}),
-        ...(model ? { model } : {}),
-      },
-    },
-    timeline,
-  };
+    .slice(0, limit)
+    .map((session) => ({
+      providerHandleId: session.id,
+      cwd: session.directory,
+      title: normalizeOpenCodeSessionTitle(session.title),
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
+    }));
 }
 
 function normalizeOpenCodeSessionTitle(title: string | null | undefined): string | null {
@@ -1030,6 +1027,21 @@ function buildOpenCodeReplayPartTimelineEvent(params: {
   });
 }
 
+function isOpenCodeCompactionSummaryMessage(message: OpenCodeMessage): boolean {
+  return (
+    message.role === "assistant" &&
+    (message.summary === true || message.agent === "compaction" || message.mode === "compaction")
+  );
+}
+
+function findOpenCodeCompactionPart(
+  message: OpenCodeSessionMessage,
+): Extract<OpenCodePart, { type: "compaction" }> | undefined {
+  return message.parts.find(
+    (part): part is Extract<OpenCodePart, { type: "compaction" }> => part.type === "compaction",
+  );
+}
+
 async function readOpenCodeSessionMessagesFromSdk(
   client: Pick<OpencodeClient, "session">,
   session: OpenCodePersistedSession,
@@ -1049,9 +1061,30 @@ async function readOpenCodeSessionMessagesFromSdk(
 function buildOpenCodeSessionTimeline(
   messages: ReadonlyArray<OpenCodeSessionMessage>,
 ): AgentTimelineItem[] {
-  return messages.flatMap((message) =>
-    buildOpenCodeReplayTimelineEvents(message).map((event) => event.item),
-  );
+  const timeline: AgentTimelineItem[] = [];
+  let hideNextAssistantAfterCompaction = false;
+
+  for (const message of messages) {
+    const compactionPart = findOpenCodeCompactionPart(message);
+    if (message.info.role === "assistant" && hideNextAssistantAfterCompaction) {
+      hideNextAssistantAfterCompaction = false;
+      continue;
+    }
+    if (message.info.role === "user" && !compactionPart) {
+      hideNextAssistantAfterCompaction = false;
+    }
+
+    timeline.push(...buildOpenCodeReplayTimelineEvents(message).map((event) => event.item));
+
+    if (message.info.role === "user" && compactionPart) {
+      timeline.push(
+        createCompactionTimelineItem("completed", compactionPart.auto ? "auto" : "manual"),
+      );
+      hideNextAssistantAfterCompaction = true;
+    }
+  }
+
+  return timeline;
 }
 
 function filterOpenCodeRevertedMessages(
@@ -1110,6 +1143,9 @@ function buildOpenCodeReplayTimelineEvents(
   message: OpenCodeSessionMessage,
 ): Extract<AgentStreamEvent, { type: "timeline" }>[] {
   const { info, parts } = message;
+  if (isOpenCodeCompactionSummaryMessage(info)) {
+    return [];
+  }
   if (info.role === "user") {
     const text = parts
       .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
@@ -1155,6 +1191,7 @@ function buildOpenCodeReplayTimelineEvents(
 
 export const __openCodeInternals = {
   buildOpenCodePromptParts,
+  buildOpenCodeSessionTimeline,
   buildOpenCodeModelContextWindowLookup,
   buildOpenCodeModelDefinition,
   buildOpenCodeModelLookupKey,
@@ -1329,10 +1366,12 @@ export class OpenCodeAgentClient implements AgentClient {
     try {
       // Background model discovery can be legitimately slow while OpenCode refreshes
       // provider state, so allow longer than turn execution paths.
-      const response = await withTimeout(
-        client.provider.list({ directory: options.cwd }),
-        OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
-        `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
+      const response = await openCodeMetadataLimit(() =>
+        withTimeout(
+          client.provider.list({ directory: options.cwd }),
+          OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
+          `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
+        ),
       );
 
       if (response.error) {
@@ -1394,10 +1433,12 @@ export class OpenCodeAgentClient implements AgentClient {
     const client = this.runtime.createClient({ baseUrl: url, directory });
 
     try {
-      const response = await withTimeout(
-        client.app.agents({ directory }),
-        10_000,
-        "OpenCode app.agents timed out after 10s",
+      const response = await openCodeMetadataLimit(() =>
+        withTimeout(
+          client.app.agents({ directory }),
+          10_000,
+          "OpenCode app.agents timed out after 10s",
+        ),
       );
 
       if (response.error || !response.data) {
@@ -1434,9 +1475,9 @@ export class OpenCodeAgentClient implements AgentClient {
     return [buildOpenCodeAutoAcceptFeature(this.assertConfig(config))];
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
     const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
     const client = this.runtime.createClient({
@@ -1445,7 +1486,43 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      return await collectOpenCodePersistedAgentsFromSdk(client, options);
+      return await collectOpenCodeImportableSessionsFromSdk(client, options);
+    } finally {
+      acquisition.release();
+    }
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    const acquisition = await this.runtime.acquireServer({ force: false });
+    const { url } = acquisition.server;
+    const client = this.runtime.createClient({
+      baseUrl: url,
+      directory: input.cwd,
+    });
+
+    try {
+      const sessionResponse = await client.session.get({
+        sessionID: input.providerHandleId,
+        directory: input.cwd,
+      });
+      if (sessionResponse.error || !sessionResponse.data) {
+        throw new Error(`Failed to load OpenCode session ${input.providerHandleId}`);
+      }
+      const session = sessionResponse.data;
+      const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
+      const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
+      const model = resolveOpenCodePersistedSessionModel(session, messages);
+      return await importSessionFromPersistence({
+        provider: "opencode",
+        request: input,
+        context,
+        resumeSession: this.resumeSession.bind(this),
+        config: {
+          title: normalizeOpenCodeSessionTitle(session.title) ?? undefined,
+          ...(modeId ? { modeId } : {}),
+          ...(model ? { model } : {}),
+        },
+      });
     } finally {
       acquisition.release();
     }
@@ -1554,7 +1631,7 @@ export class OpenCodeAgentClient implements AgentClient {
     client: OpencodeClient,
     cwd: string,
   ): Promise<void> {
-    const response = await client.provider.list({ directory: cwd });
+    const response = await openCodeMetadataLimit(() => client.provider.list({ directory: cwd }));
     if (response.error || !response.data) {
       return;
     }
@@ -1577,6 +1654,9 @@ export interface OpenCodeEventTranslationState {
   sessionTotalCostUsd?: number;
   streamedPartKeys: Set<string>;
   emittedStructuredMessageIds: Set<string>;
+  compactionSummaryMessageIds: Set<string>;
+  emittedCompactionPartIds: Set<string>;
+  suppressAssistantMessagesUntilIdle?: { active: boolean };
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
@@ -1663,6 +1743,7 @@ async function listOpenCodeCommandsFromSdk(
       name: cmd.name,
       description: cmd.description ?? "",
       argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+      kind: cmd.source === "skill" ? "skill" : "command",
     });
   }
 
@@ -1937,6 +2018,11 @@ export function translateOpenCodeEvent(
 function resetOpenCodeTurnTrackingState(state: OpenCodeEventTranslationState): void {
   state.streamedPartKeys.clear();
   state.partTypes.clear();
+  state.compactionSummaryMessageIds.clear();
+  state.emittedCompactionPartIds.clear();
+  if (state.suppressAssistantMessagesUntilIdle) {
+    state.suppressAssistantMessagesUntilIdle.active = false;
+  }
 }
 
 function getOpenCodeSubAgentMaps(state: OpenCodeEventTranslationState): {
@@ -2249,6 +2335,14 @@ function appendOpenCodeMessageUpdated(
   if (info.role !== "assistant") {
     return;
   }
+  if (state.suppressAssistantMessagesUntilIdle?.active) {
+    state.compactionSummaryMessageIds.add(info.id);
+    return;
+  }
+  if (isOpenCodeCompactionSummaryMessage(info)) {
+    state.compactionSummaryMessageIds.add(info.id);
+    return;
+  }
   const modelLookupKey = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
   if (modelLookupKey) {
     const contextWindowMaxTokens = state.modelContextWindowsByModelKey?.get(modelLookupKey);
@@ -2306,6 +2400,15 @@ function appendOpenCodeMessagePartUpdated(
   const messageRole = state.messageRoles.get(part.messageID);
   state.partTypes.set(part.id, part.type);
 
+  if (state.compactionSummaryMessageIds.has(part.messageID)) {
+    return;
+  }
+
+  if (shouldSuppressOpenCodeAssistantPart(part, messageRole, state)) {
+    state.compactionSummaryMessageIds.add(part.messageID);
+    return;
+  }
+
   if (part.type === "text") {
     appendOpenCodeTextPart(part, messageRole, state, events);
     return;
@@ -2322,6 +2425,10 @@ function appendOpenCodeMessagePartUpdated(
     return;
   }
   if (part.type === "compaction") {
+    if (state.emittedCompactionPartIds.has(part.id)) {
+      return;
+    }
+    state.emittedCompactionPartIds.add(part.id);
     events.push({
       type: "timeline",
       provider: "opencode",
@@ -2345,6 +2452,18 @@ function appendOpenCodeMessagePartUpdated(
       });
     }
   }
+}
+
+function shouldSuppressOpenCodeAssistantPart(
+  part: Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
+  messageRole: OpenCodeMessageRole | undefined,
+  state: OpenCodeEventTranslationState,
+): boolean {
+  return (
+    state.suppressAssistantMessagesUntilIdle?.active === true &&
+    part.type === "text" &&
+    messageRole !== "user"
+  );
 }
 
 function appendOpenCodeTextPart(
@@ -2415,6 +2534,10 @@ function appendOpenCodeMessagePartDelta(
   const knownPartType = partID ? state.partTypes.get(partID) : undefined;
   const isReasoning = knownPartType === "reasoning" || field === "reasoning";
 
+  if (messageID && state.compactionSummaryMessageIds.has(messageID)) {
+    return;
+  }
+
   if (isReasoning) {
     if (partID) {
       state.streamedPartKeys.add(`reasoning:${partID}`);
@@ -2430,6 +2553,10 @@ function appendOpenCodeMessagePartDelta(
     return;
   }
   if (messageRole === "user") {
+    return;
+  }
+  if (messageID && state.suppressAssistantMessagesUntilIdle?.active === true) {
+    state.compactionSummaryMessageIds.add(messageID);
     return;
   }
   if (partID) {
@@ -2507,6 +2634,7 @@ function appendOpenCodeQuestionAsked(
         header: q.header,
         options,
         ...(q.multiple === true ? { multiSelect: true } : {}),
+        allowOther: true,
       },
     ];
   });
@@ -2676,6 +2804,9 @@ class OpenCodeAgentSession implements AgentSession {
   private streamedPartKeys = new Set<string>();
   /** Tracks assistant messages already emitted from structured payloads. */
   private emittedStructuredMessageIds = new Set<string>();
+  private compactionSummaryMessageIds = new Set<string>();
+  private emittedCompactionPartIds = new Set<string>();
+  private suppressAssistantMessagesUntilIdle = { active: false };
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   private partTypes = new Map<string, string>();
   private availableModesCache: AgentMode[] | null = null;
@@ -2859,6 +2990,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     const parts = buildOpenCodePromptParts(prompt);
     this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
+    this.suppressAssistantMessagesUntilIdle.active = false;
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant = thinkingOptionId ?? undefined;
@@ -2880,6 +3012,7 @@ class OpenCodeAgentSession implements AgentSession {
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
+        this.suppressAssistantMessagesUntilIdle.active = true;
         void this.client.session
           .summarize({
             sessionID: this.sessionId,
@@ -2888,6 +3021,7 @@ class OpenCodeAgentSession implements AgentSession {
           })
           .then((response) => {
             if (response.error) {
+              this.suppressAssistantMessagesUntilIdle.active = false;
               this.finishForegroundTurn(
                 {
                   type: "turn_failed",
@@ -2896,15 +3030,11 @@ class OpenCodeAgentSession implements AgentSession {
                 },
                 turnId,
               );
-            } else {
-              this.finishForegroundTurn(
-                { type: "turn_completed", provider: "opencode", usage: undefined },
-                turnId,
-              );
             }
             return;
           })
           .catch((error) => {
+            this.suppressAssistantMessagesUntilIdle.active = false;
             this.finishForegroundTurn(
               {
                 type: "turn_failed",
@@ -3343,9 +3473,11 @@ class OpenCodeAgentSession implements AgentSession {
       return this.availableModesCache;
     }
 
-    const response = await this.client.app.agents({
-      directory: this.config.cwd,
-    });
+    const response = await openCodeMetadataLimit(() =>
+      this.client.app.agents({
+        directory: this.config.cwd,
+      }),
+    );
     const agents = response.error || !response.data ? [] : response.data;
 
     const discoveredModes = agents.filter(isSelectableOpenCodeAgent).map(mapOpenCodeAgentToMode);
@@ -3623,6 +3755,9 @@ class OpenCodeAgentSession implements AgentSession {
       sessionTotalCostUsd: this.sessionTotalCostUsd,
       streamedPartKeys: this.streamedPartKeys,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
+      compactionSummaryMessageIds: this.compactionSummaryMessageIds,
+      emittedCompactionPartIds: this.emittedCompactionPartIds,
+      suppressAssistantMessagesUntilIdle: this.suppressAssistantMessagesUntilIdle,
       partTypes: this.partTypes,
       subAgentsByCallId: this.subAgentsByCallId,
       subAgentCallIdByChildSessionId: this.subAgentCallIdByChildSessionId,

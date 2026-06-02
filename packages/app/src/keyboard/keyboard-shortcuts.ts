@@ -28,8 +28,10 @@ export interface KeyboardShortcutMatch {
 export interface KeyboardShortcutHelpRow {
   id: string;
   label: string;
+  labelKey: string;
   keys: ShortcutKey[];
   note?: string;
+  noteKey?: string;
 }
 
 export type ShortcutSectionId = "navigation" | "tabs-panes" | "projects" | "panels" | "agent-input";
@@ -37,6 +39,7 @@ export type ShortcutSectionId = "navigation" | "tabs-panes" | "projects" | "pane
 export interface KeyboardShortcutHelpSection {
   id: ShortcutSectionId;
   title: string;
+  titleKey: string;
   rows: KeyboardShortcutHelpRow[];
 }
 
@@ -105,6 +108,59 @@ const SHORTCUT_HELP_SECTION_TITLES: Record<ShortcutSectionId, string> = {
   projects: "Projects",
   panels: "Panels",
   "agent-input": "Agent Input",
+};
+
+const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
+  navigation: "settings.shortcuts.sections.navigation",
+  "tabs-panes": "settings.shortcuts.sections.tabsPanes",
+  projects: "settings.shortcuts.sections.projects",
+  panels: "settings.shortcuts.sections.panels",
+  "agent-input": "settings.shortcuts.sections.agentInput",
+};
+
+const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
+  "new-agent": "settings.shortcuts.help.openProject",
+  "new-worktree": "settings.shortcuts.help.newWorktree",
+  "archive-worktree": "settings.shortcuts.help.archiveWorktree",
+  "workspace-tab-new": "settings.shortcuts.help.newTab",
+  "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
+  "workspace-jump-index": "settings.shortcuts.help.jumpToWorkspace",
+  "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
+  "workspace-prev": "settings.shortcuts.help.previousWorkspace",
+  "workspace-next": "settings.shortcuts.help.nextWorkspace",
+  "workspace-tab-prev": "settings.shortcuts.help.previousTab",
+  "workspace-tab-next": "settings.shortcuts.help.nextTab",
+  "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
+  "workspace-pane-split-down": "settings.shortcuts.help.splitPaneDown",
+  "workspace-pane-focus-left": "settings.shortcuts.help.focusPaneLeft",
+  "workspace-pane-focus-right": "settings.shortcuts.help.focusPaneRight",
+  "workspace-pane-focus-up": "settings.shortcuts.help.focusPaneUp",
+  "workspace-pane-focus-down": "settings.shortcuts.help.focusPaneDown",
+  "workspace-pane-move-tab-left": "settings.shortcuts.help.moveTabLeft",
+  "workspace-pane-move-tab-right": "settings.shortcuts.help.moveTabRight",
+  "workspace-pane-move-tab-up": "settings.shortcuts.help.moveTabUp",
+  "workspace-pane-move-tab-down": "settings.shortcuts.help.moveTabDown",
+  "workspace-pane-close": "settings.shortcuts.help.closePane",
+  "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
+  "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
+  "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
+  "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
+  "toggle-right-sidebar": "settings.shortcuts.help.toggleRightSidebar",
+  "toggle-both-sidebars": "settings.shortcuts.help.toggleBothSidebars",
+  "toggle-settings": "settings.shortcuts.help.toggleSettings",
+  "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
+  "cycle-theme": "settings.shortcuts.help.cycleTheme",
+  "focus-message-input": "settings.shortcuts.help.focusMessageInput",
+  "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
+  "dictation-toggle": "settings.shortcuts.help.startStopDictation",
+  "agent-interrupt": "settings.shortcuts.help.interruptAgent",
+  "message-input-send": "settings.shortcuts.help.sendMessage",
+  "message-input-queue": "settings.shortcuts.help.queueMessage",
+  "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+};
+
+const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
+  "show-shortcuts": "settings.shortcuts.helpNotes.showKeyboardShortcuts",
 };
 
 // --- Binding definitions ---
@@ -1343,8 +1399,10 @@ export function buildKeyboardShortcutHelpSections(
     rows.push({
       id: help.id,
       label: help.label,
+      labelKey: SHORTCUT_HELP_LABEL_KEYS[help.id] ?? help.label,
       keys: help.keys,
       ...(help.note ? { note: help.note } : {}),
+      ...(SHORTCUT_HELP_NOTE_KEYS[help.id] ? { noteKey: SHORTCUT_HELP_NOTE_KEYS[help.id] } : {}),
     });
   }
 
@@ -1365,6 +1423,7 @@ export function buildKeyboardShortcutHelpSections(
       {
         id: sectionId,
         title: SHORTCUT_HELP_SECTION_TITLES[sectionId],
+        titleKey: SHORTCUT_HELP_SECTION_LABEL_KEYS[sectionId],
         rows,
       },
     ];

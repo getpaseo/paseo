@@ -14,9 +14,8 @@ import type {
   AgentProvider,
   AgentSessionConfig,
   AgentRuntimeInfo,
-  AgentTimelineItem,
   AgentUsage,
-  PersistedAgentDescriptor,
+  ImportableProviderSession,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
@@ -32,8 +31,6 @@ interface ProjectionOptions {
 interface RecentProviderSessionProjectionOptions {
   providerLabel: string;
 }
-
-const PROMPT_PREVIEW_MAX_LENGTH = 160;
 
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
@@ -263,20 +260,18 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
 }
 
 export function toRecentProviderSessionDescriptorPayload(
-  descriptor: PersistedAgentDescriptor,
+  session: ImportableProviderSession & { provider: string },
   options: RecentProviderSessionProjectionOptions,
 ): RecentProviderSessionDescriptorPayload {
-  const promptPreviews = collectPromptPreviews(descriptor.timeline);
-
   return {
-    providerId: descriptor.provider,
+    providerId: session.provider,
     providerLabel: options.providerLabel,
-    providerHandleId: descriptor.persistence.nativeHandle ?? descriptor.persistence.sessionId,
-    cwd: descriptor.cwd,
-    title: descriptor.title,
-    firstPromptPreview: promptPreviews[0] ?? null,
-    lastPromptPreview: promptPreviews.at(-1) ?? null,
-    lastActivityAt: descriptor.lastActivityAt.toISOString(),
+    providerHandleId: session.providerHandleId,
+    cwd: session.cwd,
+    title: session.title,
+    firstPromptPreview: session.firstPromptPreview,
+    lastPromptPreview: session.lastPromptPreview,
+    lastActivityAt: session.lastActivityAt.toISOString(),
   };
 }
 
@@ -295,26 +290,6 @@ export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): s
 
   timestamps.sort((a, b) => b.parsed - a.parsed);
   return timestamps[0].raw;
-}
-
-function collectPromptPreviews(timeline: readonly AgentTimelineItem[]): string[] {
-  return timeline.flatMap((item) => {
-    if (item.type !== "user_message") {
-      return [];
-    }
-    const preview = normalizePromptPreview(item.text);
-    return preview ? [preview] : [];
-  });
-}
-
-function normalizePromptPreview(text: string): string | null {
-  const normalized = text.trim().replace(/\s+/g, " ");
-  if (!normalized) {
-    return null;
-  }
-  return normalized.length > PROMPT_PREVIEW_MAX_LENGTH
-    ? normalized.slice(0, PROMPT_PREVIEW_MAX_LENGTH)
-    : normalized;
 }
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {

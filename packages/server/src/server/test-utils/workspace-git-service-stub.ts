@@ -77,6 +77,7 @@ export function createNoopWorkspaceGitService(
       unsubscribe: () => {},
     }),
     scheduleRefreshForCwd: () => {},
+    onWorkspaceStateMayHaveChanged: () => {},
     dispose: () => {},
     ...overrides,
   };

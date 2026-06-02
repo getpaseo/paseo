@@ -1,6 +1,10 @@
 import type { PrHint } from "@/git/use-pr-status-query";
+import {
+  canCreateWorktreeForProjectKind,
+  type HostProjectListItem,
+} from "@/projects/host-project-model";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import type { WorkspaceStructureProject } from "@/stores/session-store-hooks";
+import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -17,6 +21,7 @@ export interface SidebarWorkspaceEntry {
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   statusBucket: SidebarStateBucket;
+  statusEnteredAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
@@ -31,12 +36,13 @@ export interface SidebarProjectEntry {
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
+  canCreateWorktree: boolean;
   workspaces: SidebarWorkspaceEntry[];
 }
 
 function createStructuralWorkspaceEntry(input: {
   serverId: string;
-  project: WorkspaceStructureProject;
+  project: HostProjectListItem;
   workspaceId: string;
 }): SidebarWorkspaceEntry {
   return {
@@ -50,6 +56,7 @@ function createStructuralWorkspaceEntry(input: {
     workspaceKind: "checkout",
     name: input.workspaceId,
     statusBucket: "done",
+    statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,
     prHint: null,
@@ -64,6 +71,22 @@ export function buildSidebarProjectsFromStructure(input: {
   serverId: string;
   projects: WorkspaceStructureProject[];
 }): SidebarProjectEntry[] {
+  return buildSidebarProjectsFromHostProjects({
+    projects: input.projects.map((project) => ({
+      serverId: input.serverId,
+      projectKey: project.projectKey,
+      projectName: project.projectName,
+      projectKind: project.projectKind,
+      iconWorkingDir: project.iconWorkingDir,
+      workspaceKeys: project.workspaceKeys,
+      canCreateWorktree: canCreateWorktreeForProjectKind(project.projectKind),
+    })),
+  });
+}
+
+export function buildSidebarProjectsFromHostProjects(input: {
+  projects: readonly HostProjectListItem[];
+}): SidebarProjectEntry[] {
   if (input.projects.length === 0) {
     return EMPTY_PROJECTS;
   }
@@ -73,9 +96,10 @@ export function buildSidebarProjectsFromStructure(input: {
     projectName: project.projectName,
     projectKind: project.projectKind,
     iconWorkingDir: project.iconWorkingDir,
+    canCreateWorktree: project.canCreateWorktree,
     workspaces: project.workspaceKeys.map((workspaceId) =>
       createStructuralWorkspaceEntry({
-        serverId: input.serverId,
+        serverId: project.serverId,
         project,
         workspaceId,
       }),

@@ -1,5 +1,136 @@
 # Changelog
 
+## 0.1.93 - 2026-06-10
+
+### Added
+
+- **Claude Fable 5 is available in the Claude model picker** ([#1443](https://github.com/getpaseo/paseo/pull/1443) by [@0-Captain](https://github.com/0-Captain))
+
+## 0.1.92 - 2026-06-10
+
+### Added
+
+- **Skills autocomplete inside prompts**
+
+### Improved
+
+- Provider catalog is inline in Host settings ([#1423](https://github.com/getpaseo/paseo/pull/1423))
+- Manual update checks skip staged rollout delays
+- CodeWhale replaces DeepSeek TUI in the provider catalog
+- ACP provider catalog entries are updated for Cline, Codebuddy Code, DimCode, Factory Droid, Gemini, Nova, and Qoder
+- OMP has its own icon and website page
+- Model selector descriptions are clearer
+- ACP provider errors show the provider's real failure message
+
+### Fixed
+
+- New Paseo worktree branches can push their first commits
+- Imported sessions no longer open blank or in the wrong workspace
+- Windows Explorer opens the selected workspace instead of Documents ([#1412](https://github.com/getpaseo/paseo/pull/1412) by [@bjspi](https://github.com/bjspi))
+- Windows editor shortcuts installed as command shims launch correctly ([#1387](https://github.com/getpaseo/paseo/pull/1387) by [@Peter7896](https://github.com/Peter7896))
+- ACP providers that cannot use MCP servers can start correctly
+- Removed hosts no longer leave host pages stuck connecting
+- File preview links open in your external browser
+- Chat stays pinned to the latest message while output streams
+- The mobile composer send button no longer shifts while typing
+
+## 0.1.91 - 2026-06-08
+
+### Added
+
+- **Open multiple desktop windows** ([#1355](https://github.com/getpaseo/paseo/pull/1355) by [@arieel-ost](https://github.com/arieel-ost))
+- **Open browser pop-ups and links inside workspace tabs** ([#1375](https://github.com/getpaseo/paseo/pull/1375))
+- **Use the command center from mobile**
+- **Add OMP as a provider** ([#1388](https://github.com/getpaseo/paseo/pull/1388))
+
+### Improved
+
+- New workspaces remember your last provider, mode, and thinking choices
+- Git controls now default ready branches to pull requests and hide unavailable pull or push actions
+- Desktop-managed hosts recover more reliably after stale daemon state
+- Daemon status now explains authentication failures
+- Project search skips Python virtual environments ([#1356](https://github.com/getpaseo/paseo/pull/1356))
+- Config files can include `$schema` for editor help
+- Claude MCP servers preserve always-load tool settings ([#1333](https://github.com/getpaseo/paseo/pull/1333) by [@nodomain](https://github.com/nodomain))
+- Claude profiles keep their configured models ([#1311](https://github.com/getpaseo/paseo/pull/1311) by [@ilteoood](https://github.com/ilteoood))
+- Provider loading can wait longer on slow machines ([#1346](https://github.com/getpaseo/paseo/pull/1346) by [@nodomain](https://github.com/nodomain))
+- The Kimi catalog entry now points to Kimi Code CLI ([#1403](https://github.com/getpaseo/paseo/pull/1403) by [@wbxl2000](https://github.com/wbxl2000))
+- ACP provider catalog entries are updated for Auggie, Claude Agent, Cline, Codebuddy Code, DimCode, Factory Droid, fast-agent, Gemini, GitHub Copilot, and Nova
+- Local dictation crash reports show more useful details ([#1379](https://github.com/getpaseo/paseo/pull/1379))
+- Daemon logs show why managed workers exit
+
+### Fixed
+
+- Pi compaction slash commands run correctly ([#1338](https://github.com/getpaseo/paseo/pull/1338) by [@chyendongnhanh338](https://github.com/chyendongnhanh338))
+- Auto-archiving still works after a merged PR branch is deleted ([#1378](https://github.com/getpaseo/paseo/pull/1378))
+- Worktrees can check out existing branch refs correctly ([#1358](https://github.com/getpaseo/paseo/pull/1358) by [@dixonl90](https://github.com/dixonl90))
+- File downloads work when daemon password protection is enabled ([#1351](https://github.com/getpaseo/paseo/pull/1351) by [@nodomain](https://github.com/nodomain))
+- iOS markdown links are tappable again ([#1334](https://github.com/getpaseo/paseo/pull/1334) by [@kaspesi](https://github.com/kaspesi))
+- iOS markdown images render correctly
+- Windows workspaces load their providers correctly ([#1329](https://github.com/getpaseo/paseo/pull/1329))
+- Removing a localhost host stops its local daemon ([#1297](https://github.com/getpaseo/paseo/pull/1297) by [@mcowger](https://github.com/mcowger))
+- Provider settings sheets stack correctly
+- The new workspace screen no longer opens behind the mobile sidebar
+- Global agent listing works again ([#1420](https://github.com/getpaseo/paseo/pull/1420))
+- OpenCode compaction summaries stay out of chat
+- OpenCode agents sharing a workspace keep their own Paseo tools
+
+## 0.1.90 - 2026-06-04
+
+### Added
+
+- **Group the sidebar by status so workspaces waiting on you, ready to review, working, and done are visible at a glance** ([#1317](https://github.com/getpaseo/paseo/pull/1317))
+- **Start a new workspace from the global sidebar button without choosing a project first** ([#1324](https://github.com/getpaseo/paseo/pull/1324))
+- **Open the active file directly in your editor, file manager, or GitHub instead of only opening the workspace root** ([#1285](https://github.com/getpaseo/paseo/pull/1285) by [@aaronzhongg](https://github.com/aaronzhongg))
+- **Automatically archive clean PR workspaces after the PR is merged from host settings** ([#1313](https://github.com/getpaseo/paseo/pull/1313))
+- **Desktop-managed Paseo skills stay current after installing a newer desktop build** ([#1309](https://github.com/getpaseo/paseo/pull/1309))
+- **Dart files and Dart code blocks are now syntax-highlighted** ([#1326](https://github.com/getpaseo/paseo/pull/1326))
+
+### Improved
+
+- Sidebar workspaces can be marked as read when they are ready to review or failed ([#1317](https://github.com/getpaseo/paseo/pull/1317))
+- Child agents keep unattended permissions when delegated across providers ([#1315](https://github.com/getpaseo/paseo/pull/1315))
+- Scheduled agents open with the real prompt and title instead of looking empty ([#1316](https://github.com/getpaseo/paseo/pull/1316))
+- Git controls prioritize the action that gets a ready branch shipped ([#1316](https://github.com/getpaseo/paseo/pull/1316))
+- Multiple agent questions are shown one at a time
+- OpenCode questions with free-write answers show the typed response in Paseo
+- Delegated agent activity is visible on the parent workspace
+- Sessions are ordered by latest activity
+- ACP provider catalog entries are updated for Claude Agent, Cline, Codebuddy Code, Factory Droid, and Qoder
+
+### Fixed
+
+- Timeline catch-up no longer leaves older messages unloaded
+- Markdown code in file previews renders correctly
+- Long dictation retries no longer stall new audio
+- Settings host picker navigation works from host settings pages
+- Diff gutter rows stay aligned with changed code
+- Mobile sidebar gestures stay responsive under load
+- Compact sheets keep their footer and bottom spacing visible
+
+## 0.1.89 - 2026-06-02
+
+### Added
+
+- **Open workspace services through public service proxy links** ([#1280](https://github.com/getpaseo/paseo/pull/1280) by [@mcowger](https://github.com/mcowger))
+- **Choose where new worktrees are created** ([#1230](https://github.com/getpaseo/paseo/pull/1230) by [@mcowger](https://github.com/mcowger))
+- **Desktop windows reopen at the same size and position** ([#1224](https://github.com/getpaseo/paseo/pull/1224) by [@everton-dgn](https://github.com/everton-dgn))
+- **Delegated agents can run independently and send recurring heartbeat updates**
+
+### Improved
+
+- Composer controls fit better in narrow panes
+- Fork pull request badges stay visible in worktrees
+- Cline in the ACP catalog is updated to v3
+
+### Fixed
+
+- Archiving a worktree finishes even if teardown hits an error ([#1260](https://github.com/getpaseo/paseo/pull/1260) by [@mcowger](https://github.com/mcowger))
+- iOS chat messages render bold, italics, strikethrough, and line breaks correctly ([#1254](https://github.com/getpaseo/paseo/pull/1254) by [@outofrange-consulting](https://github.com/outofrange-consulting))
+- Right-edge split pane resizing no longer clips ([#1261](https://github.com/getpaseo/paseo/pull/1261) by [@everton-dgn](https://github.com/everton-dgn))
+- Pi extension command output no longer hangs
+- Delegated agents no longer appear in workspace alert counts
+
 ## 0.1.88 - 2026-06-01
 
 ### Added

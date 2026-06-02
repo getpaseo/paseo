@@ -7,6 +7,7 @@ export type CreateFlowLifecycleState = "active" | "abandoned" | "sent";
 export interface PendingCreateAttempt {
   draftId: string;
   serverId: string;
+  workspaceId?: string;
   agentId: string | null;
   clientMessageId: string;
   text: string;

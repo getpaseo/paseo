@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { useTranslation } from "react-i18next";
 import { Info } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,6 +28,7 @@ export function SettingsGroup({
   style,
   children,
 }: SettingsGroupProps) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const groupStyle = useMemo(() => [styles.group, style], [style]);
   return (
@@ -39,7 +41,7 @@ export function SettingsGroup({
               <TooltipTrigger asChild>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`About ${title}`}
+                  accessibilityLabel={t("settings.groupInfo", { title })}
                   testID={testID ? `${testID}-info` : undefined}
                   hitSlop={8}
                   style={styles.infoButton}

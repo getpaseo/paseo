@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   getCliInstallStatus,
   getSkillsStatus,
@@ -29,6 +30,7 @@ interface DesktopInstallHookResult {
 }
 
 export function useCliInstall(): DesktopInstallHookResult {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const reportError = useDesktopIpcErrorReporter();
   const enabled = shouldUseDesktopDaemon();
@@ -42,7 +44,7 @@ export function useCliInstall(): DesktopInstallHookResult {
   const { data: installStatus, error: statusError, isLoading, refetch } = statusQuery;
   useDesktopIpcQueryErrorToast({
     error: statusQuery.error,
-    message: "Unable to check CLI install status.",
+    message: t("desktop.integrations.cli.statusFailed"),
     logLabel: "[Integrations] Failed to load CLI status",
   });
 
@@ -51,7 +53,7 @@ export function useCliInstall(): DesktopInstallHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to install the Paseo CLI.",
+        message: t("desktop.integrations.cli.installFailed"),
         logLabel: "[Integrations] Failed to install CLI",
       });
     },
@@ -88,6 +90,7 @@ export interface SkillsStatusHookResult {
 }
 
 export function useSkillsStatus(): SkillsStatusHookResult {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const reportError = useDesktopIpcErrorReporter();
   const enabled = shouldUseDesktopDaemon();
@@ -101,7 +104,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
   const { data: status, error: statusError, isLoading, refetch } = statusQuery;
   useDesktopIpcQueryErrorToast({
     error: statusQuery.error,
-    message: "Unable to check orchestration skills status.",
+    message: t("desktop.integrations.skills.statusFailed"),
     logLabel: "[Integrations] Failed to load skills status",
   });
 
@@ -117,7 +120,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to install orchestration skills.",
+        message: t("desktop.integrations.skills.installFailed"),
         logLabel: "[Integrations] Failed to install skills",
       });
     },
@@ -129,7 +132,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to update orchestration skills.",
+        message: t("desktop.integrations.skills.updateFailed"),
         logLabel: "[Integrations] Failed to update skills",
       });
     },
@@ -141,7 +144,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: "Unable to uninstall orchestration skills.",
+        message: t("desktop.integrations.skills.uninstallFailed"),
         logLabel: "[Integrations] Failed to uninstall skills",
       });
     },

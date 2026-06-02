@@ -11,6 +11,7 @@ import {
 import { Folder } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { shortenPath } from "@/utils/shorten-path";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
@@ -60,6 +61,7 @@ function PathRow({ path, active, onSelect }: PathRowProps) {
 
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const serverId = useActiveServerId();
 
   const open = useKeyboardShortcutsStore((s) => s.projectPickerOpen);
@@ -235,7 +237,7 @@ export function ProjectPickerModal() {
               ref={inputRef}
               value={query}
               onChangeText={handleChangeQuery}
-              placeholder="Type a directory path..."
+              placeholder={t("projectPicker.placeholder")}
               placeholderTextColor={theme.colors.foregroundMuted}
               style={inputStyle}
               autoCapitalize="none"
@@ -253,9 +255,9 @@ export function ProjectPickerModal() {
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
-            {isSubmitting ? <Text style={emptyTextStyle}>Opening project...</Text> : null}
+            {isSubmitting ? <Text style={emptyTextStyle}>{t("projectPicker.opening")}</Text> : null}
             {!isSubmitting && options.length === 0 && !query.trim() ? (
-              <Text style={emptyTextStyle}>Start typing a path</Text>
+              <Text style={emptyTextStyle}>{t("projectPicker.empty")}</Text>
             ) : null}
             {!isSubmitting && !(options.length === 0 && !query.trim()) ? (
               <>

@@ -1,8 +1,7 @@
 import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
+import { i18n } from "@/i18n/i18next";
 
-export const IMPORTABLE_PROVIDER_IDS: Set<string> = new Set(IMPORTABLE_PROVIDERS);
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
@@ -28,9 +27,7 @@ export function resolveProvidersToFetch(
   // when the supported daemon floor is >= v0.1.48 (target: 2026-10-05).
   if (!supportsSnapshot) return null;
   if (!snapshotEntries) return null;
-  return snapshotEntries
-    .filter((entry) => IMPORTABLE_PROVIDER_IDS.has(entry.provider) && entry.enabled !== false)
-    .map((entry) => entry.provider);
+  return snapshotEntries.filter((entry) => entry.enabled !== false).map((entry) => entry.provider);
 }
 
 export function buildProviderLabelMap(
@@ -101,11 +98,15 @@ export function getSessionTitle(entry: FetchRecentProviderSessionEntry): string 
   if (firstPromptPreview) {
     return firstPromptPreview;
   }
-  return "Untitled session";
+  return i18n.t("importSession.preview.untitledSession");
 }
 
 export function getPromptPreview(entry: FetchRecentProviderSessionEntry): string {
-  return entry.lastPromptPreview?.trim() || entry.firstPromptPreview?.trim() || "No prompt preview";
+  return (
+    entry.lastPromptPreview?.trim() ||
+    entry.firstPromptPreview?.trim() ||
+    i18n.t("importSession.preview.noPrompt")
+  );
 }
 
 export interface EmptyStateInputs {
@@ -136,10 +137,16 @@ export function computeEmptyState(input: EmptyStateInputs): {
   const isFilteredEmpty = input.selectedProvider !== ALL_FILTER_VALUE && input.aggregatedCount > 0;
   if (isFilteredEmpty) {
     const label = input.providerLabelById.get(input.selectedProvider) ?? input.selectedProvider;
-    return { showEmptyState, emptyStateTitle: `No ${label} sessions found.` };
+    return {
+      showEmptyState,
+      emptyStateTitle: i18n.t("importSession.empty.noProviderSessions", { provider: label }),
+    };
   }
   if (input.totalAlreadyImportedCount > 0) {
-    return { showEmptyState, emptyStateTitle: "All recent sessions are already imported." };
+    return {
+      showEmptyState,
+      emptyStateTitle: i18n.t("importSession.empty.alreadyImported"),
+    };
   }
-  return { showEmptyState, emptyStateTitle: "No recent sessions to import." };
+  return { showEmptyState, emptyStateTitle: i18n.t("importSession.empty.noRecent") };
 }

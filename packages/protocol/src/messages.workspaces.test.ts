@@ -5,6 +5,7 @@ import {
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceDescriptorPayloadSchema,
+  WorkspaceScriptPayloadSchema,
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
@@ -240,62 +241,42 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
-  test("parses list_available_editors_request", () => {
-    const parsed = SessionInboundMessageSchema.parse({
+  test("parses legacy editor RPC messages for compatibility", () => {
+    const listRequest = SessionInboundMessageSchema.parse({
       type: "list_available_editors_request",
       requestId: "req-editors",
     });
-
-    expect(parsed.type).toBe("list_available_editors_request");
-  });
-
-  test("parses open_in_editor_request with flexible editor ids", () => {
-    const knownEditor = SessionInboundMessageSchema.parse({
+    const openRequest = SessionInboundMessageSchema.parse({
       type: "open_in_editor_request",
-      requestId: "req-open-webstorm",
-      editorId: "webstorm",
-      path: "/tmp/repo",
-    });
-    const unknownEditor = SessionInboundMessageSchema.parse({
-      type: "open_in_editor_request",
-      requestId: "req-open-custom",
+      requestId: "req-open-editor",
       editorId: "unknown-editor",
       path: "/tmp/repo",
+      mode: "reveal",
+      cwd: "/tmp",
     });
-
-    expect(knownEditor.type).toBe("open_in_editor_request");
-    expect(unknownEditor.type).toBe("open_in_editor_request");
-  });
-
-  test("parses open_in_editor_response", () => {
-    const parsed = SessionOutboundMessageSchema.parse({
-      type: "open_in_editor_response",
-      payload: {
-        requestId: "req-open-editor",
-        error: null,
-      },
-    });
-
-    expect(parsed.type).toBe("open_in_editor_response");
-  });
-
-  test("parses list_available_editors_response with unknown editor ids", () => {
-    const parsed = SessionOutboundMessageSchema.parse({
+    const listResponse = SessionOutboundMessageSchema.parse({
       type: "list_available_editors_response",
       payload: {
         requestId: "req-editors",
-        editors: [
-          { id: "cursor", label: "Cursor" },
-          { id: "unknown-editor", label: "Unknown Editor" },
-        ],
+        editors: [{ id: "unknown-editor", label: "Unknown Editor" }],
         error: null,
       },
     });
+    const openResponse = SessionOutboundMessageSchema.parse({
+      type: "open_in_editor_response",
+      payload: {
+        requestId: "req-open-editor",
+        error: "Editor opening moved to the desktop app",
+      },
+    });
 
-    expect(parsed.type).toBe("list_available_editors_response");
+    expect(listRequest.type).toBe("list_available_editors_request");
+    expect(openRequest.type).toBe("open_in_editor_request");
+    expect(listResponse.type).toBe("list_available_editors_response");
+    expect(openResponse.type).toBe("open_in_editor_response");
   });
 
-  test("rejects empty editor ids", () => {
+  test("rejects empty legacy editor ids", () => {
     const result = SessionInboundMessageSchema.safeParse({
       type: "open_in_editor_request",
       requestId: "req-open-empty",
@@ -430,6 +411,73 @@ describe("workspace message schemas", () => {
     ).toBe(archivingAt);
   });
 
+  // The protocol `statusEnteredAt` field is optional and defaults to null.
+  // Old daemons omit it entirely and old clients must keep accepting that.
+  test("defaults statusEnteredAt to null for legacy descriptors", () => {
+    const baseWorkspace = {
+      id: "ws-status-entered",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "running",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).statusEnteredAt).toBeNull();
+  });
+
+  test("preserves statusEnteredAt when present", () => {
+    const baseWorkspace = {
+      id: "ws-status-entered",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "running",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    const statusEnteredAt = "2026-05-12T10:00:00.000Z";
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({
+        ...baseWorkspace,
+        statusEnteredAt,
+      }).statusEnteredAt,
+    ).toBe(statusEnteredAt);
+  });
+
+  test("preserves explicit statusEnteredAt: null for empty workspaces", () => {
+    // The server emits `statusEnteredAt: null` for workspaces with no
+    // contributing agents (the "done with no agents" case). The client must
+    // distinguish this from "field omitted" — both parse to null, but the
+    // round-trip must not lose the explicit null.
+    const baseWorkspace = {
+      id: "ws-status-entered",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    const parsed = WorkspaceDescriptorPayloadSchema.parse({
+      ...baseWorkspace,
+      statusEnteredAt: null,
+    });
+    expect(parsed.statusEnteredAt).toBeNull();
+  });
+
   test("parses legacy workspace descriptor enum values", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "workspace_update",
@@ -483,6 +531,53 @@ describe("workspace message schemas", () => {
       type: "service",
       exitCode: null,
     });
+  });
+
+  test("parses workspace service payloads from old daemons without split proxy URLs", () => {
+    const parsed = WorkspaceScriptPayloadSchema.parse({
+      scriptName: "web",
+      type: "service",
+      hostname: "web--repo.localhost",
+      port: 3000,
+      proxyUrl: "http://web--repo.localhost:6767",
+      lifecycle: "running",
+      health: "healthy",
+    });
+
+    expect(parsed.localProxyUrl).toBeUndefined();
+    expect(parsed.publicProxyUrl).toBeUndefined();
+    expect(parsed.proxyUrl).toBe("http://web--repo.localhost:6767");
+  });
+
+  test("parses workspace service payloads with split local and public proxy URLs", () => {
+    const parsed = WorkspaceScriptPayloadSchema.parse({
+      scriptName: "web",
+      type: "service",
+      hostname: "web--repo.localhost",
+      port: 3000,
+      localProxyUrl: "http://web--repo.localhost:6767",
+      publicProxyUrl: "https://web--repo.services.example.com",
+      proxyUrl: "https://web--repo.services.example.com",
+      lifecycle: "running",
+      health: "healthy",
+    });
+
+    expect(parsed.localProxyUrl).toBe("http://web--repo.localhost:6767");
+    expect(parsed.publicProxyUrl).toBe("https://web--repo.services.example.com");
+    expect(parsed.proxyUrl).toBe("https://web--repo.services.example.com");
+  });
+
+  test("defaults omitted workspace script proxyUrl to null", () => {
+    const parsed = WorkspaceScriptPayloadSchema.parse({
+      scriptName: "typecheck",
+      type: "script",
+      hostname: "typecheck",
+      port: null,
+      lifecycle: "stopped",
+      health: null,
+    });
+
+    expect(parsed.proxyUrl).toBeNull();
   });
 
   test("parses workspace_setup_progress payload", () => {

@@ -282,7 +282,8 @@ describe("opencode tool-call mapper", () => {
         callId: "opencode-write-success-text",
         status: "completed",
         input: {
-          filePath: "/Users/moboudra/.paseo/worktrees/1luy0po7/cold-ladybug/dummy.txt",
+          filePath:
+            "/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/cold-ladybug/dummy.txt",
           content: "hello world\n",
         },
         output: "Wrote file successfully.",
@@ -291,7 +292,8 @@ describe("opencode tool-call mapper", () => {
 
     expect(item.detail).toEqual({
       type: "write",
-      filePath: "/Users/moboudra/.paseo/worktrees/1luy0po7/cold-ladybug/dummy.txt",
+      filePath:
+        "/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/cold-ladybug/dummy.txt",
       content: "hello world\n",
     });
   });

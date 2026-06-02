@@ -4,7 +4,7 @@ import { getServerId } from "./helpers/server-id";
 import { startupScenario } from "./helpers/startup-dsl";
 
 test.describe("Startup loading presentation", () => {
-  test("mobile reconnect keeps connection recovery actions visible", async ({ page }) => {
+  test("mobile reconnect preserves the saved host shell", async ({ page }) => {
     const startup = await startupScenario(page)
       .withMobileViewport()
       .withSavedHost({
@@ -14,8 +14,8 @@ test.describe("Startup loading presentation", () => {
       })
       .openRoot();
 
-    await startup.expectsReconnectWelcome();
-    await startup.expectsNoSavedHostStatus({ label: "Dev" });
+    await startup.expectsSavedHostShell({ label: "Dev" });
+    await startup.expectsNoSavedHostErrorStatus();
     await startup.expectsNoLocalServerStartupCopy();
   });
 

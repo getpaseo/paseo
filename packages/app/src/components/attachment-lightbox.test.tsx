@@ -55,6 +55,17 @@ vi.mock("@/constants/platform", () => ({
   isNative: false,
 }));
 
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) =>
+      ({
+        "message.attachments.closeImage": "Close image",
+        "message.attachments.dismissImage": "Dismiss image",
+        "message.attachments.imageLoadFailed": "Couldn't load image",
+      })[key] ?? key,
+  }),
+}));
+
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));

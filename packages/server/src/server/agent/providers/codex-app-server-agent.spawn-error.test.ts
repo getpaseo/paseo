@@ -30,7 +30,7 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
     }
   });
 
-  test("listPersistedAgents rejects gracefully when the codex binary does not exist", async () => {
+  test("listImportableSessions rejects gracefully when the codex binary does not exist", async () => {
     const client = new CodexAppServerAgentClient(logger, {
       command: {
         mode: "replace",
@@ -45,7 +45,7 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
     process.on("uncaughtException", onUncaught);
 
     try {
-      await expect(client.listPersistedAgents()).rejects.toThrow();
+      await expect(client.listImportableSessions()).rejects.toThrow();
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(uncaughtErrors).toHaveLength(0);
     } finally {

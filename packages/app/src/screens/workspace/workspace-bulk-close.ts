@@ -1,11 +1,37 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { i18n } from "@/i18n/i18next";
 
 export interface BulkClosableTabGroups {
   agentTabs: Array<{ tabId: string; agentId: string }>;
   terminalTabs: Array<{ tabId: string; terminalId: string }>;
   otherTabs: Array<{ tabId: string; target: WorkspaceTabDescriptor["target"] }>;
 }
+
+export interface BulkCloseConfirmationLabels {
+  all: (input: { agents: number; terminals: number; tabs: number }) => string;
+  agentsAndTerminals: (input: { agents: number; terminals: number }) => string;
+  terminalsAndTabs: (input: { terminals: number; tabs: number }) => string;
+  agentsAndTabs: (input: { agents: number; tabs: number }) => string;
+  terminals: (input: { terminals: number }) => string;
+  tabs: (input: { tabs: number }) => string;
+  agents: (input: { agents: number }) => string;
+}
+
+export const DEFAULT_BULK_CLOSE_CONFIRMATION_LABELS: BulkCloseConfirmationLabels = {
+  all: ({ agents, terminals, tabs }) =>
+    `This will archive ${agents} agent(s), close ${terminals} terminal(s), and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
+  agentsAndTerminals: ({ agents, terminals }) =>
+    `This will archive ${agents} agent(s) and close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
+  terminalsAndTabs: ({ terminals, tabs }) =>
+    `This will close ${terminals} terminal(s) and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
+  agentsAndTabs: ({ agents, tabs }) =>
+    `This will archive ${agents} agent(s) and close ${tabs} tab(s).`,
+  terminals: ({ terminals }) =>
+    `This will close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
+  tabs: ({ tabs }) => `This will close ${tabs} tab(s).`,
+  agents: ({ agents }) => `This will archive ${agents} agent(s).`,
+};
 
 interface CloseWorkspaceTabWithCleanupInput {
   tabId: string;
@@ -43,27 +69,43 @@ export function classifyBulkClosableTabs(tabs: WorkspaceTabDescriptor[]): BulkCl
   return groups;
 }
 
-export function buildBulkCloseConfirmationMessage(input: BulkClosableTabGroups): string {
+export function buildBulkCloseConfirmationMessage(
+  input: BulkClosableTabGroups,
+  labels: BulkCloseConfirmationLabels = DEFAULT_BULK_CLOSE_CONFIRMATION_LABELS,
+): string {
   const { agentTabs, terminalTabs, otherTabs } = input;
   if (agentTabs.length > 0 && terminalTabs.length > 0 && otherTabs.length > 0) {
-    return `This will archive ${agentTabs.length} agent(s), close ${terminalTabs.length} terminal(s), and close ${otherTabs.length} tab(s). Any running process in a closed terminal will be stopped immediately.`;
+    return labels.all({
+      agents: agentTabs.length,
+      terminals: terminalTabs.length,
+      tabs: otherTabs.length,
+    });
   }
   if (agentTabs.length > 0 && terminalTabs.length > 0) {
-    return `This will archive ${agentTabs.length} agent(s) and close ${terminalTabs.length} terminal(s). Any running process in a closed terminal will be stopped immediately.`;
+    return labels.agentsAndTerminals({
+      agents: agentTabs.length,
+      terminals: terminalTabs.length,
+    });
   }
   if (terminalTabs.length > 0 && otherTabs.length > 0) {
-    return `This will close ${terminalTabs.length} terminal(s) and close ${otherTabs.length} tab(s). Any running process in a closed terminal will be stopped immediately.`;
+    return labels.terminalsAndTabs({
+      terminals: terminalTabs.length,
+      tabs: otherTabs.length,
+    });
   }
   if (agentTabs.length > 0 && otherTabs.length > 0) {
-    return `This will archive ${agentTabs.length} agent(s) and close ${otherTabs.length} tab(s).`;
+    return labels.agentsAndTabs({
+      agents: agentTabs.length,
+      tabs: otherTabs.length,
+    });
   }
   if (terminalTabs.length > 0) {
-    return `This will close ${terminalTabs.length} terminal(s). Any running process in a closed terminal will be stopped immediately.`;
+    return labels.terminals({ terminals: terminalTabs.length });
   }
   if (otherTabs.length > 0) {
-    return `This will close ${otherTabs.length} tab(s).`;
+    return labels.tabs({ tabs: otherTabs.length });
   }
-  return `This will archive ${agentTabs.length} agent(s).`;
+  return labels.agents({ agents: agentTabs.length });
 }
 
 export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput): Promise<void> {
@@ -81,7 +123,7 @@ export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput)
       });
   } else if (hasDestructiveTabs) {
     warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, {
-      error: new Error("Daemon client not available"),
+      error: new Error(i18n.t("common.errors.daemonClientUnavailable")),
     });
   }
 

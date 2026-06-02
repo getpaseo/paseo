@@ -68,16 +68,15 @@ describe("resolveArchiveSubagentDialog", () => {
     });
   });
 
-  it("uses running copy for initializing subagents", () => {
+  it("does not use running copy for initializing subagents", () => {
     expect(
       resolveArchiveSubagentDialog({
         title: "Starting child",
         status: "initializing",
       }),
     ).toEqual({
-      title: "Archive running subagent?",
-      message:
-        "Starting child is still running. Archiving it will stop the subagent and remove it from the track.",
+      title: "Archive subagent?",
+      message: "Remove Starting child from the track. The subagent will be archived.",
       confirmLabel: "Archive",
       cancelLabel: "Cancel",
       destructive: true,

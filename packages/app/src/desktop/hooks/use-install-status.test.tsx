@@ -5,6 +5,7 @@ import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import { useCliInstall, useSkillsStatus } from "./use-install-status";
 
 const toast = vi.hoisted(() => ({
@@ -54,6 +55,7 @@ describe("useCliInstall", () => {
   });
 
   afterEach(() => {
+    void i18n.changeLanguage("en");
     vi.restoreAllMocks();
     vi.clearAllMocks();
   });
@@ -89,6 +91,28 @@ describe("useCliInstall", () => {
     expect(toast.error).toHaveBeenCalledWith("Unable to install the Paseo CLI.");
     expect(console.error).toHaveBeenCalledWith("[Integrations] Failed to install CLI", error);
   });
+
+  it("uses the active language for CLI install errors", async () => {
+    await i18n.changeLanguage("zh-CN");
+    const error = new Error("Missing IPC handler");
+    desktopDaemon.getCliInstallStatus.mockResolvedValue({ installed: false });
+    desktopDaemon.installCli.mockRejectedValue(error);
+    const { result } = renderDesktopHook(() => useCliInstall());
+
+    await waitFor(() => {
+      expect(result.current.status).toEqual({ installed: false });
+    });
+
+    act(() => {
+      result.current.install();
+    });
+
+    await waitFor(() => {
+      expect(result.current.error).toBe(error);
+    });
+
+    expect(toast.error).toHaveBeenCalledWith("无法安装 Paseo CLI。");
+  });
 });
 
 describe("useSkillsStatus", () => {
@@ -97,6 +121,7 @@ describe("useSkillsStatus", () => {
   });
 
   afterEach(() => {
+    void i18n.changeLanguage("en");
     vi.restoreAllMocks();
     vi.clearAllMocks();
   });

@@ -362,6 +362,45 @@ describe("daemon E2E - timeline window", () => {
     }
   });
 
+  test("projected empty after fetch preserves older history availability", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Timeline Empty After HasOlder Test",
+        modeId: "full-access",
+      });
+      for (let seq = 1; seq <= 160; seq += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `row ${seq}`,
+        });
+      }
+
+      const tail = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        limit: 100,
+        projection: "projected",
+      });
+      expect(tail.hasOlder).toBe(true);
+      expect(tail.startCursor?.seq).toBe(61);
+      expect(tail.endCursor?.seq).toBe(160);
+
+      const after = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: tail.epoch, seq: tail.endCursor?.seq ?? 160 },
+        limit: 100,
+        projection: "projected",
+      });
+
+      expect(after.entries).toHaveLength(0);
+      expect(after.hasOlder).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("before fetch does not re-fetch full plain chat history", async () => {
     const cwd = tmpCwd();
     try {

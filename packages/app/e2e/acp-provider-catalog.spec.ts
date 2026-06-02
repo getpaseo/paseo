@@ -4,7 +4,7 @@ import { getServerId } from "./helpers/server-id";
 import {
   expectProviderInstalledInSettings,
   installAcpCatalogProvider,
-  openAddProviderModal,
+  openAddProviderArea,
   openSettingsHost,
   openSettingsHostSection,
 } from "./helpers/settings";
@@ -21,7 +21,7 @@ test.describe("ACP provider catalog", () => {
     await openSettingsHost(page, getServerId());
     // Providers moved to their own host section; add-provider lives there now.
     await openSettingsHostSection(page, getServerId(), "providers");
-    await openAddProviderModal(page);
+    await openAddProviderArea(page);
 
     await installAcpCatalogProvider(page, ACP_PROVIDER.name);
     await expectProviderInstalledInSettings(page, ACP_PROVIDER.name);

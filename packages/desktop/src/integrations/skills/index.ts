@@ -1,4 +1,5 @@
 export {
+  autoUpdateInstalledSkills,
   getSkillsStatus,
   installSkills,
   uninstallSkills,

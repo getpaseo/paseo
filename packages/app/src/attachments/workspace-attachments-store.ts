@@ -19,6 +19,10 @@ interface WorkspaceAttachmentsStoreActions {
     scopeKey: string;
     attachments: readonly WorkspaceComposerAttachment[];
   }) => void;
+  addWorkspaceAttachment: (input: {
+    scopeKey: string;
+    attachment: WorkspaceComposerAttachment;
+  }) => void;
   clearWorkspaceAttachments: (input: { scopeKey: string }) => void;
 }
 
@@ -60,6 +64,35 @@ function areWorkspaceAttachmentsEqual(
   return left.every((attachment, index) => attachment === right[index]);
 }
 
+function getContextAttachmentKey(attachment: WorkspaceComposerAttachment): string | null {
+  if (
+    attachment.kind !== "github.pull_request_comment" &&
+    attachment.kind !== "github.pull_request_review" &&
+    attachment.kind !== "github.pull_request_check"
+  ) {
+    return null;
+  }
+  return JSON.stringify({
+    kind: attachment.kind,
+    id: attachment.id,
+  });
+}
+
+export function appendWorkspaceAttachment(
+  current: readonly WorkspaceComposerAttachment[],
+  attachment: WorkspaceComposerAttachment,
+): WorkspaceComposerAttachment[] {
+  const contextKey = getContextAttachmentKey(attachment);
+  if (contextKey === null) {
+    return [...current, attachment];
+  }
+
+  const next = current.filter(
+    (currentAttachment) => getContextAttachmentKey(currentAttachment) !== contextKey,
+  );
+  return [...next, attachment];
+}
+
 export const useWorkspaceAttachmentsStore = create<WorkspaceAttachmentsStore>()((set) => ({
   attachmentsByScope: {},
   setWorkspaceAttachments: ({ scopeKey, attachments }) => {
@@ -75,6 +108,21 @@ export const useWorkspaceAttachmentsStore = create<WorkspaceAttachmentsStore>()(
         const next = { ...state.attachmentsByScope };
         delete next[scopeKey];
         return { attachmentsByScope: next };
+      }
+      return {
+        attachmentsByScope: {
+          ...state.attachmentsByScope,
+          [scopeKey]: attachments,
+        },
+      };
+    });
+  },
+  addWorkspaceAttachment: ({ scopeKey, attachment }) => {
+    set((state) => {
+      const current = state.attachmentsByScope[scopeKey] ?? EMPTY_WORKSPACE_ATTACHMENTS;
+      const attachments = appendWorkspaceAttachment(current, attachment);
+      if (areWorkspaceAttachmentsEqual(current, attachments)) {
+        return state;
       }
       return {
         attachmentsByScope: {

@@ -10,8 +10,8 @@ import {
   ViewStyle,
   type TextStyle,
 } from "react-native";
+import { useTranslation } from "react-i18next";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import * as React from "react";
 import {
   useState,
@@ -26,12 +26,8 @@ import {
   Children,
   cloneElement,
 } from "react";
-import type { ReactNode, ComponentType } from "react";
-import Markdown, {
-  MarkdownIt,
-  type ASTNode,
-  type RenderRules,
-} from "react-native-markdown-display";
+import type { ComponentType, ReactNode } from "react";
+import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -51,7 +47,7 @@ import {
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { type Theme } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -62,14 +58,15 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
+import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
@@ -99,6 +96,7 @@ import {
   AssistantMarkdownLink,
   type InlinePathTarget,
   useAssistantFileLinkActions,
+  useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
@@ -109,8 +107,6 @@ import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 export type { InlinePathTarget } from "@/assistant-file-links";
-
-type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
 interface UserMessageProps {
   serverId?: string;
@@ -158,22 +154,6 @@ const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
   "http://",
 ] as const;
 const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
-
-interface MarkdownWithStableRendererProps {
-  children: ReactNode;
-  style: ReturnType<typeof createMarkdownStyles>;
-  rules: RenderRules;
-  markdownit: MarkdownIt;
-  onLinkPress: (url: string) => boolean;
-  allowedImageHandlers: readonly string[];
-  topLevelMaxExceededItem: ReactNode;
-}
-
-const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
-const ThemedMarkdown = withUnistyles(MarkdownWithStableRenderer);
-const markdownStyleMapping = (theme: Theme): Partial<MarkdownWithStableRendererProps> => ({
-  style: createMarkdownStyles(theme),
-});
 
 const ThemedMicVocal = withUnistyles(MicVocal);
 const ThemedTodoCheckIcon = withUnistyles(Check);
@@ -446,18 +426,23 @@ function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAtta
   return <Image source={imageSource} style={userMessageStylesheet.imageThumbnail} />;
 }
 
-function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
+function getUserMessageAttachmentLabel(
+  attachment: AgentAttachment,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
   switch (attachment.type) {
     case "review": {
       const count = attachment.comments.length;
-      return count === 1 ? "Review · 1 comment" : `Review · ${count} comments`;
+      return count === 1
+        ? t("message.attachments.reviewOne")
+        : t("message.attachments.reviewMany", { count });
     }
     case "github_pr":
       return `PR #${attachment.number}`;
     case "github_issue":
       return `Issue #${attachment.number}`;
     case "text":
-      return attachment.title ?? "Text attachment";
+      return attachment.title ?? t("message.attachments.textAttachment");
     default:
       return "";
   }
@@ -478,6 +463,7 @@ export const UserMessage = memo(function UserMessage({
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
@@ -560,7 +546,7 @@ export const UserMessage = memo(function UserMessage({
                   style={userMessageStylesheet.structuredAttachmentPill}
                 >
                   <Text style={userMessageStylesheet.structuredAttachmentText} numberOfLines={1}>
-                    {getUserMessageAttachmentLabel(attachment)}
+                    {getUserMessageAttachmentLabel(attachment, t)}
                   </Text>
                 </View>
               ))}
@@ -586,7 +572,7 @@ export const UserMessage = memo(function UserMessage({
             <TurnCopyButton
               getContent={getMessageContent}
               containerStyle={userMessageStylesheet.copyButton}
-              accessibilityLabel="Copy message"
+              accessibilityLabel={t("message.actions.copyMessage")}
             />
           </View>
         ) : null}
@@ -860,6 +846,7 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
   const handleImageError = useCallback(() => {
     setLoadState({ status: "error" });
   }, []);
+  const { t } = useTranslation();
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
       assistantMessageStylesheet.imageSurface,
@@ -885,7 +872,9 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
         <View style={stateSurfaceStyle}>
           {loadState.status === "loading" ? <ActivityIndicator size="small" /> : null}
           {loadState.status === "error" ? (
-            <Text style={assistantMessageStylesheet.imageErrorText}>Image unavailable</Text>
+            <Text style={assistantMessageStylesheet.imageErrorText}>
+              {t("message.attachments.imageUnavailable")}
+            </Text>
           ) : null}
         </View>
       </View>
@@ -922,6 +911,7 @@ function AssistantMarkdownImage({
   workspaceRoot?: string;
   serverId?: string;
 }) {
+  const { t } = useTranslation();
   const resolution = useMemo(
     () => resolveAssistantImageSource({ source, workspaceRoot }),
     [source, workspaceRoot],
@@ -951,7 +941,7 @@ function AssistantMarkdownImage({
 
       const file = await client.readFile(resolution.cwd, resolution.path);
       if (file.kind !== "image") {
-        throw new Error("Image preview unavailable.");
+        throw new Error(t("message.attachments.imagePreviewUnavailable"));
       }
 
       return await persistAttachmentFromBytes({
@@ -1024,7 +1014,11 @@ function AssistantMarkdownImage({
     );
   }
 
-  const errorText = resolveAssistantImageErrorText(query.error, dataImageQuery.error);
+  const errorText = resolveAssistantImageErrorText(
+    query.error,
+    dataImageQuery.error,
+    t("message.attachments.imagePreviewLoadFailed"),
+  );
 
   return (
     <View style={stateFrameStyle}>
@@ -1033,10 +1027,14 @@ function AssistantMarkdownImage({
   );
 }
 
-function resolveAssistantImageErrorText(fileError: unknown, dataError: unknown): string {
+function resolveAssistantImageErrorText(
+  fileError: unknown,
+  dataError: unknown,
+  fallbackText: string,
+): string {
   if (fileError instanceof Error) return fileError.message;
   if (dataError instanceof Error) return dataError.message;
-  return "Unable to load image preview.";
+  return fallbackText;
 }
 
 function getInlineCodeAutoLinkUrl(
@@ -1142,6 +1140,7 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   accessibilityLabel,
   copiedAccessibilityLabel,
 }: TurnCopyButtonProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1183,7 +1182,9 @@ export const TurnCopyButton = memo(function TurnCopyButton({
       style={pressableStyle}
       accessibilityRole="button"
       accessibilityLabel={
-        copied ? (copiedAccessibilityLabel ?? "Copied") : (accessibilityLabel ?? "Copy turn")
+        copied
+          ? (copiedAccessibilityLabel ?? t("message.actions.copied"))
+          : (accessibilityLabel ?? t("message.actions.copyTurn"))
       }
     >
       {({ hovered }) => {
@@ -1497,18 +1498,15 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
-    <AppearanceStyleBoundary>
-      <ThemedMarkdown
-        uniProps={markdownStyleMapping}
-        rules={rules}
-        markdownit={parser}
-        onLinkPress={onLinkPress}
-        allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
-        topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
-      >
-        {text}
-      </ThemedMarkdown>
-    </AppearanceStyleBoundary>
+    <MarkdownRenderer
+      text={text}
+      enableHtmlish={false}
+      rules={rules}
+      markdownit={parser}
+      onLinkPress={onLinkPress}
+      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+    />
   );
 });
 
@@ -1531,8 +1529,19 @@ function MarkdownInheritedText({
     () => [inheritedStyles, textStyle, overrideStyle],
     [inheritedStyles, textStyle, overrideStyle],
   );
+  // When this span renders link label text on iOS, pick up the link's press
+  // handler from context and hand it to MarkdownTextSpan, which forwards it to
+  // the leaf string children react-native-uitextview makes tappable. Null
+  // outside a link (and on every other platform, where no provider mounts), so
+  // ordinary text is unaffected. See assistant-file-links/link-press-context.
+  const linkPress = useAssistantLinkPress();
   return (
-    <MarkdownTextSpan monoSurface={monoSurface} style={style}>
+    <MarkdownTextSpan
+      monoSurface={monoSurface}
+      style={style}
+      onPress={linkPress?.onPress}
+      accessibilityRole={linkPress?.accessibilityRole}
+    >
       {children}
     </MarkdownTextSpan>
   );
@@ -1825,7 +1834,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
       ) => (
-        <MarkdownParagraphView key={node.key} paragraphStyle={styles.paragraph}>
+        <MarkdownParagraphView
+          key={node.key}
+          paragraphStyle={styles.paragraph}
+          containsImage={markdownNodeContainsType(node, "image")}
+        >
           {children}
         </MarkdownParagraphView>
       ),
@@ -1949,6 +1962,7 @@ export const SpeakMessage = memo(function SpeakMessage({
   timestamp: _timestamp,
   disableOuterSpacing,
 }: SpeakMessageProps) {
+  const { t } = useTranslation();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const containerStyle = useMemo(
     () => [
@@ -1962,7 +1976,7 @@ export const SpeakMessage = memo(function SpeakMessage({
     <View testID="speak-message" style={containerStyle}>
       <View style={speakMessageStylesheet.header}>
         <ThemedMicVocal size={12} uniProps={foregroundMutedColorMapping} />
-        <Text style={speakMessageStylesheet.headerLabel}>Spoke</Text>
+        <Text style={speakMessageStylesheet.headerLabel}>{t("message.speak.header")}</Text>
       </View>
       <Text style={speakMessageStylesheet.text}>{message}</Text>
     </View>
@@ -2063,6 +2077,7 @@ export const ActivityLog = memo(function ActivityLog({
   onArtifactClick,
   disableOuterSpacing,
 }: ActivityLogProps) {
+  const { t } = useTranslation();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -2132,7 +2147,9 @@ export const ActivityLog = memo(function ActivityLog({
             </Text>
             {metadata && (
               <View style={activityLogStylesheet.detailsRow}>
-                <Text style={activityLogStylesheet.detailsText}>Details</Text>
+                <Text style={activityLogStylesheet.detailsText}>
+                  {t("message.activity.details")}
+                </Text>
                 {isExpanded ? (
                   <ChevronDown size={12} color="#71717a" />
                 ) : (
@@ -2289,6 +2306,7 @@ export const TodoListCard = memo(function TodoListCard({
   items,
   disableOuterSpacing,
 }: TodoListCardProps) {
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
@@ -2302,7 +2320,7 @@ export const TodoListCard = memo(function TodoListCard({
       <View style={todoListCardStylesheet.detailsWrapper}>
         <View style={todoListCardStylesheet.list}>
           {items.length === 0 ? (
-            <Text style={todoListCardStylesheet.emptyText}>No tasks yet.</Text>
+            <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
             items.map((item) => (
               <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
@@ -2311,11 +2329,11 @@ export const TodoListCard = memo(function TodoListCard({
         </View>
       </View>
     );
-  }, [items]);
+  }, [items, t]);
 
   return (
     <ExpandableBadge
-      label="Tasks"
+      label={t("message.todo.title")}
       secondaryLabel={nextTask}
       icon={CheckSquare}
       isExpanded={isExpanded}
@@ -2458,6 +2476,7 @@ function ExpandableBadgeLabelRow({
   onOpenFileHoverIn,
   onOpenFileHoverOut,
 }: ExpandableBadgeLabelRowProps) {
+  const { t } = useTranslation();
   return (
     <View
       style={expandableBadgeStylesheet.labelRow}
@@ -2482,7 +2501,7 @@ function ExpandableBadgeLabelRow({
           onHoverIn={onOpenFileHoverIn}
           onHoverOut={onOpenFileHoverOut}
           accessibilityRole="button"
-          accessibilityLabel="Open file"
+          accessibilityLabel={t("message.actions.openFile")}
           testID="tool-call-open-file"
           style={expandableBadgeStylesheet.openFileButton}
           hitSlop={6}
@@ -3152,7 +3171,6 @@ export const ToolCall = memo(function ToolCall({
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
     return (
       <PlanCard
-        title="Plan"
         text={effectiveDetail.text}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}

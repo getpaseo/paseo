@@ -66,6 +66,7 @@ export class TestOpenCodeClient {
     sessionCommand: [] as unknown[],
     sessionCreate: [] as unknown[],
     sessionDelete: [] as unknown[],
+    sessionGet: [] as unknown[],
     sessionMessages: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
     sessionSummarize: [] as unknown[],
@@ -89,9 +90,13 @@ export class TestOpenCodeClient {
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
   sessionDeleteResponse: OpenCodeResponse = {};
+  sessionGetResponse: OpenCodeResponse = {
+    data: { id: "session-1", directory: "/workspace/repo", title: null },
+  };
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
+  sessionSummarizeEvents: unknown[] = [idleEvent()];
   sessionSummarizeResponse: OpenCodeResponse = { data: {} };
   sessionUpdateResponse: OpenCodeResponse = {};
   private readonly queuedEventStream = createQueuedEventStream();
@@ -195,6 +200,10 @@ export class TestOpenCodeClient {
           this.calls.sessionDelete.push(parameters);
           return this.sessionDeleteResponse;
         },
+        get: async (parameters: unknown) => {
+          this.calls.sessionGet.push(parameters);
+          return this.sessionGetResponse;
+        },
         messages: async (parameters: unknown) => {
           this.calls.sessionMessages.push(parameters);
           return this.sessionMessagesResponse;
@@ -208,6 +217,9 @@ export class TestOpenCodeClient {
         },
         summarize: async (parameters: unknown) => {
           this.calls.sessionSummarize.push(parameters);
+          for (const event of this.sessionSummarizeEvents) {
+            this.emitEvent(event);
+          }
           return this.sessionSummarizeResponse;
         },
         update: async (parameters: unknown) => {

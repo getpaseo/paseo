@@ -9,6 +9,9 @@ A release has exactly two steps. The agent does the first, the user authorizes t
 **Preparation** (local, reversible — agent does this):
 
 - format, lint, typecheck all green
+- ACP provider catalog drift checked with `npm run acp:version-drift:check`;
+  if stale package-runner pins are intentional, say so explicitly, otherwise run
+  `npm run acp:version-drift:update` and commit the updated catalog
 - draft the changelog, show it to the user, wait for review
 - run the pre-release sanity check, surface findings to the user
 - confirm CI is green
@@ -30,7 +33,7 @@ Rules that apply to both steps:
 There are two supported ways to ship from `main`:
 
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
-2. **Beta flow**: silent release candidates. Betas don't touch the changelog, don't move the website, and don't publish npm or production mobile builds.
+2. **Beta flow**: silent release candidates. Betas don't touch the changelog, don't move the website, and publish npm only on the explicit `beta` dist-tag.
 
 ## Standard release (patch)
 
@@ -63,14 +66,15 @@ npm run release:push         # Push HEAD + tag (triggers CI workflows)
 ## Beta flow
 
 ```bash
-npm run release:beta:patch       # Bump to X.Y.Z-beta.1, push commit + tag
+npm run release:beta:patch       # Bump to X.Y.Z-beta.1, publish npm beta, push commit + tag
 # ... test desktop and APK prerelease assets from GitHub Releases ...
 npm run release:beta:next        # Optional: cut X.Y.Z-beta.2, beta.3, ...
 npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 ```
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
-- Betas publish desktop assets and APKs for testing, but they do not publish npm packages and do not trigger the production web/mobile release flows
+- Betas publish npm packages with `--tag beta`, so `npm install @getpaseo/cli@beta` opts in while plain `npm install @getpaseo/cli` stays on `latest`
+- Betas publish desktop assets and APKs for testing, but they do not trigger the production web/mobile release flows
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
@@ -85,7 +89,7 @@ Use the beta path when you need to:
 
 ## Staged rollout (stable channel)
 
-Stable desktop releases go out via a linear time-based rollout: 0% admitted when the updater manifests appear, 100% admitted 36 hours later, linear ramp in between. Beta releases bypass the rollout entirely — beta users always receive updates immediately.
+Stable desktop releases go out via a linear time-based rollout for automatic update checks: 0% admitted when the updater manifests appear, 100% admitted 36 hours later, linear ramp in between. Manual checks bypass the rollout so a user can install immediately when they click **Check**. Beta releases bypass the rollout entirely — beta users always receive updates immediately.
 
 The rollout is driven by a `rolloutHours` field stamped into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml`) by the `finalize-rollout` job in `desktop-release.yml`.
 
@@ -169,7 +173,7 @@ If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+
 - **No pause / kill switch.** Once a stable user is admitted, they will install the update on next quit (`autoInstallOnAppQuit = true`). To stop new admissions, ship a superseding release. To "recall" already-admitted users, ship a hotfix `+1` patch.
 - **No rollback.** `allowDowngrade = false`. Bad release = ship a hotfix.
 - **Bootstrap caveat.** Clients running a build older than the rollout feature ignore `rolloutHours` and admit immediately. Rollout protection only applies to clients running the rollout-aware version or later.
-- **Up to ~30 min admission latency.** Renderer polls every 30 minutes, so a stable user may take up to that long to be evaluated against the rollout window.
+- **Up to ~30 min automatic admission latency.** Renderer polls every 30 minutes, so a stable user may take up to that long to be evaluated against the rollout window. Clicking **Check** is manual and bypasses rollout admission.
 
 ## Mobile builds (EAS)
 
@@ -300,6 +304,7 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
 - If `release:publish` partially fails, re-run it — npm skips already-published versions
+- If `release:publish:beta` partially fails, re-run it — npm skips already-published versions and keeps prereleases off `latest` because every publish uses `--tag beta`
 - The website uses GitHub's latest published release API for download links, so published beta prereleases do not replace the stable download target.
 
 ## Changelog format
@@ -420,6 +425,7 @@ The changelog covers **stable-to-stable**. Betas are not represented. When you p
 
 - [ ] Working tree is clean and the intended commit is on `main`
 - [ ] `npm run release:beta:patch` (or `:next`) completes successfully
+- [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 

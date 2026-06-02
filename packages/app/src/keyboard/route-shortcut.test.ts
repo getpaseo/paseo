@@ -134,6 +134,13 @@ describe("routeKeyboardShortcut — workspace.navigate.index", () => {
 });
 
 describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
+  const STATUS_VISUAL_TARGETS = [
+    { serverId: "srv", workspaceId: "needs-input" },
+    { serverId: "srv", workspaceId: "running-new" },
+    { serverId: "srv", workspaceId: "running-old" },
+    { serverId: "srv", workspaceId: "done" },
+  ] as const;
+
   it("uses the retained navigation workspace selection over a stale pathname", () => {
     expect(
       routeKeyboardShortcut(
@@ -147,6 +154,57 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
       kind: "navigate-workspace",
       serverId: "srv",
       workspaceId: "ws-5",
+    });
+  });
+
+  it("moves from status row 2 to row 3 using status visual target order", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.relative", payload: { delta: 1 } },
+        makeCtx({
+          pathname: "/h/srv/workspace/ui-expose-archive-worktrees-on-merge",
+          sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-new" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "running-old",
+    });
+  });
+
+  it("moves backward from status row 2 to row 1 using status visual target order", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.relative", payload: { delta: -1 } },
+        makeCtx({
+          pathname: "/h/srv/workspace/ui-expose-archive-worktrees-on-merge",
+          sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-new" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "needs-input",
+    });
+  });
+
+  it("moves backward from status row 3 to row 2 using status visual target order", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.relative", payload: { delta: -1 } },
+        makeCtx({
+          pathname: "/h/srv/workspace/running-old",
+          sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-old" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "running-new",
     });
   });
 

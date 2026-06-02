@@ -1,5 +1,10 @@
 import { generateMessageId } from "@/types/stream";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { i18n } from "@/i18n/i18next";
+
+const MAX_CHUNKS_PER_FLUSH_TURN = 128;
+
+const waitForNextFlushTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 export interface DictationStreamSenderParams {
   client: DaemonClient | null;
@@ -33,6 +38,8 @@ export class DictationStreamSender {
   private sendSeq = 0;
   private segments: string[] = [];
   private streamReady = false;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private drainWaiters: Array<() => void> = [];
 
   private startGeneration = 0;
   private startPromise: Promise<void> | null = null;
@@ -64,6 +71,7 @@ export class DictationStreamSender {
   }
 
   clearAll(): void {
+    this.clearScheduledFlush();
     this.dictationId = null;
     this.sendSeq = 0;
     this.segments = [];
@@ -73,6 +81,7 @@ export class DictationStreamSender {
   }
 
   resetStreamForReplay(): void {
+    this.clearScheduledFlush();
     this.dictationId = null;
     this.sendSeq = 0;
     this.streamReady = false;
@@ -108,12 +117,17 @@ export class DictationStreamSender {
     }
 
     let sent = 0;
-    while (this.sendSeq < this.segments.length) {
+    while (this.sendSeq < this.segments.length && sent < MAX_CHUNKS_PER_FLUSH_TURN) {
       const seq = this.sendSeq;
       const audio = this.segments[seq];
       client.sendDictationStreamChunk(dictationId, seq, audio, this.format);
       this.sendSeq = seq + 1;
       sent += 1;
+    }
+    if (this.hasPendingSegments()) {
+      this.scheduleFlush();
+    } else {
+      this.resolveDrainWaiters();
     }
     return sent;
   }
@@ -165,10 +179,10 @@ export class DictationStreamSender {
   async finish(finalSeq: number): Promise<DictationFinishResult> {
     const client = this.client;
     if (!client) {
-      throw new Error("Daemon client unavailable");
+      throw new Error(i18n.t("common.errors.daemonClientUnavailable"));
     }
     if (!client.isConnected) {
-      throw new Error("Daemon client is disconnected");
+      throw new Error(i18n.t("common.errors.daemonClientDisconnected"));
     }
 
     if (!this.dictationId) {
@@ -184,6 +198,7 @@ export class DictationStreamSender {
     }
 
     this.flush();
+    await this.waitForFlushDrain();
     return client.finishDictationStream(dictationId, finalSeq);
   }
 
@@ -194,5 +209,48 @@ export class DictationStreamSender {
       client.cancelDictationStream(dictationId);
     }
     this.resetStreamForReplay();
+  }
+
+  private hasPendingSegments(): boolean {
+    return this.sendSeq < this.segments.length;
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer) {
+      return;
+    }
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flush();
+    }, 0);
+  }
+
+  private clearScheduledFlush(): void {
+    if (!this.flushTimer) {
+      return;
+    }
+    clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+  }
+
+  private async waitForFlushDrain(): Promise<void> {
+    while (this.hasPendingSegments()) {
+      const client = this.client;
+      if (!client?.isConnected || !this.dictationId || !this.streamReady) {
+        throw new Error("Failed to flush dictation stream");
+      }
+      await new Promise<void>((resolve) => {
+        this.drainWaiters.push(resolve);
+      });
+      await waitForNextFlushTurn();
+    }
+  }
+
+  private resolveDrainWaiters(): void {
+    const waiters = this.drainWaiters;
+    this.drainWaiters = [];
+    for (const resolve of waiters) {
+      resolve();
+    }
   }
 }

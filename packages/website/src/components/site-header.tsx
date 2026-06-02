@@ -35,6 +35,12 @@ export function SiteHeader() {
           Download
         </a>
         <a
+          href="/sponsor"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Sponsor
+        </a>
+        <a
           href="https://discord.gg/jz8T2uahpH"
           target="_blank"
           rel="noopener noreferrer"

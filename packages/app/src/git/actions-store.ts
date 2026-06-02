@@ -18,6 +18,7 @@ import {
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-execution";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
+import { i18n } from "@/i18n/i18next";
 
 const SUCCESS_DISPLAY_MS = 1000;
 
@@ -52,7 +53,7 @@ function resolveClient(serverId: string) {
   const session = useSessionStore.getState().sessions[serverId];
   const client = session?.client ?? null;
   if (!client) {
-    throw new Error("Daemon client unavailable");
+    throw new Error(i18n.t("common.errors.daemonClientUnavailable"));
   }
   return client;
 }

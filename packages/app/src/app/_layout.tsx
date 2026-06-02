@@ -1,4 +1,5 @@
 import "@/styles/unistyles";
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
@@ -46,7 +47,14 @@ import {
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
 import { VoiceProvider } from "@/contexts/voice-context";
-import { startDaemonIfGateAllows, startHostRuntimeBootstrap } from "@/app/host-runtime-bootstrap";
+import {
+  resolveStartupBlocker,
+  resolveStartupNavigationReady,
+  shouldRunStartupGiveUpTimer,
+  startDaemonIfGateAllows,
+  startHostRuntimeBootstrap,
+  type StartupBlocker,
+} from "@/app/host-runtime-bootstrap";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
@@ -57,17 +65,16 @@ import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
-import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { I18nProvider } from "@/i18n/provider";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
-  hasConfiguredLocalDaemonOverride,
   useHostMutations,
   useHostRuntimeClient,
   useHosts,
@@ -79,9 +86,9 @@ import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { resolveActiveHost } from "@/utils/active-host";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
+import { canOpenLeftSidebarGesture } from "@/utils/sidebar-animation-state";
 import {
   buildHostRootRoute,
-  mapPathnameToServer,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
   parseWorkspaceOpenIntent,
@@ -101,6 +108,7 @@ export interface HostRuntimeBootstrapState {
   retry: () => void;
   hasGivenUpWaitingForHost: boolean;
   storeReady: boolean;
+  startupBlocker: StartupBlocker;
 }
 
 const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
@@ -108,6 +116,7 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   retry: () => {},
   hasGivenUpWaitingForHost: false,
   storeReady: false,
+  startupBlocker: { kind: "none" },
 });
 
 function PushNotificationRouter() {
@@ -311,18 +320,26 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const daemonStartError = useDaemonStartLastError();
   const daemonStartIsRunning = useDaemonStartIsRunning();
-  const waitForConfiguredLocalDaemon =
-    hasConfiguredLocalDaemonOverride() && !shouldUseDesktopDaemon();
-
   const [hasGivenUpWaitingForHost, setHasGivenUpWaitingForHost] = useState(false);
+  const isDesktopRuntime = shouldUseDesktopDaemon();
+  const startupBlocker = useMemo(
+    () =>
+      resolveStartupBlocker({
+        isDesktopRuntime,
+        anyOnlineHostServerId,
+        daemonStartIsRunning,
+        daemonStartError,
+      }),
+    [anyOnlineHostServerId, daemonStartError, daemonStartIsRunning, isDesktopRuntime],
+  );
+  const shouldRunGiveUpTimer = shouldRunStartupGiveUpTimer({
+    startupBlocker,
+    anyOnlineHostServerId,
+    hasGivenUpWaitingForHost,
+  });
+
   useEffect(() => {
-    if (
-      anyOnlineHostServerId ||
-      daemonStartError ||
-      daemonStartIsRunning ||
-      waitForConfiguredLocalDaemon ||
-      hasGivenUpWaitingForHost
-    ) {
+    if (!shouldRunGiveUpTimer) {
       return;
     }
     const handle = setTimeout(() => {
@@ -331,13 +348,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [
-    anyOnlineHostServerId,
-    daemonStartError,
-    daemonStartIsRunning,
-    waitForConfiguredLocalDaemon,
-    hasGivenUpWaitingForHost,
-  ]);
+  }, [shouldRunGiveUpTimer]);
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
@@ -348,14 +359,13 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const splashError = !anyOnlineHostServerId ? daemonStartError : null;
-  const isCurrentlyStoreReady =
-    Boolean(anyOnlineHostServerId) || Boolean(splashError) || hasGivenUpWaitingForHost;
-  const storeReady = useLatchedBoolean(isCurrentlyStoreReady);
+  const splashError =
+    startupBlocker.kind === "managed-daemon-error" ? startupBlocker.message : null;
+  const storeReady = resolveStartupNavigationReady({ startupBlocker });
 
   const state = useMemo<HostRuntimeBootstrapState>(
-    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady }),
-    [splashError, retry, hasGivenUpWaitingForHost, storeReady],
+    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker }),
+    [splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker],
   );
 
   return (
@@ -493,7 +503,6 @@ function MobileGestureWrapper({
   children: ReactNode;
   chromeEnabled: boolean;
 }) {
-  const mobileView = usePanelStore((state) => state.mobileView);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const horizontalScroll = useHorizontalScrollOptional();
   const {
@@ -503,12 +512,13 @@ function MobileGestureWrapper({
     animateToOpen,
     animateToClose,
     isGesturing,
+    mobilePanelState,
     gestureAnimatingRef,
     openGestureRef,
   } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
-  const openGestureEnabled = chromeEnabled && mobileView === "agent";
+  const openGestureEnabled = chromeEnabled;
 
   const handleGestureOpen = useCallback(() => {
     gestureAnimatingRef.current = true;
@@ -537,6 +547,11 @@ function MobileGestureWrapper({
           const deltaY = touch.absoluteY - touchStartY.value;
           const absDeltaX = Math.abs(deltaX);
           const absDeltaY = Math.abs(deltaY);
+
+          if (!canOpenLeftSidebarGesture(mobilePanelState.value, translateX.value, windowWidth)) {
+            stateManager.fail();
+            return;
+          }
 
           if (horizontalScroll?.isAnyScrolledRight.value) {
             stateManager.fail();
@@ -593,6 +608,7 @@ function MobileGestureWrapper({
       windowWidth,
       translateX,
       backdropOpacity,
+      mobilePanelState,
       animateToOpen,
       animateToClose,
       handleGestureOpen,
@@ -800,7 +816,6 @@ function OpenProjectListener() {
 }
 
 function AppWithSidebar({ children }: { children: ReactNode }) {
-  const router = useRouter();
   const pathname = usePathname();
   const params = useGlobalSearchParams<{ open?: string | string[] }>();
   const hosts = useHosts();
@@ -808,16 +823,6 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   const activeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
   const shouldShowAppChrome =
     storeReady && activeServerId !== null && hosts.some((host) => host.serverId === activeServerId);
-
-  useEffect(() => {
-    if (!activeServerId || hosts.length === 0) {
-      return;
-    }
-    if (hosts.some((host) => host.serverId === activeServerId)) {
-      return;
-    }
-    router.replace(mapPathnameToServer(pathname, hosts[0].serverId));
-  }, [activeServerId, hosts, pathname, router]);
 
   // Parse selectedAgentKey directly from pathname
   // useLocalSearchParams doesn't update when navigating between same-pattern routes
@@ -921,19 +926,24 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
   );
 }
 
-// PortalProvider must remain the innermost global provider here.
+// PortalProvider must stay inside normal app-wide context providers here.
 // `@gorhom/portal` renders portaled children at the host's location in the
 // tree, so any context a portaled sheet might consume (QueryClient, theme,
 // auth, settings, …) must wrap PortalProvider — not be wrapped by it.
-// Adding a new global provider? Put it above PortalProvider.
+// BottomSheetModalProvider is the exception: Gorhom modals consume portal
+// context and need one shared provider for sibling sheets to stack.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
-      <SafeAreaProvider>
-        <KeyboardProvider>
-          <PortalProvider>{children}</PortalProvider>
-        </KeyboardProvider>
-      </SafeAreaProvider>
+      <I18nProvider>
+        <SafeAreaProvider>
+          <KeyboardProvider>
+            <PortalProvider>
+              <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+            </PortalProvider>
+          </KeyboardProvider>
+        </SafeAreaProvider>
+      </I18nProvider>
     </QueryProvider>
   );
 }

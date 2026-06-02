@@ -8,6 +8,8 @@ import {
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
@@ -240,11 +242,12 @@ function WorktreeSetupDetailSection({
 function resolveSubAgentFallbackHeader(
   subAgentType: string | null | undefined,
   description: string | null | undefined,
+  fallbackText: string,
 ): string {
   if (subAgentType && description) {
     return `${subAgentType}: ${description}`;
   }
-  return subAgentType ?? description ?? "Sub-agent activity";
+  return subAgentType ?? description ?? fallbackText;
 }
 
 interface SubAgentDetailProps {
@@ -365,8 +368,13 @@ function SubAgentDetailSection({
   description,
   ds,
 }: SubAgentDetailProps) {
+  const { t } = useTranslation();
   const { actions, remainingLog } = useMemo(() => parseSubAgentLog(log), [log]);
-  const fallbackHeader = resolveSubAgentFallbackHeader(subAgentType, description);
+  const fallbackHeader = resolveSubAgentFallbackHeader(
+    subAgentType,
+    description,
+    t("toolCallDetails.subAgentActivity"),
+  );
   const hasActions = actions.length > 0;
   return (
     <View style={ds.sectionFillStyle}>
@@ -594,7 +602,7 @@ interface UnknownDetail {
   output: unknown;
 }
 
-function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles): ReactNode[] {
+function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunction): ReactNode[] {
   const plainInputText =
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
@@ -609,8 +617,8 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles): ReactNod
   }
 
   const sectionsFromTopLevel = [
-    { title: "Input", value: detail.input },
-    { title: "Output", value: detail.output },
+    { title: t("toolCallDetails.input"), value: detail.input },
+    { title: t("toolCallDetails.output"), value: detail.output },
   ].filter((entry) =>
     hasMeaningfulToolCallDetail({
       type: "unknown",
@@ -653,6 +661,7 @@ function buildDetailSections(
   detail: ToolCallDetail | undefined,
   diffLines: DiffLine[] | undefined,
   ds: DetailStyles,
+  t: TFunction,
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
@@ -723,15 +732,16 @@ function buildDetailSections(
     return [<PlainTextSection key="plain-text" text={detail.text} />];
   }
   if (detail.type === "unknown") {
-    return buildUnknownSections(detail, ds);
+    return buildUnknownSections(detail, ds, t);
   }
   return [];
 }
 
 function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.section}>
-      <Text style={SECTION_TITLE_ERROR_STYLE}>Error</Text>
+      <Text style={SECTION_TITLE_ERROR_STYLE}>{t("toolCallDetails.error")}</Text>
       <ScrollView
         horizontal
         nestedScrollEnabled
@@ -772,11 +782,12 @@ function ToolCallDetailsContentInner({
   fillAvailableHeight = false,
   showLoadingSkeleton = false,
 }: ToolCallDetailsContentProps) {
+  const { t } = useTranslation();
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds);
+  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t);
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
@@ -786,7 +797,7 @@ function ToolCallDetailsContentInner({
     if (showLoadingSkeleton) {
       return <LoadingSkeleton containerStyle={ds.loadingContainerStyle} />;
     }
-    return <Text style={styles.emptyStateText}>No additional details available</Text>;
+    return <Text style={styles.emptyStateText}>{t("toolCallDetails.empty")}</Text>;
   }
 
   return <View style={ds.fullBleedContainerStyle}>{sections}</View>;

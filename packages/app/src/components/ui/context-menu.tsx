@@ -12,6 +12,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Dimensions,
@@ -385,6 +386,7 @@ export function ContextMenuContent({
   mobileMode?: MobileMenuMode;
   testID?: string;
 }>): ReactElement | null {
+  const { t } = useTranslation();
   const context = useContextMenuContext("ContextMenuContent");
   const { theme } = useUnistyles();
   const webScrollbarStyle = useWebScrollbarStyle();
@@ -560,7 +562,7 @@ export function ContextMenuContent({
       <View style={styles.overlay}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Menu backdrop"
+          accessibilityLabel={t("menu.backdrop")}
           style={styles.backdrop}
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}

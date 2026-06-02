@@ -147,6 +147,7 @@ function createHarness(input: {
         unsubscribe: () => {},
       }),
       scheduleRefreshForCwd: () => {},
+      onWorkspaceStateMayHaveChanged: () => {},
       getMetrics: () => ({
         checkoutDiffTargetCount: 0,
         checkoutDiffSubscriptionCount: 0,

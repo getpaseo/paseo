@@ -1,5 +1,7 @@
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import type { ToastApi } from "@/components/toast-host";
+import { i18n } from "@/i18n/i18next";
 import { useSessionStore, type AgentTimelineCursorState } from "@/stores/session-store";
 import { planTimelineOlderFetch } from "@/timeline/timeline-sync-plan";
 
@@ -27,13 +29,15 @@ export interface LoadOlderAgentHistoryDeps {
   setInFlight: (value: boolean) => void;
   toast?: ToastApi | null;
   logger?: LoadOlderAgentHistoryLogger;
+  failedMessage?: string;
 }
 
 export async function loadOlderAgentHistory(
   agentId: string,
   deps: LoadOlderAgentHistoryDeps,
 ): Promise<void> {
-  const { client, cursor, hasOlder, isLoadingOlder, setInFlight, toast, logger } = deps;
+  const { client, cursor, hasOlder, isLoadingOlder, setInFlight, toast, logger, failedMessage } =
+    deps;
   if (!client || !cursor || !hasOlder || isLoadingOlder) {
     return;
   }
@@ -46,7 +50,7 @@ export async function loadOlderAgentHistory(
     );
   } catch (error) {
     (logger ?? console).warn("[Timeline] failed to load older agent history", agentId, error);
-    toast?.show("Couldn't load older history", {
+    toast?.show(failedMessage ?? i18n.t("loadOlderHistory.failed"), {
       durationMs: 2200,
       testID: "agent-load-older-history-toast",
     });
@@ -64,6 +68,7 @@ export function useLoadOlderAgentHistory({
   agentId: string;
   toast?: ToastApi | null;
 }) {
+  const { t } = useTranslation();
   const hasOlder =
     useSessionStore((state) => state.sessions[serverId]?.agentTimelineHasOlder.get(agentId)) ===
     true;
@@ -98,8 +103,9 @@ export function useLoadOlderAgentHistory({
       isLoadingOlder: session?.agentTimelineOlderFetchInFlight.get(agentId) === true,
       setInFlight,
       toast,
+      failedMessage: t("loadOlderHistory.failed"),
     });
-  }, [agentId, serverId, setInFlight, toast]);
+  }, [agentId, serverId, setInFlight, toast, t]);
 
   return {
     isLoadingOlder,

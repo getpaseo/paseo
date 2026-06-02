@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import type { ToastApi } from "@/components/toast-host";
@@ -35,13 +36,14 @@ export function useBranchSwitcher({
   toast,
   queryClient,
 }: UseBranchSwitcherInput): UseBranchSwitcherResult {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
 
   const branchSuggestionsQuery = useQuery({
     queryKey: ["branchSuggestions", normalizedServerId, normalizedWorkspaceId],
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client unavailable");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       const payload = await client.getBranchSuggestions({
         cwd: normalizedWorkspaceId,
@@ -85,35 +87,34 @@ export function useBranchSwitcher({
         const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
         if (!targetStash) return;
         const shouldRestore = await confirmDialog({
-          title: "Restore stashed changes?",
-          message:
-            "This branch has stashed changes from a previous session. Would you like to restore them?",
-          confirmLabel: "Restore",
-          cancelLabel: "Later",
+          title: t("branchSwitcher.restoreStashTitle"),
+          message: t("branchSwitcher.restoreStashMessage"),
+          confirmLabel: t("branchSwitcher.restore"),
+          cancelLabel: t("branchSwitcher.later"),
         });
         if (!shouldRestore) return;
         const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
         if (popPayload.error) {
           toast.error(popPayload.error.message);
         } else {
-          toast.show("Stashed changes restored");
+          toast.show(t("branchSwitcher.stashRestored"));
         }
         await invalidateStashAndCheckout();
       } catch {
         // Non-critical — user can still restore on next branch switch
       }
     },
-    [client, invalidateStashAndCheckout, normalizedWorkspaceId, toast],
+    [client, invalidateStashAndCheckout, normalizedWorkspaceId, toast, t],
   );
 
   const stashAndSwitch = useCallback(
     async (branchId: string) => {
       if (!client) return;
       const shouldStash = await confirmDialog({
-        title: "Uncommitted changes",
-        message: "You have uncommitted changes. Stash them before switching branches?",
-        confirmLabel: "Stash & Switch",
-        cancelLabel: "Cancel",
+        title: t("branchSwitcher.uncommittedTitle"),
+        message: t("branchSwitcher.uncommittedMessage"),
+        confirmLabel: t("branchSwitcher.stashAndSwitch"),
+        cancelLabel: t("common.actions.cancel"),
       });
       if (!shouldStash) return;
 
@@ -133,10 +134,10 @@ export function useBranchSwitcher({
         }
         await invalidateStashAndCheckout();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to stash changes");
+        toast.error(err instanceof Error ? err.message : t("branchSwitcher.failedToStash"));
       }
     },
-    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, toast],
+    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, toast, t],
   );
 
   const handleBranchSelect = useCallback(
@@ -160,7 +161,7 @@ export function useBranchSwitcher({
           await invalidateStashAndCheckout();
           await maybeRestoreStashForBranch(branchId);
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Failed to switch branch");
+          toast.error(err instanceof Error ? err.message : t("branchSwitcher.failedToSwitch"));
         }
       })();
     },
@@ -171,6 +172,7 @@ export function useBranchSwitcher({
       maybeRestoreStashForBranch,
       normalizedWorkspaceId,
       stashAndSwitch,
+      t,
       toast,
     ],
   );

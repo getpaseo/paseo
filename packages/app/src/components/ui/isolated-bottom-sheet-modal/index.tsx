@@ -1,10 +1,8 @@
 import {
   BottomSheetModal as GorhomBottomSheetModal,
-  BottomSheetModalProvider,
   type BottomSheetModalProps,
 } from "@gorhom/bottom-sheet";
-import { Portal } from "@gorhom/portal";
-import React, { createContext, useContext } from "react";
+import React from "react";
 import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
 import type { ElementRef } from "react";
 import {
@@ -17,50 +15,29 @@ type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
 type IsolatedBottomSheetModalProps = Omit<
   BottomSheetModalProps,
   "enableDismissOnClose" | "stackBehavior"
->;
+> & {
+  presentation?: "push" | "replace";
+};
 
 export type IsolatedBottomSheetModalRef = GorhomBottomSheetModalMethods;
-
-const IsolatedBottomSheetScopeContext = createContext(false);
 
 export const IsolatedBottomSheetModal = forwardRef<
   IsolatedBottomSheetModalRef,
   IsolatedBottomSheetModalProps
 >(function IsolatedBottomSheetModal(props, ref) {
-  const isNestedSheet = useContext(IsolatedBottomSheetScopeContext);
-  const { children, ...bottomSheetProps } = props;
-  const scopedChildren =
-    typeof children === "function" ? (
-      (input: { data?: unknown }) => (
-        <IsolatedBottomSheetScopeContext.Provider value={true}>
-          {children(input) as React.ReactNode}
-        </IsolatedBottomSheetScopeContext.Provider>
-      )
-    ) : (
-      <IsolatedBottomSheetScopeContext.Provider value={true}>
-        {children}
-      </IsolatedBottomSheetScopeContext.Provider>
-    );
+  const { children, presentation = "push", ...bottomSheetProps } = props;
   const modal = (
     <GorhomBottomSheetModal
       {...bottomSheetProps}
       ref={ref}
       enableDismissOnClose
-      stackBehavior={isNestedSheet ? "push" : "replace"}
+      stackBehavior={presentation}
     >
-      {scopedChildren}
+      {children}
     </GorhomBottomSheetModal>
   );
 
-  if (isNestedSheet) {
-    return modal;
-  }
-
-  return (
-    <Portal hostName="root">
-      <BottomSheetModalProvider>{modal}</BottomSheetModalProvider>
-    </Portal>
-  );
+  return modal;
 });
 
 export function useIsolatedBottomSheetVisibility({

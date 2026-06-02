@@ -1,10 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import path from "node:path";
 
 import type { Logger } from "pino";
 import { z } from "zod";
 
+import { writeJsonFileAtomic } from "./atomic-file.js";
 import type { PersistedProjectKind, PersistedWorkspaceKind } from "./workspace-registry-model.js";
 
 const PersistedProjectRecordSchema = z.object({
@@ -161,10 +160,7 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
 
   private async persist(): Promise<void> {
     const records = Array.from(this.cache.values());
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    await fs.writeFile(tempPath, JSON.stringify(records, null, 2), "utf8");
-    await fs.rename(tempPath, this.filePath);
+    await writeJsonFileAtomic(this.filePath, records);
   }
 
   private async enqueuePersist(): Promise<void> {

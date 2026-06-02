@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Modal,
@@ -32,6 +33,7 @@ import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { isWeb } from "@/constants/platform";
+import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
@@ -244,6 +246,7 @@ export function DropdownMenu({
     defaultOpen,
     onOpenChange,
   });
+  useDismissKeyboardOnOpen(isOpen);
 
   const flushPendingSelect = useCallback(() => {
     const pendingSelect = pendingSelectRef.current;
@@ -440,6 +443,7 @@ export function DropdownMenuContent({
   scrollable?: boolean;
   testID?: string;
 }>): ReactElement | null {
+  const { t } = useTranslation();
   const { open, setOpen, triggerRef, flushPendingSelect } =
     useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
@@ -623,7 +627,7 @@ export function DropdownMenuContent({
       <View style={styles.overlay}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Menu backdrop"
+          accessibilityLabel={t("menu.backdrop")}
           style={styles.backdrop}
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}
@@ -897,8 +901,6 @@ const styles = StyleSheet.create((theme) => ({
   labelText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
   },
   separator: {
     height: 1,

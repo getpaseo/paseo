@@ -126,8 +126,8 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: string })
 const CLAUDE_CODE_BADGE_ICON = <ClaudeCodeIcon className="h-6 w-6" />;
 const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
 const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
-const COPILOT_BADGE_ICON = <CopilotIcon className="h-6 w-6" />;
 const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
+const CURSOR_BADGE_ICON = <CursorIcon className="h-6 w-6" />;
 
 const FEATURED_AGENT_COUNT = 5;
 const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENT_COUNT;
@@ -357,8 +357,8 @@ function MultiProviderSection() {
     { name: "Claude Code", icon: <ClaudeIcon size={28} /> },
     { name: "Codex", icon: <CodexIcon className="w-7 h-7" /> },
     { name: "OpenCode", icon: <OpenCodeIcon className="w-7 h-7" /> },
-    { name: "Copilot", icon: <CopilotIcon className="w-7 h-7" /> },
     { name: "Pi", icon: <PiIcon className="w-7 h-7" /> },
+    { name: "Cursor", icon: <CursorIcon className="w-7 h-7" /> },
   ];
 
   return (
@@ -1250,8 +1250,8 @@ function GetStarted() {
           <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
           <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
           <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
-          <AgentBadge name="Copilot" icon={COPILOT_BADGE_ICON} />
           <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
+          <AgentBadge name="Cursor" icon={CURSOR_BADGE_ICON} />
         </div>
         <a
           href="/agents"
@@ -1357,20 +1357,16 @@ function OpenCodeIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-function CopilotIcon(props: React.SVGProps<SVGSVGElement>) {
+function CursorIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 512 416"
+      viewBox="0 0 466.73 532.09"
       fill="currentColor"
       aria-hidden="true"
       {...props}
     >
-      <path
-        d="M181.33 266.143c0-11.497 9.32-20.818 20.818-20.818 11.498 0 20.819 9.321 20.819 20.818v38.373c0 11.497-9.321 20.818-20.819 20.818-11.497 0-20.818-9.32-20.818-20.818v-38.373zM308.807 245.325c-11.477 0-20.798 9.321-20.798 20.818v38.373c0 11.497 9.32 20.818 20.798 20.818 11.497 0 20.818-9.32 20.818-20.818v-38.373c0-11.497-9.32-20.818-20.818-20.818z"
-        fillRule="evenodd"
-      />
-      <path d="M512.002 246.393v57.384c-.02 7.411-3.696 14.638-9.67 19.011C431.767 374.444 344.695 416 256 416c-98.138 0-196.379-56.542-246.33-93.21-5.975-4.374-9.65-11.6-9.671-19.012v-57.384a35.347 35.347 0 016.857-20.922l15.583-21.085c8.336-11.312 20.757-14.31 33.98-14.31 4.988-56.953 16.794-97.604 45.024-127.354C155.194 5.77 226.56 0 256 0c29.441 0 100.807 5.77 154.557 62.722 28.19 29.75 40.036 70.401 45.025 127.354 13.263 0 25.602 2.936 33.958 14.31l15.583 21.127c4.476 6.077 6.878 13.345 6.878 20.88zm-97.666-26.075c-.677-13.058-11.292-18.19-22.338-21.824-11.64 7.309-25.848 10.183-39.46 10.183-14.454 0-41.432-3.47-63.872-25.869-5.667-5.625-9.527-14.454-12.155-24.247a212.902 212.902 0 00-20.469-1.088c-6.098 0-13.099.349-20.551 1.088-2.628 9.793-6.509 18.622-12.155 24.247-22.4 22.4-49.418 25.87-63.872 25.87-13.612 0-27.86-2.855-39.501-10.184-11.005 3.613-21.558 8.828-22.277 21.824-1.17 24.555-1.272 49.11-1.375 73.645-.041 12.318-.082 24.658-.288 36.976.062 7.166 4.374 13.818 10.882 16.774 52.97 24.124 103.045 36.278 149.137 36.278 46.01 0 96.085-12.154 149.014-36.278 6.508-2.956 10.84-9.608 10.881-16.774.637-36.832.124-73.809-1.642-110.62h.041zM107.521 168.97c8.643 8.623 24.966 14.392 42.56 14.392 13.448 0 39.03-2.874 60.156-24.329 9.28-8.951 15.05-31.35 14.413-54.079-.657-18.231-5.769-33.28-13.448-39.665-8.315-7.371-27.203-10.574-48.33-8.644-22.399 2.238-41.267 9.588-50.875 19.833-20.798 22.728-16.323 80.317-4.476 92.492zm130.556-56.008c.637 3.51.965 7.35 1.273 11.517 0 2.875 0 5.77-.308 8.952 6.406-.636 11.847-.636 16.959-.636s10.553 0 16.959.636c-.329-3.182-.329-6.077-.329-8.952.329-4.167.657-8.007 1.294-11.517-6.735-.637-12.812-.965-17.924-.965s-11.21.328-17.924.965zm49.275-8.008c-.637 22.728 5.133 45.128 14.413 54.08 21.105 21.454 46.708 24.328 60.155 24.328 17.596 0 33.918-5.769 42.561-14.392 11.847-12.175 16.322-69.764-4.476-92.492-9.608-10.245-28.476-17.595-50.875-19.833-21.127-1.93-40.015 1.273-48.33 8.644-7.679 6.385-12.791 21.434-13.448 39.665z" />
+      <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
     </svg>
   );
 }
@@ -1828,7 +1824,7 @@ function FAQ() {
       <h2 className="text-3xl font-medium">FAQ</h2>
       <div className="space-y-6">
         <FAQItem question="Is this free?">
-          Yes. Paseo is free and open source. You need Claude Code, Codex, Copilot, OpenCode, or Pi
+          Yes. Paseo is free and open source. You need Claude Code, Codex, Cursor, OpenCode, or Pi
           installed with your own credentials. Voice is local-first by default and can optionally
           use OpenAI speech providers if you configure them.
         </FAQItem>
@@ -1841,8 +1837,8 @@ function FAQ() {
           , connect directly over your local network, or use your own tunnel.
         </FAQItem>
         <FAQItem question="What agents does it support?">
-          Claude Code, Codex, Copilot, OpenCode, and Pi. Each agent runs as its own process using
-          its own CLI or local integration. Paseo doesn&apos;t modify or wrap their behavior.
+          Claude Code, Codex, Cursor, OpenCode, and Pi. Each agent runs as its own process using its
+          own CLI or local integration. Paseo doesn&apos;t modify or wrap their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
@@ -1878,7 +1874,7 @@ function FAQ() {
           <p>We can&apos;t make promises on behalf of providers.</p>
           <p>
             That said, Paseo launches each provider&apos;s local CLI or integration (Claude Code,
-            Codex, Copilot, OpenCode, Pi) as a subprocess. It doesn&apos;t extract tokens or call
+            Codex, Cursor, OpenCode, Pi) as a subprocess. It doesn&apos;t extract tokens or call
             inference APIs directly. From the provider&apos;s perspective, usage through Paseo is
             indistinguishable from running the provider yourself.
           </p>

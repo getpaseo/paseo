@@ -121,7 +121,6 @@ function createCheckoutSnapshotFacts(cwd: string): CheckoutSnapshotFacts {
     comparisonBaseRef: null,
     branchRemoteName: "origin",
     branchMergeRef: "refs/heads/main",
-    trackedOriginBranch: "main",
     pullRequestLookupTarget: { headRef: "main" },
   };
 }
@@ -879,7 +878,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(repoRootWatch).toBeDefined();
 
     repoRootWatch?.callback();
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_000);
     await flushPromises();
 
     expect(getCheckoutShortstat).toHaveBeenLastCalledWith(

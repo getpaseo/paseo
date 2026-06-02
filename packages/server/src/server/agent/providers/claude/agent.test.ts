@@ -9,7 +9,9 @@ import * as executableUtils from "../../../../utils/executable.js";
 import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
+  normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
+  toClaudeSdkMcpConfig,
 } from "./agent.js";
 import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../../agent-sdk-types.js";
 
@@ -397,28 +399,38 @@ describe("ClaudeAgentClient.listModels", () => {
   const logger = createTestLogger();
 
   test("returns hardcoded claude models", async () => {
-    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
-    const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveBinary: async () => "/test/claude/bin",
+        configDir: emptyConfigDir,
+      });
+      const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
-    expect(models.map((m) => m.id)).toEqual([
-      "claude-opus-4-8[1m]",
-      "claude-opus-4-8",
-      "claude-opus-4-7[1m]",
-      "claude-opus-4-7",
-      "claude-opus-4-6[1m]",
-      "claude-opus-4-6",
-      "claude-sonnet-4-6[1m]",
-      "claude-sonnet-4-6",
-      "claude-haiku-4-5",
-    ]);
+      expect(models.map((m) => m.id)).toEqual([
+        "claude-fable-5",
+        "claude-opus-4-8[1m]",
+        "claude-opus-4-8",
+        "claude-opus-4-7[1m]",
+        "claude-opus-4-7",
+        "claude-opus-4-6[1m]",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6[1m]",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+      ]);
 
-    for (const model of models) {
-      expect(model.provider).toBe("claude");
-      expect(model.label.length).toBeGreaterThan(0);
+      for (const model of models) {
+        expect(model.provider).toBe("claude");
+        expect(model.label.length).toBeGreaterThan(0);
+      }
+
+      const defaultModel = models.find((m) => m.isDefault);
+      expect(defaultModel?.id).toBe("claude-opus-4-8");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
-
-    const defaultModel = models.find((m) => m.isDefault);
-    expect(defaultModel?.id).toBe("claude-opus-4-8");
   });
 });
 
@@ -603,6 +615,37 @@ describe("ClaudeAgentSession features", () => {
 });
 
 describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
+  test("marks Claude AskUserQuestion options as allowing other answers", () => {
+    expect(
+      normalizeClaudeAskUserQuestionRequestInput("AskUserQuestion", {
+        questions: [
+          {
+            question: "Which provider should I use?",
+            header: "Provider",
+            options: [
+              { label: "Claude", description: "Use Claude Code" },
+              { label: "Codex", description: "Use Codex" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      }),
+    ).toEqual({
+      questions: [
+        {
+          question: "Which provider should I use?",
+          header: "Provider",
+          options: [
+            { label: "Claude", description: "Use Claude Code" },
+            { label: "Codex", description: "Use Codex" },
+          ],
+          multiSelect: false,
+          allowOther: true,
+        },
+      ],
+    });
+  });
+
   test("maps frontend header-keyed answers to Claude question text keys", () => {
     expect(
       normalizeClaudeAskUserQuestionUpdatedInput(
@@ -728,6 +771,86 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
             },
           ],
           answers: { "Which provider should I use?": "Claude" },
+        },
+        updatedPermissions: undefined,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("respondToPermission maps other answer text back to Claude question keys", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    const request = {
+      id: "permission-question-2",
+      provider: "claude",
+      name: "AskUserQuestion",
+      kind: "question",
+      input: normalizeClaudeAskUserQuestionRequestInput("AskUserQuestion", {
+        questions: [
+          {
+            question: "Which provider should I use?",
+            header: "Provider",
+            options: [
+              { label: "Claude", description: "Use Claude Code" },
+              { label: "Codex", description: "Use Codex" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      }),
+    };
+
+    const resultPromise = new Promise<unknown>((resolve, reject) => {
+      (
+        session as unknown as {
+          pendingPermissions: Map<
+            string,
+            {
+              request: typeof request;
+              resolve: (value: unknown) => void;
+              reject: (error: Error) => void;
+            }
+          >;
+        }
+      ).pendingPermissions.set(request.id, {
+        request,
+        resolve,
+        reject,
+      });
+    });
+
+    try {
+      await session.respondToPermission(request.id, {
+        behavior: "allow",
+        updatedInput: {
+          answers: { Provider: "Use both" },
+        },
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [
+                { label: "Claude", description: "Use Claude Code" },
+                { label: "Codex", description: "Use Codex" },
+              ],
+              multiSelect: false,
+            },
+          ],
+          answers: { "Which provider should I use?": "Use both" },
         },
         updatedPermissions: undefined,
       });
@@ -874,6 +997,88 @@ describe("ClaudeAgentSession context window usage", () => {
     await persistedSession.close();
 
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
+  });
+
+  test("classifies Claude root-only commands separately from inline skills", async () => {
+    const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+      void prompt;
+      return {
+        next: async () => ({ done: true, value: undefined }),
+        interrupt: async () => undefined,
+        return: async () => undefined,
+        close: () => undefined,
+        setPermissionMode: async () => undefined,
+        setModel: async () => undefined,
+        supportedModels: async () => [],
+        supportedCommands: async () => [
+          {
+            name: "taste",
+            description: "Use when another skill needs the shared standard. (user)",
+            argumentHint: "",
+          },
+          {
+            name: "claude-api",
+            description: "Build, debug, and optimize Claude API apps with this skill.",
+            argumentHint: "",
+          },
+          {
+            name: "usage",
+            description: "Show the total cost and duration of the current session",
+            argumentHint: "",
+          },
+          {
+            name: "clear",
+            description: "Start a new session with empty context",
+            argumentHint: "",
+          },
+        ],
+        rewindFiles: async () => ({ canRewind: true }),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    const commands = await session.listCommands();
+    await session.close();
+
+    expect(commands).toEqual([
+      {
+        name: "claude-api",
+        description: "Build, debug, and optimize Claude API apps with this skill.",
+        argumentHint: "",
+        kind: "skill",
+      },
+      {
+        name: "clear",
+        description: "Start a new session with empty context",
+        argumentHint: "",
+        kind: "command",
+      },
+      {
+        name: "rewind",
+        description: "Rewind tracked files to a previous user message",
+        argumentHint: "[user_message_uuid]",
+      },
+      {
+        name: "taste",
+        description: "Use when another skill needs the shared standard. (user)",
+        argumentHint: "",
+        kind: "skill",
+      },
+      {
+        name: "usage",
+        description: "Show the total cost and duration of the current session",
+        argumentHint: "",
+        kind: "command",
+      },
+    ]);
   });
 
   test("deletes the persisted session jsonl on close when persistSession=false", async () => {
@@ -1663,5 +1868,65 @@ describe("ClaudeAgentSession context window usage", () => {
         messageId: "assistant-third-party-1",
       },
     ]);
+  });
+});
+
+describe("toClaudeSdkMcpConfig", () => {
+  test("preserves alwaysLoad on stdio servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "chrome-devtools-mcp@latest"],
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "chrome-devtools-mcp@latest"],
+      env: undefined,
+      alwaysLoad: true,
+    });
+  });
+
+  test("preserves alwaysLoad on http servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer x" },
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "http",
+      url: "https://example.com/mcp",
+      headers: { Authorization: "Bearer x" },
+      alwaysLoad: true,
+    });
+  });
+
+  test("preserves alwaysLoad on sse servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "sse",
+        url: "https://example.com/sse",
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "sse",
+      url: "https://example.com/sse",
+      headers: undefined,
+      alwaysLoad: true,
+    });
+  });
+
+  test("leaves alwaysLoad undefined when not provided (preserves default deferral)", () => {
+    const result = toClaudeSdkMcpConfig({
+      type: "stdio",
+      command: "uvx",
+      args: ["markitdown-mcp"],
+    });
+    expect(result.type).toBe("stdio");
+    expect(result.alwaysLoad).toBeUndefined();
   });
 });

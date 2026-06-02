@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import { once } from "node:events";
+import { fork, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 
@@ -18,6 +20,8 @@ import { bufferToWorkerBytes, workerBytesToBuffer } from "./worker-bytes.js";
 class FakeLocalSpeechWorker extends EventEmitter {
   public connected = true;
   public killed = false;
+  public pid = 12345;
+  public readonly stderr = new EventEmitter() as NodeJS.ReadableStream;
   public readonly sent: LocalSpeechWorkerRequest[] = [];
   public disconnects = 0;
   public kills = 0;
@@ -54,9 +58,54 @@ class FakeLocalSpeechWorker extends EventEmitter {
   }
 }
 
+class PausedIpcWorker {
+  private readonly child: ChildProcess;
+
+  constructor() {
+    this.child = fork(
+      fileURLToPath(new URL("./test-fixtures/paused-ipc-worker.cjs", import.meta.url)),
+      [],
+      { serialization: "advanced", stdio: ["ignore", "ignore", "ignore", "ipc"] },
+    );
+  }
+
+  get connected(): boolean {
+    return this.child.connected;
+  }
+
+  get killed(): boolean {
+    return this.child.killed;
+  }
+
+  send(message: LocalSpeechWorkerRequest, callback: (error: Error | null) => void): boolean {
+    return this.child.send(message, (error) => callback(error ?? null));
+  }
+
+  disconnect(): void {
+    this.child.disconnect();
+  }
+
+  kill(): boolean {
+    return this.child.kill();
+  }
+
+  on(event: "message", listener: (message: LocalSpeechWorkerToParentMessage) => void): this;
+  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(
+    event: "message" | "close",
+    listener:
+      | ((message: LocalSpeechWorkerToParentMessage) => void)
+      | ((code: number | null, signal: NodeJS.Signals | null) => void),
+  ): this {
+    this.child.on(event, listener as (...args: unknown[]) => void);
+    return this;
+  }
+}
+
 function createClient(options?: { idleTtlMs?: number }) {
   const workers: FakeLocalSpeechWorker[] = [];
   const client = new LocalSpeechWorkerClient({
+    logger: pino({ level: "silent" }),
     config: {
       modelsDir: "/tmp/models",
       voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
@@ -72,6 +121,19 @@ function createClient(options?: { idleTtlMs?: number }) {
     },
   });
   return { client, workers };
+}
+
+function createCapturingLogger(): { logger: pino.Logger; records: Array<Record<string, unknown>> } {
+  const records: Array<Record<string, unknown>> = [];
+  const logger = pino(
+    { level: "trace" },
+    {
+      write(line: string) {
+        records.push(JSON.parse(line) as Record<string, unknown>);
+      },
+    },
+  );
+  return { logger, records };
 }
 
 async function waitForMicrotasks(): Promise<void> {
@@ -166,6 +228,124 @@ describe("LocalSpeechWorkerClient", () => {
     await expect(transcriptPromise).resolves.toEqual([
       { segmentId: "seg-1", transcript: "hello", isFinal: true },
     ]);
+  });
+
+  it("does not surface real IPC backpressure when replaying native-sized dictation frames", async () => {
+    const workers: PausedIpcWorker[] = [];
+    const client = new LocalSpeechWorkerClient({
+      logger: pino({ level: "silent" }),
+      config: {
+        modelsDir: "/tmp/models",
+        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceTtsModel: "kokoro-en-v0_19",
+      },
+      requestTimeoutMs: 30_000,
+      idleTtlMs: 30_000,
+      forkWorker: () => {
+        const worker = new PausedIpcWorker();
+        workers.push(worker);
+        return worker;
+      },
+    });
+    const provider = new WorkerBackedSpeechToTextProvider(client, "dictationStt");
+    const session = provider.createSession({ logger: pino({ level: "silent" }) });
+    let observedError: Error | null = null;
+    (session as EventEmitter).on("error", (error: Error) => {
+      observedError = error;
+    });
+
+    try {
+      await session.connect();
+      const nativeFrame = Buffer.alloc(1024, 1);
+
+      for (let seq = 0; seq < 480; seq += 1) {
+        session.appendPcm16(nativeFrame);
+      }
+      session.commit();
+      await waitForMicrotasks();
+
+      expect(observedError?.message).not.toBe("Local speech worker IPC channel is not writable");
+    } finally {
+      client.shutdown();
+      for (const worker of workers) {
+        worker.kill();
+      }
+    }
+  });
+
+  it("logs worker exit details and includes actionable context in the surfaced error", async () => {
+    const { logger, records } = createCapturingLogger();
+    const workers: FakeLocalSpeechWorker[] = [];
+    const client = new LocalSpeechWorkerClient({
+      logger,
+      config: {
+        modelsDir: "/tmp/models",
+        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceTtsModel: "kokoro-en-v0_19",
+      },
+      forkWorker: () => {
+        const worker = new FakeLocalSpeechWorker();
+        workers.push(worker);
+        return worker;
+      },
+    });
+    const provider = new WorkerBackedSpeechToTextProvider(client, "dictationStt");
+    const session = provider.createSession({ logger: pino({ level: "silent" }) });
+
+    const connect = session.connect();
+    workers[0].emit("exit", null, "SIGABRT");
+    workers[0].stderr.emit("data", "dyld: Library not loaded: libsherpa-onnx-c-api.dylib");
+    workers[0].emit("close", null, "SIGABRT");
+
+    await expect(connect).rejects.toThrow(
+      "Local speech worker exited (signal SIGABRT) while handling session.create (dictationStt). Last stderr: dyld: Library not loaded: libsherpa-onnx-c-api.dylib",
+    );
+    const exitRecord = records.find((record) => record.msg === "Local speech worker exited");
+    expect(exitRecord).toMatchObject({
+      workerPid: 12345,
+      signal: "SIGABRT",
+      stderrTail: "dyld: Library not loaded: libsherpa-onnx-c-api.dylib",
+      pendingRequests: [expect.objectContaining({ type: "session.create", kind: "dictationStt" })],
+    });
+  });
+
+  it("does not log intentional shutdowns as worker crashes", async () => {
+    const { logger, records } = createCapturingLogger();
+    const workers: FakeLocalSpeechWorker[] = [];
+    const client = new LocalSpeechWorkerClient({
+      logger,
+      config: {
+        modelsDir: "/tmp/models",
+        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceTtsModel: "kokoro-en-v0_19",
+      },
+      forkWorker: () => {
+        const worker = new FakeLocalSpeechWorker();
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    const synthesize = client.synthesizeSpeech("hello");
+    workers[0].respond(workers[0].sent[0], {
+      audio: bufferToWorkerBytes(Buffer.from([1])),
+      format: "pcm;rate=24000",
+    });
+    await synthesize;
+
+    client.shutdown();
+    workers[0].emit("close", null, "SIGTERM");
+
+    expect(records.find((record) => record.msg === "Local speech worker exited")).toBeUndefined();
+    expect(
+      records.find((record) => record.msg === "Local speech worker closed after shutdown"),
+    ).toMatchObject({
+      workerPid: 12345,
+      signal: "SIGTERM",
+    });
   });
 
   it("forwards VAD session events through the shared worker", async () => {

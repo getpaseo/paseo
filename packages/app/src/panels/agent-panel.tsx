@@ -1,6 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { TFunction } from "i18next";
 import { SquarePen } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ActivityIndicator, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -149,13 +151,14 @@ function buildChatAgentFromState(
 function renderChatAgentNonReadyView(args: {
   viewState: AgentScreenViewState;
   effectiveAgent: AgentScreenAgent | null;
+  t: TFunction;
 }): React.ReactElement | null {
-  const { viewState, effectiveAgent } = args;
+  const { viewState, effectiveAgent, t } = args;
   if (viewState.tag === "not_found") {
     return (
       <View style={styles.container} testID="agent-not-found">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.notFound")}</Text>
         </View>
       </View>
     );
@@ -164,7 +167,7 @@ function renderChatAgentNonReadyView(args: {
     return (
       <View style={styles.container} testID="agent-load-error">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Failed to load agent</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
           <Text style={styles.statusText}>{viewState.message}</Text>
         </View>
       </View>
@@ -443,6 +446,7 @@ function AgentPanelContent({
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
   const daemons = useHosts();
@@ -456,7 +460,8 @@ function AgentPanelContent({
   const daemon = connectionServerId
     ? (daemons.find((entry) => entry.serverId === connectionServerId) ?? null)
     : null;
-  const serverLabel = daemon?.label ?? connectionServerId ?? "Selected host";
+  const serverLabel =
+    daemon?.label ?? connectionServerId ?? t("agentPanel.unavailable.selectedHost");
   const isUnknownDaemon = Boolean(connectionServerId && !daemon);
   const connectionStatus: HostRuntimeConnectionStatus =
     isUnknownDaemon && runtimeConnectionStatus === "connecting"
@@ -471,6 +476,7 @@ function AgentPanelContent({
         connectionStatus={connectionStatus}
         lastError={lastConnectionError}
         isUnknownDaemon={isUnknownDaemon}
+        t={t}
       />
     );
   }
@@ -505,6 +511,7 @@ function AgentPanelBody({
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
   const projectPlacement = useStoreWithEqualityFn(
@@ -601,7 +608,7 @@ function AgentPanelBody({
     return (
       <View style={styles.container} testID="agent-not-found">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.notFound")}</Text>
         </View>
       </View>
     );
@@ -611,7 +618,7 @@ function AgentPanelBody({
     return (
       <View style={styles.container} testID="agent-load-error">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Failed to load agent</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
           <Text style={styles.statusText}>{lookupState.message}</Text>
         </View>
       </View>
@@ -670,6 +677,7 @@ function ChatAgentContent({
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const panelToast = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
@@ -797,12 +805,12 @@ function ChatAgentContent({
     }
     if (!reconnectToastArmedRef.current) {
       reconnectToastArmedRef.current = true;
-      panelToast.api.show("Reconnecting...", {
+      panelToast.api.show(t("agentPanel.states.reconnecting"), {
         durationMs: null,
         testID: "agent-reconnecting-toast",
       });
     }
-  }, [connectionStatus, panelToast]);
+  }, [connectionStatus, panelToast, t]);
 
   useEffect(() => {
     if (!isPaneFocused || !agentId || !isConnected || !hasSession) {
@@ -1014,6 +1022,7 @@ function ChatAgentContent({
   const nonReadyView = renderChatAgentNonReadyView({
     viewState,
     effectiveAgent,
+    t,
   });
   if (nonReadyView) return nonReadyView;
   invariant(agentId, "agent id is defined when agent content is ready");
@@ -1091,6 +1100,7 @@ function ChatAgentReadyContent({
   attentionController: ReturnType<typeof useAgentAttentionClear>;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const agentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -1161,8 +1171,8 @@ function ChatAgentReadyContent({
         {isArchivingCurrentAgent ? (
           <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
             <ThemedActivityIndicator size="large" uniProps={foregroundColorMapping} />
-            <Text style={styles.archivingTitle}>Archiving agent...</Text>
-            <Text style={styles.archivingSubtitle}>Please wait while we archive this agent.</Text>
+            <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
+            <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
           </View>
         ) : null}
       </View>
@@ -1470,22 +1480,22 @@ function AgentSessionUnavailableState({
   connectionStatus,
   lastError,
   isUnknownDaemon = false,
+  t,
 }: {
   serverLabel: string;
   connectionStatus: HostRuntimeConnectionStatus;
   lastError: string | null;
   isUnknownDaemon?: boolean;
+  t: TFunction;
 }) {
   if (isUnknownDaemon) {
     return (
       <View style={styles.container}>
         <View style={styles.centerState}>
           <Text style={styles.errorText}>
-            Cannot open this agent because {serverLabel} is not configured on this device.
+            {t("agentPanel.unavailable.unknownHost", { serverLabel })}
           </Text>
-          <Text style={styles.statusText}>
-            Add the host in Settings or open an agent on a configured server to continue.
-          </Text>
+          <Text style={styles.statusText}>{t("agentPanel.unavailable.addHost")}</Text>
         </View>
       </View>
     );
@@ -1502,20 +1512,22 @@ function AgentSessionUnavailableState({
             <ActivityIndicator size="large" />
             <Text style={styles.loadingText}>
               {isPreparingSession
-                ? `Preparing ${serverLabel} session...`
-                : `Connecting to ${serverLabel}...`}
+                ? t("agentPanel.unavailable.preparingSession", { serverLabel })
+                : t("agentPanel.unavailable.connecting", { serverLabel })}
             </Text>
             <Text style={styles.statusText}>
               {isPreparingSession
-                ? "We will show this agent in a moment."
-                : "We will show this agent once the host is online."}
+                ? t("agentPanel.unavailable.showSoon")
+                : t("agentPanel.unavailable.showWhenOnline")}
             </Text>
           </>
         ) : (
           <>
-            <Text style={styles.offlineTitle}>Reconnecting to {serverLabel}...</Text>
+            <Text style={styles.offlineTitle}>
+              {t("agentPanel.unavailable.reconnectingTo", { serverLabel })}
+            </Text>
             <Text style={styles.offlineDescription}>
-              We will show this agent again as soon as the host is reachable.
+              {t("agentPanel.unavailable.showAgainWhenReachable")}
             </Text>
             {lastError ? <Text style={styles.offlineDetails}>{lastError}</Text> : null}
           </>

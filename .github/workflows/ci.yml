@@ -20,6 +20,10 @@ env:
 jobs:
   format:
     runs-on: ubuntu-latest
+    env:
+      # This job never executes Electron. Skipping the hosted binary avoids
+      # unrelated npm ci failures when Electron's CDN returns 504.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +40,8 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +64,8 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -88,6 +96,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     name: server-tests (${{ matrix.os }})
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,8 +141,35 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies with Electron retry
+        if: runner.os != 'Windows'
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            else
+              exit_code=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit $exit_code
+            fi
+            sleep $((attempt * 20))
+          done
+
+      - name: Install dependencies with Electron retry
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            npm ci
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -eq 3) {
+              exit $LASTEXITCODE
+            }
+            Start-Sleep -Seconds (20 * $attempt)
+          }
 
       - name: Build server stack
         run: npm run build:server
@@ -142,6 +179,8 @@ jobs:
 
   app-tests:
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -164,6 +203,8 @@ jobs:
 
   sdk-tests:
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -189,6 +230,8 @@ jobs:
 
   playwright:
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -229,6 +272,8 @@ jobs:
 
   relay-tests:
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -253,6 +298,8 @@ jobs:
         shard: [1, 2, 3]
     runs-on: ubuntu-latest
     name: cli-tests (shard ${{ matrix.shard }}/3)
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 

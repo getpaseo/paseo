@@ -2,7 +2,7 @@
 title: Supported providers
 description: Every coding agent Paseo can launch, natively supported providers and the ACP catalog.
 nav: Supported providers
-order: 4
+order: 6
 ---
 
 # Supported providers
@@ -28,6 +28,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Autohand Code](https://www.autohand.ai/cli/), Autohand AI's coding agent.
 - [Cline](https://cline.bot/cli), autonomous coding agent.
 - [Codebuddy Code](https://www.codebuddy.cn/cli/), Tencent Cloud's coding tool.
+- [CodeWhale](https://codewhale.net/), terminal coding agent for DeepSeek V4 and open models.
 - [Cortex Code](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli), Snowflake's coding agent.
 - [Corust Agent](https://github.com/Corust-ai/corust-agent-release/releases), Rust-focused coding partner.
 - [crow-cli](https://crow-ai.dev/), minimal ACP-native coding agent.
@@ -45,7 +46,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp), Nous Research's self-improving agent.
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html), JetBrains' coding agent.
 - [Kilo Code](https://kilo.ai/docs/code-with-ai/platforms/cli), open-source coding agent.
-- [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli), Moonshot AI's coding assistant.
+- [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code), Moonshot AI's coding assistant.
 - [Minion Code](https://github.com/femto/minion-code), Minion-framework coding agent.
 - [Mistral Vibe](https://github.com/mistralai/mistral-vibe), Mistral's open-source CLI assistant.
 - [Nova](https://www.compassap.ai/portfolio/nova.html), Compass AI's software engineer.

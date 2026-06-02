@@ -95,6 +95,54 @@ describe("persistence hooks", () => {
     });
   });
 
+  test("buildConfigOverrides drops persisted internal paseo MCP server", () => {
+    const record = createRecord({
+      config: {
+        modeId: "default",
+        model: "gpt-5.4-mini",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=stale-agent",
+          },
+          custom: {
+            type: "stdio",
+            command: "custom-mcp",
+          },
+        },
+      },
+    });
+
+    expect(buildConfigOverrides(record).mcpServers).toEqual({
+      custom: {
+        type: "stdio",
+        command: "custom-mcp",
+      },
+    });
+  });
+
+  test("buildConfigOverrides preserves user-provided paseo MCP server", () => {
+    const record = createRecord({
+      config: {
+        modeId: "default",
+        model: "gpt-5.4-mini",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "https://example.com/custom-paseo",
+          },
+        },
+      },
+    });
+
+    expect(buildConfigOverrides(record).mcpServers).toEqual({
+      paseo: {
+        type: "http",
+        url: "https://example.com/custom-paseo",
+      },
+    });
+  });
+
   test("buildSessionConfig accepts providers from the canonical manifest", () => {
     const record = createRecord({
       provider: "claude",

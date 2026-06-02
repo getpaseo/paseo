@@ -8,25 +8,41 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Home, Plus, Settings } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { Shortcut } from "@/components/ui/shortcut";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  IsolatedBottomSheetModal,
+  useIsolatedBottomSheetVisibility,
+} from "@/components/ui/isolated-bottom-sheet-modal";
+import {
+  BottomSheetBackdrop,
+  BottomSheetScrollView,
+  BottomSheetTextInput,
+} from "@gorhom/bottom-sheet";
 
 function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
 }
+
+const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+}));
 
 interface CommandCenterRowProps {
   active: boolean;
   children: ReactNode;
   onPress: () => void;
   registerRow: (el: View | null) => void;
+  onLayout?: (event: { nativeEvent: { layout: { y: number; height: number } } }) => void;
 }
 
 const CommandCenterRow = memo(function CommandCenterRow({
@@ -34,6 +50,7 @@ const CommandCenterRow = memo(function CommandCenterRow({
   children,
   onPress,
   registerRow,
+  onLayout,
 }: CommandCenterRowProps) {
   const { theme } = useUnistyles();
 
@@ -48,7 +65,7 @@ const CommandCenterRow = memo(function CommandCenterRow({
   );
 
   return (
-    <Pressable ref={registerRow} style={pressableStyle} onPress={onPress}>
+    <Pressable ref={registerRow} style={pressableStyle} onPress={onPress} onLayout={onLayout}>
       {children}
     </Pressable>
   );
@@ -59,6 +76,7 @@ interface CommandCenterRowContainerProps {
   active: boolean;
   rowRefs: React.MutableRefObject<Map<number, View>>;
   onPress: () => void;
+  onLayout?: (event: { nativeEvent: { layout: { y: number; height: number } } }) => void;
   children: ReactNode;
 }
 
@@ -67,6 +85,7 @@ function CommandCenterRowContainer({
   active,
   rowRefs,
   onPress,
+  onLayout,
   children,
 }: CommandCenterRowContainerProps) {
   const registerRow = useCallback(
@@ -77,7 +96,12 @@ function CommandCenterRowContainer({
     [rowRefs, rowIndex],
   );
   return (
-    <CommandCenterRow active={active} registerRow={registerRow} onPress={onPress}>
+    <CommandCenterRow
+      active={active}
+      registerRow={registerRow}
+      onPress={onPress}
+      onLayout={onLayout}
+    >
       {children}
     </CommandCenterRow>
   );
@@ -88,6 +112,7 @@ interface CommandCenterActionRowProps {
   rowIndex: number;
   active: boolean;
   rowRefs: React.MutableRefObject<Map<number, View>>;
+  onLayout?: (event: { nativeEvent: { layout: { y: number; height: number } } }) => void;
   onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
 }
 
@@ -96,6 +121,7 @@ function CommandCenterActionRow({
   rowIndex,
   active,
   rowRefs,
+  onLayout,
   onSelect,
 }: CommandCenterActionRowProps) {
   const { theme } = useUnistyles();
@@ -119,6 +145,7 @@ function CommandCenterActionRow({
       active={active}
       rowRefs={rowRefs}
       onPress={handlePress}
+      onLayout={onLayout}
     >
       <View style={styles.rowContent}>
         <View style={styles.rowMain}>
@@ -142,6 +169,7 @@ interface CommandCenterAgentRowProps {
   rowIndex: number;
   active: boolean;
   rowRefs: React.MutableRefObject<Map<number, View>>;
+  onLayout?: (event: { nativeEvent: { layout: { y: number; height: number } } }) => void;
   onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
   children: ReactNode;
 }
@@ -150,6 +178,7 @@ function CommandCenterAgentRow({
   rowIndex,
   active,
   rowRefs,
+  onLayout,
   onSelect,
   item,
   children,
@@ -161,6 +190,7 @@ function CommandCenterAgentRow({
       active={active}
       rowRefs={rowRefs}
       onPress={handlePress}
+      onLayout={onLayout}
     >
       {children}
     </CommandCenterRowContainer>
@@ -173,6 +203,7 @@ interface CommandCenterAgentRowContentProps {
 
 function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const titleStyle = useMemo(
     () => [styles.title, { color: theme.colors.foreground }],
     [theme.colors.foreground],
@@ -193,7 +224,7 @@ function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentPro
         </View>
         <View style={styles.textContent}>
           <Text style={titleStyle} numberOfLines={1}>
-            {agent.title || "New agent"}
+            {agent.title || t("shell.commandCenter.newAgent")}
           </Text>
           <Text style={subtitleStyle} numberOfLines={1}>
             {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
@@ -209,6 +240,9 @@ interface AgentItemsSectionProps {
   actionItemsLength: number;
   activeIndex: number;
   rowRefs: React.MutableRefObject<Map<number, View>>;
+  onRowLayout: (
+    rowIndex: number,
+  ) => (event: { nativeEvent: { layout: { y: number; height: number } } }) => void;
   onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
   sectionDividerStyle: React.ComponentProps<typeof View>["style"];
   sectionLabelStyle: React.ComponentProps<typeof Text>["style"];
@@ -219,14 +253,17 @@ function AgentItemsSection({
   actionItemsLength,
   activeIndex,
   rowRefs,
+  onRowLayout,
   onSelect,
   sectionDividerStyle,
   sectionLabelStyle,
 }: AgentItemsSectionProps) {
+  const { t } = useTranslation();
+
   return (
     <>
       {actionItemsLength > 0 ? <View style={sectionDividerStyle} /> : null}
-      <Text style={sectionLabelStyle}>Agents</Text>
+      <Text style={sectionLabelStyle}>{t("shell.commandCenter.agents")}</Text>
       {agentItems.map((item, index) => {
         const rowIndex = actionItemsLength + index;
         const agent = item.agent;
@@ -237,6 +274,7 @@ function AgentItemsSection({
             rowIndex={rowIndex}
             active={rowIndex === activeIndex}
             rowRefs={rowRefs}
+            onLayout={onRowLayout(rowIndex)}
             onSelect={onSelect}
           >
             <CommandCenterAgentRowContent agent={agent} />
@@ -249,49 +287,119 @@ function AgentItemsSection({
 
 export function CommandCenter() {
   const { theme } = useUnistyles();
-  const { open, inputRef, query, setQuery, activeIndex, items, handleClose, handleSelectItem } =
-    useCommandCenter();
+  const { t } = useTranslation();
+  const {
+    open,
+    inputRef,
+    query,
+    setQuery,
+    activeIndex,
+    items,
+    handleClose,
+    handleSelectItem,
+    handleKeyEvent,
+  } = useCommandCenter();
+
+  const isCompact = useIsCompactFormFactor();
+  const showBottomSheet = isCompact && isNative;
 
   const rowRefs = useRef<Map<number, View>>(new Map());
+  const rowLayouts = useRef<Map<number, { y: number; height: number }>>(new Map());
   const resultsRef = useRef<ScrollView>(null);
+  const nativeScrollY = useRef(0);
+  const nativeViewHeight = useRef(0);
+  // BottomSheetTextInput wraps a different TextInput type (from react-native-gesture-handler).
+  // Use a loose ref to avoid the type mismatch — same pattern as AdaptiveTextInput.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const bottomSheetInputRef = useRef<any>(null);
 
+  const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
+    visible: open,
+    isEnabled: showBottomSheet,
+    onClose: handleClose,
+  });
+
+  // Focus the bottom sheet input when the sheet opens on mobile
   useEffect(() => {
-    if (!open) {
-      return;
+    if (showBottomSheet && open) {
+      const id = setTimeout(() => bottomSheetInputRef.current?.focus(), 300);
+      return () => clearTimeout(id);
     }
-    const row = rowRefs.current.get(activeIndex);
-    if (!row || typeof document === "undefined") {
-      return;
-    }
-    const scrollNode =
-      (
-        resultsRef.current as
-          | (ScrollView & {
-              getScrollableNode?: () => HTMLElement | null;
-            })
-          | null
-      )?.getScrollableNode?.() ?? null;
-    const rowEl = row as unknown as HTMLElement;
+  }, [showBottomSheet, open]);
 
-    if (!scrollNode) {
-      rowEl.scrollIntoView?.({ block: "nearest" });
+  const renderBackdrop = useCallback(
+    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
+      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
+    ),
+    [],
+  );
+
+  // Scroll active row into view
+  useEffect(() => {
+    if (!open) return;
+
+    if (isWeb) {
+      const row = rowRefs.current.get(activeIndex);
+      if (!row || typeof document === "undefined") return;
+      const scrollNode =
+        (
+          resultsRef.current as
+            | (ScrollView & {
+                getScrollableNode?: () => HTMLElement | null;
+              })
+            | null
+        )?.getScrollableNode?.() ?? null;
+      const rowEl = row as unknown as HTMLElement;
+
+      if (!scrollNode) {
+        rowEl.scrollIntoView?.({ block: "nearest" });
+        return;
+      }
+
+      const rowTop = rowEl.offsetTop;
+      const rowBottom = rowTop + rowEl.offsetHeight;
+      const visibleTop = scrollNode.scrollTop;
+      const visibleBottom = visibleTop + scrollNode.clientHeight;
+
+      if (rowTop < visibleTop) {
+        scrollNode.scrollTop = rowTop;
+        return;
+      }
+
+      if (rowBottom > visibleBottom) {
+        scrollNode.scrollTop = rowBottom - scrollNode.clientHeight;
+      }
       return;
     }
 
-    const rowTop = rowEl.offsetTop;
-    const rowBottom = rowTop + rowEl.offsetHeight;
-    const visibleTop = scrollNode.scrollTop;
-    const visibleBottom = visibleTop + scrollNode.clientHeight;
+    // Native: use onLayout-measured positions
+    const layout = rowLayouts.current.get(activeIndex);
+    if (!layout || !resultsRef.current) return;
+
+    const rowTop = layout.y;
+    const rowBottom = rowTop + layout.height;
+    const visibleTop = nativeScrollY.current;
+    const visibleBottom = visibleTop + nativeViewHeight.current;
 
     if (rowTop < visibleTop) {
-      scrollNode.scrollTop = rowTop;
-      return;
-    }
-
-    if (rowBottom > visibleBottom) {
-      scrollNode.scrollTop = rowBottom - scrollNode.clientHeight;
+      resultsRef.current.scrollTo?.({ y: rowTop, animated: true });
+    } else if (rowBottom > visibleBottom) {
+      resultsRef.current.scrollTo?.({
+        y: rowBottom - nativeViewHeight.current,
+        animated: true,
+      });
     }
   }, [activeIndex, open]);
+
+  const handleRowLayout = useCallback(
+    (rowIndex: number) => (event: { nativeEvent: { layout: { y: number; height: number } } }) => {
+      rowLayouts.current.set(rowIndex, {
+        y: event.nativeEvent.layout.y,
+        height: event.nativeEvent.layout.height,
+      });
+    },
+    [],
+  );
 
   const actionItems = useMemo(() => items.filter((item) => item.kind === "action"), [items]);
   const agentItems = useMemo(() => items.filter((item) => item.kind === "agent"), [items]);
@@ -324,8 +432,101 @@ export function CommandCenter() {
     [theme.colors.border],
   );
 
-  if (isNative || !open) return null;
+  const handleKeyPress = useCallback(
+    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => {
+      handleKeyEvent(key);
+    },
+    [handleKeyEvent],
+  );
 
+  const handleSubmitEditing = useCallback(() => {
+    handleKeyEvent("Enter");
+  }, [handleKeyEvent]);
+
+  const snapPoints = useMemo(() => ["60%", "90%"], []);
+
+  const resultList =
+    items.length === 0 ? (
+      <Text style={emptyTextStyle}>{t("shell.commandCenter.noMatches")}</Text>
+    ) : (
+      <>
+        {actionItems.length > 0 ? (
+          <>
+            <Text style={sectionLabelStyle}>{t("shell.commandCenter.actions")}</Text>
+            {actionItems.map((item, index) => (
+              <CommandCenterActionRow
+                key={`action:${item.action.id}`}
+                item={item}
+                rowIndex={index}
+                active={index === activeIndex}
+                rowRefs={rowRefs}
+                onLayout={handleRowLayout(index)}
+                onSelect={handleSelectItem}
+              />
+            ))}
+          </>
+        ) : null}
+
+        {agentItems.length > 0 ? (
+          <AgentItemsSection
+            agentItems={agentItems}
+            actionItemsLength={actionItems.length}
+            activeIndex={activeIndex}
+            rowRefs={rowRefs}
+            onRowLayout={handleRowLayout}
+            onSelect={handleSelectItem}
+            sectionDividerStyle={sectionDividerStyle}
+            sectionLabelStyle={sectionLabelStyle}
+          />
+        ) : null}
+      </>
+    );
+
+  // Mobile: bottom sheet
+  if (showBottomSheet) {
+    return (
+      <IsolatedBottomSheetModal
+        ref={sheetRef}
+        snapPoints={snapPoints}
+        index={0}
+        enableDynamicSizing={false}
+        onChange={handleSheetChange}
+        onDismiss={handleSheetDismiss}
+        backdropComponent={renderBackdrop}
+        enablePanDownToClose
+        keyboardBehavior="extend"
+        keyboardBlurBehavior="restore"
+        accessible={false}
+      >
+        <View style={styles.bottomSheetHeader}>
+          <ThemedBottomSheetTextInput
+            testID="command-center-input"
+            ref={bottomSheetInputRef as unknown as React.Ref<never>}
+            value={query}
+            onChangeText={setQuery}
+            onKeyPress={handleKeyPress}
+            onSubmitEditing={handleSubmitEditing}
+            placeholder={t("shell.commandCenter.placeholder")}
+            style={inputStyle}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+        </View>
+        <BottomSheetScrollView
+          contentContainerStyle={styles.resultsContent}
+          keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={false}
+        >
+          {resultList}
+        </BottomSheetScrollView>
+      </IsolatedBottomSheetModal>
+    );
+  }
+
+  if (!open) return null;
+
+  // Desktop web: centered overlay panel
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={styles.overlay}>
@@ -338,7 +539,7 @@ export function CommandCenter() {
               ref={inputRef}
               value={query}
               onChangeText={setQuery}
-              placeholder="Type a command or search agents..."
+              placeholder={t("shell.commandCenter.placeholder")}
               placeholderTextColor={theme.colors.foregroundMuted}
               style={inputStyle}
               autoCapitalize="none"
@@ -354,39 +555,7 @@ export function CommandCenter() {
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
-            {items.length === 0 ? (
-              <Text style={emptyTextStyle}>No matches</Text>
-            ) : (
-              <>
-                {actionItems.length > 0 ? (
-                  <>
-                    <Text style={sectionLabelStyle}>Actions</Text>
-                    {actionItems.map((item, index) => (
-                      <CommandCenterActionRow
-                        key={`action:${item.action.id}`}
-                        item={item}
-                        rowIndex={index}
-                        active={index === activeIndex}
-                        rowRefs={rowRefs}
-                        onSelect={handleSelectItem}
-                      />
-                    ))}
-                  </>
-                ) : null}
-
-                {agentItems.length > 0 ? (
-                  <AgentItemsSection
-                    agentItems={agentItems}
-                    actionItemsLength={actionItems.length}
-                    activeIndex={activeIndex}
-                    rowRefs={rowRefs}
-                    onSelect={handleSelectItem}
-                    sectionDividerStyle={sectionDividerStyle}
-                    sectionLabelStyle={sectionLabelStyle}
-                  />
-                ) : null}
-              </>
-            )}
+            {resultList}
           </ScrollView>
         </View>
       </View>
@@ -395,6 +564,12 @@ export function CommandCenter() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  bottomSheetHeader: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   overlay: {
     flex: 1,
     justifyContent: "flex-start",

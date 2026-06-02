@@ -11,6 +11,7 @@ import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getRightSidebarAnimationTargets,
@@ -36,8 +37,10 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
 );
 
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
+  const { startMobilePanelTransition, settleMobilePanel } = useSidebarAnimation();
   const { width: windowWidth } = useWindowDimensions();
   const isCompactLayout = useIsCompactFormFactor();
+  const mobileView = usePanelStore((state) => state.mobileView);
   const isOpen = usePanelStore((state) =>
     selectIsFileExplorerOpen(state, { isCompact: isCompactLayout }),
   );
@@ -53,6 +56,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
+  const prevMobileView = useRef(mobileView);
   const prevWindowWidth = useRef(windowWidth);
 
   // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close)
@@ -63,11 +67,16 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       previousWindowWidth: prevWindowWidth.current,
       nextWindowWidth: windowWidth,
     });
+    const didMobileViewChange = prevMobileView.current !== mobileView;
     const previousIsOpen = prevIsOpen.current;
+    const previousMobileView = prevMobileView.current;
+    const ownsMobileViewChange =
+      previousMobileView === "file-explorer" || mobileView === "file-explorer";
     prevIsOpen.current = isOpen;
+    prevMobileView.current = mobileView;
     prevWindowWidth.current = windowWidth;
 
-    if (!didStateChange) {
+    if (!didStateChange && !didMobileViewChange) {
       return;
     }
 
@@ -84,10 +93,46 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     const targets = getRightSidebarAnimationTargets({ isOpen, windowWidth });
 
     if (previousIsOpen !== isOpen) {
-      translateX.value = withTiming(targets.translateX, {
-        duration: ANIMATION_DURATION,
-        easing: ANIMATION_EASING,
-      });
+      if (isOpen) {
+        if (isCompactLayout) {
+          startMobilePanelTransition("file-explorer");
+        }
+        translateX.value = withTiming(
+          targets.translateX,
+          {
+            duration: ANIMATION_DURATION,
+            easing: ANIMATION_EASING,
+          },
+          (finished) => {
+            if (!finished) return;
+            if (isCompactLayout) {
+              settleMobilePanel("file-explorer");
+            }
+          },
+        );
+        backdropOpacity.value = withTiming(targets.backdropOpacity, {
+          duration: ANIMATION_DURATION,
+          easing: ANIMATION_EASING,
+        });
+        return;
+      }
+
+      if (isCompactLayout && mobileView === "agent") {
+        startMobilePanelTransition("agent");
+      }
+      translateX.value = withTiming(
+        targets.translateX,
+        {
+          duration: ANIMATION_DURATION,
+          easing: ANIMATION_EASING,
+        },
+        (finished) => {
+          if (!finished) return;
+          if (isCompactLayout && mobileView === "agent") {
+            settleMobilePanel("agent");
+          }
+        },
+      );
       backdropOpacity.value = withTiming(targets.backdropOpacity, {
         duration: ANIMATION_DURATION,
         easing: ANIMATION_EASING,
@@ -97,31 +142,60 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-  }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
+    if (isCompactLayout && ownsMobileViewChange) {
+      settleMobilePanel(mobileView);
+    }
+  }, [
+    isOpen,
+    mobileView,
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    isGesturing,
+    isCompactLayout,
+    startMobilePanelTransition,
+    settleMobilePanel,
+  ]);
 
   const animateToOpen = useCallback(() => {
     "worklet";
-    translateX.value = withTiming(0, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
+    startMobilePanelTransition("file-explorer");
+    translateX.value = withTiming(
+      0,
+      {
+        duration: ANIMATION_DURATION,
+        easing: ANIMATION_EASING,
+      },
+      (finished) => {
+        if (!finished) return;
+        settleMobilePanel("file-explorer");
+      },
+    );
     backdropOpacity.value = withTiming(1, {
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  }, [translateX, backdropOpacity]);
+  }, [translateX, backdropOpacity, startMobilePanelTransition, settleMobilePanel]);
 
   const animateToClose = useCallback(() => {
     "worklet";
-    translateX.value = withTiming(windowWidth, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
+    startMobilePanelTransition("agent");
+    translateX.value = withTiming(
+      windowWidth,
+      {
+        duration: ANIMATION_DURATION,
+        easing: ANIMATION_EASING,
+      },
+      (finished) => {
+        if (!finished) return;
+        settleMobilePanel("agent");
+      },
+    );
     backdropOpacity.value = withTiming(0, {
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  }, [translateX, backdropOpacity, windowWidth]);
+  }, [translateX, backdropOpacity, windowWidth, startMobilePanelTransition, settleMobilePanel]);
 
   const value = useMemo<ExplorerSidebarAnimationContextValue>(
     () => ({
