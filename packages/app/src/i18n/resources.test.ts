@@ -192,4 +192,18 @@ describe("translation resources", () => {
     expect(en.message.todo.title).toBe("Tasks");
     expect(en.message.todo.empty).toBe("No tasks yet.");
   });
+
+  it("includes workspace tab toast keys for the Batch 4J migration", () => {
+    expect(en.workspace.tabs.emptyPane).toBe("No tabs in this pane.");
+    expect(en.workspace.tabs.toasts.copyFailed).toBe("Copy failed");
+    expect(en.workspace.tabs.toasts.agentIdCopiedLabel).toBe("Agent ID");
+    expect(en.workspace.tabs.toasts.resumeCommandCopiedLabel).toBe("resume command");
+    expect(en.workspace.tabs.toasts.resumeIdUnavailable).toBe("Resume ID not available");
+    expect(en.workspace.tabs.toasts.resumeCommandUnavailable).toBe("Resume command not available");
+    expect(en.workspace.tabs.toasts.reloadingAgent).toBe("Reloading agent...");
+    expect(en.workspace.tabs.toasts.reloadedAgent).toBe("Reloaded agent");
+    expect(en.workspace.tabs.toasts.failedToReloadAgent).toBe("Failed to reload agent");
+    expect(en.workspace.header.toasts.workspacePathCopiedLabel).toBe("Workspace path");
+    expect(en.workspace.header.toasts.branchNameCopiedLabel).toBe("Branch name");
+  });
 });

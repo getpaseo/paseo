@@ -315,6 +315,7 @@ export const en = {
     tabs: {
       loading: "Loading...",
       loadingAgentTitle: "Loading agent title",
+      emptyPane: "No tabs in this pane.",
       fallback: {
         newAgent: "New Agent",
         setup: "Setup",
@@ -357,6 +358,16 @@ export const en = {
         close: "Close explorer",
         toggle: "Toggle explorer",
       },
+      toasts: {
+        copyFailed: "Copy failed",
+        agentIdCopiedLabel: "Agent ID",
+        resumeCommandCopiedLabel: "resume command",
+        resumeIdUnavailable: "Resume ID not available",
+        resumeCommandUnavailable: "Resume command not available",
+        reloadingAgent: "Reloading agent...",
+        reloadedAgent: "Reloaded agent",
+        failedToReloadAgent: "Failed to reload agent",
+      },
       confirmations: {
         close: "Close",
         cancel: "Cancel",
@@ -397,6 +408,8 @@ export const en = {
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",
         terminalQueued: "Preparing workspace, opening terminal when ready...",
+        workspacePathCopiedLabel: "Workspace path",
+        branchNameCopiedLabel: "Branch name",
       },
     },
     scripts: {

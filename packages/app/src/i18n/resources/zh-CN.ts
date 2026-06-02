@@ -316,6 +316,7 @@ export const zhCN: TranslationResources = {
     tabs: {
       loading: "正在加载...",
       loadingAgentTitle: "正在加载 Agent 标题",
+      emptyPane: "此窗格中没有标签。",
       fallback: {
         newAgent: "新建 Agent",
         setup: "Setup",
@@ -358,6 +359,16 @@ export const zhCN: TranslationResources = {
         close: "关闭 explorer",
         toggle: "切换 explorer",
       },
+      toasts: {
+        copyFailed: "复制失败",
+        agentIdCopiedLabel: "Agent ID",
+        resumeCommandCopiedLabel: "恢复命令",
+        resumeIdUnavailable: "恢复 ID 不可用",
+        resumeCommandUnavailable: "恢复命令不可用",
+        reloadingAgent: "正在重新加载 Agent...",
+        reloadedAgent: "已重新加载 Agent",
+        failedToReloadAgent: "重新加载 Agent 失败",
+      },
       confirmations: {
         close: "关闭",
         cancel: "取消",
@@ -397,6 +408,8 @@ export const zhCN: TranslationResources = {
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",
         terminalQueued: "正在准备 workspace，Terminal 准备好后会打开...",
+        workspacePathCopiedLabel: "Workspace 路径",
+        branchNameCopiedLabel: "分支名称",
       },
     },
     scripts: {
