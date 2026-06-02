@@ -1,7 +1,9 @@
-import i18n from "i18next";
+import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { en } from "./resources/en";
 import { zhCN } from "./resources/zh-CN";
+
+const i18n = createInstance();
 
 void i18n.use(initReactI18next).init({
   compatibilityJSON: "v4",
