@@ -10,15 +10,19 @@ import type {
   AgentStreamEvent,
   ToolCallTimelineItem,
 } from "../../agent-sdk-types.js";
-import { isProviderAvailable } from "../../../daemon-e2e/agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+  getRealProviderConfig,
+  getRealProviderRuntimeSettings,
+} from "../../../daemon-e2e/real-provider-test-config.js";
 import { findExecutable } from "../../../../utils/executable.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
-import { ClaudeAgentClient } from "./agent.js";
 import { claudeQuery } from "./query.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 
 const logger = pino({ level: "silent" });
-const client = new ClaudeAgentClient({ logger });
+const client = createRealProviderClient("claude", logger);
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -150,11 +154,10 @@ async function createSession(params?: {
 }): Promise<{ cwd: string; session: AgentSession }> {
   const cwd = tmpCwd(params?.cwdPrefix ?? "claude-agent-integration-");
   const session = await client.createSession({
-    provider: "claude",
+    ...getRealProviderConfig("claude"),
     cwd,
     title: params?.title ?? "ClaudeAgentSession integration",
     modeId: params?.modeId ?? "acceptEdits",
-    model: "haiku",
   });
   return { cwd, session };
 }
@@ -175,7 +178,7 @@ describe("ClaudeAgentSession integration", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -233,16 +236,19 @@ describe("ClaudeAgentSession integration", () => {
   test("supportedModels returns the current abstract Claude SDK model shape", async () => {
     const claudeBinary = await findExecutable("claude");
     if (!claudeBinary) throw new Error("claude binary required for this integration test");
-    const query = claudeQuery({
-      prompt: createEmptyPrompt(),
-      options: {
-        cwd: process.cwd(),
-        permissionMode: "plan",
-        includePartialMessages: false,
-        settingSources: ["user", "project"],
-        pathToClaudeCodeExecutable: claudeBinary,
+    const query = claudeQuery(
+      {
+        prompt: createEmptyPrompt(),
+        options: {
+          cwd: process.cwd(),
+          permissionMode: "plan",
+          includePartialMessages: false,
+          settingSources: ["user", "project"],
+          pathToClaudeCodeExecutable: claudeBinary,
+        },
       },
-    });
+      { runtimeSettings: getRealProviderRuntimeSettings("claude") },
+    );
 
     try {
       const models = await query.supportedModels();

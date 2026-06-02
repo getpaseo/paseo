@@ -31,6 +31,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "browser",
+          fileParallelism: false,
           include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
           browser: {
             enabled: true,

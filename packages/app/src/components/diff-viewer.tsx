@@ -2,13 +2,13 @@ import React from "react";
 import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
-import { Fonts } from "@/constants/theme";
 import type { DiffLine } from "@/utils/tool-call-parsers";
 import { diffLinePrefix } from "@/utils/diff-highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isWeb } from "@/constants/platform";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
@@ -165,7 +165,7 @@ export function DiffViewer({
   }
 
   const lines = (
-    <View style={linesContainerStyle}>
+    <View style={linesContainerStyle} dataSet={CODE_SURFACE_DATASET}>
       {keyedDiffLines.map(({ key, line }) => (
         <DiffLineRow key={key} line={line} />
       ))}
@@ -226,7 +226,7 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: theme.spacing[1],
     },
     lineText: {
-      fontFamily: Fonts.mono,
+      fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
       ...(isWeb

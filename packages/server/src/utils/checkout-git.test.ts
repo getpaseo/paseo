@@ -10,6 +10,7 @@ import {
   mkdirSync,
 } from "fs";
 import { join } from "path";
+import { win32 } from "node:path";
 import { tmpdir } from "os";
 import {
   __resetCheckoutShortstatCacheForTests,
@@ -1011,6 +1012,27 @@ const x = 1;
     expect(diff.structured?.some((f) => f.path === "file.txt" && f.status === "too_large")).toBe(
       true,
     );
+  });
+
+  it("marks tracked generated one-line diffs as too_large by content size", async () => {
+    writeFileSync(join(repoDir, "generated.js"), `const data = "old";\n`);
+    execFileSync("git", ["add", "generated.js"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add generated"], {
+      cwd: repoDir,
+    });
+
+    writeFileSync(join(repoDir, "generated.js"), `const data = "${"x".repeat(1_100_000)}";\n`);
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const entry = diff.structured?.find((file) => file.path === "generated.js");
+
+    expect(entry).toBeTruthy();
+    expect(entry?.status).toBe("too_large");
+    expect(entry?.additions).toBe(1);
+    expect(entry?.deletions).toBe(1);
+    expect(entry?.hunks).toEqual([]);
+    expect(diff.diff).toContain("# generated.js: diff too large omitted");
+    expect(diff.diff).not.toContain("x".repeat(10_000));
   });
 
   it("short-circuits tracked binary files", async () => {
@@ -2332,6 +2354,20 @@ const x = 1;
 
     it("matches Windows .paseo\\worktrees\\ paths", () => {
       expect(isPaseoWorktreePath("C:\\Users\\dev\\.paseo\\worktrees\\feature")).toBe(true);
+    });
+
+    it("matches worktrees under a custom PASEO_HOME", () => {
+      const customPaseoHome = process.platform === "win32" ? "C:\\paseo" : "/var/lib/paseo";
+      const worktreePath =
+        process.platform === "win32"
+          ? win32.join(customPaseoHome, "worktrees", "project", "feature")
+          : `${customPaseoHome}/worktrees/project/feature`;
+
+      expect(
+        isPaseoWorktreePath(worktreePath, {
+          paseoHome: customPaseoHome,
+        }),
+      ).toBe(true);
     });
 
     it("rejects paths without .paseo/worktrees segment", () => {

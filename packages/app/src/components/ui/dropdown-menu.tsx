@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -30,6 +31,7 @@ import { Check, CheckCircle } from "lucide-react-native";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
+import { isWeb } from "@/constants/platform";
 
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
@@ -178,10 +180,19 @@ function renderDropdownSurface(input: {
   scrollable: boolean;
   scrollViewportStyle: StyleProp<ViewStyle>;
   content: ReactElement;
+  surfaceNativeID: string;
   onExited: () => void;
 }): ReactElement {
-  const { frameStyle, testID, surfaceStyle, scrollable, scrollViewportStyle, content, onExited } =
-    input;
+  const {
+    frameStyle,
+    testID,
+    surfaceStyle,
+    scrollable,
+    scrollViewportStyle,
+    content,
+    surfaceNativeID,
+    onExited,
+  } = input;
 
   const body = scrollable ? (
     <FloatingScrollView
@@ -199,6 +210,7 @@ function renderDropdownSurface(input: {
   return (
     <FloatingSurface
       collapsable={false}
+      nativeID={surfaceNativeID}
       testID={testID}
       style={surfaceStyle}
       frameStyle={frameStyle}
@@ -350,15 +362,57 @@ function getTransformOrigin(placement: Placement, alignment: Alignment): string 
   return `${vertical} ${horizontal}`;
 }
 
+const CONTENT_ENTERING_DURATION_MS = 150;
+
 const contentEntering = new Keyframe({
   0: { opacity: 0, transform: [{ scale: 0.97 }] },
   100: { opacity: 1, transform: [{ scale: 1 }] },
-}).duration(150);
+}).duration(CONTENT_ENTERING_DURATION_MS);
 
 const contentExiting = new Keyframe({
   0: { opacity: 1, transform: [{ scale: 1 }] },
   100: { opacity: 0, transform: [{ scale: 0.97 }] },
 }).duration(100);
+
+function releaseFixedMenuHeight(surfaceNativeID: string): void {
+  if (!isWeb) return;
+  document.getElementById(surfaceNativeID)?.style.removeProperty("height");
+}
+
+function useReleaseFixedMenuHeight({
+  contentSize,
+  enabled,
+  surfaceNativeID,
+}: {
+  contentSize: Size | null;
+  enabled: boolean;
+  surfaceNativeID: string;
+}): void {
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    // Reanimated web entering animations leave the measured menu surface with
+    // an inline height snapshot. Once the menu is open, height must return to
+    // content-sized so rows can grow in place (for example service script URLs).
+    const release = () => {
+      releaseFixedMenuHeight(surfaceNativeID);
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => releaseFixedMenuHeight(surfaceNativeID));
+      }
+    };
+    const timers: ReturnType<typeof setTimeout>[] = [
+      setTimeout(release, CONTENT_ENTERING_DURATION_MS),
+    ];
+
+    if (contentSize) {
+      timers.push(setTimeout(release, 0));
+    }
+
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, [contentSize, enabled, surfaceNativeID]);
+}
 
 export function DropdownMenuContent({
   children,
@@ -389,6 +443,7 @@ export function DropdownMenuContent({
   const { open, setOpen, triggerRef, flushPendingSelect } =
     useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
+  const surfaceNativeID = useId();
   const webScrollbarStyle = useWebScrollbarStyle();
   const [closing, setClosing] = useState(false);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
@@ -428,6 +483,12 @@ export function DropdownMenuContent({
       flushPendingSelect();
     }
   }, [flushPendingSelect, modalVisible, open]);
+
+  useReleaseFixedMenuHeight({
+    contentSize,
+    enabled: modalVisible,
+    surfaceNativeID,
+  });
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -575,6 +636,7 @@ export function DropdownMenuContent({
               scrollable,
               scrollViewportStyle,
               content,
+              surfaceNativeID,
               onExited: () => setModalVisible(false),
             })
           : null}

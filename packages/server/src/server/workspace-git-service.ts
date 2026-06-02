@@ -259,6 +259,7 @@ interface WorkspaceGitServiceDependencies {
 interface WorkspaceGitServiceOptions {
   logger: pino.Logger;
   paseoHome: string;
+  worktreesRoot?: string;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
@@ -269,7 +270,7 @@ interface WorkspaceGitTarget {
   debounceTimer: NodeJS.Timeout | null;
   selfHealTimer: NodeJS.Timeout | null;
   githubPollSubscription: { unsubscribe: () => void } | null;
-  githubPollHeadRef: string | null;
+  githubPollKey: string | null;
   refreshState: WorkspaceGitRefreshState;
   latestGit: WorkspaceGitRuntimeSnapshot["git"] | null;
   latestGitLoadedAtMs: number | null;
@@ -316,6 +317,11 @@ interface WorkspaceGitAuxiliaryReadCacheEntry<T> {
   inFlight: Promise<T> | null;
 }
 
+interface WorkspaceGitHubPollTarget {
+  headRef: string;
+  headRepositoryOwner?: string;
+}
+
 function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies {
   return {
     watch,
@@ -347,6 +353,7 @@ function resolveWorkspaceGitServiceDeps(
 export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly worktreesRoot: string | undefined;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
@@ -385,6 +392,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
+    this.worktreesRoot = options.worktreesRoot;
     this.deps = resolveWorkspaceGitServiceDeps(options.deps);
   }
 
@@ -438,6 +446,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     try {
       const status = await this.deps.getCheckoutStatus(normalizedCwd, {
         paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
         logger: this.logger,
       });
       if (!status.isGit) {
@@ -484,7 +493,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const normalizedOptions = this.normalizeCheckoutDiffOptions(options);
     const key = this.buildCheckoutDiffCacheKey(normalizedCwd, normalizedOptions);
     return this.readAuxiliaryCache(this.checkoutDiffCache, key, readOptions, () =>
-      this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, { paseoHome: this.paseoHome }),
+      this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+      }),
     );
   }
 
@@ -581,6 +593,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.deps.listPaseoWorktrees({
         cwd: repoRoot,
         paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
       }),
     );
   }
@@ -788,7 +801,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       debounceTimer: null,
       selfHealTimer: null,
       githubPollSubscription: null,
-      githubPollHeadRef: null,
+      githubPollKey: null,
       refreshState: { status: "idle" },
       latestGit: null,
       latestGitLoadedAtMs: null,
@@ -1148,23 +1161,28 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
-    const headRef = git.currentBranch;
+    const pollTarget = this.resolveGitHubPollTarget(target);
+    const remoteUrl = git.remoteUrl;
     const hasGitHubRemote =
-      target.cachedGitHubRemote?.remoteUrl === git.remoteUrl &&
+      target.cachedGitHubRemote?.remoteUrl === remoteUrl &&
       target.cachedGitHubRemote.identity !== null;
-    if (!headRef || !hasGitHubRemote) {
+    if (!pollTarget || remoteUrl === null || !hasGitHubRemote) {
       this.stopGitHubPollForTarget(target);
       return;
     }
-    if (target.githubPollHeadRef === headRef && target.githubPollSubscription) {
+    const pollKey = buildWorkspaceGitHubPollKey(remoteUrl, pollTarget);
+    if (target.githubPollKey === pollKey && target.githubPollSubscription) {
       return;
     }
 
     this.stopGitHubPollForTarget(target);
-    target.githubPollHeadRef = headRef;
+    target.githubPollKey = pollKey;
     target.githubPollSubscription = this.deps.github.retainCurrentPullRequestStatusPoll({
       cwd: target.cwd,
-      headRef,
+      headRef: pollTarget.headRef,
+      ...(pollTarget.headRepositoryOwner
+        ? { headRepositoryOwner: pollTarget.headRepositoryOwner }
+        : {}),
       onStatus: (status) => {
         if (!this.isActiveObservedWorkspaceTarget(target)) {
           return;
@@ -1175,17 +1193,40 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       },
       onError: (error) => {
         this.logger.warn(
-          { err: error, cwd: target.cwd, headRef, reason: "self-heal-github" },
+          {
+            err: error,
+            cwd: target.cwd,
+            headRef: pollTarget.headRef,
+            headRepositoryOwner: pollTarget.headRepositoryOwner,
+            reason: "self-heal-github",
+          },
           "Failed to run GitHub self-heal refresh",
         );
       },
     });
   }
 
+  private resolveGitHubPollTarget(target: WorkspaceGitTarget): WorkspaceGitHubPollTarget | null {
+    const git = target.latestGit;
+    if (!git?.currentBranch) {
+      return null;
+    }
+
+    const lookupTarget =
+      target.latestFacts?.isGit && target.latestFacts.currentBranch === git.currentBranch
+        ? target.latestFacts.pullRequestLookupTarget
+        : null;
+    if (lookupTarget) {
+      return lookupTarget;
+    }
+
+    return { headRef: git.currentBranch };
+  }
+
   private stopGitHubPollForTarget(target: WorkspaceGitTarget): void {
     target.githubPollSubscription?.unsubscribe();
     target.githubPollSubscription = null;
-    target.githubPollHeadRef = null;
+    target.githubPollKey = null;
   }
 
   private addWorkingTreeWatcher(
@@ -1566,7 +1607,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const cwd = target.cwd;
     const previousGitHubPollKey = this.getGitHubPollKey(target);
-    const baseContext: CheckoutContext = { paseoHome: this.paseoHome, logger: this.logger };
+    const baseContext: CheckoutContext = {
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+      logger: this.logger,
+    };
     const facts = await this.loadCheckoutFacts(target, {
       ...baseContext,
       allowRecent: !request.force,
@@ -1657,7 +1702,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return null;
     }
 
-    return JSON.stringify([git.remoteUrl, git.currentBranch]);
+    const pollTarget = this.resolveGitHubPollTarget(target);
+    if (!pollTarget) {
+      return null;
+    }
+
+    return buildWorkspaceGitHubPollKey(git.remoteUrl, pollTarget);
   }
 
   private rememberGitHubSnapshot(
@@ -1962,6 +2012,10 @@ function buildGitHubSnapshotFromStatus(
     pullRequest: status,
     error: null,
   };
+}
+
+function buildWorkspaceGitHubPollKey(remoteUrl: string, target: WorkspaceGitHubPollTarget): string {
+  return JSON.stringify([remoteUrl, target.headRef, target.headRepositoryOwner ?? null]);
 }
 
 async function runGitFetch(cwd: string): Promise<void> {

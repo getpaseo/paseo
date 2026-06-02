@@ -49,6 +49,7 @@ interface LegacyCreateWorktreeTestOptions {
   worktreeSlug: string;
   runSetup?: boolean;
   paseoHome?: string;
+  worktreesRoot?: string;
 }
 
 function createLegacyWorktreeForTest(
@@ -68,6 +69,7 @@ function createLegacyWorktreeForTest(
     },
     runSetup: options.runSetup ?? true,
     paseoHome: options.paseoHome,
+    worktreesRoot: options.worktreesRoot,
   });
 }
 
@@ -116,6 +118,38 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(existsSync(metadataPath)).toBe(true);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
       expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
+    });
+
+    it("creates and owns worktrees under a configured root", async () => {
+      const worktreesRoot = join(tempDir, "custom-worktrees");
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const result = await createLegacyWorktreeForTest({
+        branchName: "custom-root",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "custom-root",
+        paseoHome,
+        worktreesRoot,
+      });
+
+      expect(result.worktreePath).toBe(join(worktreesRoot, projectHash, "custom-root"));
+      await expect(
+        isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome, worktreesRoot }),
+      ).resolves.toMatchObject({ allowed: true, worktreeRoot: join(worktreesRoot, projectHash) });
+      await expect(
+        isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome }),
+      ).resolves.toMatchObject({ allowed: false });
+
+      const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome, worktreesRoot });
+      expect(worktrees.map((entry) => entry.path)).toContain(result.worktreePath);
+
+      await deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: result.worktreePath,
+        paseoHome,
+        worktreesBaseRoot: worktreesRoot,
+      });
+      expect(existsSync(result.worktreePath)).toBe(false);
     });
 
     it.skip("detects paseo-owned worktrees across realpath differences (macOS /var vs /private/var)", async () => {

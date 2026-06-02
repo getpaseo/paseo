@@ -13,7 +13,6 @@ import {
   type GitHubCommandRunner,
   type GitHubCommandRunnerOptions,
   type GitHubCurrentPullRequestStatus,
-  type GitHubReadOptions,
 } from "./github-service.js";
 import { CheckoutPrStatusResponseSchema } from "@getpaseo/protocol/messages";
 
@@ -186,7 +185,7 @@ function githubStatusFacts(
 }
 
 function recordCurrentPullRequestStatusReads(service: ReturnType<typeof createGitHubService>) {
-  const reads: GitHubReadOptions[] = [];
+  const reads: Parameters<typeof service.getCurrentPullRequestStatus>[0][] = [];
   const getCurrentPullRequestStatus = service.getCurrentPullRequestStatus.bind(service);
   service.getCurrentPullRequestStatus = vi.fn(async (options) => {
     reads.push(options);
@@ -657,6 +656,41 @@ describe("GitHubService", () => {
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(2);
     expect(reads.map((read) => read.reason)).toEqual([undefined, "self-heal-github"]);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("retained fork PR status polls keep the head repository owner", async () => {
+    const runner = createRunner([
+      currentPullRequestJson({
+        headRefName: "open-button-targets-active-file",
+        headRepositoryOwner: { login: "fork-owner" },
+      }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    const reads = recordCurrentPullRequestStatusReads(service);
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "open-button-targets-active-file",
+      headRepositoryOwner: "fork-owner",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reads).toEqual([
+      expect.objectContaining({
+        cwd: "/repo",
+        headRef: "open-button-targets-active-file",
+        headRepositoryOwner: "fork-owner",
+        reason: "self-heal-github",
+      }),
+    ]);
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
 
     subscription?.unsubscribe();
     service.dispose?.();

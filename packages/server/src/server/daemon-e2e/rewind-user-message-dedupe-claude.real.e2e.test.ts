@@ -6,8 +6,11 @@ import pino from "pino";
 
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-rewind-dedupe-real-claude-"));
@@ -17,7 +20,7 @@ describe("daemon E2E (real claude) - rewind user message dedupe", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -30,7 +33,7 @@ describe("daemon E2E (real claude) - rewind user message dedupe", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -44,7 +47,7 @@ describe("daemon E2E (real claude) - rewind user message dedupe", () => {
       const agent = await client.createAgent({
         cwd,
         title: "rewind-user-message-dedupe-real-claude",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       await client.sendMessage(agent.id, "Reply with exactly: READY");

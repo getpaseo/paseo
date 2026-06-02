@@ -4,65 +4,54 @@ import path from "node:path";
 import pino from "pino";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
-import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
-import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
-import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import type {
-  AgentClient,
   AgentProvider,
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+  getRealProviderConfig,
+  type RealProvider,
+} from "./real-provider-test-config.js";
 import { fetchTimelineItems } from "./test-utils/rewind-helpers.js";
 
-type ContractProvider = Extract<AgentProvider, "claude" | "codex" | "opencode" | "pi">;
+type ContractProvider = Extract<AgentProvider, RealProvider>;
 
 interface ProviderContractCase {
   provider: ContractProvider;
   title: string;
   timeoutMs: number;
-  createClient: (logger: pino.Logger) => AgentClient;
   createConfig: () => AgentSessionConfig;
 }
-
-const PI_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
 
 const CONTRACT_CASES: ProviderContractCase[] = [
   {
     provider: "claude",
     title: "Claude",
     timeoutMs: 180_000,
-    createClient: (logger) => new ClaudeAgentClient({ logger }),
-    createConfig: () => getFullAccessConfig("claude"),
+    createConfig: () => getRealProviderConfig("claude"),
   },
   {
     provider: "codex",
     title: "Codex",
     timeoutMs: 180_000,
-    createClient: (logger) => new CodexAppServerAgentClient(logger),
-    createConfig: () => getFullAccessConfig("codex"),
+    createConfig: () => getRealProviderConfig("codex"),
   },
   {
     provider: "opencode",
     title: "OpenCode",
     timeoutMs: 180_000,
-    createClient: (logger) => new OpenCodeAgentClient(logger),
-    createConfig: () => getFullAccessConfig("opencode"),
+    createConfig: () => getRealProviderConfig("opencode"),
   },
   {
     provider: "pi",
     title: "Pi",
     timeoutMs: 240_000,
-    createClient: (logger) => new PiRpcAgentClient({ logger }),
-    createConfig: () => ({
-      provider: "pi",
-      model: PI_REAL_TEST_MODEL,
-      thinkingOptionId: "medium",
-    }),
+    createConfig: () => getRealProviderConfig("pi"),
   },
 ];
 
@@ -94,7 +83,7 @@ describe.each(CONTRACT_CASES)("daemon E2E (real $provider) - user_message contra
   let cwd: string | null = null;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable(entry.provider);
+    canRun = await canRunRealProvider(entry.provider);
   });
 
   beforeEach(async (context) => {
@@ -106,7 +95,7 @@ describe.each(CONTRACT_CASES)("daemon E2E (real $provider) - user_message contra
     cwd = tmpCwd(entry.provider);
     const logger = pino({ level: "silent" });
     daemon = await createTestPaseoDaemon({
-      agentClients: { [entry.provider]: entry.createClient(logger) },
+      agentClients: { [entry.provider]: createRealProviderClient(entry.provider, logger) },
       logger,
     });
     client = new DaemonClient({

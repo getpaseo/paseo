@@ -1,6 +1,7 @@
 import path from "node:path";
 import { resolvePaseoNodeEnv } from "./paseo-env.js";
 import { z } from "zod";
+import { expandTilde } from "../utils/path.js";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
 import {
@@ -23,6 +24,7 @@ import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostn
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+const DEFAULT_SERVICE_PROXY_LISTEN = "127.0.0.1:6868";
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
@@ -151,6 +153,12 @@ interface ResolvedRelay {
   publicUseTls: boolean;
 }
 
+interface ResolvedServiceProxy {
+  enabled: boolean;
+  listen: string;
+  publicBaseUrl: string | null;
+}
+
 function resolveTlsFromEnv(
   envValue: string | undefined,
   persistedValue: boolean | undefined,
@@ -195,6 +203,38 @@ interface ResolvedVoiceLlm {
   provider: AgentProvider | null;
   providerExplicit: boolean;
   model: string | null;
+}
+
+function resolveServiceProxyPublicBaseUrl(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  try {
+    return new URL(value).toString().replace(/\/$/, "");
+  } catch {
+    throw new Error(`Invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: ${value}`);
+  }
+}
+
+function resolveServiceProxyConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): ResolvedServiceProxy {
+  const publicBaseUrl = resolveServiceProxyPublicBaseUrl(
+    env.PASEO_SERVICE_PROXY_PUBLIC_BASE_URL ??
+      persisted.daemon?.serviceProxy?.publicBaseUrl ??
+      null,
+  );
+  const enabled =
+    parseBooleanEnv(env.PASEO_SERVICE_PROXY_ENABLED) ??
+    persisted.daemon?.serviceProxy?.enabled ??
+    publicBaseUrl !== null;
+  const listen =
+    env.PASEO_SERVICE_PROXY_LISTEN ??
+    persisted.daemon?.serviceProxy?.listen ??
+    DEFAULT_SERVICE_PROXY_LISTEN;
+
+  return { enabled, listen, publicBaseUrl };
 }
 
 function resolveVoiceLlmConfig(
@@ -256,6 +296,21 @@ function resolveAuthConfig(
     : undefined;
 }
 
+function resolveWorktreesRoot(
+  paseoHome: string,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): string | undefined {
+  const configuredRoot = persisted.worktrees?.root?.trim();
+  if (!configuredRoot) {
+    return undefined;
+  }
+
+  const expandedRoot = expandTilde(configuredRoot);
+  return path.isAbsolute(expandedRoot)
+    ? path.resolve(expandedRoot)
+    : path.resolve(paseoHome, expandedRoot);
+}
+
 function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
@@ -306,6 +361,7 @@ export function loadConfig(
     cliRelayEnabled: options?.cli?.relayEnabled,
     cliRelayUseTls: options?.cli?.relayUseTls,
   });
+  const serviceProxy = resolveServiceProxyConfig(env, persisted);
 
   const { openai, speech } = resolveSpeechConfig({
     paseoHome,
@@ -321,6 +377,7 @@ export function loadConfig(
   return {
     listen,
     paseoHome,
+    worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
     mcpEnabled,
@@ -337,6 +394,7 @@ export function loadConfig(
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,
     relayPublicUseTls: relay.publicUseTls,
+    serviceProxy,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

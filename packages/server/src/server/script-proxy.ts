@@ -33,30 +33,49 @@ export interface ScriptRouteEntry extends ScriptRoute {
   workspaceId: string;
   projectSlug: string;
   scriptName: string;
+  publicHostname?: string | null;
+  publicBaseUrl?: string | null;
 }
 
 export class ScriptRouteStore {
   private routes = new Map<string, ScriptRouteEntry>();
+  private hostnameAliases = new Map<string, string>();
   private workspaceHostnames = new Map<string, Set<string>>();
 
   registerRoute(entry: ScriptRouteEntry): void {
     const previous = this.routes.get(entry.hostname);
     if (previous) {
-      this.removeHostnameFromWorkspaceIndex(previous.workspaceId, previous.hostname);
+      this.removeRoute(previous.hostname);
     }
 
-    const storedEntry = { ...entry };
+    const { publicHostname, publicBaseUrl, ...requiredEntry } = entry;
+    const storedEntry: ScriptRouteEntry = {
+      ...requiredEntry,
+      ...(publicHostname ? { publicHostname } : {}),
+      ...(publicBaseUrl ? { publicBaseUrl } : {}),
+    };
     this.routes.set(storedEntry.hostname, storedEntry);
+    for (const alias of this.getRouteHostnames(storedEntry)) {
+      const aliasedCanonicalHostname = this.hostnameAliases.get(alias);
+      if (aliasedCanonicalHostname && aliasedCanonicalHostname !== storedEntry.hostname) {
+        this.removeRoute(aliasedCanonicalHostname);
+      }
+      this.hostnameAliases.set(alias, storedEntry.hostname);
+    }
     this.addHostnameToWorkspaceIndex(storedEntry.workspaceId, storedEntry.hostname);
   }
 
   removeRoute(hostname: string): void {
-    const entry = this.routes.get(hostname);
+    const canonicalHostname = this.hostnameAliases.get(hostname) ?? hostname;
+    const entry = this.routes.get(canonicalHostname);
     if (!entry) {
       return;
     }
-    this.routes.delete(hostname);
-    this.removeHostnameFromWorkspaceIndex(entry.workspaceId, hostname);
+    this.routes.delete(canonicalHostname);
+    for (const alias of this.getRouteHostnames(entry)) {
+      this.hostnameAliases.delete(alias);
+    }
+    this.removeHostnameFromWorkspaceIndex(entry.workspaceId, canonicalHostname);
   }
 
   removeRouteForWorkspaceScript(params: { workspaceId: string; scriptName: string }): void {
@@ -72,6 +91,9 @@ export class ScriptRouteStore {
     for (const [hostname, entry] of this.routes) {
       if (entry.port === port) {
         this.routes.delete(hostname);
+        for (const alias of this.getRouteHostnames(entry)) {
+          this.hostnameAliases.delete(alias);
+        }
         this.removeHostnameFromWorkspaceIndex(entry.workspaceId, hostname);
       }
     }
@@ -82,7 +104,7 @@ export class ScriptRouteStore {
     const hostname = host.replace(/:\d+$/, "");
 
     // 1. Exact match
-    const exactRoute = this.routes.get(hostname);
+    const exactRoute = this.getRouteByHostname(hostname);
     if (exactRoute !== undefined) {
       return { hostname: exactRoute.hostname, port: exactRoute.port };
     }
@@ -91,7 +113,7 @@ export class ScriptRouteStore {
     const parts = hostname.split(".");
     for (let i = 1; i < parts.length; i++) {
       const candidate = parts.slice(i).join(".");
-      const candidateRoute = this.routes.get(candidate);
+      const candidateRoute = this.getRouteByHostname(candidate);
       if (candidateRoute !== undefined) {
         return { hostname: candidateRoute.hostname, port: candidateRoute.port };
       }
@@ -101,7 +123,7 @@ export class ScriptRouteStore {
   }
 
   getRouteEntry(hostname: string): ScriptRouteEntry | null {
-    const entry = this.routes.get(hostname);
+    const entry = this.getRouteByHostname(hostname);
     return entry ? { ...entry } : null;
   }
 
@@ -123,6 +145,17 @@ export class ScriptRouteStore {
       }
     }
     return routes;
+  }
+
+  private getRouteByHostname(hostname: string): ScriptRouteEntry | undefined {
+    const canonicalHostname = this.hostnameAliases.get(hostname) ?? hostname;
+    return this.routes.get(canonicalHostname);
+  }
+
+  private getRouteHostnames(
+    entry: Pick<ScriptRouteEntry, "hostname" | "publicHostname">,
+  ): string[] {
+    return [entry.hostname, ...(entry.publicHostname ? [entry.publicHostname] : [])];
   }
 
   private addHostnameToWorkspaceIndex(workspaceId: string, hostname: string): void {

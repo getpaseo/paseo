@@ -173,6 +173,10 @@ export function TerminalPane({
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const terminalFontFamily = useMemo(() => {
+    const trimmed = settings.monoFontFamily.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -214,6 +218,7 @@ export function TerminalPane({
   const pendingTerminalInputRef = useRef<PendingTerminalInput[]>([]);
   const keyboardRefitTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastAutoFocusKeyRef = useRef<string | null>(null);
+  const lastPaneFocusResizeKeyRef = useRef<string | null>(null);
   const initialSnapshot = workspaceTerminalSession.snapshots.get({ terminalId });
 
   useEffect(() => {
@@ -252,7 +257,7 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    if (isMobile || !isWorkspaceFocused || !isPaneFocused || !terminalId) {
+    if (isMobile || !isPaneFocused || !terminalId) {
       lastAutoFocusKeyRef.current = null;
       return;
     }
@@ -263,15 +268,36 @@ export function TerminalPane({
     }
 
     lastAutoFocusKeyRef.current = nextFocusKey;
+    if (!isWorkspaceFocused) {
+      return;
+    }
+
     requestTerminalFocus();
   }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
 
   useEffect(() => {
-    if (isPaneFocused && isWorkspaceFocused && isAppVisible && terminalId) {
-      lastSentTerminalSizeRef.current = null;
-      requestTerminalReflow();
+    if (!isPaneFocused || !terminalId) {
+      lastPaneFocusResizeKeyRef.current = null;
+      return;
     }
-  }, [isAppVisible, isPaneFocused, isWorkspaceFocused, requestTerminalReflow, terminalId]);
+
+    const focusResizeKey = `${scopeKey}:${terminalId}`;
+    if (lastPaneFocusResizeKeyRef.current === focusResizeKey) {
+      return;
+    }
+    lastPaneFocusResizeKeyRef.current = focusResizeKey;
+    if (!isWorkspaceFocused) {
+      return;
+    }
+
+    lastSentTerminalSizeRef.current = null;
+    requestTerminalReflow();
+  }, [isPaneFocused, isWorkspaceFocused, requestTerminalReflow, scopeKey, terminalId]);
+
+  const handleTerminalFocus = useCallback(() => {
+    lastSentTerminalSizeRef.current = null;
+    requestTerminalReflow();
+  }, [requestTerminalReflow]);
 
   const clearKeyboardRefitTimeouts = useCallback(() => {
     if (keyboardRefitTimeoutsRef.current.length === 0) {
@@ -307,25 +333,6 @@ export function TerminalPane({
     },
     [pulseKeyboardRefits],
   );
-
-  useEffect(() => {
-    if (!isWorkspaceFocused || !terminalId) {
-      return;
-    }
-    // Focus transitions can temporarily report stale dimensions.
-    // Pulse forced refits so xterm fills the pane when returning to a terminal.
-    const timeoutHandles = TERMINAL_REFIT_DELAYS_MS.map((delayMs) =>
-      setTimeout(() => {
-        requestTerminalReflow();
-      }, delayMs),
-    );
-
-    return () => {
-      for (const handle of timeoutHandles) {
-        clearTimeout(handle);
-      }
-    };
-  }, [isWorkspaceFocused, requestTerminalReflow, terminalId]);
 
   useEffect(() => {
     if (!client || !isConnected || !isWorkspaceFocused) {
@@ -375,7 +382,7 @@ export function TerminalPane({
 
     const controller = new TerminalStreamController({
       client,
-      getPreferredSize: () => measuredTerminalSizeRef.current,
+      getPreferredSize: () => lastSentTerminalSizeRef.current,
       onOutput: ({ terminalId: outputTerminalId, data }) => {
         if (!isWorkspaceFocused || terminalIdRef.current !== outputTerminalId) {
           return;
@@ -605,33 +612,35 @@ export function TerminalPane({
     ],
   );
 
-  const handleTerminalResize = useStableEvent((input: { rows: number; cols: number }) => {
-    const { rows, cols } = input;
-    if (rows <= 0 || cols <= 0) {
-      return;
-    }
-    const normalizedRows = Math.floor(rows);
-    const normalizedCols = Math.floor(cols);
-    const nextSize = { rows: normalizedRows, cols: normalizedCols };
-    measuredTerminalSizeRef.current = nextSize;
-    if (!client || !terminalId || !isPaneFocused || !isWorkspaceFocused || !isAppVisible) {
-      return;
-    }
-    const previousSent = lastSentTerminalSizeRef.current;
-    if (
-      previousSent &&
-      previousSent.rows === normalizedRows &&
-      previousSent.cols === normalizedCols
-    ) {
-      return;
-    }
-    lastSentTerminalSizeRef.current = nextSize;
-    client.sendTerminalInput(terminalId, {
-      type: "resize",
-      rows: normalizedRows,
-      cols: normalizedCols,
-    });
-  });
+  const handleTerminalResize = useStableEvent(
+    (input: { rows: number; cols: number; shouldClaim: boolean }) => {
+      const { rows, cols } = input;
+      if (rows <= 0 || cols <= 0) {
+        return;
+      }
+      const normalizedRows = Math.floor(rows);
+      const normalizedCols = Math.floor(cols);
+      const nextSize = { rows: normalizedRows, cols: normalizedCols };
+      measuredTerminalSizeRef.current = nextSize;
+      if (!input.shouldClaim || !client || !terminalId || !isWorkspaceFocused || !isAppVisible) {
+        return;
+      }
+      const previousSent = lastSentTerminalSizeRef.current;
+      if (
+        previousSent &&
+        previousSent.rows === normalizedRows &&
+        previousSent.cols === normalizedCols
+      ) {
+        return;
+      }
+      lastSentTerminalSizeRef.current = nextSize;
+      client.sendTerminalInput(terminalId, {
+        type: "resize",
+        rows: normalizedRows,
+        cols: normalizedCols,
+      });
+    },
+  );
 
   const handleTerminalKey = useCallback(
     async (input: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }) => {
@@ -758,12 +767,15 @@ export function TerminalPane({
               testId="terminal-surface"
               xtermTheme={xtermTheme}
               scrollbackLines={settings.terminalScrollbackLines}
+              fontFamily={terminalFontFamily}
+              fontSize={settings.codeFontSize}
               swipeGesturesEnabled={swipeGesturesEnabled}
               initialSnapshot={initialSnapshot}
               onRendererReadyChange={handleRendererReadyChange}
               onSwipeRight={handleSwipeRight}
               onSwipeLeft={handleSwipeLeft}
               onInput={handleTerminalData}
+              onFocus={handleTerminalFocus}
               onResize={handleTerminalResize}
               onTerminalKey={handleTerminalKey}
               onInputModeChange={handleInputModeChange}

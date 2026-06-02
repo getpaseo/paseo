@@ -1,3 +1,4 @@
+import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
@@ -15,12 +16,24 @@ const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app"
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
+export const DEFAULT_UI_FONT_SIZE = 16; // == FONT_SIZE.base
+export const MIN_UI_FONT_SIZE = 11;
+export const MAX_UI_FONT_SIZE = 24;
+export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
+export const MIN_CODE_FONT_SIZE = 9;
+export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
+export const MAX_FONT_FAMILY_LENGTH = 200;
 
 export interface AppSettings {
   theme: ThemeName | "auto";
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
+  uiFontFamily: string; // "" = platform default UI stack
+  monoFontFamily: string; // "" = platform default mono stack
+  uiFontSize: number; // clamped px, default 16
+  codeFontSize: number; // clamped px, default 12
+  syntaxTheme: SyntaxThemeId; // default "one"
 }
 
 export interface Settings extends AppSettings {
@@ -33,6 +46,11 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
+  uiFontFamily: "",
+  monoFontFamily: "",
+  uiFontSize: DEFAULT_UI_FONT_SIZE,
+  codeFontSize: DEFAULT_CODE_FONT_SIZE,
+  syntaxTheme: "one",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -144,6 +162,31 @@ function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
   if (terminalScrollbackLines !== null) {
     result.terminalScrollbackLines = terminalScrollbackLines;
   }
+  const uiFontFamily = sanitizeFontFamily(stored.uiFontFamily);
+  if (uiFontFamily !== null) {
+    result.uiFontFamily = uiFontFamily;
+  }
+  const monoFontFamily = sanitizeFontFamily(stored.monoFontFamily);
+  if (monoFontFamily !== null) {
+    result.monoFontFamily = monoFontFamily;
+  }
+  const uiFontSize = parseClampedFontSize(stored.uiFontSize, {
+    min: MIN_UI_FONT_SIZE,
+    max: MAX_UI_FONT_SIZE,
+  });
+  if (uiFontSize !== null) {
+    result.uiFontSize = uiFontSize;
+  }
+  const codeFontSize = parseClampedFontSize(stored.codeFontSize, {
+    min: MIN_CODE_FONT_SIZE,
+    max: MAX_CODE_FONT_SIZE,
+  });
+  if (codeFontSize !== null) {
+    result.codeFontSize = codeFontSize;
+  }
+  if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
+    result.syntaxTheme = stored.syntaxTheme;
+  }
   return result;
 }
 
@@ -169,6 +212,42 @@ export function parseTerminalScrollbackLines(value: unknown): number | null {
     MAX_TERMINAL_SCROLLBACK_LINES,
     Math.max(MIN_TERMINAL_SCROLLBACK_LINES, Math.floor(numericValue)),
   );
+}
+
+export function parseClampedFontSize(
+  value: unknown,
+  bounds: { min: number; max: number },
+): number | null {
+  let numericValue = NaN;
+  if (typeof value === "number") {
+    numericValue = value;
+  } else if (typeof value === "string" && value.trim().length > 0) {
+    numericValue = Number(value);
+  }
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return Math.min(bounds.max, Math.max(bounds.min, Math.floor(numericValue)));
+}
+
+export function sanitizeFontFamily(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return ""; // explicit empty = default
+  }
+  if (trimmed.length > MAX_FONT_FAMILY_LENGTH) {
+    return null;
+  }
+  if (/[;{}<>]/.test(trimmed)) {
+    return null; // would break the web CSS font-family declaration
+  }
+  if ([...trimmed].some((char) => char.charCodeAt(0) <= 0x1f)) {
+    return null; // control chars would corrupt the font-family string
+  }
+  return trimmed; // quotes/commas are legit in stacks
 }
 
 async function loadLegacyDesktopSettingsFromStorage(storage: KeyValueStorage): Promise<{

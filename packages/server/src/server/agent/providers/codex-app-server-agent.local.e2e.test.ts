@@ -8,11 +8,7 @@ import { once } from "node:events";
 
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { agentConfigs } from "../../daemon-e2e/agent-configs.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-
-const CODEX_TEST_MODEL = agentConfigs.codex.model;
-const CODEX_TEST_THINKING_OPTION_ID = agentConfigs.codex.thinkingOptionId;
 
 function isCodexInstalled(): boolean {
   try {
@@ -217,35 +213,7 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
   });
 }
 
-describe("Codex app-server provider (e2e)", () => {
-  test.runIf(isCodexInstalled())(
-    "lists models and runs a simple prompt",
-    async () => {
-      const client = new CodexAppServerAgentClient(createTestLogger());
-      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-"));
-      const models = await client.listModels({ cwd, force: false });
-      expect(models.some((m) => m.id.includes("gpt-5.1-codex"))).toBe(true);
-
-      const session = await client.createSession({
-        provider: "codex",
-        cwd,
-        modeId: "auto",
-        model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-      });
-      try {
-        expect(session.features?.some((feature) => feature.id === "plan_mode")).toBe(true);
-
-        const result = await session.run("Say hello in one sentence.");
-        expect(result.finalText.length).toBeGreaterThan(0);
-      } finally {
-        await session.close();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    },
-    30000,
-  );
-
+describe("Codex app-server provider (local e2e)", () => {
   test.runIf(isCodexInstalled())(
     "surfaces request_user_input from the app-server as question permissions and timeline tool calls",
     async () => {

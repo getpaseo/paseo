@@ -88,6 +88,19 @@ describe("parseScheduleCreateInput first-run timing", () => {
     expect(input.runOnCreate).toBe(true);
   });
 
+  test("--cron with --timezone stores a timezone-aware cadence", () => {
+    const input = parseScheduleCreateInput({
+      ...baseCron,
+      timezone: "  America/New_York  ",
+    });
+
+    expect(input.cadence).toEqual({
+      type: "cron",
+      expression: "0 9 * * *",
+      timezone: "America/New_York",
+    });
+  });
+
   test("--every with --run-now is rejected as redundant", () => {
     expect(() => parseScheduleCreateInput({ ...baseOptions, runNow: true })).toThrow(
       expect.objectContaining({
@@ -102,6 +115,15 @@ describe("parseScheduleCreateInput first-run timing", () => {
       expect.objectContaining({
         code: "REDUNDANT_NO_RUN_NOW",
         message: expect.stringContaining("--no-run-now is redundant with --cron"),
+      }),
+    );
+  });
+
+  test("--timezone without --cron is rejected", () => {
+    expect(() => parseScheduleCreateInput({ ...baseOptions, timezone: "Europe/Zurich" })).toThrow(
+      expect.objectContaining({
+        code: "INVALID_TIME_ZONE",
+        message: "--timezone can only be used with --cron",
       }),
     );
   });
@@ -151,9 +173,28 @@ describe("parseScheduleUpdateInput", () => {
     });
   });
 
+  test("parses --cron cadence with --timezone", () => {
+    expect(
+      parseScheduleUpdateInput({
+        id: "abc",
+        cron: "30 9 * * *",
+        timezone: "Europe/Zurich",
+      }),
+    ).toEqual({
+      id: "abc",
+      cadence: { type: "cron", expression: "30 9 * * *", timezone: "Europe/Zurich" },
+    });
+  });
+
   test("rejects passing both --every and --cron", () => {
     expect(() => parseScheduleUpdateInput({ id: "abc", every: "5m", cron: "0 9 * * *" })).toThrow(
       expect.objectContaining({ code: "INVALID_CADENCE" }),
+    );
+  });
+
+  test("rejects --timezone without --cron", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", timezone: "Europe/Zurich" })).toThrow(
+      expect.objectContaining({ code: "INVALID_TIME_ZONE" }),
     );
   });
 

@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyWindowControlsOverlayUpdate,
   createWindowControlsOverlayState,
+  DEFAULT_WINDOW_HEIGHT,
+  DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
   getTitleBarOverlayOptions,
   readBadgeCount,
   readWindowControlsOverlayUpdate,
   readWindowTheme,
   resolveRuntimeTitleBarOverlayOptions,
+  resolveWindowBounds,
 } from "./window-manager";
 
 describe("window-manager", () => {
@@ -183,6 +186,28 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         titleBarOverlay: true,
         trafficLightPosition: { x: 16, y: 14 },
+      });
+    });
+  });
+
+  describe("resolveWindowBounds", () => {
+    it("falls back to the default size when no state is saved", () => {
+      expect(resolveWindowBounds(null)).toEqual({
+        width: DEFAULT_WINDOW_WIDTH,
+        height: DEFAULT_WINDOW_HEIGHT,
+      });
+    });
+
+    it("restores the full size and position", () => {
+      expect(
+        resolveWindowBounds({ x: 120, y: 80, width: 1024, height: 720, isMaximized: false }),
+      ).toEqual({ width: 1024, height: 720, x: 120, y: 80 });
+    });
+
+    it("omits the position when only the size was persisted", () => {
+      expect(resolveWindowBounds({ width: 1024, height: 720, isMaximized: true })).toEqual({
+        width: 1024,
+        height: 720,
       });
     });
   });

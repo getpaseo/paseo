@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-claude-autonomous-simple-"));
@@ -21,7 +24,7 @@ describe("daemon E2E (real claude) - autonomous wake simple", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("claude");
+    canRun = await canRunRealProvider("claude");
   });
 
   beforeEach((context) => {
@@ -34,7 +37,7 @@ describe("daemon E2E (real claude) - autonomous wake simple", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      agentClients: createRealProviderClients(["claude"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -48,7 +51,7 @@ describe("daemon E2E (real claude) - autonomous wake simple", () => {
       const agent = await client.createAgent({
         cwd,
         title: "claude-autonomous-simple-real",
-        ...getFullAccessConfig("claude"),
+        ...getRealProviderConfig("claude"),
       });
 
       const autonomousWakeToken = `AUTONOMOUS_SIMPLE_${Date.now().toString(36)}`;

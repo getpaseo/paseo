@@ -2,12 +2,9 @@
  * Shared agent configurations for e2e tests.
  * Enables running the same tests against Claude, Codex, and OpenCode providers.
  */
-import { existsSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 import dotenv from "dotenv";
-import { isCommandAvailable } from "../../utils/executable.js";
 
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: resolve(serverRoot, ".env.test"), override: true });
@@ -63,7 +60,6 @@ export const agentConfigs = {
 } as const satisfies Record<string, AgentTestConfig>;
 
 export type AgentProvider = keyof typeof agentConfigs;
-const providerAvailabilityCache = new Map<AgentProvider, Promise<boolean>>();
 
 /**
  * Get test config for creating an agent with full permissions (no prompts).
@@ -94,55 +90,6 @@ export function getAskModeConfig(provider: AgentProvider) {
 }
 
 /**
- * Whether a real provider can run in this environment.
- * Checks binary availability AND credentials (env vars, OAuth tokens, auth files).
- *
- * Credentials are typically loaded from .env.test via the vitest setup file.
- * This MUST be a function (not a const) so process.env is read at call time,
- * after dotenv has injected the test credentials.
- */
-export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
-  const cached = providerAvailabilityCache.get(provider);
-  if (cached) {
-    return cached;
-  }
-
-  const availability = (async (): Promise<boolean> => {
-    switch (provider) {
-      case "claude":
-        const hasClaudeEnvCredentials =
-          Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY);
-        return (await isCommandAvailable("claude")) && (!process.env.CI || hasClaudeEnvCredentials);
-      case "codex":
-        return (
-          (await isCommandAvailable("codex")) &&
-          (existsSync(join(homedir(), ".codex", "auth.json")) ||
-            Boolean(process.env.OPENAI_API_KEY))
-        );
-      case "copilot":
-        return await isCommandAvailable("copilot");
-      case "opencode":
-        return await isCommandAvailable("opencode");
-      case "pi":
-        return (
-          (await isCommandAvailable(
-            process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
-          )) &&
-          (Boolean(process.env.OPENAI_API_KEY) ||
-            Boolean(process.env.ANTHROPIC_API_KEY) ||
-            Boolean(process.env.OPENROUTER_API_KEY) ||
-            existsSync(join(homedir(), ".pi", "agent", "auth.json")))
-        );
-      default:
-        return false;
-    }
-  })();
-
-  providerAvailabilityCache.set(provider, availability);
-  return availability;
-}
-
-/**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "copilot", "opencode", "pi"];
+export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi"];

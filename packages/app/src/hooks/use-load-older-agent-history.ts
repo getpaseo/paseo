@@ -10,7 +10,7 @@ export interface LoadOlderAgentHistoryClient {
       direction: "before";
       cursor: { epoch: string; seq: number };
       limit: number;
-      projection: "canonical";
+      projection: "projected";
     },
   ) => Promise<unknown>;
 }

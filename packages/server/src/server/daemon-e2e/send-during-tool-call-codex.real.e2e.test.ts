@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createMessageCollector } from "../test-utils/message-collector.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import type { SessionOutboundMessage } from "../messages.js";
-import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-codex-tool-interrupt-"));
@@ -143,7 +146,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
   let canRun = false;
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("codex");
+    canRun = await canRunRealProvider("codex");
   });
 
   beforeEach((context) => {
@@ -156,7 +159,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      agentClients: createRealProviderClients(["codex"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -169,7 +172,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-tool-interrupt-repro",
-        ...getFullAccessConfig("codex"),
+        ...getRealProviderConfig("codex"),
       });
 
       collector = createMessageCollector(client);
@@ -232,7 +235,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      agentClients: createRealProviderClients(["codex"], logger),
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -245,7 +248,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-quick-follow-up-repro",
-        ...getFullAccessConfig("codex"),
+        ...getRealProviderConfig("codex"),
       });
 
       collector = createMessageCollector(client);

@@ -83,3 +83,66 @@ describe("daemon relay config", () => {
     expect(config.relayPublicUseTls).toBe(true);
   });
 });
+
+describe("daemon service proxy config", () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("loads public base URL from env before persisted config", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        serviceProxy: {
+          publicBaseUrl: "https://persisted.example.com",
+        },
+      },
+    });
+
+    const config = loadConfig(home, {
+      env: { PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: "https://env.example.com/" },
+    });
+
+    expect(config.serviceProxy).toEqual({
+      enabled: true,
+      listen: "127.0.0.1:6868",
+      publicBaseUrl: "https://env.example.com",
+    });
+  });
+
+  test("rejects invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL values", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    expect(() =>
+      loadConfig(home, {
+        env: { PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: "not-a-url" },
+      }),
+    ).toThrow("Invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: not-a-url");
+  });
+});
+
+describe("daemon worktree root config", () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("resolves relative worktrees.root against PASEO_HOME", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: "custom-worktrees" },
+    });
+
+    expect(loadConfig(home, { env: {} }).worktreesRoot).toBe(path.join(home, "custom-worktrees"));
+  });
+
+  test("keeps absolute worktrees.root absolute", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: path.join(os.tmpdir(), "paseo-custom-worktrees") },
+    });
+
+    expect(loadConfig(home, { env: {} }).worktreesRoot).toBe(
+      path.join(os.tmpdir(), "paseo-custom-worktrees"),
+    );
+  });
+});

@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
-import { buildScriptHostname } from "../utils/script-hostname.js";
+import { buildPublicScriptHostname, buildScriptHostname } from "../utils/script-hostname.js";
 import {
   getScriptConfigs,
   getWorktreeTerminalSpecs,
@@ -699,6 +699,7 @@ interface SpawnWorkspaceScriptOptions {
   scriptName: string;
   daemonPort?: number | null;
   daemonListenHost?: string | null;
+  serviceProxyPublicBaseUrl?: string | null;
   routeStore: ScriptRouteStore;
   runtimeStore: WorkspaceScriptRuntimeStore;
   terminalManager: TerminalManager;
@@ -721,6 +722,7 @@ async function setupServiceScriptRoute(params: {
   workspaceId: string;
   daemonPort: number | null | undefined;
   daemonListenHost: string | null | undefined;
+  serviceProxyPublicBaseUrl: string | null | undefined;
   existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
   routeStore: ScriptRouteStore;
 }): Promise<ServiceScriptSetupResult> {
@@ -733,10 +735,19 @@ async function setupServiceScriptRoute(params: {
     workspaceId,
     daemonPort,
     daemonListenHost,
+    serviceProxyPublicBaseUrl,
     existingRuntimeEntry,
     routeStore,
   } = params;
   const hostname = buildScriptHostname({ projectSlug, branchName, scriptName });
+  const publicHostname = serviceProxyPublicBaseUrl
+    ? buildPublicScriptHostname({
+        projectSlug,
+        branchName,
+        scriptName,
+        publicBaseUrl: serviceProxyPublicBaseUrl,
+      })
+    : null;
 
   const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
   for (const [configuredScriptName, scriptConfig] of scriptConfigs) {
@@ -779,11 +790,14 @@ async function setupServiceScriptRoute(params: {
     branchName,
     daemonPort,
     daemonListenHost,
+    serviceProxyPublicBaseUrl,
     peers,
   });
 
   routeStore.registerRoute({
     hostname,
+    publicHostname,
+    publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
     port,
     workspaceId,
     projectSlug,
@@ -828,6 +842,7 @@ export async function spawnWorkspaceScript(
     scriptName,
     daemonPort,
     daemonListenHost,
+    serviceProxyPublicBaseUrl,
     routeStore,
     runtimeStore,
     terminalManager,
@@ -869,6 +884,7 @@ export async function spawnWorkspaceScript(
         workspaceId,
         daemonPort,
         daemonListenHost,
+        serviceProxyPublicBaseUrl,
         existingRuntimeEntry,
         routeStore,
       });

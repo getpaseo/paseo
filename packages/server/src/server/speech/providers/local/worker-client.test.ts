@@ -13,6 +13,7 @@ import type {
   LocalSpeechWorkerRequest,
   LocalSpeechWorkerToParentMessage,
 } from "./worker-protocol.js";
+import { bufferToWorkerBytes, workerBytesToBuffer } from "./worker-bytes.js";
 
 class FakeLocalSpeechWorker extends EventEmitter {
   public connected = true;
@@ -101,7 +102,7 @@ describe("LocalSpeechWorkerClient", () => {
     });
 
     workers[0].respond(request, {
-      audio: Buffer.from([1, 2, 3, 4]),
+      audio: bufferToWorkerBytes(Buffer.from([1, 2, 3, 4])),
       format: "pcm;rate=24000",
     });
 
@@ -130,11 +131,16 @@ describe("LocalSpeechWorkerClient", () => {
 
     session.appendPcm16(Buffer.from([9, 8, 7, 6]));
     await waitForMicrotasks();
-    expect(workers[0].sent[1]).toMatchObject({
+    const appendRequest = workers[0].sent[1];
+    expect(appendRequest).toMatchObject({
       type: "session.append",
       sessionId: createRequest.sessionId,
-      audio: Buffer.from([9, 8, 7, 6]),
     });
+    if (appendRequest.type !== "session.append") {
+      throw new Error("Expected session.append request");
+    }
+    expect(Buffer.from(appendRequest.audio)).toEqual(Buffer.from([9, 8, 7, 6]));
+    expect(workerBytesToBuffer(appendRequest.audio).byteOffset).toBe(0);
 
     session.commit();
     await waitForMicrotasks();
@@ -193,7 +199,7 @@ describe("LocalSpeechWorkerClient", () => {
 
     const first = client.synthesizeSpeech("first");
     workers[0].respond(workers[0].sent[0], {
-      audio: Buffer.from([1]),
+      audio: bufferToWorkerBytes(Buffer.from([1])),
       format: "pcm;rate=24000",
     });
     await first;
@@ -204,7 +210,7 @@ describe("LocalSpeechWorkerClient", () => {
     const second = client.synthesizeSpeech("second");
     expect(workers).toHaveLength(2);
     workers[1].respond(workers[1].sent[0], {
-      audio: Buffer.from([2]),
+      audio: bufferToWorkerBytes(Buffer.from([2])),
       format: "pcm;rate=24000",
     });
     await second;

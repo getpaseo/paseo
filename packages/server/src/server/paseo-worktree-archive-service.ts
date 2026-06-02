@@ -5,11 +5,16 @@ import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import type { GitHubService } from "../services/github-service.js";
-import { deletePaseoWorktree, resolvePaseoWorktreeRootForCwd } from "../utils/worktree.js";
+import {
+  deletePaseoWorktree,
+  resolvePaseoWorktreeRootForCwd,
+  WorktreeTeardownError,
+} from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 
 export interface ArchivePaseoWorktreeDependencies {
   paseoHome?: string;
+  worktreesRoot?: string;
   github: GitHubService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
   agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
@@ -37,12 +42,14 @@ export async function archivePaseoWorktree(
     targetPath: string;
     repoRoot: string | null;
     worktreesRoot?: string;
+    worktreesBaseRoot?: string;
     requestId: string;
   },
 ): Promise<string[]> {
   let targetPath = options.targetPath;
   const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
     paseoHome: dependencies.paseoHome,
+    worktreesRoot: options.worktreesBaseRoot ?? dependencies.worktreesRoot,
   });
   if (resolvedWorktree) {
     targetPath = resolvedWorktree.worktreePath;
@@ -104,14 +111,28 @@ export async function archivePaseoWorktree(
       }
     }
 
-    await deletePaseoWorktree({
-      cwd: options.repoRoot,
-      worktreePath: targetPath,
-      worktreesRoot: options.worktreesRoot,
-      paseoHome: dependencies.paseoHome,
-    });
+    let teardownError: WorktreeTeardownError | null = null;
+    try {
+      await deletePaseoWorktree({
+        cwd: options.repoRoot,
+        worktreePath: targetPath,
+        worktreesRoot: options.worktreesRoot,
+        paseoHome: dependencies.paseoHome,
+        worktreesBaseRoot: options.worktreesBaseRoot ?? dependencies.worktreesRoot,
+      });
+    } catch (error) {
+      if (error instanceof WorktreeTeardownError) {
+        teardownError = error;
+        dependencies.sessionLogger?.warn(
+          { err: error, targetPath },
+          "Worktree teardown failed during archive; archiving workspace record anyway",
+        );
+      } else {
+        throw error;
+      }
+    }
 
-    if (options.repoRoot) {
+    if (!teardownError && options.repoRoot) {
       try {
         await dependencies.workspaceGitService.getSnapshot(options.repoRoot, {
           force: true,
@@ -136,11 +157,17 @@ export async function archivePaseoWorktree(
         } catch (error) {
           dependencies.sessionLogger?.warn(
             { err: error, workspaceId },
-            "Failed to archive workspace record; worktree FS already removed",
+            teardownError
+              ? "Failed to archive workspace record after teardown failed"
+              : "Failed to archive workspace record; worktree FS already removed",
           );
         }
       }),
     );
+
+    if (teardownError) {
+      throw teardownError;
+    }
   } finally {
     dependencies.clearWorkspaceArchiving(affectedWorkspaceIdList);
     await dependencies.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIdList);

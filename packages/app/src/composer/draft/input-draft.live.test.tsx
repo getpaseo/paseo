@@ -101,6 +101,7 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
       },
     ],
     isAllModelsLoading: false,
+    isProviderModelsRefreshing: false,
     availableThinkingOptions: [
       { id: "medium", label: "Medium" },
       { id: "high", label: "High", isDefault: true },

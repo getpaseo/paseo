@@ -4,19 +4,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { OpenCodeAgentClient } from "./opencode-agent.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
-import { isProviderAvailable } from "../../daemon-e2e/agent-configs.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+  getRealProviderConfig,
+} from "../../daemon-e2e/real-provider-test-config.js";
 
-const BIG_PICKLE_MODEL = "opencode/big-pickle";
+const OPENCODE_REAL_TEST_MODEL = getRealProviderConfig("opencode").model;
 
 describe("OpenCode assistant message", () => {
   let canRun = false;
   const logger = pino({ level: "silent" });
 
   beforeAll(async () => {
-    canRun = await isProviderAvailable("opencode");
+    canRun = await canRunRealProvider("opencode");
   });
 
   beforeEach((context) => {
@@ -29,15 +32,15 @@ describe("OpenCode assistant message", () => {
     await OpenCodeServerManager.getInstance(logger).shutdown();
   });
 
-  test("assistant_message appears in live stream with opencode/big-pickle", async () => {
+  test("assistant_message appears in live stream", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "opencode-msg-"));
-    const client = new OpenCodeAgentClient(logger);
+    const client = createRealProviderClient("opencode", logger);
 
     try {
       const session = await client.createSession({
         provider: "opencode",
         cwd,
-        model: BIG_PICKLE_MODEL,
+        model: OPENCODE_REAL_TEST_MODEL,
         modeId: "build",
       });
 
@@ -53,13 +56,13 @@ describe("OpenCode assistant message", () => {
 
   test("streamHistory returns assistant_message after a completed turn", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "opencode-history-"));
-    const client = new OpenCodeAgentClient(logger);
+    const client = createRealProviderClient("opencode", logger);
 
     try {
       const session = await client.createSession({
         provider: "opencode",
         cwd,
-        model: BIG_PICKLE_MODEL,
+        model: OPENCODE_REAL_TEST_MODEL,
         modeId: "build",
       });
 

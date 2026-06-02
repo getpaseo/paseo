@@ -17,14 +17,18 @@
     <title>%WEB_TITLE%</title>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
-      /* These styles make the body full-height */
+      /* Keep the app shell fixed to the viewport. */
       html,
       body {
+        width: 100%;
         height: 100%;
-      }
-      /* These styles disable body scrolling if you are using <ScrollView> */
-      body {
+        margin: 0;
+        padding: 0;
         overflow: hidden;
+        overscroll-behavior: none;
+      }
+      /* These styles smooth text rendering in the app shell. */
+      body {
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
       }
@@ -38,8 +42,12 @@
       /* These styles make the root element full-height */
       #root {
         display: flex;
+        width: 100%;
         height: 100%;
         flex: 1;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
       }
     </style>
     <style>

@@ -15,6 +15,7 @@ import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
+  worktreesRoot?: string;
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: GitHubService;
@@ -81,7 +82,10 @@ export async function archiveIfSafe(input: {
       return;
     }
 
-    const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, { paseoHome: options.paseoHome });
+    const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
+      paseoHome: options.paseoHome,
+      worktreesRoot: options.worktreesRoot,
+    });
     if (!ownership.allowed) {
       return;
     }
@@ -90,6 +94,7 @@ export async function archiveIfSafe(input: {
       await deps.archivePaseoWorktree(
         {
           paseoHome: options.paseoHome,
+          worktreesRoot: options.worktreesRoot,
           github: options.github,
           workspaceGitService: options.workspaceGitService,
           agentManager: options.agentManager,
@@ -115,6 +120,7 @@ export async function archiveIfSafe(input: {
           targetPath: cwd,
           repoRoot: ownership.repoRoot ?? null,
           worktreesRoot: ownership.worktreeRoot,
+          worktreesBaseRoot: options.worktreesRoot,
           requestId: "auto-archive-on-merge",
         },
       );

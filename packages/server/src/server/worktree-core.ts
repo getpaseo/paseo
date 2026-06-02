@@ -24,6 +24,7 @@ export interface CreateWorktreeCoreInput {
   githubPrNumber?: number;
   firstAgentContext?: FirstAgentContext;
   paseoHome?: string;
+  worktreesRoot?: string;
   runSetup?: boolean;
 }
 
@@ -98,6 +99,7 @@ export async function createWorktreeCore(
     slug: normalizedSlug,
     repoRoot,
     paseoHome: input.paseoHome,
+    worktreesRoot: input.worktreesRoot,
   });
   if (existingWorktree) {
     return { worktree: existingWorktree, intent, repoRoot, created: false };
@@ -110,6 +112,7 @@ export async function createWorktreeCore(
       source: intent,
       runSetup: input.runSetup ?? true,
       paseoHome: input.paseoHome,
+      worktreesRoot: input.worktreesRoot,
     }),
     intent,
     repoRoot,

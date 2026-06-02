@@ -6,19 +6,24 @@ import { beforeAll, beforeEach, expect, test } from "vitest";
 import pino from "pino";
 
 import type {
+  AgentClient,
   AgentPersistenceHandle,
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../agent/agent-sdk-types.js";
-import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { isProviderAvailable } from "./agent-configs.js";
+import {
+  canRunRealProvider,
+  createRealProviderClient,
+  createRealProviderClients,
+  getRealProviderConfig,
+} from "./real-provider-test-config.js";
 
 process.env.PASEO_SUPERVISED = "0";
 
 const PI_TEST_TIMEOUT_MS = 240_000;
-const PI_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
+const PI_REAL_TEST_MODEL = getRealProviderConfig("pi").model;
 
 type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
@@ -26,14 +31,14 @@ function tmpCwd(prefix = "daemon-real-pi-"): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-function createPiClient(): PiRpcAgentClient {
-  return new PiRpcAgentClient({ logger: pino({ level: "silent" }) });
+function createPiClient(): AgentClient {
+  return createRealProviderClient("pi", pino({ level: "silent" }));
 }
 
 function createPiToolDaemon() {
   const logger = pino({ level: "silent" });
   return createTestPaseoDaemon({
-    agentClients: { pi: new PiRpcAgentClient({ logger }) },
+    agentClients: createRealProviderClients(["pi"], logger),
     logger,
   });
 }
@@ -87,7 +92,7 @@ async function withConnectedPiDaemon(
 let canRun = false;
 
 beforeAll(async () => {
-  canRun = await isProviderAvailable("pi");
+  canRun = await canRunRealProvider("pi");
 });
 
 beforeEach((context) => {
