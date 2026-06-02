@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -7,19 +9,20 @@ import { useDownloadStore, formatSpeed, formatEta, type Download } from "@/store
 
 const AUTO_DISMISS_DELAY = 3000;
 
-function getDownloadStatusText(download: Download): string {
+function getDownloadStatusText(download: Download, t: TFunction): string {
   if (download.status === "downloading") {
     if (download.progress) {
       return `${Math.round(download.progress.percent * 100)}% · ${formatSpeed(download.progress.speed)} · ${formatEta(download.progress.eta)}`;
     }
-    return "Starting...";
+    return t("common.states.starting");
   }
-  if (download.status === "complete") return "Download complete";
-  return download.message ?? "Download failed";
+  if (download.status === "complete") return t("common.states.downloadComplete");
+  return download.message ?? t("common.states.downloadFailed");
 }
 
 export function DownloadToast() {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const downloads = useDownloadStore((state) => state.downloads);
   const activeDownloadId = useDownloadStore((state) => state.activeDownloadId);
@@ -78,7 +81,7 @@ export function DownloadToast() {
           <Text style={styles.fileName} numberOfLines={1}>
             {activeDownload.fileName}
           </Text>
-          <Text style={styles.status}>{getDownloadStatusText(activeDownload)}</Text>
+          <Text style={styles.status}>{getDownloadStatusText(activeDownload, t)}</Text>
           {activeDownload.status === "downloading" && activeDownload.progress && (
             <View style={styles.progressBar}>
               <ProgressFill percent={activeDownload.progress.percent} />
