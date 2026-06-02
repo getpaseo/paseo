@@ -153,9 +153,13 @@ export function WorkspaceOpenInEditorButton({
           const isFileManager = FILE_MANAGER_TARGET_IDS.has(editor.id);
           let openPath = cwd;
           let mode: OpenInEditorMode | undefined;
+          let workspaceCwd: string | undefined;
           if (resolvedFile) {
             if (!isFileManager) {
               openPath = resolvedFile.absolutePath;
+              // Open the workspace folder alongside the file so the editor loads
+              // the project, not just the bare file.
+              workspaceCwd = cwd;
             } else if (revealInFileManagerSupported) {
               openPath = resolvedFile.absolutePath;
               mode = "reveal";
@@ -164,7 +168,7 @@ export function WorkspaceOpenInEditorButton({
           const payload = await client.openInEditor(
             openPath,
             editor.id,
-            mode ? { mode } : undefined,
+            mode || workspaceCwd ? { mode, cwd: workspaceCwd } : undefined,
           );
           if (payload.error) {
             throw new Error(payload.error);

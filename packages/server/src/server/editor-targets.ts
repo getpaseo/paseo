@@ -48,6 +48,16 @@ function isAbsolutePath(value: string): boolean {
   return posix.isAbsolute(value) || win32.isAbsolute(value);
 }
 
+const FILE_MANAGER_TARGET_IDS: ReadonlySet<KnownEditorTargetId> = new Set([
+  "finder",
+  "explorer",
+  "file-manager",
+]);
+
+function isFileManagerTarget(target: EditorTargetDefinition): boolean {
+  return FILE_MANAGER_TARGET_IDS.has(target.id);
+}
+
 function isTargetSupportedOnPlatform(
   target: EditorTargetDefinition,
   platform: NodeJS.Platform,
@@ -101,6 +111,7 @@ interface Launch {
 function buildLaunchArgs(input: {
   target: EditorTargetDefinition;
   path: string;
+  cwd?: string;
   platform: NodeJS.Platform;
   mode: OpenInEditorMode;
 }): string[] {
@@ -117,12 +128,18 @@ function buildLaunchArgs(input: {
       return [posix.dirname(input.path)];
     }
   }
+  // Open editors on the workspace folder plus the file so the project loads
+  // around the file. File managers only ever take a single path.
+  if (input.cwd && !isFileManagerTarget(input.target) && input.cwd !== input.path) {
+    return [input.cwd, input.path];
+  }
   return [input.path];
 }
 
 async function resolveEditorLaunch(input: {
   editorId: EditorTargetId;
   path: string;
+  cwd?: string;
   platform: NodeJS.Platform;
   mode: OpenInEditorMode;
   findExecutableFn: (command: string) => string | null | Promise<string | null>;
@@ -141,6 +158,7 @@ async function resolveEditorLaunch(input: {
     args: buildLaunchArgs({
       target,
       path: input.path,
+      cwd: input.cwd,
       platform: input.platform,
       mode: input.mode,
     }),
@@ -151,6 +169,7 @@ export async function openInEditorTarget(
   input: {
     editorId: EditorTargetId;
     path: string;
+    cwd?: string;
     mode?: OpenInEditorMode;
   },
   dependencies: OpenInEditorTargetDependencies = {},
@@ -168,9 +187,16 @@ export async function openInEditorTarget(
     throw new Error(`Path does not exist: ${pathToOpen}`);
   }
 
+  // The workspace folder is a best-effort hint: only prepend it when it points
+  // at a real, distinct absolute path, otherwise just open the file.
+  const cwd = input.cwd?.trim();
+  const workspaceCwd =
+    cwd && isAbsolutePath(cwd) && cwd !== pathToOpen && existsSyncFn(cwd) ? cwd : undefined;
+
   const launch = await resolveEditorLaunch({
     editorId: input.editorId,
     path: pathToOpen,
+    cwd: workspaceCwd,
     platform,
     mode: input.mode ?? "open",
     findExecutableFn,

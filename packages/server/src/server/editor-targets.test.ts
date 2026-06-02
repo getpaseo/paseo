@@ -194,6 +194,99 @@ describe("editor-targets", () => {
     );
   });
 
+  it("opens the workspace folder alongside the file for editor targets", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "vscode",
+        path: "/tmp/repo/src/index.ts",
+        cwd: "/tmp/repo",
+      },
+      {
+        platform: "darwin",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "code" ? "/usr/local/bin/code" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/local/bin/code",
+      ["/tmp/repo", "/tmp/repo/src/index.ts"],
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
+  it("ignores cwd when it equals the path or is not a real absolute path", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "vscode",
+        path: "/tmp/repo",
+        cwd: "/tmp/repo",
+      },
+      {
+        platform: "darwin",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "code" ? "/usr/local/bin/code" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/local/bin/code",
+      ["/tmp/repo"],
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
+  it("does not prepend the workspace folder for file-manager targets", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "finder",
+        path: "/tmp/repo/src",
+        cwd: "/tmp/repo",
+      },
+      {
+        platform: "darwin",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "open" ? "/usr/bin/open" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/open",
+      ["/tmp/repo/src"],
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
   it("rejects relative paths", async () => {
     await expect(
       openInEditorTarget(

@@ -1614,6 +1614,9 @@ export const OpenInEditorRequestSchema = z.object({
   editorId: EditorTargetIdSchema,
   // COMPAT(revealInFileManager): added in v0.1.88, drop the gate when floor >= v0.1.88.
   mode: OpenInEditorModeSchema.optional(),
+  // Workspace root to open alongside `path` so editors load the folder plus the
+  // file rather than the bare file. Ignored by file-manager targets.
+  cwd: z.string().optional(),
   requestId: z.string(),
 });
 

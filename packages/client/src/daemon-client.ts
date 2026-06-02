@@ -1798,12 +1798,12 @@ export class DaemonClient {
   async openInEditor(
     path: string,
     editorId: EditorTargetId,
-    options?: { mode?: OpenInEditorMode; requestId?: string },
+    options?: { mode?: OpenInEditorMode; cwd?: string; requestId?: string },
   ): Promise<OpenInEditorPayload>;
   async openInEditor(
     path: string,
     editorId: EditorTargetId,
-    request?: string | { mode?: OpenInEditorMode; requestId?: string },
+    request?: string | { mode?: OpenInEditorMode; cwd?: string; requestId?: string },
   ): Promise<OpenInEditorPayload> {
     const options = typeof request === "string" ? { requestId: request } : request;
     return this.sendCorrelatedSessionRequest({
@@ -1813,6 +1813,7 @@ export class DaemonClient {
         path,
         editorId,
         ...(options?.mode ? { mode: options.mode } : {}),
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
       },
       responseType: "open_in_editor_response",
       timeout: 10000,

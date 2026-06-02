@@ -7172,6 +7172,7 @@ export class Session {
   async openEditorTarget(options: {
     editorId: EditorTargetId;
     path: string;
+    cwd?: string;
     mode?: OpenInEditorMode;
   }): Promise<void> {
     await openInEditorTarget(options);
@@ -7279,6 +7280,7 @@ export class Session {
       await this.openEditorTarget({
         editorId: request.editorId,
         path: request.path,
+        cwd: request.cwd,
         mode: request.mode,
       });
       this.emit({
