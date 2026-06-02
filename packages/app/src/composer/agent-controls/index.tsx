@@ -754,10 +754,6 @@ function DesktopFeaturesSection({
 }: DesktopFeaturesSectionProps) {
   const { theme } = useUnistyles();
   const handleOpenFeatures = useCallback(() => handleOpenSheet?.("features"), [handleOpenSheet]);
-  const featuresAnchorRef = useRef<View | null>(null);
-  const handleFeaturesRef = useCallback((r: View | null) => {
-    featuresAnchorRef.current = r;
-  }, []);
 
   const hasFeatures = Boolean(features && features.length > 0);
   const minimal = compactLevel >= 2;
@@ -769,7 +765,6 @@ function DesktopFeaturesSection({
     return (
       <>
         <Pressable
-          ref={handleFeaturesRef}
           onPress={handleOpenFeatures}
           disabled={disabled}
           style={styles.modeIconBadge}
@@ -864,7 +859,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleCloseSheet,
     handleSelectThinkingAndClose: _handleSelectThinkingAndClose,
     ProviderIcon,
-    handleSheetModelSelect,
+    handleSheetModelSelect: _handleSheetModelSelect,
   } = props;
 
   const iconOnly = compactLevel >= 1;
@@ -890,7 +885,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   );
 
   const compactModelTrigger = useMemo(() => {
-    if (!iconOnly || !handleSheetModelSelect) return undefined;
+    if (!iconOnly) return undefined;
     return ({
       selectedModelLabel: _selectedModelLabel,
     }: {
@@ -906,13 +901,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
         <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </View>
     );
-  }, [
-    iconOnly,
-    handleSheetModelSelect,
-    ProviderIcon,
-    theme.iconSize,
-    theme.colors.foregroundMuted,
-  ]);
+  }, [iconOnly, ProviderIcon, theme.iconSize, theme.colors.foregroundMuted]);
 
   return (
     <>
