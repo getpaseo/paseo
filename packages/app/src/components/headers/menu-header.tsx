@@ -1,4 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PanelLeft } from "lucide-react-native";
@@ -48,6 +49,7 @@ export function SidebarMenuToggle({
   nativeID = "menu-button",
 }: SidebarMenuToggleProps = {}) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const isOpen = usePanelStore((state) => selectIsAgentListOpen(state, { isCompact: isMobile }));
   const toggleAgentListForLayout = usePanelStore((state) => state.toggleAgentListForLayout);
@@ -68,7 +70,7 @@ export function SidebarMenuToggle({
   return (
     <HeaderToggleButton
       onPress={handlePress}
-      tooltipLabel="Toggle sidebar"
+      tooltipLabel={t("shell.menu.toggleSidebar")}
       tooltipKeys={toggleShortcutKeys}
       tooltipSide={tooltipSide}
       testID={testID}
@@ -76,7 +78,7 @@ export function SidebarMenuToggle({
       style={style}
       accessible
       accessibilityRole="button"
-      accessibilityLabel={isOpen ? "Close menu" : "Open menu"}
+      accessibilityLabel={isOpen ? t("shell.menu.close") : t("shell.menu.open")}
       accessibilityState={accessibilityState}
     >
       {isMobile ? (
