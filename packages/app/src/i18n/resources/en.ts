@@ -2,6 +2,32 @@ export const en = {
   common: {
     back: "Back",
     loading: "Loading...",
+    actions: {
+      back: "Back",
+      close: "Close",
+      dismiss: "Dismiss",
+      search: "Search",
+    },
+    states: {
+      loading: "Loading...",
+      starting: "Starting...",
+      downloadComplete: "Download complete",
+      downloadFailed: "Download failed",
+    },
+  },
+  shell: {
+    menu: {
+      toggleSidebar: "Toggle sidebar",
+      open: "Open menu",
+      close: "Close menu",
+    },
+    commandCenter: {
+      placeholder: "Type a command or search agents...",
+      noMatches: "No matches",
+      actions: "Actions",
+      agents: "Agents",
+      newAgent: "New agent",
+    },
   },
   settings: {
     title: "Settings",

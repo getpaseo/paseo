@@ -4,6 +4,32 @@ export const zhCN: TranslationResources = {
   common: {
     back: "返回",
     loading: "加载中...",
+    actions: {
+      back: "返回",
+      close: "关闭",
+      dismiss: "关闭",
+      search: "搜索",
+    },
+    states: {
+      loading: "加载中...",
+      starting: "正在开始...",
+      downloadComplete: "下载完成",
+      downloadFailed: "下载失败",
+    },
+  },
+  shell: {
+    menu: {
+      toggleSidebar: "切换侧边栏",
+      open: "打开菜单",
+      close: "关闭菜单",
+    },
+    commandCenter: {
+      placeholder: "输入命令或搜索 Agent...",
+      noMatches: "没有匹配项",
+      actions: "操作",
+      agents: "Agents",
+      newAgent: "新建 Agent",
+    },
   },
   settings: {
     title: "设置",
