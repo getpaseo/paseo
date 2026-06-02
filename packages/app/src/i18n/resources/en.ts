@@ -185,6 +185,7 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
+      openFile: "Open file",
       copied: "Copied",
     },
     attachments: {
@@ -741,6 +742,18 @@ export const en = {
       },
     },
   },
+  projectPicker: {
+    placeholder: "Type a directory path...",
+    opening: "Opening project...",
+    empty: "Start typing a path",
+  },
+  branchSwitcher: {
+    currentBranch: "Current branch: {{branchName}}. Press to switch branch.",
+    placeholder: "Switch branch...",
+    searchPlaceholder: "Filter branches...",
+    empty: "No branches found.",
+    title: "Switch branch",
+  },
   onboarding: {
     title: "Welcome to Paseo",
     subtitle: "Connect your computer to get started",
@@ -923,7 +936,15 @@ export const en = {
     },
     file: {
       executionDirectoryMissing: "Workspace execution directory not found.",
+      loading: "Loading file...",
+      noPreview: "No preview available",
+      binaryPreviewUnavailable: "Binary preview unavailable",
+      failedToLoad: "Failed to load file",
     },
+  },
+  toolCallDetails: {
+    error: "Error",
+    empty: "No additional details available",
   },
   review: {
     comment: {

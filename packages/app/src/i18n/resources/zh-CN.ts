@@ -186,6 +186,7 @@ export const zhCN: TranslationResources = {
       copyCode: "复制代码",
       copyTurn: "复制回合",
       copyMessage: "复制消息",
+      openFile: "打开文件",
       copied: "已复制",
     },
     attachments: {
@@ -727,6 +728,18 @@ export const zhCN: TranslationResources = {
       },
     },
   },
+  projectPicker: {
+    placeholder: "输入目录路径...",
+    opening: "正在打开 project...",
+    empty: "开始输入路径",
+  },
+  branchSwitcher: {
+    currentBranch: "当前分支：{{branchName}}。按下以切换分支。",
+    placeholder: "切换分支...",
+    searchPlaceholder: "筛选分支...",
+    empty: "没有找到分支。",
+    title: "切换分支",
+  },
   onboarding: {
     title: "欢迎使用 Paseo",
     subtitle: "连接你的电脑即可开始",
@@ -907,7 +920,15 @@ export const zhCN: TranslationResources = {
     },
     file: {
       executionDirectoryMissing: "未找到 workspace 执行目录。",
+      loading: "正在加载文件...",
+      noPreview: "没有可用预览",
+      binaryPreviewUnavailable: "二进制预览不可用",
+      failedToLoad: "加载文件失败",
     },
+  },
+  toolCallDetails: {
+    error: "错误",
+    empty: "没有可用的更多详情",
   },
   review: {
     comment: {

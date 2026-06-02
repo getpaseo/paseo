@@ -226,4 +226,24 @@ describe("translation resources", () => {
       "Couldn't load projects from host {{hostName}}: {{message}}",
     );
   });
+
+  it("includes picker, file pane, and tool detail keys for the Batch 4L migration", () => {
+    expect(en.projectPicker.placeholder).toBe("Type a directory path...");
+    expect(en.projectPicker.opening).toBe("Opening project...");
+    expect(en.projectPicker.empty).toBe("Start typing a path");
+    expect(en.branchSwitcher.currentBranch).toBe(
+      "Current branch: {{branchName}}. Press to switch branch.",
+    );
+    expect(en.branchSwitcher.placeholder).toBe("Switch branch...");
+    expect(en.branchSwitcher.searchPlaceholder).toBe("Filter branches...");
+    expect(en.branchSwitcher.empty).toBe("No branches found.");
+    expect(en.branchSwitcher.title).toBe("Switch branch");
+    expect(en.panels.file.loading).toBe("Loading file...");
+    expect(en.panels.file.noPreview).toBe("No preview available");
+    expect(en.panels.file.binaryPreviewUnavailable).toBe("Binary preview unavailable");
+    expect(en.panels.file.failedToLoad).toBe("Failed to load file");
+    expect(en.toolCallDetails.error).toBe("Error");
+    expect(en.toolCallDetails.empty).toBe("No additional details available");
+    expect(en.message.actions.openFile).toBe("Open file");
+  });
 });
