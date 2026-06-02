@@ -18,6 +18,7 @@ describe("translation resources", () => {
 
   it("includes shared shell keys for the Batch 1 migration", () => {
     expect(en.common.actions.back).toBe("Back");
+    expect(en.common.actions.cancel).toBe("Cancel");
     expect(en.common.actions.close).toBe("Close");
     expect(en.common.actions.dismiss).toBe("Dismiss");
     expect(en.common.actions.search).toBe("Search");

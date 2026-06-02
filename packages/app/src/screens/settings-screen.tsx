@@ -217,11 +217,6 @@ function getSendBehaviorOptions(t: TFunction) {
   ];
 }
 
-const RELEASE_CHANNEL_OPTIONS = [
-  { value: "stable" as const, label: "Stable" },
-  { value: "beta" as const, label: "Beta" },
-];
-
 function getServiceUrlBehaviorLabel(t: TFunction, value: ServiceUrlBehavior): string {
   const labels: Record<ServiceUrlBehavior, string> = {
     ask: t("settings.general.serviceUrls.options.ask"),
@@ -444,15 +439,16 @@ function DiagnosticsSection({
   playbackTestResult,
   handlePlaybackTest,
 }: DiagnosticsSectionProps) {
+  const { t } = useTranslation();
   const handlePlayPress = useCallback(() => {
     void handlePlaybackTest();
   }, [handlePlaybackTest]);
   return (
-    <SettingsSection title="Diagnostics">
+    <SettingsSection title={t("settings.diagnostics.title")}>
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>Test audio</Text>
+            <Text style={settingsStyles.rowTitle}>{t("settings.diagnostics.testAudio")}</Text>
             {playbackTestResult ? (
               <Text style={settingsStyles.rowHint}>{playbackTestResult}</Text>
             ) : null}
@@ -463,7 +459,9 @@ function DiagnosticsSection({
             onPress={handlePlayPress}
             disabled={!voiceAudioEngine || isPlaybackTestRunning}
           >
-            {isPlaybackTestRunning ? "Playing..." : "Play test"}
+            {isPlaybackTestRunning
+              ? t("settings.diagnostics.playing")
+              : t("settings.diagnostics.playTest")}
           </Button>
         </View>
       </View>
@@ -478,14 +476,15 @@ interface AboutSectionProps {
 }
 
 function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSectionProps) {
+  const { t } = useTranslation();
   return (
     <>
-      <SettingsSection title="About">
+      <SettingsSection title={t("settings.about.title")}>
         <View style={settingsStyles.card}>
           <View style={settingsStyles.row}>
             <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>App version</Text>
-              <Text style={settingsStyles.rowHint}>This device</Text>
+              <Text style={settingsStyles.rowTitle}>{t("settings.about.appVersion")}</Text>
+              <Text style={settingsStyles.rowHint}>{t("settings.about.thisDevice")}</Text>
             </View>
             <Text style={styles.aboutValue}>{appVersionText}</Text>
           </View>
@@ -507,12 +506,13 @@ function normalizeVersion(version: string | null | undefined): string | null {
 }
 
 function ConnectedHostsSection({ clientVersion }: { clientVersion: string | null }) {
+  const { t } = useTranslation();
   const hosts = useHosts();
   if (hosts.length === 0) {
     return null;
   }
   return (
-    <SettingsSection title="Connected hosts">
+    <SettingsSection title={t("settings.about.connectedHosts")}>
       <View style={settingsStyles.card}>
         {hosts.map((host, index) => (
           <HostVersionRow
@@ -536,6 +536,7 @@ function HostVersionRow({
   showBorder: boolean;
   clientVersion: string | null;
 }) {
+  const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(host.serverId);
   const daemonVersion = useSessionStore(
     (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
@@ -553,7 +554,7 @@ function HostVersionRow({
 
   let valueText: string;
   if (!isConnected) {
-    valueText = "Offline";
+    valueText = t("settings.about.offline");
   } else if (normalizedHost) {
     valueText = formatVersionWithPrefix(normalizedHost);
   } else {
@@ -572,7 +573,7 @@ function HostVersionRow({
           {host.label}
         </Text>
         {isMismatch ? (
-          <Text style={settingsStyles.rowHint}>Version differs from this device</Text>
+          <Text style={settingsStyles.rowHint}>{t("settings.about.versionDiffers")}</Text>
         ) : null}
       </View>
       <Text style={valueStyle}>{valueText}</Text>
@@ -581,15 +582,21 @@ function HostVersionRow({
 }
 
 function getUpdateButtonLabel(
+  t: TFunction,
   isInstalling: boolean,
   latestVersion: string | null | undefined,
 ): string {
-  if (isInstalling) return "Installing...";
-  if (latestVersion) return `Update to ${formatVersionWithPrefix(latestVersion)}`;
-  return "Update";
+  if (isInstalling) return t("settings.about.updates.installing");
+  if (latestVersion) {
+    return t("settings.about.updates.updateTo", {
+      version: formatVersionWithPrefix(latestVersion),
+    });
+  }
+  return t("settings.about.updates.update");
 }
 
 function DesktopAppUpdateRow() {
+  const { t } = useTranslation();
   const { settings, updateSettings } = useSettings();
   const {
     isDesktopApp,
@@ -625,6 +632,13 @@ function DesktopAppUpdateRow() {
     },
     [updateSettings],
   );
+  const releaseChannelOptions = useMemo(
+    () => [
+      { value: "stable" as const, label: t("settings.about.releaseChannel.stable") },
+      { value: "beta" as const, label: t("settings.about.releaseChannel.beta") },
+    ],
+    [t],
+  );
 
   const handleInstallUpdate = useCallback(() => {
     if (!isDesktopApp) {
@@ -632,10 +646,10 @@ function DesktopAppUpdateRow() {
     }
 
     void confirmDialog({
-      title: "Install desktop update",
-      message: "This updates Paseo on this computer",
-      confirmLabel: "Install update",
-      cancelLabel: "Cancel",
+      title: t("settings.about.updates.installTitle"),
+      message: t("settings.about.updates.installMessage"),
+      confirmLabel: t("settings.about.updates.installConfirm"),
+      cancelLabel: t("common.actions.cancel"),
     })
       .then((confirmed) => {
         if (!confirmed) {
@@ -646,9 +660,12 @@ function DesktopAppUpdateRow() {
       })
       .catch((error) => {
         console.error("[Settings] Failed to open app update confirmation", error);
-        Alert.alert("Error", "Unable to open the update confirmation dialog.");
+        Alert.alert(
+          t("settings.about.updates.alertTitle"),
+          t("settings.about.updates.alertMessage"),
+        );
       });
-  }, [installUpdate, isDesktopApp]);
+  }, [installUpdate, isDesktopApp, t]);
 
   if (!isDesktopApp) {
     return null;
@@ -658,25 +675,27 @@ function DesktopAppUpdateRow() {
     <>
       <View style={ROW_WITH_BORDER_STYLE}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Release channel</Text>
+          <Text style={settingsStyles.rowTitle}>{t("settings.about.releaseChannel.label")}</Text>
           <Text style={settingsStyles.rowHint}>
-            Switch to Beta to get updates sooner and help shape them
+            {t("settings.about.releaseChannel.description")}
           </Text>
         </View>
         <SegmentedControl
           size="sm"
           value={settings.releaseChannel}
           onValueChange={handleReleaseChannelChange}
-          options={RELEASE_CHANNEL_OPTIONS}
+          options={releaseChannelOptions}
         />
       </View>
       <View style={ROW_WITH_BORDER_STYLE}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>App updates</Text>
+          <Text style={settingsStyles.rowTitle}>{t("settings.about.updates.label")}</Text>
           <Text style={settingsStyles.rowHint}>{statusText}</Text>
           {availableUpdate?.latestVersion ? (
             <Text style={settingsStyles.rowHint}>
-              Ready to install: {formatVersionWithPrefix(availableUpdate.latestVersion)}
+              {t("settings.about.updates.readyToInstall", {
+                version: formatVersionWithPrefix(availableUpdate.latestVersion),
+              })}
             </Text>
           ) : null}
           {errorMessage ? <Text style={styles.aboutErrorText}>{errorMessage}</Text> : null}
@@ -688,7 +707,7 @@ function DesktopAppUpdateRow() {
             onPress={handleCheckForUpdates}
             disabled={isChecking || isInstalling}
           >
-            {isChecking ? "Checking..." : "Check"}
+            {isChecking ? t("settings.about.updates.checking") : t("settings.about.updates.check")}
           </Button>
           <Button
             variant="default"
@@ -696,7 +715,7 @@ function DesktopAppUpdateRow() {
             onPress={handleInstallUpdate}
             disabled={isChecking || isInstalling || !availableUpdate}
           >
-            {getUpdateButtonLabel(isInstalling, availableUpdate?.latestVersion)}
+            {getUpdateButtonLabel(t, isInstalling, availableUpdate?.latestVersion)}
           </Button>
         </View>
       </View>
@@ -1294,11 +1313,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Settings] Playback test failed", error);
-      setPlaybackTestResult(`Playback failed: ${message}`);
+      setPlaybackTestResult(t("settings.diagnostics.playbackFailed", { message }));
     } finally {
       setIsPlaybackTestRunning(false);
     }
-  }, [isPlaybackTestRunning, voiceAudioEngine]);
+  }, [isPlaybackTestRunning, t, voiceAudioEngine]);
 
   const closeAddConnectionFlow = useCallback(() => {
     setIsAddHostMethodVisible(false);

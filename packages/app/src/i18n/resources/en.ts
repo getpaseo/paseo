@@ -4,6 +4,7 @@ export const en = {
     loading: "Loading...",
     actions: {
       back: "Back",
+      cancel: "Cancel",
       close: "Close",
       dismiss: "Dismiss",
       search: "Search",
