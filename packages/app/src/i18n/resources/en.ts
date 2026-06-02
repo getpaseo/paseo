@@ -180,6 +180,39 @@ export const en = {
       archive: "Archive",
     },
   },
+  message: {
+    actions: {
+      copyCode: "Copy code",
+      copyTurn: "Copy turn",
+      copyMessage: "Copy message",
+      copied: "Copied",
+    },
+    attachments: {
+      dismissImage: "Dismiss image",
+      closeImage: "Close image",
+      imageLoadFailed: "Couldn't load image",
+      imageUnavailable: "Image unavailable",
+    },
+    dictation: {
+      start: "Start voice dictation",
+      cancel: "Cancel dictation",
+      retry: "Retry dictation",
+      insert: "Insert transcription",
+      insertAndSend: "Insert transcription and send",
+      failed: "Dictation failed: {{error}}",
+      failedRetry: "Dictation failed. Tap retry.",
+    },
+    question: {
+      submit: "Submit",
+      next: "Next",
+      answerPlaceholder: "Type your answer...",
+      otherPlaceholder: "Other...",
+    },
+    todo: {
+      title: "Tasks",
+      empty: "No tasks yet.",
+    },
+  },
   importSession: {
     title: "Import session",
     filters: {

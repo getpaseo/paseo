@@ -10,6 +10,7 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, X } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
@@ -33,9 +34,17 @@ interface QuestionFormCardProps {
 
 const IS_WEB = isWeb;
 
-function getQuestionInputPlaceholder(question: QuestionFormQuestion): string {
+function getQuestionInputPlaceholder({
+  question,
+  answerPlaceholder,
+  otherPlaceholder,
+}: {
+  question: QuestionFormQuestion;
+  answerPlaceholder: string;
+  otherPlaceholder: string;
+}): string {
   return (
-    question.placeholder ?? (question.options.length === 0 ? "Type your answer..." : "Other...")
+    question.placeholder ?? (question.options.length === 0 ? answerPlaceholder : otherPlaceholder)
   );
 }
 
@@ -239,6 +248,7 @@ function QuestionOtherInput({
 
 export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const questions = useMemo(
     () => parseQuestionFormQuestions(permission.request.input),
@@ -367,7 +377,9 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   );
 
   const primaryDisabled = isResponding || (isLastQuestion ? !allAnswered : !activeQuestionAnswered);
-  const primaryActionLabel = isLastQuestion ? "Submit" : "Next";
+  const primaryActionLabel = isLastQuestion
+    ? t("message.question.submit")
+    : t("message.question.next");
   const submitButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.actionButton,
@@ -417,7 +429,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     return null;
   }
 
-  const dismissLabel = resolveDismissLabel(questions);
+  const dismissLabel = resolveDismissLabel(questions, t("common.actions.dismiss"));
   const selected = selections[resolvedActiveQuestionIndex] ?? new Set<number>();
   const otherText = otherTexts[resolvedActiveQuestionIndex] ?? "";
   const showTextInput = activeQuestion ? questionShowsTextInput(activeQuestion) : false;
@@ -470,7 +482,11 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
               qIndex={resolvedActiveQuestionIndex}
               accessibilityLabel={activeQuestion.question}
               value={otherText}
-              placeholder={getQuestionInputPlaceholder(activeQuestion)}
+              placeholder={getQuestionInputPlaceholder({
+                question: activeQuestion,
+                answerPlaceholder: t("message.question.answerPlaceholder"),
+                otherPlaceholder: t("message.question.otherPlaceholder"),
+              })}
               isResponding={isResponding}
               onChange={setOtherText}
               onSubmit={handlePrimaryAction}

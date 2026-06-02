@@ -181,6 +181,39 @@ export const zhCN: TranslationResources = {
       archive: "归档",
     },
   },
+  message: {
+    actions: {
+      copyCode: "复制代码",
+      copyTurn: "复制回合",
+      copyMessage: "复制消息",
+      copied: "已复制",
+    },
+    attachments: {
+      dismissImage: "关闭图片",
+      closeImage: "关闭图片",
+      imageLoadFailed: "无法加载图片",
+      imageUnavailable: "图片不可用",
+    },
+    dictation: {
+      start: "开始语音听写",
+      cancel: "取消听写",
+      retry: "重试听写",
+      insert: "插入转写",
+      insertAndSend: "插入转写并发送",
+      failed: "听写失败：{{error}}",
+      failedRetry: "听写失败。点按重试。",
+    },
+    question: {
+      submit: "提交",
+      next: "下一步",
+      answerPlaceholder: "输入你的回答...",
+      otherPlaceholder: "其他...",
+    },
+    todo: {
+      title: "任务",
+      empty: "还没有任务。",
+    },
+  },
   importSession: {
     title: "导入会话",
     filters: {

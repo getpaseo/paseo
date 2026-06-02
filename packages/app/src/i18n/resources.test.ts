@@ -169,4 +169,27 @@ describe("translation resources", () => {
     );
     expect(en.agentList.archiveSheet.archive).toBe("Archive");
   });
+
+  it("includes message utility keys for the Batch 4I migration", () => {
+    expect(en.message.actions.copyCode).toBe("Copy code");
+    expect(en.message.actions.copyTurn).toBe("Copy turn");
+    expect(en.message.actions.copyMessage).toBe("Copy message");
+    expect(en.message.actions.copied).toBe("Copied");
+    expect(en.message.attachments.dismissImage).toBe("Dismiss image");
+    expect(en.message.attachments.closeImage).toBe("Close image");
+    expect(en.message.attachments.imageLoadFailed).toBe("Couldn't load image");
+    expect(en.message.attachments.imageUnavailable).toBe("Image unavailable");
+    expect(en.message.dictation.start).toBe("Start voice dictation");
+    expect(en.message.dictation.cancel).toBe("Cancel dictation");
+    expect(en.message.dictation.retry).toBe("Retry dictation");
+    expect(en.message.dictation.insert).toBe("Insert transcription");
+    expect(en.message.dictation.insertAndSend).toBe("Insert transcription and send");
+    expect(en.message.dictation.failed).toBe("Dictation failed: {{error}}");
+    expect(en.message.dictation.failedRetry).toBe("Dictation failed. Tap retry.");
+    expect(en.message.question.submit).toBe("Submit");
+    expect(en.message.question.answerPlaceholder).toBe("Type your answer...");
+    expect(en.message.question.otherPlaceholder).toBe("Other...");
+    expect(en.message.todo.title).toBe("Tasks");
+    expect(en.message.todo.empty).toBe("No tasks yet.");
+  });
 });
