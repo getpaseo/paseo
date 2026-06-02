@@ -9,6 +9,7 @@ export const zhCN: TranslationResources = {
       cancel: "取消",
       close: "关闭",
       dismiss: "关闭",
+      retry: "重试",
       search: "搜索",
     },
     states: {
@@ -753,6 +754,40 @@ export const zhCN: TranslationResources = {
     quitting: {
       title: "正在退出 Paseo...",
       detail: "正在停止本地 daemon。",
+    },
+    updates: {
+      status: {
+        checking: "正在检查 app 更新...",
+        installing: "正在安装 app 更新...",
+        upToDate: "App 已是最新版本。",
+        upToDateWithLastChecked: "已是最新版本。上次检查时间：{{time}}。",
+        pending: "更新准备好后会通知你。",
+        availableWithVersion: "更新已就绪：{{version}}",
+        available: "有 app 更新可安装。",
+        installed: "App 更新已安装。需要重启。",
+        failed: "App 更新失败。",
+        idle: "尚未检查更新状态。",
+      },
+      installError: "无法安装 desktop app 更新。",
+      callout: {
+        installingTitle: "正在安装更新",
+        failedTitle: "更新失败",
+        availableTitle: "有可用更新",
+        genericError: "出了点问题。",
+        whatsNew: "更新内容",
+        installingAction: "正在安装...",
+        installAndRestart: "安装并重启",
+        installingDescription: "正在安装并重启...",
+        versionReady: "{{version}} 已准备好安装。",
+        newVersionReady: "新版本已准备好安装。",
+        restartWarning: "升级 app 会停止正在运行的 agents，并关闭 terminal 会话。",
+      },
+    },
+    rosetta: {
+      title: "下载 Apple Silicon 构建",
+      runningIntel: "你正在 Apple Silicon 上通过 Rosetta 运行 Paseo 的 Intel 构建。",
+      highCpu: "这会导致较高 CPU 使用率。下载 Apple Silicon 构建即可修复。",
+      download: "下载",
     },
   },
   openProject: {

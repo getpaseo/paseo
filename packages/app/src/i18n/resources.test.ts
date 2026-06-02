@@ -21,6 +21,7 @@ describe("translation resources", () => {
     expect(en.common.actions.cancel).toBe("Cancel");
     expect(en.common.actions.close).toBe("Close");
     expect(en.common.actions.dismiss).toBe("Dismiss");
+    expect(en.common.actions.retry).toBe("Retry");
     expect(en.common.actions.search).toBe("Search");
     expect(en.common.states.starting).toBe("Starting...");
     expect(en.common.states.downloadComplete).toBe("Download complete");
@@ -325,5 +326,38 @@ describe("translation resources", () => {
     expect(en.providerSelection.readiness.modelDefaultsLoading).toBe(
       "Model defaults are still loading",
     );
+  });
+
+  it("includes desktop update utility keys for the Batch 4Q migration", () => {
+    expect(en.desktop.updates.status.checking).toBe("Checking for app updates...");
+    expect(en.desktop.updates.status.installing).toBe("Installing app update...");
+    expect(en.desktop.updates.status.upToDate).toBe("App is up to date.");
+    expect(en.desktop.updates.status.pending).toBe("We'll let you know when the update is ready.");
+    expect(en.desktop.updates.status.availableWithVersion).toBe("Update ready: {{version}}");
+    expect(en.desktop.updates.status.available).toBe("An app update is ready to install.");
+    expect(en.desktop.updates.status.installed).toBe("App update installed. Restart required.");
+    expect(en.desktop.updates.status.failed).toBe("Failed to update app.");
+    expect(en.desktop.updates.status.idle).toBe("Update status has not been checked yet.");
+    expect(en.desktop.updates.installError).toBe("Unable to install the desktop app update.");
+    expect(en.desktop.updates.callout.installingTitle).toBe("Installing update");
+    expect(en.desktop.updates.callout.failedTitle).toBe("Update failed");
+    expect(en.desktop.updates.callout.availableTitle).toBe("Update available");
+    expect(en.desktop.updates.callout.genericError).toBe("Something went wrong.");
+    expect(en.desktop.updates.callout.whatsNew).toBe("What's new");
+    expect(en.desktop.updates.callout.installAndRestart).toBe("Install & restart");
+    expect(en.desktop.updates.callout.installingDescription).toBe("Installing and restarting...");
+    expect(en.desktop.updates.callout.versionReady).toBe("{{version}} is ready to install.");
+    expect(en.desktop.updates.callout.newVersionReady).toBe("A new version is ready to install.");
+    expect(en.desktop.updates.callout.restartWarning).toBe(
+      "Upgrading the app will stop running agents and close terminal sessions.",
+    );
+    expect(en.desktop.rosetta.title).toBe("Download the Apple Silicon build");
+    expect(en.desktop.rosetta.runningIntel).toBe(
+      "You're running the Intel build of Paseo under Rosetta on Apple Silicon.",
+    );
+    expect(en.desktop.rosetta.highCpu).toBe(
+      "This causes high CPU usage. Download the Apple Silicon build to fix it.",
+    );
+    expect(en.desktop.rosetta.download).toBe("Download");
   });
 });

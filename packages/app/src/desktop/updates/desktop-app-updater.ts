@@ -4,6 +4,7 @@ import type {
   DesktopAppUpdateInstallResult,
   DesktopReleaseChannel,
 } from "@/desktop/updates/desktop-updates";
+import { i18n } from "@/i18n/i18next";
 
 export type DesktopAppUpdateStatus =
   | "idle"
@@ -119,40 +120,44 @@ export function formatStatusText(input: {
   } = input;
 
   if (status === "checking") {
-    return "Checking for app updates...";
+    return i18n.t("desktop.updates.status.checking");
   }
 
   if (status === "installing") {
-    return "Installing app update...";
+    return i18n.t("desktop.updates.status.installing");
   }
 
   if (status === "up-to-date") {
     if (lastCheckedAt != null) {
-      return `Up to date. Last checked at ${formatLastCheckedAt(lastCheckedAt)}.`;
+      return i18n.t("desktop.updates.status.upToDateWithLastChecked", {
+        time: formatLastCheckedAt(lastCheckedAt),
+      });
     }
-    return "Up to date.";
+    return i18n.t("desktop.updates.status.upToDate");
   }
 
   if (status === "pending") {
-    return "We'll let you know when the update is ready.";
+    return i18n.t("desktop.updates.status.pending");
   }
 
   if (status === "available") {
     if (availableUpdate?.latestVersion) {
-      return `Update ready: ${formatVersion(availableUpdate.latestVersion)}`;
+      return i18n.t("desktop.updates.status.availableWithVersion", {
+        version: formatVersion(availableUpdate.latestVersion),
+      });
     }
-    return "An app update is ready to install.";
+    return i18n.t("desktop.updates.status.available");
   }
 
   if (status === "installed") {
-    return installMessage ?? "App update installed. Restart required.";
+    return installMessage ?? i18n.t("desktop.updates.status.installed");
   }
 
   if (status === "error") {
-    return "Failed to update app.";
+    return i18n.t("desktop.updates.status.failed");
   }
 
-  return "Update status has not been checked yet.";
+  return i18n.t("desktop.updates.status.idle");
 }
 
 export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopAppUpdater {
@@ -264,7 +269,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       const message = getErrorMessage(error);
       deps.reportInstallError?.({
         error,
-        message: "Unable to install the desktop app update.",
+        message: i18n.t("desktop.updates.installError"),
         logLabel: "[DesktopUpdater] Failed to install app update",
       });
       commit({

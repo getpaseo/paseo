@@ -7,6 +7,7 @@ export const en = {
       cancel: "Cancel",
       close: "Close",
       dismiss: "Dismiss",
+      retry: "Retry",
       search: "Search",
     },
     states: {
@@ -768,6 +769,40 @@ export const en = {
     quitting: {
       title: "Quitting Paseo...",
       detail: "Stopping the local daemon.",
+    },
+    updates: {
+      status: {
+        checking: "Checking for app updates...",
+        installing: "Installing app update...",
+        upToDate: "App is up to date.",
+        upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
+        pending: "We'll let you know when the update is ready.",
+        availableWithVersion: "Update ready: {{version}}",
+        available: "An app update is ready to install.",
+        installed: "App update installed. Restart required.",
+        failed: "Failed to update app.",
+        idle: "Update status has not been checked yet.",
+      },
+      installError: "Unable to install the desktop app update.",
+      callout: {
+        installingTitle: "Installing update",
+        failedTitle: "Update failed",
+        availableTitle: "Update available",
+        genericError: "Something went wrong.",
+        whatsNew: "What's new",
+        installingAction: "Installing...",
+        installAndRestart: "Install & restart",
+        installingDescription: "Installing and restarting...",
+        versionReady: "{{version}} is ready to install.",
+        newVersionReady: "A new version is ready to install.",
+        restartWarning: "Upgrading the app will stop running agents and close terminal sessions.",
+      },
+    },
+    rosetta: {
+      title: "Download the Apple Silicon build",
+      runningIntel: "You're running the Intel build of Paseo under Rosetta on Apple Silicon.",
+      highCpu: "This causes high CPU usage. Download the Apple Silicon build to fix it.",
+      download: "Download",
     },
   },
   openProject: {
