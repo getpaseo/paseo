@@ -1,4 +1,5 @@
 import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import { i18n } from "@/i18n/i18next";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
@@ -83,7 +84,7 @@ export function formatThinkingOptionLabel(option: ControlLabelInput): string {
   const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
 
   if (compactId === "xhigh" || compactLabel === "xhigh") {
-    return "Extra high";
+    return i18n.t("agentControls.thinking.extraHigh");
   }
 
   return formatControlLabel(option, true);
@@ -177,16 +178,8 @@ export function resolveAgentModelSelection(input: {
   runtimeModelId: string | null | undefined;
   configuredModelId: string | null | undefined;
   explicitThinkingOptionId: string | null | undefined;
-  fallbackLabels?: {
-    unknownModel: string;
-    unknownThinking: string;
-  };
 }) {
   const { models, runtimeModelId, configuredModelId, explicitThinkingOptionId } = input;
-  const fallbackLabels = input.fallbackLabels ?? {
-    unknownModel: "Unknown model",
-    unknownThinking: "Unknown",
-  };
   const normalizedRuntimeModelId = normalizeModelId(runtimeModelId);
   const normalizedConfiguredModelId = normalizeModelId(configuredModelId);
 
@@ -203,7 +196,7 @@ export function resolveAgentModelSelection(input: {
     selectedModel,
     preferredModelId,
     fallbackModel,
-    fallbackLabels.unknownModel,
+    i18n.t("agentControls.model.unknown"),
   );
 
   const thinkingOptions = selectedModel?.thinkingOptions ?? null;
@@ -213,7 +206,7 @@ export function resolveAgentModelSelection(input: {
   const displayThinking = resolveThinkingDisplay(
     effectiveThinking,
     selectedThinkingId,
-    fallbackLabels.unknownThinking,
+    i18n.t("agentControls.thinking.unknown"),
   );
 
   return {

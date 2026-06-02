@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Dimensions, Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { CircleCheck, CircleDot, CircleX, ExternalLink } from "lucide-react-native";
@@ -212,6 +213,7 @@ function WorkspaceHoverCardContent({
   triggerRef: React.RefObject<View | null>;
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
+  const { t } = useTranslation();
   const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -274,7 +276,7 @@ function WorkspaceHoverCardContent({
           collapsable={false}
           onLayout={handleLayout}
           accessibilityRole="menu"
-          accessibilityLabel="Workspace scripts"
+          accessibilityLabel={t("workspace.hoverCard.scriptsAccessibility")}
           testID="workspace-hover-card"
           style={styles.card}
           frameStyle={frameStyle}

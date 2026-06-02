@@ -407,4 +407,21 @@ describe("translation resources", () => {
       "Unable to install orchestration skills.",
     );
   });
+
+  it("includes remaining utility chrome keys for the Batch 4T migration", () => {
+    expect(en.message.attachments.reviewOne).toBe("Review · 1 comment");
+    expect(en.message.attachments.reviewMany).toBe("Review · {{count}} comments");
+    expect(en.message.attachments.textAttachment).toBe("Text attachment");
+    expect(en.composer.attachments.browserElement).toBe("Element · {{tag}}");
+    expect(en.workspace.hoverCard.scriptsAccessibility).toBe("Workspace scripts");
+    expect(en.branchSwitcher.restoreStashTitle).toBe("Restore stashed changes?");
+    expect(en.branchSwitcher.stashRestored).toBe("Stashed changes restored");
+    expect(en.agentAutocomplete.searchingWorkspace).toBe("Searching workspace...");
+    expect(en.agentAutocomplete.noCommands).toBe("No commands found");
+    expect(en.agentAutocomplete.failedToLoad).toBe("Failed to load");
+    expect(en.loadOlderHistory.failed).toBe("Couldn't load older history");
+    expect(en.agentControls.thinking.extraHigh).toBe("Extra high");
+    expect(en.agentControls.model.unknown).toBe("Unknown model");
+    expect(en.panels.draft.creatingAgent).toBe("Creating agent");
+  });
 });

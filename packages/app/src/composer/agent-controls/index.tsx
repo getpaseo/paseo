@@ -1367,7 +1367,6 @@ export const AgentControls = memo(function AgentControls({
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
-  const { t } = useTranslation();
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
@@ -1415,10 +1414,6 @@ export const AgentControls = memo(function AgentControls({
     runtimeModelId: agent?.runtimeModelId,
     configuredModelId: agent?.model,
     explicitThinkingOptionId: agent?.thinkingOptionId,
-    fallbackLabels: {
-      unknownModel: t("agentControls.model.unknown"),
-      unknownThinking: t("agentControls.thinking.unknown"),
-    },
   });
 
   const modelOptions = useMemo<AgentControlOption[]>(() => {

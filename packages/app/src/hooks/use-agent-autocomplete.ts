@@ -11,6 +11,7 @@ import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
+import { i18n } from "@/i18n/i18next";
 import {
   applySlashCommandReplacement,
   filterAndRankCommandAutocompleteEntries,
@@ -260,7 +261,9 @@ function resolveAutocompleteErrorMessage(args: {
   fileSuggestionsError: unknown;
 }): string | undefined {
   if (args.mode === "command") {
-    return args.isCommandError ? (args.commandError?.message ?? "Failed to load") : undefined;
+    return args.isCommandError
+      ? (args.commandError?.message ?? i18n.t("agentAutocomplete.failedToLoad"))
+      : undefined;
   }
   if (args.mode === "file") {
     return args.fileSuggestionsError instanceof Error
@@ -490,8 +493,12 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     fileSuggestionsError: fileSuggestionsQuery.error,
   });
 
-  const loadingText = mode === "file" ? "Searching workspace..." : "Loading commands...";
-  const emptyText = mode === "file" ? "No files or directories found" : "No commands found";
+  const loadingText =
+    mode === "file"
+      ? i18n.t("agentAutocomplete.searchingWorkspace")
+      : i18n.t("agentAutocomplete.loadingCommands");
+  const emptyText =
+    mode === "file" ? i18n.t("agentAutocomplete.noFiles") : i18n.t("agentAutocomplete.noCommands");
 
   return {
     isVisible,

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { ToastApi } from "@/components/toast-host";
+import { i18n } from "@/i18n/i18next";
 import { useSessionStore, type AgentTimelineCursorState } from "@/stores/session-store";
 import { planTimelineOlderFetch } from "@/timeline/timeline-sync-plan";
 
@@ -46,7 +47,7 @@ export async function loadOlderAgentHistory(
     );
   } catch (error) {
     (logger ?? console).warn("[Timeline] failed to load older agent history", agentId, error);
-    toast?.show("Couldn't load older history", {
+    toast?.show(i18n.t("loadOlderHistory.failed"), {
       durationMs: 2200,
       testID: "agent-load-older-history-toast",
     });

@@ -83,6 +83,11 @@ export const en = {
       removeImage: "Remove image attachment",
       openGithub: "Open {{kind}} #{{number}}",
       removeGithub: "Remove {{kind}} #{{number}}",
+      browserElement: "Element · {{tag}}",
+      openBrowserElement: "Open browser element attachment",
+      removeBrowserElement: "Remove browser element attachment",
+      openReview: "Open review attachment",
+      removeReview: "Remove review attachment",
     },
     github: {
       searching: "Searching...",
@@ -99,6 +104,7 @@ export const en = {
     thinking: {
       title: "Thinking",
       unknown: "Unknown",
+      extraHigh: "Extra high",
       select: "Select thinking option",
       selectWithValue: "Select thinking option ({{value}})",
     },
@@ -207,6 +213,9 @@ export const en = {
       closeImage: "Close image",
       imageLoadFailed: "Couldn't load image",
       imageUnavailable: "Image unavailable",
+      reviewOne: "Review · 1 comment",
+      reviewMany: "Review · {{count}} comments",
+      textAttachment: "Text attachment",
     },
     dictation: {
       start: "Start voice dictation",
@@ -274,6 +283,9 @@ export const en = {
       hostStatus: "Host status: {{status}}",
       missing: "Workspace not found",
       manageHost: "Manage host",
+    },
+    hoverCard: {
+      scriptsAccessibility: "Workspace scripts",
     },
     fileExplorer: {
       sort: {
@@ -949,6 +961,22 @@ export const en = {
     stashAndSwitch: "Stash & Switch",
     failedToStash: "Failed to stash changes",
     failedToSwitch: "Failed to switch branch",
+    restoreStashTitle: "Restore stashed changes?",
+    restoreStashMessage:
+      "This branch has stashed changes from a previous session. Would you like to restore them?",
+    restore: "Restore",
+    later: "Later",
+    stashRestored: "Stashed changes restored",
+  },
+  agentAutocomplete: {
+    searchingWorkspace: "Searching workspace...",
+    loadingCommands: "Loading commands...",
+    noFiles: "No files or directories found",
+    noCommands: "No commands found",
+    failedToLoad: "Failed to load",
+  },
+  loadOlderHistory: {
+    failed: "Couldn't load older history",
   },
   imageAttachmentPicker: {
     permissionTitle: "Permission required",

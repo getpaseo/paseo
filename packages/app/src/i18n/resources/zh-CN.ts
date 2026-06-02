@@ -85,6 +85,11 @@ export const zhCN: TranslationResources = {
       removeImage: "移除图片附件",
       openGithub: "打开 {{kind}} #{{number}}",
       removeGithub: "移除 {{kind}} #{{number}}",
+      browserElement: "元素 · {{tag}}",
+      openBrowserElement: "打开浏览器元素附件",
+      removeBrowserElement: "移除浏览器元素附件",
+      openReview: "打开 review 附件",
+      removeReview: "移除 review 附件",
     },
     github: {
       searching: "正在搜索...",
@@ -101,6 +106,7 @@ export const zhCN: TranslationResources = {
     thinking: {
       title: "Thinking",
       unknown: "未知",
+      extraHigh: "Extra high",
       select: "选择 thinking 选项",
       selectWithValue: "选择 thinking 选项（{{value}}）",
     },
@@ -208,6 +214,9 @@ export const zhCN: TranslationResources = {
       closeImage: "关闭图片",
       imageLoadFailed: "无法加载图片",
       imageUnavailable: "图片不可用",
+      reviewOne: "Review · 1 条评论",
+      reviewMany: "Review · {{count}} 条评论",
+      textAttachment: "文本附件",
     },
     dictation: {
       start: "开始语音听写",
@@ -275,6 +284,9 @@ export const zhCN: TranslationResources = {
       hostStatus: "Host 状态：{{status}}",
       missing: "Workspace 未找到",
       manageHost: "管理 Host",
+    },
+    hoverCard: {
+      scriptsAccessibility: "Workspace scripts",
     },
     fileExplorer: {
       sort: {
@@ -930,6 +942,21 @@ export const zhCN: TranslationResources = {
     stashAndSwitch: "Stash 并切换",
     failedToStash: "Stash 变更失败",
     failedToSwitch: "切换分支失败",
+    restoreStashTitle: "恢复 stashed 变更？",
+    restoreStashMessage: "此分支有上一会话 stashed 的变更。要恢复它们吗？",
+    restore: "恢复",
+    later: "稍后",
+    stashRestored: "Stashed 变更已恢复",
+  },
+  agentAutocomplete: {
+    searchingWorkspace: "正在搜索 workspace...",
+    loadingCommands: "正在加载 commands...",
+    noFiles: "没有找到文件或目录",
+    noCommands: "没有找到 commands",
+    failedToLoad: "加载失败",
+  },
+  loadOlderHistory: {
+    failed: "无法加载更早历史",
   },
   imageAttachmentPicker: {
     permissionTitle: "需要权限",

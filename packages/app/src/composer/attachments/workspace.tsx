@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
@@ -231,14 +232,15 @@ function WorkspaceAttachmentPill({
   onOpen,
   onRemove,
 }: WorkspaceAttachmentPillProps) {
+  const { t } = useTranslation();
   let label: string;
   if (attachment.kind === "browser_element") {
-    label = `Element · ${attachment.attachment.tag}`;
+    label = t("composer.attachments.browserElement", { tag: attachment.attachment.tag });
   } else {
     label =
       attachment.commentCount === 1
-        ? "Review · 1 comment"
-        : `Review · ${attachment.commentCount} comments`;
+        ? t("message.attachments.reviewOne")
+        : t("message.attachments.reviewMany", { count: attachment.commentCount });
   }
   const handleOpen = useCallback(() => {
     onOpen(attachment);
@@ -253,13 +255,13 @@ function WorkspaceAttachmentPill({
       onRemove={handleRemove}
       openAccessibilityLabel={
         attachment.kind === "browser_element"
-          ? "Open browser element attachment"
-          : "Open review attachment"
+          ? t("composer.attachments.openBrowserElement")
+          : t("composer.attachments.openReview")
       }
       removeAccessibilityLabel={
         attachment.kind === "browser_element"
-          ? "Remove browser element attachment"
-          : "Remove review attachment"
+          ? t("composer.attachments.removeBrowserElement")
+          : t("composer.attachments.removeReview")
       }
       disabled={disabled}
     >

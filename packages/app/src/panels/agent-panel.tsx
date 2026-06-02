@@ -374,7 +374,6 @@ export function useDraftPanelDescriptor(
   target: { kind: "draft"; draftId: string },
   context: { serverId: string },
 ) {
-  const { t } = useTranslation();
   const createDescriptorState = useCreateFlowStore(
     useShallow((state) => {
       const pending = state.pendingByDraftId[target.draftId];
@@ -394,10 +393,6 @@ export function useDraftPanelDescriptor(
   return buildDraftPanelDescriptor({
     ...createDescriptorState,
     icon: SquarePen,
-    labels: {
-      newAgent: t("panels.draft.newAgent"),
-      creatingAgent: t("panels.draft.creatingAgent"),
-    },
   });
 }
 

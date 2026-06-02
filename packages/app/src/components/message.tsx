@@ -449,18 +449,23 @@ function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAtta
   return <Image source={imageSource} style={userMessageStylesheet.imageThumbnail} />;
 }
 
-function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
+function getUserMessageAttachmentLabel(
+  attachment: AgentAttachment,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
   switch (attachment.type) {
     case "review": {
       const count = attachment.comments.length;
-      return count === 1 ? "Review · 1 comment" : `Review · ${count} comments`;
+      return count === 1
+        ? t("message.attachments.reviewOne")
+        : t("message.attachments.reviewMany", { count });
     }
     case "github_pr":
       return `PR #${attachment.number}`;
     case "github_issue":
       return `Issue #${attachment.number}`;
     case "text":
-      return attachment.title ?? "Text attachment";
+      return attachment.title ?? t("message.attachments.textAttachment");
     default:
       return "";
   }
@@ -564,7 +569,7 @@ export const UserMessage = memo(function UserMessage({
                   style={userMessageStylesheet.structuredAttachmentPill}
                 >
                   <Text style={userMessageStylesheet.structuredAttachmentText} numberOfLines={1}>
-                    {getUserMessageAttachmentLabel(attachment)}
+                    {getUserMessageAttachmentLabel(attachment, t)}
                   </Text>
                 </View>
               ))}

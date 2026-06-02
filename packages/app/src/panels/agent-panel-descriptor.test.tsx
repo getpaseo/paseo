@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 
 function TestIcon() {
@@ -42,23 +43,16 @@ describe("buildDraftPanelDescriptor", () => {
     });
   });
 
-  it("uses injected labels for draft descriptor chrome", () => {
+  it("uses the active language for draft descriptor chrome", async () => {
+    await i18n.changeLanguage("zh-CN");
     const idleDescriptor = buildDraftPanelDescriptor({
       isCreating: false,
       icon: TestIcon,
-      labels: {
-        newAgent: "新建 Agent",
-        creatingAgent: "正在创建 Agent",
-      },
     });
     const creatingDescriptor = buildDraftPanelDescriptor({
       isCreating: true,
       pendingPrompt: "   ",
       icon: TestIcon,
-      labels: {
-        newAgent: "新建 Agent",
-        creatingAgent: "正在创建 Agent",
-      },
     });
 
     expect(idleDescriptor).toMatchObject({
@@ -69,5 +63,6 @@ describe("buildDraftPanelDescriptor", () => {
       label: "新建 Agent",
       subtitle: "正在创建 Agent",
     });
+    await i18n.changeLanguage("en");
   });
 });
