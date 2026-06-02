@@ -3892,6 +3892,39 @@ test("onAgentAttention is not called for internal agents", async () => {
   expect(attentionCalls).toHaveLength(0);
 });
 
+test("onAgentAttention is not called for delegated child agents", async () => {
+  const childAgentId = "00000000-0000-4000-8000-000000000112";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const attentionCalls: string[] = [];
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => childAgentId,
+    onAgentAttention: ({ agentId }) => {
+      attentionCalls.push(agentId);
+    },
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Delegated Child Agent",
+    },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" } },
+  );
+
+  await manager.runAgent(agent.id, "hello");
+
+  expect(attentionCalls).toEqual([]);
+});
+
 test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-error-"));
   const storagePath = join(workdir, "agents");
