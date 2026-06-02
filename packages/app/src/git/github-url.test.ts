@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildGitHubBranchTreeUrl, parseGitHubRepoFromRemote } from "./github-url";
+import {
+  buildGitHubBlobUrl,
+  buildGitHubBranchTreeUrl,
+  parseGitHubRepoFromRemote,
+} from "./github-url";
 
 describe("parseGitHubRepoFromRemote", () => {
   it.each([
@@ -47,6 +51,81 @@ describe("buildGitHubBranchTreeUrl", () => {
       buildGitHubBranchTreeUrl({
         remoteUrl: "https://github.com/acme/repo.git",
         branch: "HEAD",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("buildGitHubBlobUrl", () => {
+  it("builds a blob URL for a file path", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "git@github.com:acme/repo.git",
+        branch: "main",
+        path: "src/index.ts",
+      }),
+    ).toBe("https://github.com/acme/repo/blob/main/src/index.ts");
+  });
+
+  it("appends a single-line anchor", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "https://github.com/acme/repo.git",
+        branch: "main",
+        path: "src/index.ts",
+        lineStart: 12,
+      }),
+    ).toBe("https://github.com/acme/repo/blob/main/src/index.ts#L12");
+  });
+
+  it("appends a line range anchor", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "https://github.com/acme/repo.git",
+        branch: "main",
+        path: "src/index.ts",
+        lineStart: 12,
+        lineEnd: 20,
+      }),
+    ).toBe("https://github.com/acme/repo/blob/main/src/index.ts#L12-L20");
+  });
+
+  it("strips leading slashes and encodes path segments", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "https://github.com/acme/repo.git",
+        branch: "main",
+        path: "/src/a b/c#d.ts",
+      }),
+    ).toBe("https://github.com/acme/repo/blob/main/src/a%20b/c%23d.ts");
+  });
+
+  it("normalizes harmless dot segments in the blob path", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "https://github.com/acme/repo.git",
+        branch: "main",
+        path: "./src/../index.ts",
+      }),
+    ).toBe("https://github.com/acme/repo/blob/main/index.ts");
+  });
+
+  it("returns null for blob paths that escape above the repo root", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "https://github.com/acme/repo.git",
+        branch: "main",
+        path: "../outside.ts",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when the path is missing", () => {
+    expect(
+      buildGitHubBlobUrl({
+        remoteUrl: "https://github.com/acme/repo.git",
+        branch: "main",
+        path: "",
       }),
     ).toBeNull();
   });

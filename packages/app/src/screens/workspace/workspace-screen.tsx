@@ -2851,6 +2851,13 @@ function WorkspaceScreenContent({
   });
 
   const activeTabDescriptor = useMemo(() => activeTab?.descriptor ?? null, [activeTab]);
+  const activeFileLocation = useMemo<WorkspaceFileLocation | null>(() => {
+    const target = activeTabDescriptor?.target;
+    if (target?.kind !== "file") {
+      return null;
+    }
+    return { path: target.path, lineStart: target.lineStart, lineEnd: target.lineEnd };
+  }, [activeTabDescriptor]);
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const shouldRenderDesktopPaneFallback = useMemo(
     () => !isMobile && !canRenderDesktopPaneSplits,
@@ -3087,6 +3094,7 @@ function WorkspaceScreenContent({
           <WorkspaceOpenInEditorButton
             serverId={normalizedServerId}
             cwd={normalizedWorkspaceId}
+            activeFile={activeFileLocation}
             hideLabels={showCompactButtonLabels}
           />
         ) : null}
@@ -3193,6 +3201,7 @@ function WorkspaceScreenContent({
       workspaceDescriptor,
       normalizedServerId,
       normalizedWorkspaceId,
+      activeFileLocation,
       liveTerminalIds,
       handleScriptTerminalStarted,
       handleViewScriptTerminal,

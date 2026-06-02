@@ -78,6 +78,7 @@ import type {
   SessionOutboundMessage,
   SendAgentMessageRequest,
   EditorTargetId,
+  OpenInEditorMode,
   PaseoConfigRaw,
   PaseoConfigRevision,
 } from "@getpaseo/protocol/messages";
@@ -1793,13 +1794,25 @@ export class DaemonClient {
     path: string,
     editorId: EditorTargetId,
     requestId?: string,
+  ): Promise<OpenInEditorPayload>;
+  async openInEditor(
+    path: string,
+    editorId: EditorTargetId,
+    options?: { mode?: OpenInEditorMode; requestId?: string },
+  ): Promise<OpenInEditorPayload>;
+  async openInEditor(
+    path: string,
+    editorId: EditorTargetId,
+    request?: string | { mode?: OpenInEditorMode; requestId?: string },
   ): Promise<OpenInEditorPayload> {
+    const options = typeof request === "string" ? { requestId: request } : request;
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "open_in_editor_request",
         path,
         editorId,
+        ...(options?.mode ? { mode: options.mode } : {}),
       },
       responseType: "open_in_editor_response",
       timeout: 10000,

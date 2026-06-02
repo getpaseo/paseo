@@ -1606,10 +1606,14 @@ export const ListAvailableEditorsRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const OpenInEditorModeSchema = z.enum(["open", "reveal"]);
+
 export const OpenInEditorRequestSchema = z.object({
   type: z.literal("open_in_editor_request"),
   path: z.string(),
   editorId: EditorTargetIdSchema,
+  // COMPAT(revealInFileManager): added in v0.1.88, drop the gate when floor >= v0.1.88.
+  mode: OpenInEditorModeSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2142,6 +2146,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(revealInFileManager): added in v0.1.88, remove gate after 2026-12-02.
+        revealInFileManager: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4030,6 +4036,7 @@ export type PaseoWorktreeArchiveResponse = z.infer<typeof PaseoWorktreeArchiveRe
 export type WorkspaceSetupStatusRequest = z.infer<typeof WorkspaceSetupStatusRequestSchema>;
 export type ListAvailableEditorsRequest = z.infer<typeof ListAvailableEditorsRequestSchema>;
 export type OpenInEditorRequest = z.infer<typeof OpenInEditorRequestSchema>;
+export type OpenInEditorMode = z.infer<typeof OpenInEditorModeSchema>;
 export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;

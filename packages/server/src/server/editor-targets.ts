@@ -5,6 +5,7 @@ import type {
   EditorTargetDescriptorPayload,
   EditorTargetId,
   KnownEditorTargetId,
+  OpenInEditorMode,
 } from "@getpaseo/protocol/messages";
 import { createExternalProcessEnv } from "./paseo-env.js";
 import { findExecutable } from "../utils/executable.js";
@@ -97,10 +98,33 @@ interface Launch {
   args: string[];
 }
 
+function buildLaunchArgs(input: {
+  target: EditorTargetDefinition;
+  path: string;
+  platform: NodeJS.Platform;
+  mode: OpenInEditorMode;
+}): string[] {
+  if (input.mode === "reveal") {
+    if (input.target.id === "finder" && input.platform === "darwin") {
+      return ["-R", input.path];
+    }
+    if (input.target.id === "explorer" && input.platform === "win32") {
+      return ["/select,", input.path];
+    }
+    if (input.target.id === "file-manager") {
+      // No native reveal affordance for generic Linux file managers: open the
+      // containing folder rather than the file itself.
+      return [posix.dirname(input.path)];
+    }
+  }
+  return [input.path];
+}
+
 async function resolveEditorLaunch(input: {
   editorId: EditorTargetId;
   path: string;
   platform: NodeJS.Platform;
+  mode: OpenInEditorMode;
   findExecutableFn: (command: string) => string | null | Promise<string | null>;
 }): Promise<Launch> {
   const target = resolveEditorTargetDefinition(input.editorId);
@@ -114,7 +138,12 @@ async function resolveEditorLaunch(input: {
 
   return {
     command: executable,
-    args: [input.path],
+    args: buildLaunchArgs({
+      target,
+      path: input.path,
+      platform: input.platform,
+      mode: input.mode,
+    }),
   };
 }
 
@@ -122,6 +151,7 @@ export async function openInEditorTarget(
   input: {
     editorId: EditorTargetId;
     path: string;
+    mode?: OpenInEditorMode;
   },
   dependencies: OpenInEditorTargetDependencies = {},
 ): Promise<void> {
@@ -142,6 +172,7 @@ export async function openInEditorTarget(
     editorId: input.editorId,
     path: pathToOpen,
     platform,
+    mode: input.mode ?? "open",
     findExecutableFn,
   });
 

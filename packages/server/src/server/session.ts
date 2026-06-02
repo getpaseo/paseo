@@ -28,6 +28,7 @@ import {
   type DirectorySuggestionsRequest,
   type EditorTargetDescriptorPayload,
   type EditorTargetId,
+  type OpenInEditorMode,
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
@@ -7168,7 +7169,11 @@ export class Session {
     return this.filterEditorsForClient(await this.getMemoizedAvailableEditorTargets());
   }
 
-  async openEditorTarget(options: { editorId: EditorTargetId; path: string }): Promise<void> {
+  async openEditorTarget(options: {
+    editorId: EditorTargetId;
+    path: string;
+    mode?: OpenInEditorMode;
+  }): Promise<void> {
     await openInEditorTarget(options);
   }
 
@@ -7271,7 +7276,11 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "open_in_editor_request" }>,
   ): Promise<void> {
     try {
-      await this.openEditorTarget({ editorId: request.editorId, path: request.path });
+      await this.openEditorTarget({
+        editorId: request.editorId,
+        path: request.path,
+        mode: request.mode,
+      });
       this.emit({
         type: "open_in_editor_response",
         payload: {

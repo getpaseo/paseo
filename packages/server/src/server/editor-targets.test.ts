@@ -70,6 +70,130 @@ describe("editor-targets", () => {
     expect(unref).toHaveBeenCalled();
   });
 
+  it("reveals files in Finder on macOS", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "finder",
+        path: "/tmp/repo/src/index.ts",
+        mode: "reveal",
+      },
+      {
+        platform: "darwin",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "open" ? "/usr/bin/open" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/open",
+      ["-R", "/tmp/repo/src/index.ts"],
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
+  it("reveals files in Explorer on Windows", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "explorer",
+        path: "C:/repo/src/index.ts",
+        mode: "reveal",
+      },
+      {
+        platform: "win32",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "explorer" ? "explorer" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "explorer",
+      ["/select,", "C:/repo/src/index.ts"],
+      expect.objectContaining({ shell: true }),
+    );
+  });
+
+  it("reveals files by opening the containing folder when reveal is unsupported (Linux)", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "file-manager",
+        path: "/home/user/repo/src/index.ts",
+        mode: "reveal",
+      },
+      {
+        platform: "linux",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "xdg-open" ? "/usr/bin/xdg-open" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/xdg-open",
+      ["/home/user/repo/src"],
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
+  it("ignores reveal mode for editor targets", async () => {
+    const once = vi.fn((event: string, handler: () => void) => {
+      if (event === "spawn") {
+        queueMicrotask(handler);
+      }
+      return child;
+    });
+    const child = { once, unref: vi.fn() };
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
+
+    await openInEditorTarget(
+      {
+        editorId: "vscode",
+        path: "/home/user/repo/src/index.ts",
+        mode: "reveal",
+      },
+      {
+        platform: "linux",
+        existsSync: () => true,
+        findExecutable: (command) => (command === "code" ? "/usr/bin/code" : null),
+        spawn,
+      },
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/code",
+      ["/home/user/repo/src/index.ts"],
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
   it("rejects relative paths", async () => {
     await expect(
       openInEditorTarget(

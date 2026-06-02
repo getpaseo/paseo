@@ -9,7 +9,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { EditorTargetDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { EditorTargetDescriptorPayload, OpenInEditorMode } from "@getpaseo/protocol/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
@@ -23,16 +23,21 @@ import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { buildGitHubBranchTreeUrl } from "@/git/github-url";
+import { buildGitHubBlobUrl, buildGitHubBranchTreeUrl } from "@/git/github-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
+import { useSessionStore } from "@/stores/session-store";
+import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
 import type { Theme } from "@/styles/theme";
 import { filterTargetsForDaemonLocation } from "./workspace-open-targets";
+
+const FILE_MANAGER_TARGET_IDS = new Set<string>(["finder", "explorer", "file-manager"]);
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   cwd: string;
+  activeFile?: WorkspaceFileLocation | null;
   hideLabels?: boolean;
 }
 
@@ -80,6 +85,7 @@ function OpenTargetMenuItem({ target, isPreferred, onOpen }: OpenTargetMenuItemP
 export function WorkspaceOpenInEditorButton({
   serverId,
   cwd,
+  activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
   const toast = useToast();
@@ -87,6 +93,19 @@ export function WorkspaceOpenInEditorButton({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
+  const revealInFileManagerSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.revealInFileManager === true,
+  );
+
+  const resolvedFile = useMemo(
+    () =>
+      activeFile ? resolveWorkspaceFilePaths({ path: activeFile.path, workspaceRoot: cwd }) : null,
+    [activeFile, cwd],
+  );
+  const activeFileName = useMemo(
+    () => resolvedFile?.absolutePath.split("/").findLast(Boolean) ?? null,
+    [resolvedFile],
+  );
 
   const shouldQueryWorkspace =
     isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
@@ -131,23 +150,46 @@ export function WorkspaceOpenInEditorButton({
           if (!client) {
             throw new Error("Host is not connected");
           }
-          const payload = await client.openInEditor(cwd, editor.id);
+          const isFileManager = FILE_MANAGER_TARGET_IDS.has(editor.id);
+          let openPath = cwd;
+          let mode: OpenInEditorMode | undefined;
+          if (resolvedFile) {
+            if (!isFileManager) {
+              openPath = resolvedFile.absolutePath;
+            } else if (revealInFileManagerSupported) {
+              openPath = resolvedFile.absolutePath;
+              mode = "reveal";
+            }
+          }
+          const payload = await client.openInEditor(
+            openPath,
+            editor.id,
+            mode ? { mode } : undefined,
+          );
           if (payload.error) {
             throw new Error(payload.error);
           }
         },
       })),
-    [availableEditors, client, cwd],
+    [availableEditors, client, cwd, resolvedFile, revealInFileManagerSupported],
   );
 
   const githubTarget = useMemo<OpenTarget | null>(() => {
     if (!checkoutStatus?.isGit) {
       return null;
     }
-    const url = buildGitHubBranchTreeUrl({
-      remoteUrl: checkoutStatus.remoteUrl,
-      branch: checkoutStatus.currentBranch,
-    });
+    const url = resolvedFile?.relativePath
+      ? buildGitHubBlobUrl({
+          remoteUrl: checkoutStatus.remoteUrl,
+          branch: checkoutStatus.currentBranch,
+          path: resolvedFile.relativePath,
+          lineStart: activeFile?.lineStart,
+          lineEnd: activeFile?.lineEnd,
+        })
+      : buildGitHubBranchTreeUrl({
+          remoteUrl: checkoutStatus.remoteUrl,
+          branch: checkoutStatus.currentBranch,
+        });
     if (!url) {
       return null;
     }
@@ -158,7 +200,7 @@ export function WorkspaceOpenInEditorButton({
       requiresLocalDaemon: false,
       onOpen: () => openExternalUrl(url),
     };
-  }, [checkoutStatus]);
+  }, [checkoutStatus, resolvedFile, activeFile?.lineStart, activeFile?.lineEnd]);
 
   const targets = useMemo(
     () =>
@@ -229,7 +271,11 @@ export function WorkspaceOpenInEditorButton({
           onPress={handlePrimaryPress}
           disabled={openMutation.isPending}
           accessibilityRole="button"
-          accessibilityLabel={`Open workspace in ${primaryOption.label}`}
+          accessibilityLabel={
+            activeFileName
+              ? `Open ${activeFileName} in ${primaryOption.label}`
+              : `Open workspace in ${primaryOption.label}`
+          }
         >
           {openMutation.isPending ? (
             <ThemedActivityIndicator
