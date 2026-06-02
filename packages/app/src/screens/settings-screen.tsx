@@ -338,9 +338,7 @@ function GeneralSection({
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>
-              {t("settings.general.defaultSend.label")}
-            </Text>
+            <Text style={settingsStyles.rowTitle}>{t("settings.general.defaultSend.label")}</Text>
             <Text style={settingsStyles.rowHint}>
               {t("settings.general.defaultSend.description")}
             </Text>
@@ -358,7 +356,11 @@ function GeneralSection({
             <Text style={settingsStyles.rowHint}>{t("settings.general.language.description")}</Text>
           </View>
           <DropdownMenu>
-            <DropdownMenuTrigger style={themeTriggerStyle}>
+            <DropdownMenuTrigger
+              accessibilityRole="button"
+              accessibilityLabel={selectedLanguageLabel}
+              style={themeTriggerStyle}
+            >
               <Text style={styles.themeTriggerText}>{selectedLanguageLabel}</Text>
               <ChevronDown size={theme.iconSize.sm} color={iconColor} />
             </DropdownMenuTrigger>
@@ -377,9 +379,7 @@ function GeneralSection({
         {isDesktopApp ? (
           <View style={ROW_WITH_BORDER_STYLE}>
             <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.general.serviceUrls.label")}
-              </Text>
+              <Text style={settingsStyles.rowTitle}>{t("settings.general.serviceUrls.label")}</Text>
               <Text style={settingsStyles.rowHint}>
                 {t("settings.general.serviceUrls.description")}
               </Text>
