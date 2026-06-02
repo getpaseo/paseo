@@ -98,6 +98,7 @@ interface ProjectRowProps {
 }
 
 function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowProps) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { projectKey, projectName } = project;
 
@@ -122,7 +123,7 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
       style={rowStyle}
       onPress={handleNavigate}
       accessibilityRole="button"
-      accessibilityLabel={`Edit ${projectName}`}
+      accessibilityLabel={t("settings.projectList.editProject", { projectName })}
       testID={`project-row-${projectKey}`}
       data-selected={isSelected ? "true" : "false"}
     >

@@ -31,7 +31,7 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
   const { isPending, mutateAsync } = useMutation({
     mutationFn: async ({ mode }: RewindAgentInput) => {
       if (!input.client || !input.agentId || !input.messageId) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
       if (mode !== "files") {

@@ -345,6 +345,7 @@ function getWorkspaceArchiveStatus(
 }
 
 export function PrBadge({ hint }: { hint: PrHint }) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => {
@@ -368,7 +369,9 @@ export function PrBadge({ hint }: { hint: PrHint }) {
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={`Pull request #${hint.number}`}
+      accessibilityLabel={t("workspace.git.pr.accessibility.pullRequest", {
+        number: hint.number,
+      })}
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}

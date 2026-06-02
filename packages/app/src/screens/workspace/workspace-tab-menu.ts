@@ -1,4 +1,5 @@
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 
@@ -19,17 +20,17 @@ export interface WorkspaceTabMenuLabels {
 }
 
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
-  copyResumeCommand: "Copy resume command",
-  copyAgentId: "Copy agent id",
-  rename: "Rename",
-  closeAbove: "Close tabs above",
-  closeBelow: "Close tabs below",
-  closeLeft: "Close to the left",
-  closeRight: "Close to the right",
-  closeOthers: "Close other tabs",
-  reloadAgent: "Reload agent",
-  reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
-  close: "Close",
+  copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
+  copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
+  rename: i18n.t("workspace.tabs.menu.rename"),
+  closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
+  closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
+  closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
+  closeRight: i18n.t("workspace.tabs.menu.closeRight"),
+  closeOthers: i18n.t("workspace.tabs.menu.closeOthers"),
+  reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
+  reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
+  close: i18n.t("workspace.tabs.menu.close"),
 };
 
 export type WorkspaceTabMenuEntry =

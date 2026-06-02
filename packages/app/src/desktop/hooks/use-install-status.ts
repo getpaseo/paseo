@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   getCliInstallStatus,
   getSkillsStatus,
@@ -15,7 +16,6 @@ import {
   useDesktopIpcErrorReporter,
   useDesktopIpcQueryErrorToast,
 } from "@/desktop/hooks/desktop-ipc-error";
-import { i18n } from "@/i18n/i18next";
 
 const CLI_INSTALL_STATUS_QUERY_KEY = ["desktop", "integrations", "cli-install-status"] as const;
 const SKILLS_STATUS_QUERY_KEY = ["desktop", "integrations", "skills-status"] as const;
@@ -30,6 +30,7 @@ interface DesktopInstallHookResult {
 }
 
 export function useCliInstall(): DesktopInstallHookResult {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const reportError = useDesktopIpcErrorReporter();
   const enabled = shouldUseDesktopDaemon();
@@ -43,7 +44,7 @@ export function useCliInstall(): DesktopInstallHookResult {
   const { data: installStatus, error: statusError, isLoading, refetch } = statusQuery;
   useDesktopIpcQueryErrorToast({
     error: statusQuery.error,
-    message: i18n.t("desktop.integrations.cli.statusFailed"),
+    message: t("desktop.integrations.cli.statusFailed"),
     logLabel: "[Integrations] Failed to load CLI status",
   });
 
@@ -52,7 +53,7 @@ export function useCliInstall(): DesktopInstallHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: i18n.t("desktop.integrations.cli.installFailed"),
+        message: t("desktop.integrations.cli.installFailed"),
         logLabel: "[Integrations] Failed to install CLI",
       });
     },
@@ -89,6 +90,7 @@ export interface SkillsStatusHookResult {
 }
 
 export function useSkillsStatus(): SkillsStatusHookResult {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const reportError = useDesktopIpcErrorReporter();
   const enabled = shouldUseDesktopDaemon();
@@ -102,7 +104,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
   const { data: status, error: statusError, isLoading, refetch } = statusQuery;
   useDesktopIpcQueryErrorToast({
     error: statusQuery.error,
-    message: i18n.t("desktop.integrations.skills.statusFailed"),
+    message: t("desktop.integrations.skills.statusFailed"),
     logLabel: "[Integrations] Failed to load skills status",
   });
 
@@ -118,7 +120,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: i18n.t("desktop.integrations.skills.installFailed"),
+        message: t("desktop.integrations.skills.installFailed"),
         logLabel: "[Integrations] Failed to install skills",
       });
     },
@@ -130,7 +132,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: i18n.t("desktop.integrations.skills.updateFailed"),
+        message: t("desktop.integrations.skills.updateFailed"),
         logLabel: "[Integrations] Failed to update skills",
       });
     },
@@ -142,7 +144,7 @@ export function useSkillsStatus(): SkillsStatusHookResult {
     onError: (error) => {
       reportError({
         error,
-        message: i18n.t("desktop.integrations.skills.uninstallFailed"),
+        message: t("desktop.integrations.skills.uninstallFailed"),
         logLabel: "[Integrations] Failed to uninstall skills",
       });
     },

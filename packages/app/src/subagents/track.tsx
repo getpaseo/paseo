@@ -182,6 +182,7 @@ function SubagentArchiveButton({
   visible: boolean;
   onPress: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <View
       style={visible ? styles.archiveSlotVisible : styles.archiveSlotHidden}
@@ -191,7 +192,7 @@ function SubagentArchiveButton({
         <TooltipTrigger asChild disabled={!visible}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Archive ${displayLabel}`}
+            accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
             testID={`subagents-track-archive-${rowId}`}
             onPress={onPress}
             style={styles.archiveButton}
@@ -206,7 +207,7 @@ function SubagentArchiveButton({
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="top" align="center" offset={8}>
-          <Text style={styles.tooltipText}>Archive subagent</Text>
+          <Text style={styles.tooltipText}>{t("subagents.archiveTooltip")}</Text>
         </TooltipContent>
       </Tooltip>
     </View>

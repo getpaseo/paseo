@@ -411,13 +411,10 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
         <View style={styles.errorContent}>
           <View style={styles.errorHeader}>
             <PaseoLogo size={64} />
-            <Text style={styles.title}>Something went wrong</Text>
+            <Text style={styles.title}>{t("startup.errorTitle")}</Text>
           </View>
 
-          <Text style={styles.errorDescription}>
-            The local server failed to start. If this keeps happening, please report the issue on
-            GitHub and include the logs below.
-          </Text>
+          <Text style={styles.errorDescription}>{t("startup.errorDescription")}</Text>
 
           <Text dataSet={CODE_SURFACE_DATASET} style={styles.errorMessage}>
             {bootstrapState.splashError}

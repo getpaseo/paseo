@@ -1,6 +1,7 @@
 import { isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import { isWeb } from "@/constants/platform";
+import { i18n } from "@/i18n/i18next";
 
 export interface DesktopAppUpdateCheckResult {
   hasUpdate: boolean;
@@ -136,7 +137,7 @@ export async function installDesktopAppUpdate({
   return {
     installed: result.installed === true,
     version: toStringOrNull(result.version),
-    message: toStringOrNull(result.message) ?? "Update completed.",
+    message: toStringOrNull(result.message) ?? i18n.t("desktop.updates.status.installed"),
   };
 }
 

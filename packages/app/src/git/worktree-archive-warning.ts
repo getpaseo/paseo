@@ -1,4 +1,5 @@
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { i18n } from "@/i18n/i18next";
 
 export interface WorktreeArchiveRisk {
   isDirty?: boolean | null;
@@ -21,19 +22,25 @@ export interface WorktreeArchiveWarningLabels {
   unpushedCommit: (count: number) => string;
 }
 
-function pluralize(count: number, singular: string, plural = `${singular}s`): string {
-  return count === 1 ? singular : plural;
-}
-
 export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabels = {
-  title: (worktreeName) => `Archive "${worktreeName}"?`,
-  confirm: "Archive",
-  cancel: "Cancel",
-  uncommittedChanges: "Uncommitted changes",
-  uncommittedChangesWithDiff: (diffStat) => `Uncommitted changes (${diffStat})`,
-  addedLine: (count) => `${count} added ${pluralize(count, "line")}`,
-  deletedLine: (count) => `${count} deleted ${pluralize(count, "line")}`,
-  unpushedCommit: (count) => `${count} unpushed ${pluralize(count, "commit")}`,
+  title: (worktreeName) => i18n.t("workspace.git.actions.archiveWarning.title", { worktreeName }),
+  confirm: i18n.t("workspace.git.actions.archiveWarning.confirm"),
+  cancel: i18n.t("workspace.git.actions.archiveWarning.cancel"),
+  uncommittedChanges: i18n.t("workspace.git.actions.archiveWarning.uncommittedChanges"),
+  uncommittedChangesWithDiff: (diffStat) =>
+    i18n.t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
+  addedLine: (count) =>
+    count === 1
+      ? i18n.t("workspace.git.actions.archiveWarning.addedLine", { count })
+      : i18n.t("workspace.git.actions.archiveWarning.addedLines", { count }),
+  deletedLine: (count) =>
+    count === 1
+      ? i18n.t("workspace.git.actions.archiveWarning.deletedLine", { count })
+      : i18n.t("workspace.git.actions.archiveWarning.deletedLines", { count }),
+  unpushedCommit: (count) =>
+    count === 1
+      ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
+      : i18n.t("workspace.git.actions.archiveWarning.unpushedCommits", { count }),
 };
 
 function formatDiffStat(

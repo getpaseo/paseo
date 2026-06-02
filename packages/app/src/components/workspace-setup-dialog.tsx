@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { i18n } from "@/i18n/i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Composer } from "@/composer";
@@ -98,10 +97,13 @@ async function callWorkspaceCreation({
   return connectedClient.openProject(input.cwd);
 }
 
-function failureMessageForCreationMethod(method: "create_worktree" | "open_project") {
+function failureMessageForCreationMethod(
+  method: "create_worktree" | "open_project",
+  t: ReturnType<typeof useTranslation>["t"],
+) {
   return method === "create_worktree"
-    ? i18n.t("workspaceSetup.errors.failedCreateWorktree")
-    : i18n.t("workspaceSetup.errors.failedOpenProject");
+    ? t("workspaceSetup.errors.failedCreateWorktree")
+    : t("workspaceSetup.errors.failedOpenProject");
 }
 
 function buildCreateAgentOptions({
@@ -247,7 +249,7 @@ export function WorkspaceSetupDialog() {
 
       if (payload.error || !payload.workspace) {
         throw new Error(
-          payload.error ?? failureMessageForCreationMethod(pendingWorkspaceSetup.creationMethod),
+          payload.error ?? failureMessageForCreationMethod(pendingWorkspaceSetup.creationMethod, t),
         );
       }
 
@@ -290,7 +292,7 @@ export function WorkspaceSetupDialog() {
         const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
         const connectedClient = withConnectedClient();
         if (!composerState) {
-          throw new Error("Workspace setup composer state is required");
+          throw new Error(t("workspaceSetup.errors.composerStateRequired"));
         }
         if (!composerState.selectedProvider) {
           throw new Error(t("workspaceSetup.errors.selectModel"));

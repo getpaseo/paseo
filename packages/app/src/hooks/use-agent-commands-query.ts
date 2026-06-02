@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
@@ -65,6 +66,7 @@ export function useAgentCommandsQuery({
   enabled = true,
   draftConfig,
 }: UseAgentCommandsQueryOptions) {
+  const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
@@ -72,7 +74,7 @@ export function useAgentCommandsQuery({
     queryKey: agentCommandsQueryKey(serverId, agentId, draftConfig),
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return fetchAgentCommands({ client, agentId, draftConfig });
     },

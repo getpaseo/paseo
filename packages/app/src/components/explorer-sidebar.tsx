@@ -12,6 +12,7 @@ import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-nativ
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { PrPane } from "@/git/pr-pane";
 import { usePrPaneData } from "@/hooks/use-pr-pane-data";
@@ -418,6 +419,7 @@ function SidebarContent({
   onOpenFile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const padding = useWindowControlsPadding("explorerSidebar");
   const canQueryPullRequest = isGit && Boolean(workspaceRoot);
   const prPane = usePrPaneData({
@@ -448,7 +450,7 @@ function SidebarContent({
             <ExplorerTabButton
               tab="changes"
               active={resolvedTab === "changes"}
-              label="Changes"
+              label={t("workspace.tabs.explorer.changes")}
               onTabPress={onTabPress}
               testID="explorer-tab-changes"
             />
@@ -456,7 +458,7 @@ function SidebarContent({
           <ExplorerTabButton
             tab="files"
             active={resolvedTab === "files"}
-            label="Files"
+            label={t("workspace.tabs.explorer.files")}
             onTabPress={onTabPress}
             testID="explorer-tab-files"
           />

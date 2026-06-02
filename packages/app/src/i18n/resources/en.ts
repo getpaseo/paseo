@@ -31,6 +31,18 @@ export const en = {
       error: "Error",
       unableToSave: "Unable to save",
       nameRequired: "Name is required",
+      daemonUnavailable: "Daemon unavailable",
+      daemonClientUnavailable: "Daemon client unavailable",
+      daemonClientDisconnected: "Daemon client is disconnected",
+      noFileFound: "No file found for {{token}}",
+      unexpectedDictationError: "An unexpected error occurred while handling dictation.",
+    },
+    connectionStatus: {
+      online: "Online",
+      connecting: "Connecting",
+      offline: "Offline",
+      error: "Error",
+      idle: "Idle",
     },
   },
   shell: {
@@ -98,6 +110,17 @@ export const en = {
       removeBrowserElement: "Remove browser element attachment",
       openReview: "Open review attachment",
       removeReview: "Remove review attachment",
+    },
+    errors: {
+      failedToSend: "Failed to send message",
+      failedToCreateAgent: "Failed to create agent",
+      noHostSelected: "No host selected",
+      initialPromptRequired: "Initial prompt is required",
+      alreadyLoading: "Already loading",
+    },
+    clientCommands: {
+      archiveAgent: "Archive the current agent",
+      freshDraft: "Archive this agent and start a fresh draft",
     },
     github: {
       searching: "Searching...",
@@ -186,6 +209,7 @@ export const en = {
   agentList: {
     fallbackTitle: "New session",
     dateSections: {
+      recent: "Recent",
       today: "Today",
       yesterday: "Yesterday",
       thisWeek: "This week",
@@ -223,9 +247,17 @@ export const en = {
       closeImage: "Close image",
       imageLoadFailed: "Couldn't load image",
       imageUnavailable: "Image unavailable",
+      imagePreviewUnavailable: "Image preview unavailable.",
+      imagePreviewLoadFailed: "Unable to load image preview.",
       reviewOne: "Review · 1 comment",
       reviewMany: "Review · {{count}} comments",
       textAttachment: "Text attachment",
+    },
+    speak: {
+      header: "Spoke",
+    },
+    activity: {
+      details: "Details",
     },
     dictation: {
       start: "Start voice dictation",
@@ -322,6 +354,9 @@ export const en = {
         unavailable: "Workspace is unavailable",
         loading: "Loading files...",
       },
+      errors: {
+        failedToListDirectory: "Failed to list directory",
+      },
     },
     setup: {
       descriptor: {
@@ -373,6 +408,7 @@ export const en = {
     },
     terminal: {
       hostDisconnected: "Host is not connected",
+      unableToSubscribe: "Unable to subscribe to terminal",
     },
     tabs: {
       loading: "Loading...",
@@ -405,6 +441,8 @@ export const en = {
         reloadAgent: "Reload agent",
         reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
         close: "Close",
+        renameTerminal: "Rename terminal",
+        renameAgent: "Rename agent",
       },
       actions: {
         newAgent: "New agent tab",
@@ -419,6 +457,8 @@ export const en = {
         open: "Open explorer",
         close: "Close explorer",
         toggle: "Toggle explorer",
+        changes: "Changes",
+        files: "Files",
       },
       toasts: {
         copyFailed: "Copy failed",
@@ -664,6 +704,9 @@ export const en = {
           checks: "Checks",
           reviews: "Reviews",
         },
+        accessibility: {
+          pullRequest: "Pull request #{{number}}",
+        },
         states: {
           draft: "Draft",
           merged: "Merged",
@@ -678,6 +721,10 @@ export const en = {
         },
         time: {
           justNow: "just now",
+        },
+        errors: {
+          statusLoadFailed: "Unable to load pull request status",
+          activityLoadFailed: "Unable to load pull request activity",
         },
       },
     },
@@ -873,6 +920,10 @@ export const en = {
         restartWarning: "Upgrading the app will stop running agents and close terminal sessions.",
       },
     },
+    settings: {
+      loadFailed: "Unable to load desktop settings.",
+      saveFailed: "Unable to save desktop settings.",
+    },
     rosetta: {
       title: "Download the Apple Silicon build",
       runningIntel: "You're running the Intel build of Paseo under Rosetta on Apple Silicon.",
@@ -937,6 +988,9 @@ export const en = {
     },
   },
   startup: {
+    errorTitle: "Something went wrong",
+    errorDescription:
+      "The local server failed to start. If this keeps happening, please report the issue on GitHub and include the logs below.",
     logs: {
       loading: "Loading daemon logs...",
       unavailable: "No daemon logs available.",
@@ -1206,6 +1260,21 @@ export const en = {
     externalBrowser: "External browser",
     dontAskAgain: "Don't ask again",
   },
+  downloads: {
+    requestTokenFailed: "Failed to request download token.",
+    hostUnavailable: "Download host is unavailable.",
+    cancelled: "Download was cancelled.",
+    failed: "Failed to download file.",
+    shareFile: "Share file",
+    shareFileNamed: "Share {{fileName}}",
+  },
+  menu: {
+    backdrop: "Menu backdrop",
+  },
+  subagents: {
+    archiveAction: "Archive {{label}}",
+    archiveTooltip: "Archive subagent",
+  },
   panels: {
     draft: {
       newAgent: "New Agent",
@@ -1224,6 +1293,22 @@ export const en = {
     error: "Error",
     empty: "No additional details available",
     subAgentActivity: "Sub-agent activity",
+    input: "Input",
+    output: "Output",
+  },
+  renameModal: {
+    rename: "Rename",
+    saving: "Saving...",
+  },
+  sidebarCallout: {
+    dismiss: "Dismiss",
+  },
+  contextWindow: {
+    title: "Context window",
+    used: "{{percentage}}% used",
+    tokens: "{{used}} / {{max}} tokens",
+    sessionCost: "Session cost {{cost}}",
+    accessibility: "Context window {{percentage}}% used",
   },
   review: {
     comment: {
@@ -1254,7 +1339,9 @@ export const en = {
     projects: "Projects",
     projectList: {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
+      editProject: "Edit {{projectName}}",
     },
+    groupInfo: "About {{title}}",
     sections: {
       general: "General",
       daemon: "Daemon",

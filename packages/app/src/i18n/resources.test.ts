@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { en } from "./resources/en";
 import { zhCN } from "./resources/zh-CN";
@@ -11,9 +13,59 @@ function flattenKeys(value: unknown, prefix = ""): string[] {
   return entries.flatMap(([key, child]) => flattenKeys(child, prefix ? `${prefix}.${key}` : key));
 }
 
+const appSourceRoot = join(__dirname, "..");
+const untranslatedConnectionErrors = [
+  "Daemon unavailable",
+  "Daemon client unavailable",
+  "Daemon client not available",
+  "Daemon client is disconnected",
+  "Host is not connected",
+] as const;
+const untranslatedLocalFallbacks = [
+  "No file found for ",
+  "Unable to load pull request status",
+  "Unable to load pull request activity",
+  "An unexpected error occurred while handling dictation.",
+  "Unable to load desktop settings.",
+  "Unable to save desktop settings.",
+] as const;
+
+function collectSourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "i18n") {
+        return [];
+      }
+      return collectSourceFiles(path);
+    }
+    if (!/\.(ts|tsx)$/.test(entry.name) || /\.test\./.test(entry.name)) {
+      return [];
+    }
+    return [path];
+  });
+}
+
+function findUntranslatedConnectionErrors(): string[] {
+  return collectSourceFiles(appSourceRoot).flatMap((path) => {
+    const contents = readFileSync(path, "utf8");
+    const matches = [...untranslatedConnectionErrors, ...untranslatedLocalFallbacks].filter(
+      (text) => contents.includes(`"${text}"`) || contents.includes(`\`${text}`),
+    );
+    if (matches.length === 0) {
+      return [];
+    }
+    return [`${relative(appSourceRoot, path)}: ${matches.join(", ")}`];
+  });
+}
+
 describe("translation resources", () => {
   it("keeps Simplified Chinese keys in sync with English", () => {
     expect(flattenKeys(zhCN).sort()).toEqual(flattenKeys(en).sort());
+  });
+
+  it("keeps local connection fallback errors translated", () => {
+    expect(findUntranslatedConnectionErrors()).toEqual([]);
   });
 
   it("includes shared shell keys for the Batch 1 migration", () => {
@@ -263,6 +315,22 @@ describe("translation resources", () => {
     expect(en.common.states.copiedLabel).toBe("Copied {{label}}");
     expect(en.common.errors.unableToSave).toBe("Unable to save");
     expect(en.common.errors.nameRequired).toBe("Name is required");
+    expect(en.common.errors.daemonUnavailable).toBe("Daemon unavailable");
+    expect(en.common.errors.daemonClientUnavailable).toBe("Daemon client unavailable");
+    expect(en.common.errors.daemonClientDisconnected).toBe("Daemon client is disconnected");
+    expect(en.common.errors.noFileFound).toBe("No file found for {{token}}");
+    expect(en.common.errors.unexpectedDictationError).toBe(
+      "An unexpected error occurred while handling dictation.",
+    );
+    expect(en.common.connectionStatus.online).toBe("Online");
+    expect(en.common.connectionStatus.connecting).toBe("Connecting");
+    expect(en.common.connectionStatus.offline).toBe("Offline");
+    expect(en.common.connectionStatus.idle).toBe("Idle");
+    expect(en.agentList.dateSections.recent).toBe("Recent");
+    expect(en.message.attachments.imagePreviewUnavailable).toBe("Image preview unavailable.");
+    expect(en.message.attachments.imagePreviewLoadFailed).toBe("Unable to load image preview.");
+    expect(en.workspace.tabs.explorer.changes).toBe("Changes");
+    expect(en.workspace.tabs.explorer.files).toBe("Files");
     expect(en.branchSwitcher.uncommittedTitle).toBe("Uncommitted changes");
     expect(en.branchSwitcher.uncommittedMessage).toBe(
       "You have uncommitted changes. Stash them before switching branches?",
@@ -279,6 +347,19 @@ describe("translation resources", () => {
       "Workspace setup composer state is required",
     );
     expect(en.workspaceSetup.title).toBe("Create workspace");
+    expect(en.workspace.git.pr.errors.statusLoadFailed).toBe("Unable to load pull request status");
+    expect(en.workspace.git.pr.errors.activityLoadFailed).toBe(
+      "Unable to load pull request activity",
+    );
+    expect(en.desktop.settings.loadFailed).toBe("Unable to load desktop settings.");
+    expect(en.desktop.settings.saveFailed).toBe("Unable to save desktop settings.");
+    expect(en.toolCallDetails.input).toBe("Input");
+    expect(en.toolCallDetails.output).toBe("Output");
+    expect(en.renameModal.rename).toBe("Rename");
+    expect(en.renameModal.saving).toBe("Saving...");
+    expect(en.sidebarCallout.dismiss).toBe("Dismiss");
+    expect(en.contextWindow.title).toBe("Context window");
+    expect(en.contextWindow.used).toBe("{{percentage}}% used");
   });
 
   it("includes view-model and policy utility keys for the Batch 4N migration", () => {

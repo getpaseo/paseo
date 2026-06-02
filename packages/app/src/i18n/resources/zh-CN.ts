@@ -33,6 +33,18 @@ export const zhCN: TranslationResources = {
       error: "错误",
       unableToSave: "无法保存",
       nameRequired: "名称必填",
+      daemonUnavailable: "Daemon 不可用",
+      daemonClientUnavailable: "Daemon client 不可用",
+      daemonClientDisconnected: "Daemon client 已断开连接",
+      noFileFound: "未找到 {{token}} 对应的文件",
+      unexpectedDictationError: "处理听写时发生意外错误。",
+    },
+    connectionStatus: {
+      online: "在线",
+      connecting: "正在连接",
+      offline: "离线",
+      error: "错误",
+      idle: "空闲",
     },
   },
   shell: {
@@ -100,6 +112,17 @@ export const zhCN: TranslationResources = {
       removeBrowserElement: "移除浏览器元素附件",
       openReview: "打开 review 附件",
       removeReview: "移除 review 附件",
+    },
+    errors: {
+      failedToSend: "发送消息失败",
+      failedToCreateAgent: "创建 Agent 失败",
+      noHostSelected: "未选择 Host",
+      initialPromptRequired: "初始 prompt 必填",
+      alreadyLoading: "正在加载",
+    },
+    clientCommands: {
+      archiveAgent: "归档当前 Agent",
+      freshDraft: "归档此 Agent 并开始新的草稿",
     },
     github: {
       searching: "正在搜索...",
@@ -187,6 +210,7 @@ export const zhCN: TranslationResources = {
   agentList: {
     fallbackTitle: "新会话",
     dateSections: {
+      recent: "最近",
       today: "今天",
       yesterday: "昨天",
       thisWeek: "本周",
@@ -224,9 +248,17 @@ export const zhCN: TranslationResources = {
       closeImage: "关闭图片",
       imageLoadFailed: "无法加载图片",
       imageUnavailable: "图片不可用",
+      imagePreviewUnavailable: "图片预览不可用。",
+      imagePreviewLoadFailed: "无法加载图片预览。",
       reviewOne: "Review · 1 条评论",
       reviewMany: "Review · {{count}} 条评论",
       textAttachment: "文本附件",
+    },
+    speak: {
+      header: "已朗读",
+    },
+    activity: {
+      details: "详情",
     },
     dictation: {
       start: "开始语音听写",
@@ -323,6 +355,9 @@ export const zhCN: TranslationResources = {
         unavailable: "Workspace 不可用",
         loading: "正在加载文件...",
       },
+      errors: {
+        failedToListDirectory: "列出目录失败",
+      },
     },
     setup: {
       descriptor: {
@@ -374,6 +409,7 @@ export const zhCN: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host 未连接",
+      unableToSubscribe: "无法订阅 Terminal",
     },
     tabs: {
       loading: "正在加载...",
@@ -406,6 +442,8 @@ export const zhCN: TranslationResources = {
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
         close: "关闭",
+        renameTerminal: "重命名 Terminal",
+        renameAgent: "重命名 Agent",
       },
       actions: {
         newAgent: "新建 Agent 标签",
@@ -420,6 +458,8 @@ export const zhCN: TranslationResources = {
         open: "打开 explorer",
         close: "关闭 explorer",
         toggle: "切换 explorer",
+        changes: "变更",
+        files: "文件",
       },
       toasts: {
         copyFailed: "复制失败",
@@ -652,6 +692,9 @@ export const zhCN: TranslationResources = {
           checks: "Checks",
           reviews: "Reviews",
         },
+        accessibility: {
+          pullRequest: "Pull request #{{number}}",
+        },
         states: {
           draft: "Draft",
           merged: "已 merge",
@@ -666,6 +709,10 @@ export const zhCN: TranslationResources = {
         },
         time: {
           justNow: "刚刚",
+        },
+        errors: {
+          statusLoadFailed: "无法加载 Pull Request 状态",
+          activityLoadFailed: "无法加载 Pull Request 活动",
         },
       },
     },
@@ -856,6 +903,10 @@ export const zhCN: TranslationResources = {
         restartWarning: "升级 app 会停止正在运行的 agents，并关闭 terminal 会话。",
       },
     },
+    settings: {
+      loadFailed: "无法加载桌面设置。",
+      saveFailed: "无法保存桌面设置。",
+    },
     rosetta: {
       title: "下载 Apple Silicon 构建",
       runningIntel: "你正在 Apple Silicon 上通过 Rosetta 运行 Paseo 的 Intel 构建。",
@@ -918,6 +969,8 @@ export const zhCN: TranslationResources = {
     },
   },
   startup: {
+    errorTitle: "出现问题",
+    errorDescription: "本地服务器启动失败。如果持续发生，请在 GitHub 报告问题并附上下方日志。",
     logs: {
       loading: "正在加载 daemon 日志...",
       unavailable: "没有可用的 daemon 日志。",
@@ -1184,6 +1237,21 @@ export const zhCN: TranslationResources = {
     externalBrowser: "外部浏览器",
     dontAskAgain: "不再询问",
   },
+  downloads: {
+    requestTokenFailed: "请求下载 token 失败。",
+    hostUnavailable: "下载 Host 不可用。",
+    cancelled: "下载已取消。",
+    failed: "下载文件失败。",
+    shareFile: "共享文件",
+    shareFileNamed: "共享 {{fileName}}",
+  },
+  menu: {
+    backdrop: "菜单背景",
+  },
+  subagents: {
+    archiveAction: "归档 {{label}}",
+    archiveTooltip: "归档 subagent",
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",
@@ -1202,6 +1270,22 @@ export const zhCN: TranslationResources = {
     error: "错误",
     empty: "没有可用的更多详情",
     subAgentActivity: "Sub-agent 活动",
+    input: "输入",
+    output: "输出",
+  },
+  renameModal: {
+    rename: "重命名",
+    saving: "正在保存...",
+  },
+  sidebarCallout: {
+    dismiss: "关闭",
+  },
+  contextWindow: {
+    title: "上下文窗口",
+    used: "已使用 {{percentage}}%",
+    tokens: "{{used}} / {{max}} tokens",
+    sessionCost: "会话费用 {{cost}}",
+    accessibility: "上下文窗口已使用 {{percentage}}%",
   },
   review: {
     comment: {
@@ -1232,7 +1316,9 @@ export const zhCN: TranslationResources = {
     projects: "项目",
     projectList: {
       hostLoadFailed: "无法从 Host {{hostName}} 加载 projects：{{message}}",
+      editProject: "编辑 {{projectName}}",
     },
+    groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
       daemon: "Daemon",

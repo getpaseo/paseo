@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { i18n } from "@/i18n/i18next";
 import { formatConnectionStatus } from "@/utils/daemons";
 import type { WorkspaceRouteState } from "@/screens/workspace/workspace-route-state";
 
@@ -45,14 +44,15 @@ export function renderWorkspaceRouteGate(input: {
 
 function getWorkspaceHostStateTitle(
   state: Extract<WorkspaceRouteState, { kind: "unreachable" }>,
+  t: ReturnType<typeof useTranslation>["t"],
 ): string {
   if (state.connectionStatus === "connecting" || state.connectionStatus === "idle") {
-    return i18n.t("workspace.route.connecting");
+    return t("workspace.route.connecting");
   }
   if (state.connectionStatus === "offline") {
-    return i18n.t("workspace.route.hostOffline", { hostName: state.hostName });
+    return t("workspace.route.hostOffline", { hostName: state.hostName });
   }
-  return i18n.t("workspace.route.cannotReachHost", { hostName: state.hostName });
+  return t("workspace.route.cannotReachHost", { hostName: state.hostName });
 }
 
 function WorkspaceConnecting({ hostName }: { hostName: string }) {
@@ -89,7 +89,7 @@ function WorkspaceUnreachable({
         <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
       ) : null}
       <View style={styles.textStack}>
-        <Text style={styles.title}>{getWorkspaceHostStateTitle(state)}</Text>
+        <Text style={styles.title}>{getWorkspaceHostStateTitle(state, t)}</Text>
         <Text style={styles.description}>
           {state.connectionStatus === "connecting" || state.connectionStatus === "idle"
             ? state.hostName

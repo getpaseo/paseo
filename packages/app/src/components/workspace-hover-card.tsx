@@ -375,6 +375,7 @@ function ChecksSummaryContent({
   checks: NonNullable<PrHint["checks"]>;
   hovered: boolean;
 }) {
+  const { t } = useTranslation();
   const { passed, failed, pending } = getChecksSummaryCounts(checks);
 
   const labelStyle = hovered ? checksSummaryLabelHoveredCombined : styles.checksSummaryLabel;
@@ -387,7 +388,7 @@ function ChecksSummaryContent({
       ) : (
         <ThemedGitHubIcon size={12} uniProps={iconUniProps} />
       )}
-      <Text style={labelStyle}>Checks</Text>
+      <Text style={labelStyle}>{t("workspace.git.pr.sections.checks")}</Text>
       <View style={styles.checksSummaryCounts}>
         <ChecksSummaryPill count={passed} kind="passed" />
         <ChecksSummaryPill count={failed} kind="failed" />

@@ -43,7 +43,7 @@ export function useBranchSwitcher({
     queryKey: ["branchSuggestions", normalizedServerId, normalizedWorkspaceId],
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client unavailable");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       const payload = await client.getBranchSuggestions({
         cwd: normalizedWorkspaceId,

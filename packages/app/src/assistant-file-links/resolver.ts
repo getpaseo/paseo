@@ -4,6 +4,7 @@ import {
   type AssistantFileLinkClassification,
   type InlinePathTarget,
 } from "./parse";
+import { i18n } from "@/i18n/i18next";
 
 export interface AssistantFileLinkSource {
   href: string;
@@ -60,7 +61,7 @@ export interface FetchDaemonResolutionInput {
 
 export class UnresolvedFileLinkError extends Error {
   constructor(readonly token: string) {
-    super(`No file found for ${token}`);
+    super(i18n.t("common.errors.noFileFound", { token }));
     this.name = "UnresolvedFileLinkError";
   }
 }

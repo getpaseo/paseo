@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   type DesktopDaemonStatus,
   startDesktopDaemon,
@@ -16,7 +17,6 @@ import {
 } from "@/desktop/daemon/daemon-management-error";
 import { useDesktopIpcErrorReporter } from "@/desktop/hooks/desktop-ipc-error";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
-import { i18n } from "@/i18n/i18next";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { upsertDesktopDaemonConnection } from "@/runtime/daemon-start-service";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -39,6 +39,7 @@ interface UseBuiltInDaemonManagementResult {
 export function useBuiltInDaemonManagement(
   input: UseBuiltInDaemonManagementInput,
 ): UseBuiltInDaemonManagementResult {
+  const { t } = useTranslation();
   const { daemonStatus, settings, updateSettings, setStatus, refreshStatus } = input;
   const reportError = useDesktopIpcErrorReporter();
   const { mutate: toggleDaemonManagement, isPending: isUpdating } = useMutation<
@@ -51,10 +52,10 @@ export function useBuiltInDaemonManagement(
         const result = await executeDaemonManagementToggle(wasManagingDaemon, daemonStatus, {
           confirm: () =>
             confirmDialog({
-              title: i18n.t("desktop.daemon.management.pauseTitle"),
-              message: i18n.t("desktop.daemon.management.pauseMessage"),
-              confirmLabel: i18n.t("desktop.daemon.management.pauseAndStop"),
-              cancelLabel: i18n.t("common.actions.cancel"),
+              title: t("desktop.daemon.management.pauseTitle"),
+              message: t("desktop.daemon.management.pauseMessage"),
+              confirmLabel: t("desktop.daemon.management.pauseAndStop"),
+              cancelLabel: t("common.actions.cancel"),
               destructive: true,
             }),
           persistSettings: (next) => updateSettings(next) as Promise<void>,

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { CheckoutPrStatusResponse } from "@getpaseo/protocol/messages";
 import { checkoutPrStatusQueryKey } from "@/git/query-keys";
@@ -79,6 +80,7 @@ export function useCheckoutPrStatusQuery({
   cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -101,7 +103,7 @@ export function useCheckoutPrStatusQuery({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return await client.checkoutPrStatus(cwd);
     },
@@ -128,6 +130,7 @@ export function useWorkspacePrHint({
   cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions): PrHint | null {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -150,7 +153,7 @@ export function useWorkspacePrHint({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return await client.checkoutPrStatus(cwd);
     },

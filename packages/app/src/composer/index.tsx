@@ -1117,11 +1117,11 @@ export function Composer({
         return;
       }
       if (!sendAgentMessageRef.current) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments);
     },
-    [cwd, onMessageSent],
+    [cwd, onMessageSent, t],
   );
 
   useEffect(() => {
@@ -1135,7 +1135,7 @@ export function Composer({
       sendAttachments: ComposerAttachment[],
     ) => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const stream: AgentStreamWriter = {
         getTail: (id) => useSessionStore.getState().sessions[serverId]?.agentStreamTail?.get(id),
@@ -1153,7 +1153,7 @@ export function Composer({
       });
       onAttentionPromptSend?.();
     };
-  }, [client, onAttentionPromptSend, serverId, setAgentStreamTail, setAgentStreamHead]);
+  }, [client, onAttentionPromptSend, serverId, setAgentStreamTail, setAgentStreamHead, t]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -1228,6 +1228,7 @@ export function Composer({
         onSubmitError: (error) => {
           console.error("[AgentInput] Failed to send message:", error);
         },
+        failedToSendMessage: t("composer.errors.failedToSend"),
       });
       completeSubmit({
         result,
@@ -1245,6 +1246,7 @@ export function Composer({
       setUserInput,
       submitBehavior,
       submitMessage,
+      t,
     ],
   );
 
@@ -1423,12 +1425,13 @@ export function Composer({
         queue: queueWriter,
         submitMessage: ({ text, attachments: queuedAttachments }) =>
           submitMessage(text, queuedAttachments),
+        failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage],
+    [agentId, queueWriter, submitMessage, t],
   );
 
   const handleQueue = useCallback(

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -11,7 +12,6 @@ import {
 import {
   classifyForResolution,
   fetchDaemonResolution,
-  UnresolvedFileLinkError,
   type AssistantFileLinkResolution,
   type AssistantFileLinkSource,
 } from "./resolver";
@@ -40,6 +40,7 @@ type AssistantFileLinkQueryKey = readonly [
 const DISABLED_QUERY_KEY = ["assistantFileLink", null, null, ""] as const;
 
 export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult {
+  const { t } = useTranslation();
   const context = useAssistantFileLinkResolverContext();
   const queryClient = useQueryClient();
   const stableSource = useStableSource(source);
@@ -91,6 +92,7 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
         disposition,
         context,
         queryClient,
+        formatNoFileFoundMessage: (token) => t("common.errors.noFileFound", { token }),
       });
     },
   );
@@ -163,6 +165,7 @@ function openAssistantFileLink(input: {
   disposition: OpenFileDisposition;
   context: AssistantFileLinkResolverContextValue;
   queryClient: ReturnType<typeof useQueryClient>;
+  formatNoFileFoundMessage: (token: string) => string;
 }): void {
   const capturedConfig = input.context.configRef.current;
   const capturedResolution = classifyForResolution(input.source, {
@@ -211,7 +214,7 @@ function openAssistantFileLink(input: {
     } catch (error) {
       await dispatchUnresolvedError({
         error,
-        fallbackToken: capturedResolution.token,
+        noFileFoundMessage: input.formatNoFileFoundMessage(capturedResolution.token),
         capturedServerId: capturedConfig.serverId,
         capturedWorkspaceRoot: capturedConfig.workspaceRoot,
         context: input.context,
@@ -322,7 +325,7 @@ async function dispatchExternalUrl(input: {
 
 async function dispatchUnresolvedError(input: {
   error: unknown;
-  fallbackToken: string;
+  noFileFoundMessage: string;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
   context: AssistantFileLinkResolverContextValue;
@@ -334,9 +337,7 @@ async function dispatchUnresolvedError(input: {
   ) {
     return;
   }
-  const token =
-    input.error instanceof UnresolvedFileLinkError ? input.error.token : input.fallbackToken;
-  current.toast?.show(`No file found for ${token}`, {
+  current.toast?.show(input.noFileFoundMessage, {
     variant: "error",
     testID: "assistant-file-link-not-found-toast",
   });

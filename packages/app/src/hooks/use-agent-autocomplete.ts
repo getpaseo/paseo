@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import {
   useAgentCommandsQuery,
@@ -11,7 +13,6 @@ import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
-import { i18n } from "@/i18n/i18next";
 import {
   applySlashCommandReplacement,
   filterAndRankCommandAutocompleteEntries,
@@ -116,13 +117,14 @@ function mapDirectorySuggestionsToEntries(payload: {
   }));
 }
 
-function mapCommandToOption(entry: AvailableCommand): AgentAutocompleteOption {
+function mapCommandToOption(entry: AvailableCommand, t: TFunction): AgentAutocompleteOption {
   const command = entry.command;
   const base = {
     id: command.name,
     label: `/${command.name}`,
     detail: command.argumentHint || undefined,
-    description: command.description,
+    description:
+      entry.source === "client" ? t(entry.command.descriptionKey) : entry.command.description,
     kind: "command" as const,
   };
   if (entry.source === "client") {
@@ -149,6 +151,7 @@ interface BuildAutocompleteOptionsInput {
   activeSlashCommand: SlashCommandRange | null;
   activeFileMention: FileMentionRange | null;
   fileSuggestions: DirectorySuggestionEntry[];
+  t: TFunction;
 }
 
 function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
@@ -178,7 +181,7 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
       input.commandFilterQuery,
     );
     const orderedMatches = orderAutocompleteOptions(matches);
-    return orderedMatches.map(mapCommandToOption);
+    return orderedMatches.map((entry) => mapCommandToOption(entry, input.t));
   }
 
   const activeFileMention = input.activeFileMention;
@@ -259,10 +262,11 @@ function resolveAutocompleteErrorMessage(args: {
   isCommandError: boolean;
   commandError: Error | null;
   fileSuggestionsError: unknown;
+  t: TFunction;
 }): string | undefined {
   if (args.mode === "command") {
     return args.isCommandError
-      ? (args.commandError?.message ?? i18n.t("agentAutocomplete.failedToLoad"))
+      ? (args.commandError?.message ?? args.t("agentAutocomplete.failedToLoad"))
       : undefined;
   }
   if (args.mode === "file") {
@@ -274,6 +278,7 @@ function resolveAutocompleteErrorMessage(args: {
 }
 
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
+  const { t } = useTranslation();
   const {
     userInput,
     cursorIndex,
@@ -369,7 +374,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     ],
     queryFn: async (): Promise<DirectorySuggestionEntry[]> => {
       if (!client) {
-        throw new Error("Daemon client unavailable");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       const response = await client.getDirectorySuggestions({
         cwd: autocompleteCwd,
@@ -405,6 +410,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         isDraftContext,
         isVisible,
         mode,
+        t,
       }),
     [
       activeFileMention,
@@ -415,6 +421,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       isDraftContext,
       isVisible,
       mode,
+      t,
     ],
   );
 
@@ -491,14 +498,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     isCommandError: isError,
     commandError: error,
     fileSuggestionsError: fileSuggestionsQuery.error,
+    t,
   });
 
   const loadingText =
     mode === "file"
-      ? i18n.t("agentAutocomplete.searchingWorkspace")
-      : i18n.t("agentAutocomplete.loadingCommands");
+      ? t("agentAutocomplete.searchingWorkspace")
+      : t("agentAutocomplete.loadingCommands");
   const emptyText =
-    mode === "file" ? i18n.t("agentAutocomplete.noFiles") : i18n.t("agentAutocomplete.noCommands");
+    mode === "file" ? t("agentAutocomplete.noFiles") : t("agentAutocomplete.noCommands");
 
   return {
     isVisible,

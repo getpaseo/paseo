@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type {
   CheckoutPrStatusResponse,
@@ -9,6 +10,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { mapPrPaneData, type PrPaneData } from "@/git/pr-pane-data";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { prPaneTimelineQueryKey } from "@/git/query-keys";
+import { i18n } from "@/i18n/i18next";
 
 type CheckoutPrStatus = CheckoutPrStatusResponse["payload"]["status"];
 type CheckoutPrStatusPayloadError = CheckoutPrStatusResponse["payload"]["error"];
@@ -153,6 +155,8 @@ export interface SelectPrPaneStateInput {
   timelineError: Error | null;
   timelineIsLoading: boolean;
   timelineIsFetching: boolean;
+  statusLoadFailedLabel?: string;
+  activityLoadFailedLabel?: string;
 }
 
 export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataResult {
@@ -176,6 +180,10 @@ export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataR
       statusError: input.statusError,
       timelineError: input.timelineError,
       timelinePayloadError: input.timelinePayload?.error ?? null,
+      statusLoadFailedLabel:
+        input.statusLoadFailedLabel ?? i18n.t("workspace.git.pr.errors.statusLoadFailed"),
+      activityLoadFailedLabel:
+        input.activityLoadFailedLabel ?? i18n.t("workspace.git.pr.errors.activityLoadFailed"),
     }),
     githubFeaturesEnabled: input.githubFeaturesEnabled,
   };
@@ -187,6 +195,7 @@ export function usePrPaneData({
   enabled = true,
   timelineEnabled = enabled,
 }: UsePrPaneDataOptions): UsePrPaneDataResult {
+  const { t } = useTranslation();
   const daemonClient = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, cwd, enabled });
@@ -221,7 +230,7 @@ export function usePrPaneData({
         identity.repoOwner === null ||
         identity.repoName === null
       ) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return fetchPrPaneTimelinePage({
         client: daemonClient,
@@ -255,6 +264,8 @@ export function usePrPaneData({
     timelineError: timelineQuery.error,
     timelineIsLoading: timelineQuery.isLoading,
     timelineIsFetching: timelineQuery.isFetching,
+    statusLoadFailedLabel: t("workspace.git.pr.errors.statusLoadFailed"),
+    activityLoadFailedLabel: t("workspace.git.pr.errors.activityLoadFailed"),
   });
 }
 
@@ -263,14 +274,18 @@ function firstNonSuppressedError({
   statusError,
   timelineError,
   timelinePayloadError,
+  statusLoadFailedLabel,
+  activityLoadFailedLabel,
 }: {
   statusPayloadError: CheckoutPrStatusPayloadError;
   statusError: Error | null;
   timelineError: Error | null;
   timelinePayloadError: PullRequestTimeline["error"];
+  statusLoadFailedLabel: string;
+  activityLoadFailedLabel: string;
 }): Error | null {
   if (statusPayloadError) {
-    return new Error(statusPayloadError.message || "Unable to load pull request status");
+    return new Error(statusPayloadError.message || statusLoadFailedLabel);
   }
 
   if (statusError) {
@@ -282,7 +297,7 @@ function firstNonSuppressedError({
   }
 
   if (timelinePayloadError) {
-    return new Error(timelinePayloadError.message || "Unable to load pull request activity");
+    return new Error(timelinePayloadError.message || activityLoadFailedLabel);
   }
 
   return null;

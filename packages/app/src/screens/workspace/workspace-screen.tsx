@@ -15,7 +15,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { i18n } from "@/i18n/i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   CopyX,
@@ -1580,6 +1579,7 @@ function useWorkspaceCheckoutStatus(input: {
   normalizedWorkspaceId: string;
   workspaceDirectory: string | null;
 }) {
+  const { t } = useTranslation();
   const isCheckoutQueryEnabled = useMemo(
     () =>
       canCreateWorkspaceTerminal({
@@ -1598,7 +1598,7 @@ function useWorkspaceCheckoutStatus(input: {
     enabled: isCheckoutQueryEnabled,
     queryFn: async () => {
       if (!input.client || !input.workspaceDirectory) {
-        throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return await input.client.getCheckoutStatus(input.workspaceDirectory);
     },

@@ -1,5 +1,6 @@
 import type { SubscribeTerminalRequest, TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalOutputData } from "./terminal-emulator-runtime";
+import { i18n } from "@/i18n/i18next";
 
 export interface TerminalStreamControllerClient {
   subscribeTerminal: (
@@ -127,7 +128,8 @@ export class TerminalStreamController {
         this.options.onStatusChange?.({
           terminalId: nextTerminalId,
           isAttaching: false,
-          error: error instanceof Error ? error.message : "Unable to subscribe to terminal",
+          error:
+            error instanceof Error ? error.message : i18n.t("workspace.terminal.unableToSubscribe"),
         });
       });
   }

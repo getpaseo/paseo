@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -130,6 +131,8 @@ async function submitDraftCreateRequest(input: {
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
   };
+  hostDisconnectedMessage: string;
+  selectModelMessage: string;
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
   const {
     attempt,
@@ -146,12 +149,12 @@ async function submitDraftCreateRequest(input: {
   invariant(workspaceDirectory, "Workspace directory is required");
   invariant(workspaceExecutionAuthority, "Workspace authority is required");
   if (!client) {
-    throw new Error("Host is not connected");
+    throw new Error(input.hostDisconnectedMessage);
   }
 
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
   if (!provider) {
-    throw new Error("Select a model");
+    throw new Error(input.selectModelMessage);
   }
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
@@ -199,6 +202,7 @@ function buildDraftAgentSnapshot(input: {
     selectedProvider: string | null;
     agentControls: { features?: Agent["features"] };
   };
+  selectModelMessage: string;
 }): Agent {
   const { attempt, serverId, tabId, workspaceDirectory, autoSubmitConfig, composerState } = input;
   invariant(workspaceDirectory, "Workspace directory is required");
@@ -213,7 +217,7 @@ function buildDraftAgentSnapshot(input: {
   });
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
   if (!provider) {
-    throw new Error("Select a model");
+    throw new Error(input.selectModelMessage);
   }
   return {
     serverId,
@@ -309,6 +313,7 @@ export function WorkspaceDraftAgentTab({
   onOpenWorkspaceFile,
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -456,6 +461,7 @@ export function WorkspaceDraftAgentTab({
         workspaceDirectory: draftWorkingDirectory,
         autoSubmitConfig,
         composerState,
+        selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
     createRequest: async ({ attempt, text, images, attachments }) =>
       submitDraftCreateRequest({
@@ -468,6 +474,8 @@ export function WorkspaceDraftAgentTab({
         workspaceExecutionAuthority,
         autoSubmitConfig,
         composerState,
+        hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
+        selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");

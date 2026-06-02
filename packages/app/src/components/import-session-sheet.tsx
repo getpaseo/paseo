@@ -15,6 +15,7 @@ import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/com
 import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { i18n } from "@/i18n/i18next";
 import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
@@ -64,8 +65,10 @@ function buildSessionsQueriesConfig(args: {
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   cwd: string | null | undefined;
+  hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, sessionsQueryRoot, visible, client, cwd } = args;
+  const { providersToFetch, sessionsQueryRoot, visible, client, cwd, hostDisconnectedMessage } =
+    args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
@@ -73,7 +76,7 @@ function buildSessionsQueriesConfig(args: {
     enabled,
     queryFn: async () => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
       }
       return await client.fetchRecentProviderSessions({
         ...(cwd ? { cwd } : {}),
@@ -293,8 +296,9 @@ export function ImportSessionSheet({
         visible,
         client,
         cwd,
+        hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, sessionsQueryRoot, visible, client, cwd],
+    [providersToFetch, sessionsQueryRoot, visible, client, cwd, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -395,7 +399,7 @@ export function ImportSessionSheet({
   const importMutation = useMutation({
     mutationFn: async (entry: FetchRecentProviderSessionEntry) => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       if (!entry.cwd) {
         throw new Error("Session is missing a working directory");

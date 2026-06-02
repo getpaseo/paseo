@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey } from "./agent-history-query-key";
 
@@ -382,6 +383,7 @@ export function usePendingArchiveAgentIds(serverId: string): ReadonlySet<string>
 
 export function useArchiveAgent() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   const pendingQuery = useArchiveAgentPendingQuery();
 
@@ -389,7 +391,7 @@ export function useArchiveAgent() {
     mutationFn: async (input: ArchiveAgentInput): Promise<{ archivedAt: string }> => {
       const client = useSessionStore.getState().sessions[input.serverId]?.client ?? null;
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return await client.archiveAgent(input.agentId);
     },

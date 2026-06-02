@@ -28,7 +28,7 @@ export function AdaptiveRenameModal({
   title,
   initialValue,
   placeholder,
-  submitLabel = "Rename",
+  submitLabel,
   onClose,
   onSubmit,
   validate,
@@ -150,7 +150,7 @@ export function AdaptiveRenameModal({
             disabled={isPending}
             testID={cancelTestID}
           >
-            Cancel
+            {t("common.actions.cancel")}
           </Button>
           <Button
             variant="default"
@@ -160,7 +160,7 @@ export function AdaptiveRenameModal({
             disabled={submitDisabled}
             testID={submitTestID}
           >
-            {isPending ? "Saving..." : submitLabel}
+            {isPending ? t("renameModal.saving") : (submitLabel ?? t("renameModal.rename"))}
           </Button>
         </View>
       </View>

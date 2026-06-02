@@ -1,5 +1,6 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { i18n } from "@/i18n/i18next";
 
 export interface BulkClosableTabGroups {
   agentTabs: Array<{ tabId: string; agentId: string }>;
@@ -122,7 +123,7 @@ export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput)
       });
   } else if (hasDestructiveTabs) {
     warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, {
-      error: new Error("Daemon client not available"),
+      error: new Error(i18n.t("common.errors.daemonClientUnavailable")),
     });
   }
 

@@ -1,5 +1,6 @@
 import { generateMessageId } from "@/types/stream";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { i18n } from "@/i18n/i18next";
 
 const MAX_CHUNKS_PER_FLUSH_TURN = 128;
 
@@ -178,10 +179,10 @@ export class DictationStreamSender {
   async finish(finalSeq: number): Promise<DictationFinishResult> {
     const client = this.client;
     if (!client) {
-      throw new Error("Daemon client unavailable");
+      throw new Error(i18n.t("common.errors.daemonClientUnavailable"));
     }
     if (!client.isConnected) {
-      throw new Error("Daemon client is disconnected");
+      throw new Error(i18n.t("common.errors.daemonClientDisconnected"));
     }
 
     if (!this.dictationId) {
