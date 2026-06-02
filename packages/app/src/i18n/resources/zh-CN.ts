@@ -532,6 +532,8 @@ export const zhCN: TranslationResources = {
       actions: {
         menu: "Project 操作",
         openSettings: "打开 project 设置",
+        openNewWindow: "在新窗口中打开",
+        openNewWindowFailed: "无法打开新窗口",
         remove: "移除 project",
         removing: "正在移除...",
       },

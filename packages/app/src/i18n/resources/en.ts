@@ -544,6 +544,8 @@ export const en = {
       actions: {
         menu: "Project actions",
         openSettings: "Open project settings",
+        openNewWindow: "Open in new window",
+        openNewWindowFailed: "Couldn't open a new window",
         remove: "Remove project",
         removing: "Removing...",
       },
