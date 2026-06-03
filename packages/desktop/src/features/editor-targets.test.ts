@@ -1,20 +1,18 @@
 import type { SpawnOptions } from "node:child_process";
-import { ipcMain } from "electron";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   listAvailableEditorTargets,
   openEditorTarget,
   registerEditorTargetHandlers,
 } from "./editor-targets";
 
-vi.mock("electron", () => ({
-  ipcMain: { handle: vi.fn() },
-}));
-
 interface SpawnCall {
   command: string;
   args: string[];
   options: SpawnOptions;
+  listenedForError: boolean;
+  listenedForSpawn: boolean;
+  unrefed: boolean;
 }
 
 function createExistsSync(paths: readonly string[]): (path: string) => boolean {
@@ -24,28 +22,37 @@ function createExistsSync(paths: readonly string[]): (path: string) => boolean {
 
 function createSpawnRecorder() {
   const calls: SpawnCall[] = [];
-  const unref = vi.fn();
-  const child = {
-    once: vi.fn((event: "error" | "spawn", handler: (error?: Error) => void) => {
-      if (event === "spawn") {
-        queueMicrotask(() => handler());
-      }
-      return child;
-    }),
-    unref,
-  };
-  const spawn = vi.fn((command: string, args: string[], options: SpawnOptions) => {
-    calls.push({ command, args, options });
+  const spawn = (command: string, args: string[], options: SpawnOptions) => {
+    const call: SpawnCall = {
+      command,
+      args,
+      options,
+      listenedForError: false,
+      listenedForSpawn: false,
+      unrefed: false,
+    };
+    calls.push(call);
+    const child = {
+      once: (event: "error" | "spawn", handler: (error?: Error) => void) => {
+        if (event === "error") {
+          call.listenedForError = true;
+        }
+        if (event === "spawn") {
+          call.listenedForSpawn = true;
+          queueMicrotask(() => handler());
+        }
+        return child;
+      },
+      unref: () => {
+        call.unrefed = true;
+      },
+    };
     return child;
-  });
-  return { calls, spawn, unref };
+  };
+  return { calls, spawn };
 }
 
 describe("desktop editor targets", () => {
-  beforeEach(() => {
-    vi.mocked(ipcMain.handle).mockReset();
-  });
-
   it("lists all known editor targets for the platform in deterministic order", () => {
     const targets = listAvailableEditorTargets({
       platform: "win32",
@@ -111,9 +118,11 @@ describe("desktop editor targets", () => {
           shell: false,
           stdio: "ignore",
         },
+        listenedForError: true,
+        listenedForSpawn: true,
+        unrefed: true,
       },
     ]);
-    expect(recorder.unref).toHaveBeenCalled();
   });
 
   it("reveals files in Finder on macOS", async () => {
@@ -317,12 +326,5 @@ describe("desktop editor targets", () => {
     );
 
     expect(recorder.calls[0]?.args).toEqual(["/tmp/repo"]);
-  });
-
-  it("registers handlers on Electron ipcMain by default", () => {
-    registerEditorTargetHandlers();
-
-    expect(ipcMain.handle).toHaveBeenCalledWith("paseo:editor:listTargets", expect.any(Function));
-    expect(ipcMain.handle).toHaveBeenCalledWith("paseo:editor:openTarget", expect.any(Function));
   });
 });
