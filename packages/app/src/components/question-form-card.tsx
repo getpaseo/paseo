@@ -16,7 +16,6 @@ import { isWeb } from "@/constants/platform";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
-  isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -297,9 +296,6 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     ? Math.min(activeQuestionIndex, questions.length - 1)
     : 0;
   const activeQuestion = questions?.[resolvedActiveQuestionIndex];
-  const activeQuestionAnswered = activeQuestion
-    ? isQuestionAnswered(activeQuestion, resolvedActiveQuestionIndex, selections, otherTexts)
-    : false;
 
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
@@ -340,14 +336,6 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     });
   }, [questions, onRespond, otherTexts, permission.request.input, selections]);
 
-  const handlePrimaryAction = useCallback(() => {
-    if (!questions || !activeQuestionAnswered || isResponding) return;
-    if (resolvedActiveQuestionIndex < questions.length - 1) {
-      setActiveQuestionIndex(resolvedActiveQuestionIndex + 1);
-      return;
-    }
-    handleSubmit();
-  }, [activeQuestionAnswered, handleSubmit, isResponding, questions, resolvedActiveQuestionIndex]);
   const handleSelectQuestion = useCallback((index: number) => {
     setActiveQuestionIndex(index);
   }, []);
@@ -364,11 +352,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     [theme.colors.surface2, theme.colors.surface1, theme.colors.borderAccent],
   );
 
-  const submitDisabled =
-    isResponding ||
-    (resolvedActiveQuestionIndex < (questions?.length ?? 0) - 1
-      ? !activeQuestionAnswered
-      : !allAnswered);
+  const submitDisabled = !allAnswered || isResponding;
   const submitButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.actionButton,
@@ -474,7 +458,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
               placeholder={getQuestionInputPlaceholder(activeQuestion)}
               isResponding={isResponding}
               onChange={setOtherText}
-              onSubmit={handlePrimaryAction}
+              onSubmit={handleSubmit}
             />
           ) : null}
         </View>
@@ -501,7 +485,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
         <Pressable
           style={submitButtonStyle}
-          onPress={handlePrimaryAction}
+          onPress={handleSubmit}
           disabled={submitDisabled}
           accessibilityRole="button"
           accessibilityLabel="Submit"
