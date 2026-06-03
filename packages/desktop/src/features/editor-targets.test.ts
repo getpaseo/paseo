@@ -203,7 +203,7 @@ describe("desktop editor targets", () => {
     });
   });
 
-  it("escapes Windows shell metacharacters for command-script editor wrappers", async () => {
+  it("quotes Windows command-script paths without corrupting metacharacters", async () => {
     const recorder = createSpawnRecorder();
 
     await openEditorTarget(
@@ -214,19 +214,45 @@ describe("desktop editor targets", () => {
       },
       {
         platform: "win32",
-        env: { PATH: "C:/Program Files/Editors/bin" },
+        env: { PATH: "C:/Program Files/Editors & Tools/bin" },
         existsSync: createExistsSync([
           "C:/repo/src/file & calculator.ts",
           "C:/repo & workspace",
-          "C:/Program Files/Editors/bin/code.cmd",
+          "C:/Program Files/Editors & Tools/bin/code.cmd",
         ]),
         spawn: recorder.spawn,
       },
     );
 
     expect(recorder.calls[0]).toMatchObject({
-      command: '"C:/Program Files/Editors/bin/code.cmd"',
-      args: ['"C:/repo ^& workspace"', '"C:/repo/src/file ^& calculator.ts"'],
+      command: '"C:/Program Files/Editors & Tools/bin/code.cmd"',
+      args: ['"C:/repo & workspace"', '"C:/repo/src/file & calculator.ts"'],
+      options: { shell: true },
+    });
+  });
+
+  it("quotes Windows command-script values that contain shell metacharacters", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      {
+        editorId: "vscode",
+        path: "C:/repo/src/file&calculator.ts",
+      },
+      {
+        platform: "win32",
+        env: { PATH: "C:/Editors&Tools/bin" },
+        existsSync: createExistsSync([
+          "C:/repo/src/file&calculator.ts",
+          "C:/Editors&Tools/bin/code.cmd",
+        ]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    expect(recorder.calls[0]).toMatchObject({
+      command: '"C:/Editors&Tools/bin/code.cmd"',
+      args: ['"C:/repo/src/file&calculator.ts"'],
       options: { shell: true },
     });
   });

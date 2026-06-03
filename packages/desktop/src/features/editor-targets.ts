@@ -198,16 +198,15 @@ function isWindowsCommandScript(executable: string, platform: NodeJS.Platform): 
 function escapeWindowsCmdValue(value: string): string {
   const isQuoted = value.startsWith('"') && value.endsWith('"');
   const unquoted = isQuoted ? value.slice(1, -1) : value;
-  const escaped = unquoted.replace(/([&|^<>()!])/g, "^$1");
 
-  if (isQuoted || /[\s"]/u.test(unquoted)) {
-    const quoted = escaped
+  if (isQuoted || /[\s"&|^<>()!]/u.test(unquoted)) {
+    const quoted = unquoted
       .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
       .replace(/\\+$/u, (slashes) => `${slashes}${slashes}`);
     return `"${quoted}"`;
   }
 
-  return escaped;
+  return unquoted;
 }
 
 function createSpawnLaunch(launch: Launch, platform: NodeJS.Platform): SpawnLaunch {
