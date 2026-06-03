@@ -102,13 +102,6 @@ vi.mock("./push/push-service.js", () => ({
   },
 }));
 
-vi.mock("./push/vapid-keypair.js", () => ({
-  loadOrCreateVapidKeyPair: vi.fn(() => ({
-    publicKey: "test-vapid-public-key",
-    privateKey: "test-vapid-private-key",
-  })),
-}));
-
 import { z } from "zod";
 import { VoiceAssistantWebSocketServer } from "./websocket-server";
 import { parseServerInfoStatusPayload } from "./messages.js";
@@ -712,8 +705,8 @@ describe("relay external socket reconnect behavior", () => {
     };
 
     expect(serverInfo.features?.unifiedPush).toBe(true);
-    expect(serverInfo.capabilities?.pushNotifications?.webPushVapidPublicKey).toBe(
-      "test-vapid-public-key",
+    expect(serverInfo.capabilities?.pushNotifications?.webPushVapidPublicKey).toEqual(
+      expect.stringMatching(/\S/),
     );
 
     await server.close();

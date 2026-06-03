@@ -61,7 +61,7 @@ export class PushService {
   private readonly logger: pino.Logger;
   private readonly tokenStore: PushTokenStore;
   private readonly expoSend: (messages: ExpoPushMessage[]) => Promise<ExpoPushTicket[]>;
-  private readonly webPushSend: PushServiceTransports["webPushSend"];
+  private readonly webPushSend: NonNullable<PushServiceTransports["webPushSend"]>;
   private readonly validateWebPushEndpoint: (endpoint: string) => Promise<void>;
   private readonly vapid: WebPushVapidDetails | null;
 
@@ -131,7 +131,7 @@ export class PushService {
       if (!this.vapid) {
         throw new Error("Missing VAPID configuration for Web Push notification");
       }
-      await this.webPushSend?.(
+      await this.webPushSend(
         {
           endpoint: subscription.endpoint,
           keys: subscription.keys,

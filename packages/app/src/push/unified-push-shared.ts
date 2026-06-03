@@ -64,6 +64,10 @@ export function getUnifiedPushRegistrationConfig(
   return { enabled: true, vapidPublicKey: key.trim() };
 }
 
+export function getUnifiedPushRegistrationTarget(input: UnifiedPushPlatformInput): string | null {
+  return getUnifiedPushRegistrationConfig(input).vapidPublicKey;
+}
+
 export function selectUnifiedPushDistributor(
   distributors: UnifiedPushDistributor[],
   savedDistributor: string | null,

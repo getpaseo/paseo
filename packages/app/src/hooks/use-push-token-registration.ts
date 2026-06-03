@@ -6,7 +6,7 @@ import Constants from "expo-constants";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
 import { registerUnifiedPush, subscribeUnifiedPush } from "@/push/unified-push";
-import { getUnifiedPushRegistrationConfig } from "@/push/unified-push-shared";
+import { getUnifiedPushRegistrationTarget } from "@/push/unified-push-shared";
 import type { DaemonServerInfo } from "@/stores/session-store";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
@@ -41,6 +41,10 @@ export function usePushTokenRegistration(params: {
   const { client, serverId, serverInfo } = params;
   const tokenRef = useRef<string | null>(null);
   const lastSentTokenRef = useRef<string | null>(null);
+  const unifiedPushVapidPublicKey = getUnifiedPushRegistrationTarget({
+    platform: Platform.OS,
+    serverInfo,
+  });
 
   const registerIfPossible = useCallback(async () => {
     if (isWeb) return;
@@ -59,15 +63,9 @@ export function usePushTokenRegistration(params: {
     let cancelled = false;
 
     const run = async () => {
-      if (Platform.OS === "android") {
-        const config = getUnifiedPushRegistrationConfig({
-          platform: Platform.OS,
-          serverInfo,
-        });
-        if (config.enabled && config.vapidPublicKey) {
-          await registerUnifiedPush({ client, serverId, vapidPublicKey: config.vapidPublicKey });
-          return;
-        }
+      if (Platform.OS === "android" && unifiedPushVapidPublicKey) {
+        await registerUnifiedPush({ client, serverId, vapidPublicKey: unifiedPushVapidPublicKey });
+        return;
       }
 
       const cached = await AsyncStorage.getItem(storageKey);
@@ -110,7 +108,7 @@ export function usePushTokenRegistration(params: {
     return () => {
       cancelled = true;
     };
-  }, [client, registerIfPossible, serverId, serverInfo]);
+  }, [client, registerIfPossible, serverId, unifiedPushVapidPublicKey]);
 
   useEffect(() => {
     if (isWeb || Platform.OS !== "android") return;

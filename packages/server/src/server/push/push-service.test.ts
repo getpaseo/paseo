@@ -1,6 +1,12 @@
 import type pino from "pino";
 import { describe, expect, test, vi } from "vitest";
-import { PushService, type PushPayload } from "./push-service.js";
+import {
+  PushService,
+  type ExpoPushMessage,
+  type ExpoPushTicket,
+  type PushPayload,
+  type WebPushSendOptions,
+} from "./push-service.js";
 import type { PushSubscription, PushTokenStore } from "./token-store.js";
 
 function createLogger(): pino.Logger {
@@ -38,10 +44,39 @@ const vapid = {
   privateKey: "private-vapid-key",
 };
 
+interface SentWebPushMessage {
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+  payload: string;
+  options: WebPushSendOptions;
+}
+
+function createPushTransportFake(options?: {
+  expoTickets?: ExpoPushTicket[];
+  webPushError?: Error;
+}) {
+  const expoMessages: ExpoPushMessage[][] = [];
+  const webPushMessages: SentWebPushMessage[] = [];
+  return {
+    expoMessages,
+    webPushMessages,
+    expoSend: async (messages: ExpoPushMessage[]) => {
+      expoMessages.push(messages);
+      return options?.expoTickets ?? [];
+    },
+    webPushSend: async (
+      subscription: SentWebPushMessage["subscription"],
+      serializedPayload: string,
+      sendOptions: WebPushSendOptions,
+    ) => {
+      webPushMessages.push({ subscription, payload: serializedPayload, options: sendOptions });
+      if (options?.webPushError) throw options.webPushError;
+    },
+  };
+}
+
 describe("PushService", () => {
   test("routes Expo and Web Push subscriptions to their transports", async () => {
-    const expoSend = vi.fn().mockResolvedValue([{ status: "ok" }]);
-    const webPushSend = vi.fn().mockResolvedValue(undefined);
+    const transports = createPushTransportFake({ expoTickets: [{ status: "ok" }] });
     const store = createStore([
       {
         kind: "expo",
@@ -59,31 +94,113 @@ describe("PushService", () => {
     ]);
 
     const service = new PushService(createLogger(), store, {
-      expoSend,
-      webPushSend,
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
       vapid,
       validateWebPushEndpoint: async () => undefined,
     });
 
     await service.sendPush(store.getAllSubscriptions(), payload);
 
-    expect(expoSend).toHaveBeenCalledWith([
+    expect(transports.expoMessages).toEqual([
+      [
+        {
+          to: "ExponentPushToken[test]",
+          title: "Agent finished",
+          body: "Done",
+          data: { serverId: "srv_test", agentId: "agt_test" },
+          sound: "default",
+        },
+      ],
+    ]);
+    expect(transports.webPushMessages).toEqual([
       {
-        to: "ExponentPushToken[test]",
-        title: "Agent finished",
-        body: "Done",
-        data: { serverId: "srv_test", agentId: "agt_test" },
-        sound: "default",
+        subscription: {
+          endpoint: "https://push.example.test/subscription/abc",
+          keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+        },
+        payload: JSON.stringify(payload),
+        options: { vapidDetails: vapid },
       },
     ]);
-    expect(webPushSend).toHaveBeenCalledWith(
+  });
+
+  test("removes invalid Expo push tokens", async () => {
+    const transports = createPushTransportFake({
+      expoTickets: [{ status: "error", details: { error: "DeviceNotRegistered" } }],
+    });
+    const store = createStore([
       {
+        kind: "expo",
+        token: "ExponentPushToken[invalid]",
+        createdAt: "2026-06-03T00:00:00.000Z",
+        updatedAt: "2026-06-03T00:00:00.000Z",
+      },
+    ]);
+    const service = new PushService(createLogger(), store, {
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
+      vapid,
+      validateWebPushEndpoint: async () => undefined,
+    });
+
+    await service.sendPush(store.getAllSubscriptions(), payload);
+
+    expect(store.removedExpo).toEqual(["ExponentPushToken[invalid]"]);
+  });
+
+  test("does not remove valid Expo push tokens", async () => {
+    const transports = createPushTransportFake({ expoTickets: [{ status: "ok" }] });
+    const store = createStore([
+      {
+        kind: "expo",
+        token: "ExponentPushToken[valid]",
+        createdAt: "2026-06-03T00:00:00.000Z",
+        updatedAt: "2026-06-03T00:00:00.000Z",
+      },
+    ]);
+    const service = new PushService(createLogger(), store, {
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
+      vapid,
+      validateWebPushEndpoint: async () => undefined,
+    });
+
+    await service.sendPush(store.getAllSubscriptions(), payload);
+
+    expect(store.removedExpo).toEqual([]);
+  });
+
+  test("uses VAPID details when sending Web Push notifications", async () => {
+    const transports = createPushTransportFake();
+    const store = createStore([
+      {
+        kind: "webPush",
         endpoint: "https://push.example.test/subscription/abc",
         keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+        createdAt: "2026-06-03T00:00:00.000Z",
+        updatedAt: "2026-06-03T00:00:00.000Z",
       },
-      JSON.stringify(payload),
-      { vapidDetails: vapid },
-    );
+    ]);
+    const service = new PushService(createLogger(), store, {
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
+      vapid,
+      validateWebPushEndpoint: async () => undefined,
+    });
+
+    await service.sendPush(store.getAllSubscriptions(), payload);
+
+    expect(transports.webPushMessages).toEqual([
+      {
+        subscription: {
+          endpoint: "https://push.example.test/subscription/abc",
+          keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+        },
+        payload: JSON.stringify(payload),
+        options: { vapidDetails: vapid },
+      },
+    ]);
   });
 
   test("removes expired Web Push subscriptions", async () => {
@@ -97,9 +214,10 @@ describe("PushService", () => {
       },
     ]);
     const error = Object.assign(new Error("Gone"), { statusCode: 410 });
+    const transports = createPushTransportFake({ webPushError: error });
     const service = new PushService(createLogger(), store, {
-      expoSend: vi.fn(),
-      webPushSend: vi.fn().mockRejectedValue(error),
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
       vapid,
       validateWebPushEndpoint: async () => undefined,
     });
@@ -119,11 +237,12 @@ describe("PushService", () => {
         updatedAt: "2026-06-03T00:00:00.000Z",
       },
     ]);
+    const transports = createPushTransportFake({
+      webPushError: Object.assign(new Error("Timeout"), { statusCode: 503 }),
+    });
     const service = new PushService(createLogger(), store, {
-      expoSend: vi.fn(),
-      webPushSend: vi
-        .fn()
-        .mockRejectedValue(Object.assign(new Error("Timeout"), { statusCode: 503 })),
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
       vapid,
       validateWebPushEndpoint: async () => undefined,
     });
@@ -143,16 +262,16 @@ describe("PushService", () => {
         updatedAt: "2026-06-03T00:00:00.000Z",
       },
     ]);
-    const webPushSend = vi.fn().mockResolvedValue(undefined);
+    const transports = createPushTransportFake();
     const service = new PushService(createLogger(), store, {
-      expoSend: vi.fn(),
-      webPushSend,
+      expoSend: transports.expoSend,
+      webPushSend: transports.webPushSend,
       validateWebPushEndpoint: async () => undefined,
     });
 
     await service.sendPush(store.getAllSubscriptions(), payload);
 
-    expect(webPushSend).not.toHaveBeenCalled();
+    expect(transports.webPushMessages).toEqual([]);
     expect(store.removedWebPush).toEqual([]);
   });
 });

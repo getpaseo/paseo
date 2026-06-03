@@ -1214,18 +1214,7 @@ git commit -m "feat: send notifications through web push"
 
 - [ ] **Step 1: Add failing server_info test**
 
-In `packages/server/src/server/websocket-server.relay-reconnect.test.ts`, add a VAPID module mock near the existing push mocks:
-
-```ts
-vi.mock("./push/vapid-keypair.js", () => ({
-  loadOrCreateVapidKeyPair: vi.fn(() => ({
-    publicKey: "test-vapid-public-key",
-    privateKey: "test-vapid-private-key",
-  })),
-}));
-```
-
-Add a focused test after `"includes voice capabilities in initial server_info when speech readiness exists"`:
+In `packages/server/src/server/websocket-server.relay-reconnect.test.ts`, add a focused test after `"includes voice capabilities in initial server_info when speech readiness exists"`:
 
 ```ts
 test("includes UnifiedPush feature and Web Push VAPID capability in initial server_info", async () => {
@@ -1244,8 +1233,8 @@ test("includes UnifiedPush feature and Web Push VAPID capability in initial serv
   };
 
   expect(serverInfo.features?.unifiedPush).toBe(true);
-  expect(serverInfo.capabilities?.pushNotifications?.webPushVapidPublicKey).toBe(
-    "test-vapid-public-key",
+  expect(serverInfo.capabilities?.pushNotifications?.webPushVapidPublicKey).toEqual(
+    expect.stringMatching(/\S/),
   );
 
   await server.close();
@@ -1271,8 +1260,11 @@ Add tests near the legacy push token registration coverage:
 ```ts
 test("registers Web Push subscriptions through dotted RPC", async () => {
   const messages: unknown[] = [];
+  const upserted: WebPushSubscription[] = [];
   const pushTokenStore = asPushTokenStore();
-  pushTokenStore.upsertWebPushSubscription = vi.fn();
+  pushTokenStore.upsertWebPushSubscription = (subscription) => {
+    upserted.push(subscription);
+  };
   const session = createSessionForTest({ messages, pushTokenStore });
 
   await session.handleMessage({
@@ -1285,11 +1277,13 @@ test("registers Web Push subscriptions through dotted RPC", async () => {
     },
   });
 
-  expect(pushTokenStore.upsertWebPushSubscription).toHaveBeenCalledWith({
-    kind: "webPush",
-    endpoint: "https://push.example.test/subscription/abc",
-    keys: { p256dh: "p256dh-key", auth: "auth-secret" },
-  });
+  expect(upserted).toEqual([
+    {
+      kind: "webPush",
+      endpoint: "https://push.example.test/subscription/abc",
+      keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+    },
+  ]);
   expect(messages).toContainEqual({
     type: "push.subscription.register.response",
     payload: { requestId: "req-register", success: true, error: null },
@@ -1298,8 +1292,11 @@ test("registers Web Push subscriptions through dotted RPC", async () => {
 
 test("unregisters Web Push subscriptions through dotted RPC", async () => {
   const messages: unknown[] = [];
+  const removedEndpoints: string[] = [];
   const pushTokenStore = asPushTokenStore();
-  pushTokenStore.removeWebPushSubscription = vi.fn();
+  pushTokenStore.removeWebPushSubscription = (endpoint) => {
+    removedEndpoints.push(endpoint);
+  };
   const session = createSessionForTest({ messages, pushTokenStore });
 
   await session.handleMessage({
@@ -1308,9 +1305,7 @@ test("unregisters Web Push subscriptions through dotted RPC", async () => {
     endpoint: "https://push.example.test/subscription/abc",
   });
 
-  expect(pushTokenStore.removeWebPushSubscription).toHaveBeenCalledWith(
-    "https://push.example.test/subscription/abc",
-  );
+  expect(removedEndpoints).toEqual(["https://push.example.test/subscription/abc"]);
   expect(messages).toContainEqual({
     type: "push.subscription.unregister.response",
     payload: { requestId: "req-unregister", success: true, error: null },

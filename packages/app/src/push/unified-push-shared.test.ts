@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { ServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
+  getUnifiedPushRegistrationTarget,
   getUnifiedPushRegistrationConfig,
   handleUnifiedPushEvent,
   normalizeRegisteredSubscription,
@@ -57,6 +58,42 @@ describe("UnifiedPush helpers", () => {
         serverInfo: unsupportedServerInfo,
       }),
     ).toEqual({ enabled: false, vapidPublicKey: null });
+  });
+
+  test("derives a stable registration target from UnifiedPush capability fields only", () => {
+    const firstServerInfo = {
+      status: "server_info",
+      serverId: "srv_test",
+      hostname: null,
+      version: "0.1.90",
+      features: { unifiedPush: true },
+      capabilities: {
+        pushNotifications: { webPushVapidPublicKey: " public-key " },
+      },
+    } satisfies ServerInfoStatusPayload;
+    const repeatedServerInfo = {
+      status: "server_info",
+      serverId: "srv_test",
+      hostname: "updated-hostname",
+      version: "0.1.91",
+      features: { unifiedPush: true },
+      capabilities: {
+        pushNotifications: { webPushVapidPublicKey: " public-key " },
+      },
+    } satisfies ServerInfoStatusPayload;
+
+    expect(
+      getUnifiedPushRegistrationTarget({
+        platform: "android",
+        serverInfo: firstServerInfo,
+      }),
+    ).toBe("public-key");
+    expect(
+      getUnifiedPushRegistrationTarget({
+        platform: "android",
+        serverInfo: repeatedServerInfo,
+      }),
+    ).toBe("public-key");
   });
 
   test("normalizes distributor registration payloads", () => {

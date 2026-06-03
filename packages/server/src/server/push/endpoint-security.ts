@@ -60,6 +60,10 @@ function isBlockedIpv4Range(a: number, b: number): boolean {
 function isPublicIpv6(address: string): boolean {
   const normalized = address.toLowerCase();
   if (normalized === "::" || normalized === "::1") return false;
+  if (normalized.startsWith("::ffff:")) {
+    const ipv4 = normalized.slice("::ffff:".length);
+    return isIP(ipv4) === 4 ? isPublicIpv4(ipv4) : false;
+  }
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return false;
   if (
     normalized.startsWith("fe8") ||

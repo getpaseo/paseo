@@ -23,7 +23,17 @@ describe("Web Push endpoint security", () => {
   });
 
   test("rejects local and private IP resolutions", async () => {
-    const blocked = ["127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.0.1", "::1", "fc00::1"];
+    const blocked = [
+      "127.0.0.1",
+      "10.0.0.1",
+      "172.16.0.1",
+      "192.168.0.1",
+      "::1",
+      "fc00::1",
+      "::ffff:127.0.0.1",
+      "::ffff:10.0.0.1",
+      "::ffff:7f00:1",
+    ];
     for (const address of blocked) {
       await expect(
         assertSafeWebPushEndpoint("https://push.example.test/subscription/abc", {
