@@ -193,6 +193,31 @@ function getWorkspaceScripts(
   return workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS;
 }
 
+interface WorkspaceFileLocationFields {
+  path: string | null;
+  lineStart?: number;
+  lineEnd?: number;
+}
+
+function getWorkspaceFileLocationFields(
+  tab: WorkspaceTabDescriptor | null,
+): WorkspaceFileLocationFields {
+  const target = tab?.target;
+  if (target?.kind !== "file") {
+    return { path: null };
+  }
+  return { path: target.path, lineStart: target.lineStart, lineEnd: target.lineEnd };
+}
+
+function buildWorkspaceFileLocation(
+  fields: WorkspaceFileLocationFields,
+): WorkspaceFileLocation | null {
+  if (fields.path === null) {
+    return null;
+  }
+  return { path: fields.path, lineStart: fields.lineStart, lineEnd: fields.lineEnd };
+}
+
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
@@ -2851,13 +2876,19 @@ function WorkspaceScreenContent({
   });
 
   const activeTabDescriptor = useMemo(() => activeTab?.descriptor ?? null, [activeTab]);
-  const activeFileLocation = useMemo<WorkspaceFileLocation | null>(() => {
-    const target = activeTabDescriptor?.target;
-    if (target?.kind !== "file") {
-      return null;
-    }
-    return { path: target.path, lineStart: target.lineStart, lineEnd: target.lineEnd };
-  }, [activeTabDescriptor]);
+  const activeFileFields = getWorkspaceFileLocationFields(activeTabDescriptor);
+  const activeFilePath = activeFileFields.path;
+  const activeFileLineStart = activeFileFields.lineStart;
+  const activeFileLineEnd = activeFileFields.lineEnd;
+  const activeFileLocation = useMemo<WorkspaceFileLocation | null>(
+    () =>
+      buildWorkspaceFileLocation({
+        path: activeFilePath,
+        lineStart: activeFileLineStart,
+        lineEnd: activeFileLineEnd,
+      }),
+    [activeFileLineEnd, activeFileLineStart, activeFilePath],
+  );
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const shouldRenderDesktopPaneFallback = useMemo(
     () => !isMobile && !canRenderDesktopPaneSplits,
