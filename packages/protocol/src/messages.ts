@@ -1625,6 +1625,12 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceClearAttentionRequestSchema = z.object({
+  type: z.literal("workspace.clear_attention.request"),
+  workspaceId: z.union([z.string(), z.array(z.string())]),
+  requestId: z.string(),
+});
+
 // Highlighted diff token schema
 // Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
 const HighlightTokenSchema = z.object({
@@ -1928,6 +1934,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   OpenInEditorRequestSchema,
   OpenProjectRequestSchema,
   ArchiveWorkspaceRequestSchema,
+  WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
@@ -2695,6 +2702,25 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string().or(z.array(z.string())),
     agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+export const WorkspaceClearAttentionResponseSchema = z.object({
+  type: z.literal("workspace.clear_attention.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.union([z.string(), z.array(z.string())]),
+    clearedAgentIds: z.array(z.string()),
+    results: z.array(
+      z.object({
+        workspaceId: z.string(),
+        clearedAgentIds: z.array(z.string()),
+        success: z.boolean(),
+        error: z.string().nullable(),
+      }),
+    ),
+    success: z.boolean(),
+    error: z.string().nullable(),
   }),
 });
 
@@ -3697,6 +3723,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentTimelineResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
+  WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
@@ -4040,6 +4067,7 @@ export type ListAvailableEditorsRequest = z.infer<typeof ListAvailableEditorsReq
 export type OpenInEditorRequest = z.infer<typeof OpenInEditorRequestSchema>;
 export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
+export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;

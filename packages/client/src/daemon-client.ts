@@ -1528,6 +1528,33 @@ export class DaemonClient {
     });
   }
 
+  async clearWorkspaceAttention(workspaceId: string | string[]): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "workspace.clear_attention.request",
+      workspaceId,
+      requestId,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "workspace.clear_attention.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "Failed to clear workspace attention");
+    }
+  }
+
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;

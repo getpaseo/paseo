@@ -2137,6 +2137,8 @@ export class Session {
         return this.handleOpenProjectRequest(msg);
       case "archive_workspace_request":
         return this.handleArchiveWorkspaceRequest(msg);
+      case "workspace.clear_attention.request":
+        return this.handleWorkspaceClearAttentionRequest(msg);
       case "file_explorer_request":
         return this.handleFileExplorerRequest(msg);
       case "project_icon_request":
@@ -7447,6 +7449,140 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleWorkspaceClearAttentionRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.clear_attention.request" }>,
+  ): Promise<void> {
+    const { requestId, workspaceId } = request;
+    const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
+    let agents: AgentSnapshotPayload[];
+    try {
+      agents = await this.listAgentPayloads();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const results = requestedWorkspaceIds.map((requestedWorkspaceId) => ({
+        workspaceId: requestedWorkspaceId,
+        clearedAgentIds: [],
+        success: false,
+        error: message,
+      }));
+      this.emit({
+        type: "workspace.clear_attention.response",
+        payload: {
+          requestId,
+          workspaceId,
+          clearedAgentIds: [],
+          results,
+          success: false,
+          error: message,
+        },
+      });
+      return;
+    }
+    const results: Array<{
+      workspaceId: string;
+      clearedAgentIds: string[];
+      success: boolean;
+      error: string | null;
+    }> = [];
+
+    for (const requestedWorkspaceId of requestedWorkspaceIds) {
+      const clearedAgentIds: string[] = [];
+      try {
+        const workspace = await this.workspaceRegistry.get(requestedWorkspaceId);
+        if (!workspace || workspace.archivedAt) {
+          throw new Error(`Workspace not found: ${requestedWorkspaceId}`);
+        }
+
+        const workspaceCwd = normalizePersistedWorkspaceId(workspace.cwd);
+        const clearableAgentIds = agents
+          .filter((agent) => !agent.archivedAt)
+          .filter((agent) => normalizePersistedWorkspaceId(agent.cwd) === workspaceCwd)
+          .filter((agent) => agent.requiresAttention === true)
+          .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
+          .filter((agent) => agent.attentionReason !== "permission")
+          .map((agent) => agent.id);
+
+        for (const agentId of clearableAgentIds) {
+          const liveAgent = this.agentManager.getAgent(agentId);
+          if (liveAgent) {
+            await this.agentManager.clearAgentAttention(agentId);
+            clearedAgentIds.push(agentId);
+            continue;
+          }
+
+          const record = await this.agentStorage.get(agentId);
+          if (
+            !record ||
+            record.internal ||
+            record.archivedAt ||
+            record.requiresAttention !== true
+          ) {
+            continue;
+          }
+          const nextRecord: StoredAgentRecord = {
+            ...record,
+            updatedAt: new Date().toISOString(),
+            requiresAttention: false,
+            attentionReason: null,
+            attentionTimestamp: null,
+          };
+          await this.agentStorage.upsert(nextRecord);
+          const agent = this.buildStoredAgentPayload(nextRecord);
+          const project = await this.buildProjectPlacementForCwd(agent.cwd);
+          this.emit({
+            type: "agent_update",
+            payload: {
+              kind: "upsert",
+              agent,
+              project,
+            },
+          });
+          clearedAgentIds.push(agentId);
+        }
+
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+        results.push({
+          workspaceId: requestedWorkspaceId,
+          clearedAgentIds,
+          success: true,
+          error: null,
+        });
+      } catch (error) {
+        const message = getErrorMessage(error);
+        this.sessionLogger.error(
+          { err: error, workspaceId: requestedWorkspaceId },
+          "Failed to clear workspace attention",
+        );
+        results.push({
+          workspaceId: requestedWorkspaceId,
+          clearedAgentIds,
+          success: false,
+          error: message,
+        });
+      }
+    }
+
+    const clearedAgentIds = results.flatMap((result) => result.clearedAgentIds);
+    const failedResults = results.filter((result) => !result.success);
+    this.emit({
+      type: "workspace.clear_attention.response",
+      payload: {
+        requestId,
+        workspaceId,
+        clearedAgentIds,
+        results,
+        success: failedResults.length === 0,
+        error:
+          failedResults.length === 0
+            ? null
+            : failedResults
+                .map((result) => result.error)
+                .filter((error) => error !== null)
+                .join("; "),
+      },
+    });
   }
 
   private async handleFetchAgent(agentIdOrIdentifier: string, requestId: string): Promise<void> {

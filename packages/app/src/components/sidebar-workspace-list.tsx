@@ -41,6 +41,7 @@ import { DiffStat } from "@/components/diff-stat";
 import {
   Archive,
   CircleAlert,
+  CircleCheck,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -112,6 +113,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -142,6 +144,7 @@ const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const ThemedGlobe = withUnistyles(Globe);
@@ -285,6 +288,7 @@ interface WorkspaceRowInnerProps {
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
+  onMarkAsRead?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -547,6 +551,9 @@ function ProjectRowTrailingActions({
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
+const markAsReadLeadingIcon = (
+  <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
+);
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
 
@@ -622,6 +629,7 @@ function WorkspaceRowRightGroup({
   archivePendingLabel,
   archiveShortcutKeys,
   onArchive,
+  onMarkAsRead,
   onCopyBranchName,
   onCopyPath,
   onRename,
@@ -639,6 +647,7 @@ function WorkspaceRowRightGroup({
   archivePendingLabel?: string;
   archiveShortcutKeys?: ShortcutKey[][] | null;
   onArchive?: () => void;
+  onMarkAsRead?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
@@ -662,6 +671,7 @@ function WorkspaceRowRightGroup({
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
+          onMarkAsRead={onMarkAsRead}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}
@@ -689,6 +699,7 @@ function WorkspaceKebabMenu({
   onCopyPath,
   onCopyBranchName,
   onRename,
+  onMarkAsRead,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -699,6 +710,7 @@ function WorkspaceKebabMenu({
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onRename?: () => void;
+  onMarkAsRead?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -746,6 +758,15 @@ function WorkspaceKebabMenu({
             onSelect={onRename}
           >
             Rename workspace
+          </DropdownMenuItem>
+        ) : null}
+        {onMarkAsRead ? (
+          <DropdownMenuItem
+            testID={`sidebar-workspace-menu-mark-as-read-${workspaceKey}`}
+            leading={markAsReadLeadingIcon}
+            onSelect={onMarkAsRead}
+          >
+            Mark as read
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
@@ -1622,6 +1643,15 @@ function WorkspaceRowWithMenu({
   }, []);
 
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
+  const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+  });
+  const handleMarkAsRead = useCallback(() => {
+    void clearAttention().catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to mark workspace as read");
+    });
+  }, [clearAttention, toast]);
 
   useKeyboardActionHandler({
     handlerId: `worktree-archive-${workspace.workspaceKey}`,
@@ -1659,6 +1689,7 @@ function WorkspaceRowWithMenu({
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={canCopyBranchName ? handleOpenRename : undefined}
+        onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
       <AdaptiveRenameModal
