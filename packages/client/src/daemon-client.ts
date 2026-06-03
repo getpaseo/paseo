@@ -80,6 +80,9 @@ import type {
   EditorTargetId,
   PaseoConfigRaw,
   PaseoConfigRevision,
+  PushSubscriptionRegisterResponse,
+  PushSubscriptionUnregisterResponse,
+  WebPushSubscription,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -1549,6 +1552,34 @@ export class DaemonClient {
     this.sendSessionMessage({
       type: "register_push_token",
       token,
+    });
+  }
+
+  async registerPushSubscription(params: {
+    requestId?: string;
+    subscription: WebPushSubscription;
+  }): Promise<PushSubscriptionRegisterResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest<"push.subscription.register.response">({
+      requestId: params.requestId,
+      message: {
+        type: "push.subscription.register.request",
+        subscription: params.subscription,
+      },
+      timeout: 10000,
+    });
+  }
+
+  async unregisterPushSubscription(params: {
+    requestId?: string;
+    endpoint: string;
+  }): Promise<PushSubscriptionUnregisterResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest<"push.subscription.unregister.response">({
+      requestId: params.requestId,
+      message: {
+        type: "push.subscription.unregister.request",
+        endpoint: params.endpoint,
+      },
+      timeout: 10000,
     });
   }
 

@@ -42,6 +42,10 @@ rm -rf android
 
 Keep `react` and `react-dom` pinned to the React version embedded by the current `react-native` release. React Native `0.81.x` embeds `react-native-renderer` `19.1.0`, so `packages/app` must use React `19.1.0`. Bumping React to a newer patch can build successfully but crash at JS startup on Android with `Incompatible React versions`, leaving the app on the native splash screen.
 
+## UnifiedPush
+
+Android builds support UnifiedPush through the in-repo `paseo-unified-push` Expo module when the connected daemon advertises `server_info.features.unifiedPush`. Users need an installed UnifiedPush distributor such as ntfy or Gotify for de-Googled delivery. If no external distributor is installed, the app may fall back to the module's embedded FCM-backed distributor on ordinary Android devices.
+
 ## Screenshots
 
 ```bash

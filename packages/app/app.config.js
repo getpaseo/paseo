@@ -89,6 +89,7 @@ export default {
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "CAMERA",
         "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
       ],
       package: variant.packageId,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),

@@ -21,7 +21,7 @@ The app currently registers a native push token through `expo-notifications` for
 
 Use the Web Push standard end to end for Android UnifiedPush.
 
-- Android app: use `expo-unified-push` to select a UnifiedPush distributor, request notification permission, register with the daemon's VAPID public key, and receive registration/message/unregistration events.
+- Android app: use the in-repo `paseo-unified-push` Expo module to select a UnifiedPush distributor, request notification permission, register with the daemon's VAPID public key, and receive registration/message/unregistration events.
 - Daemon: generate and persist a VAPID keypair, store Web Push subscriptions, send notification payloads through `web-push`, and keep the existing Expo channel for legacy Android and iOS tokens.
 - Protocol: keep `register_push_token` for Expo compatibility and add a dotted RPC for Web Push subscriptions.
 
@@ -50,10 +50,10 @@ The app enables Android UnifiedPush registration only when both are present:
 Add new session RPCs using the dotted namespace convention:
 
 ```ts
-push.subscription.register.request
-push.subscription.register.response
-push.subscription.unregister.request
-push.subscription.unregister.response
+push.subscription.register.request;
+push.subscription.register.response;
+push.subscription.unregister.request;
+push.subscription.unregister.response;
 ```
 
 Register request shape:
@@ -68,8 +68,8 @@ Register request shape:
     keys: {
       p256dh: string;
       auth: string;
-    };
-  };
+    }
+  }
 }
 ```
 
@@ -82,7 +82,7 @@ Register response shape:
     requestId: string;
     success: boolean;
     error: string | null;
-  };
+  }
 }
 ```
 
@@ -208,26 +208,26 @@ Logging:
 
 ## Android App
 
-Use `expo-unified-push` only on Android and only after daemon support is confirmed.
+Use the in-repo `paseo-unified-push` module only on Android and only after daemon support is confirmed.
 
 Registration flow:
 
 1. Read `server_info` from the connected daemon.
 2. If UnifiedPush is unavailable, use existing Expo registration path.
-3. If UnifiedPush is available, call `ExpoUnifiedPush.getDistributors()` and select a distributor.
-4. Prefer a non-internal distributor when one exists; otherwise use the library's internal FCM-backed distributor only as an explicit fallback to preserve working push on ordinary Android devices.
-5. Save the distributor with `ExpoUnifiedPush.saveDistributor(distributor.id)`.
-6. Request Android `POST_NOTIFICATIONS` through `expo-unified-push` helpers.
-7. Call `ExpoUnifiedPush.registerDevice(webPushVapidPublicKey, serverId)`.
-8. On `registered`, send `push.subscription.register.request` with the registration payload returned by the library.
+3. If UnifiedPush is available, call `PaseoUnifiedPush.getDistributors()` and select a distributor.
+4. Prefer a non-internal distributor when one exists; otherwise use the embedded FCM-backed distributor only as an explicit fallback to preserve working push on ordinary Android devices.
+5. Save the distributor with `PaseoUnifiedPush.saveDistributor(distributor.id)`.
+6. Request Android `POST_NOTIFICATIONS`.
+7. Call `PaseoUnifiedPush.registerDevice(webPushVapidPublicKey, serverId)`.
+8. On `registered`, send `push.subscription.register.request` with the registration payload returned by the connector.
 9. On `unregistered`, send `push.subscription.unregister.request` for the last registered endpoint saved in `AsyncStorage`.
 
 Message flow:
 
-1. Subscribe with `subscribeDistributorMessages`.
+1. Subscribe to `PaseoUnifiedPush` service events.
 2. On `message`, require `data.decrypted === true`.
 3. Parse `data.message` as JSON `PushPayload`.
-4. Show a local notification carrying `title`, `body`, and `data`.
+4. The Android PushService shows a local notification carrying `title`, `body`, and `data` so background delivery works even when JS is not active.
 5. Preserve the existing `_layout.tsx` notification response handling so taps continue to navigate through current notification routing.
 
 If the app receives malformed push JSON, it logs a warning and does not show a notification.
@@ -285,6 +285,6 @@ Update:
 
 ## Open Risks
 
-- `expo-unified-push` is young and Android-only. Implementation must verify it works with Expo prebuild and the current React Native/Expo versions.
+- The in-repo Android module depends on UnifiedPush connector libraries. Implementation must verify it works with Expo prebuild and the current React Native/Expo versions.
 - Automatic distributor selection may choose an internal FCM-backed distributor when no external distributor is installed. That preserves ordinary Android behavior but does not solve de-Googled devices unless the user installs a real distributor.
-- Background delivery behavior depends on the native library. The implementation must verify notifications appear when the app process is backgrounded or killed.
+- Background delivery behavior depends on the native PushService. The implementation must verify notifications appear when the app process is backgrounded or killed.

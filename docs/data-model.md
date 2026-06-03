@@ -399,17 +399,32 @@ Array of workspace records. A workspace is a specific working directory within a
 
 ---
 
-## 8. Push Token Store
+## 8. Push Subscription Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
 
 ```json
 {
-  "tokens": ["ExponentPushToken[...]", ...]
+  "version": 2,
+  "subscriptions": [
+    {
+      "kind": "expo",
+      "token": "ExponentPushToken[...]",
+      "createdAt": "2026-06-03T00:00:00.000Z",
+      "updatedAt": "2026-06-03T00:00:00.000Z"
+    },
+    {
+      "kind": "webPush",
+      "endpoint": "https://push.example/subscription/...",
+      "keys": { "p256dh": "...", "auth": "..." },
+      "createdAt": "2026-06-03T00:00:00.000Z",
+      "updatedAt": "2026-06-03T00:00:00.000Z"
+    }
+  ]
 }
 ```
 
-Simple set of Expo push notification tokens. Loaded with permissive parsing (filters non-string entries). Persisted with atomic temp-file rename.
+The store accepts the legacy `{ "tokens": [...] }` format and converts entries to Expo subscriptions on load. All writes use the versioned subscription format with atomic temp-file rename.
 
 ---
 

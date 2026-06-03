@@ -1749,6 +1749,45 @@ export const RegisterPushTokenMessageSchema = z.object({
   token: z.string(),
 });
 
+export const WebPushSubscriptionSchema = z.object({
+  kind: z.literal("webPush"),
+  endpoint: z.string().trim().url(),
+  keys: z.object({
+    p256dh: z.string().trim().min(1),
+    auth: z.string().trim().min(1),
+  }),
+});
+
+export const PushSubscriptionRegisterRequestSchema = z.object({
+  type: z.literal("push.subscription.register.request"),
+  requestId: z.string(),
+  subscription: WebPushSubscriptionSchema,
+});
+
+export const PushSubscriptionRegisterResponseSchema = z.object({
+  type: z.literal("push.subscription.register.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const PushSubscriptionUnregisterRequestSchema = z.object({
+  type: z.literal("push.subscription.unregister.request"),
+  requestId: z.string(),
+  endpoint: z.string().trim().url(),
+});
+
+export const PushSubscriptionUnregisterResponseSchema = z.object({
+  type: z.literal("push.subscription.unregister.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 // ============================================================================
 // Terminal Messages
 // ============================================================================
@@ -1936,6 +1975,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PingMessageSchema,
   ListCommandsRequestSchema,
   RegisterPushTokenMessageSchema,
+  PushSubscriptionRegisterRequestSchema,
+  PushSubscriptionUnregisterRequestSchema,
   ListTerminalsRequestSchema,
   SubscribeTerminalsRequestSchema,
   UnsubscribeTerminalsRequestSchema,
@@ -2086,9 +2127,14 @@ export const ServerVoiceCapabilitiesSchema = z.object({
   voice: ServerCapabilityStateSchema,
 });
 
+export const ServerPushNotificationCapabilitiesSchema = z.object({
+  webPushVapidPublicKey: z.string().trim().min(1).optional(),
+});
+
 export const ServerCapabilitiesSchema = z
   .object({
     voice: ServerVoiceCapabilitiesSchema.optional(),
+    pushNotifications: ServerPushNotificationCapabilitiesSchema.optional(),
   })
   .passthrough();
 
@@ -2142,6 +2188,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(unifiedPush): added in v0.1.90, remove gate after 2026-12-03.
+        unifiedPush: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3699,6 +3747,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
+  PushSubscriptionRegisterResponseSchema,
+  PushSubscriptionUnregisterResponseSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -4051,6 +4101,17 @@ export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
 export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>;
+export type WebPushSubscription = z.infer<typeof WebPushSubscriptionSchema>;
+export type PushSubscriptionRegisterRequest = z.infer<typeof PushSubscriptionRegisterRequestSchema>;
+export type PushSubscriptionRegisterResponse = z.infer<
+  typeof PushSubscriptionRegisterResponseSchema
+>;
+export type PushSubscriptionUnregisterRequest = z.infer<
+  typeof PushSubscriptionUnregisterRequestSchema
+>;
+export type PushSubscriptionUnregisterResponse = z.infer<
+  typeof PushSubscriptionUnregisterResponseSchema
+>;
 
 // Terminal message types
 export type ListTerminalsRequest = z.infer<typeof ListTerminalsRequestSchema>;

@@ -487,6 +487,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const focusedAgentId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedAgentId ?? null,
   );
+  const currentServerInfo = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo ?? null,
+  );
   const sessionAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
 
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
@@ -813,7 +816,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Client activity tracking (heartbeat, push token registration)
   useClientActivity({ client, focusedAgentId, onAppResumed: handleAppResumed });
-  usePushTokenRegistration({ client, serverId });
+  usePushTokenRegistration({ client, serverId, serverInfo: currentServerInfo });
 
   const notifyAgentAttention = useCallback(
     (params: {

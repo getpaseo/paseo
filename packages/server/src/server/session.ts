@@ -2239,6 +2239,12 @@ export class Session {
       case "register_push_token":
         this.handleRegisterPushToken(msg.token);
         return;
+      case "push.subscription.register.request":
+        this.handlePushSubscriptionRegister(msg);
+        return;
+      case "push.subscription.unregister.request":
+        this.handlePushSubscriptionUnregister(msg);
+        return;
     }
   }
 
@@ -4472,6 +4478,35 @@ export class Session {
   private handleRegisterPushToken(token: string): void {
     this.pushTokenStore.addToken(token);
     this.sessionLogger.info("Registered push token");
+  }
+
+  private handlePushSubscriptionRegister(
+    msg: Extract<SessionInboundMessage, { type: "push.subscription.register.request" }>,
+  ): void {
+    try {
+      this.pushTokenStore.upsertWebPushSubscription(msg.subscription);
+      this.onMessage({
+        type: "push.subscription.register.response",
+        payload: { requestId: msg.requestId, success: true, error: null },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to register push subscription";
+      this.onMessage({
+        type: "push.subscription.register.response",
+        payload: { requestId: msg.requestId, success: false, error: message },
+      });
+    }
+  }
+
+  private handlePushSubscriptionUnregister(
+    msg: Extract<SessionInboundMessage, { type: "push.subscription.unregister.request" }>,
+  ): void {
+    this.pushTokenStore.removeWebPushSubscription(msg.endpoint);
+    this.onMessage({
+      type: "push.subscription.unregister.response",
+      payload: { requestId: msg.requestId, success: true, error: null },
+    });
   }
 
   /**

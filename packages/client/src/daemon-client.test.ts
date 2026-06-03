@@ -691,6 +691,98 @@ test("sends create_agent_request with string workspace ids", async () => {
   await expect(createPromise).rejects.toThrow("compat test sentinel");
 });
 
+test("registers Web Push subscriptions with dotted RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.registerPushSubscription({
+    requestId: "req-push-register",
+    subscription: {
+      kind: "webPush",
+      endpoint: "https://push.example.test/subscription/abc",
+      keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+    },
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "push.subscription.register.request",
+    requestId: "req-push-register",
+    subscription: {
+      kind: "webPush",
+      endpoint: "https://push.example.test/subscription/abc",
+      keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "push.subscription.register.response",
+      payload: { requestId: "req-push-register", success: true, error: null },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    requestId: "req-push-register",
+    success: true,
+    error: null,
+  });
+});
+
+test("unregisters Web Push subscriptions with dotted RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.unregisterPushSubscription({
+    requestId: "req-push-unregister",
+    endpoint: "https://push.example.test/subscription/abc",
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "push.subscription.unregister.request",
+    requestId: "req-push-unregister",
+    endpoint: "https://push.example.test/subscription/abc",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "push.subscription.unregister.response",
+      payload: { requestId: "req-push-unregister", success: true, error: null },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    requestId: "req-push-unregister",
+    success: true,
+    error: null,
+  });
+});
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

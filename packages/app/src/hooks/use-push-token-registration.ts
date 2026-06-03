@@ -5,6 +5,9 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
+import { registerUnifiedPush, subscribeUnifiedPush } from "@/push/unified-push";
+import { getUnifiedPushRegistrationConfig } from "@/push/unified-push-shared";
+import type { DaemonServerInfo } from "@/stores/session-store";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
 
@@ -30,8 +33,12 @@ async function ensurePushPermission(): Promise<boolean> {
   return requested.status === Notifications.PermissionStatus.GRANTED;
 }
 
-export function usePushTokenRegistration(params: { client: DaemonClient; serverId: string }): void {
-  const { client, serverId } = params;
+export function usePushTokenRegistration(params: {
+  client: DaemonClient;
+  serverId: string;
+  serverInfo: DaemonServerInfo | null;
+}): void {
+  const { client, serverId, serverInfo } = params;
   const tokenRef = useRef<string | null>(null);
   const lastSentTokenRef = useRef<string | null>(null);
 
@@ -52,6 +59,17 @@ export function usePushTokenRegistration(params: { client: DaemonClient; serverI
     let cancelled = false;
 
     const run = async () => {
+      if (Platform.OS === "android") {
+        const config = getUnifiedPushRegistrationConfig({
+          platform: Platform.OS,
+          serverInfo,
+        });
+        if (config.enabled && config.vapidPublicKey) {
+          await registerUnifiedPush({ client, serverId, vapidPublicKey: config.vapidPublicKey });
+          return;
+        }
+      }
+
       const cached = await AsyncStorage.getItem(storageKey);
       if (cancelled) return;
       if (cached && typeof cached === "string") {
@@ -92,7 +110,12 @@ export function usePushTokenRegistration(params: { client: DaemonClient; serverI
     return () => {
       cancelled = true;
     };
-  }, [registerIfPossible, serverId]);
+  }, [client, registerIfPossible, serverId, serverInfo]);
+
+  useEffect(() => {
+    if (isWeb || Platform.OS !== "android") return;
+    return subscribeUnifiedPush({ client, serverId });
+  }, [client, serverId]);
 
   useEffect(() => {
     const unsubscribe = client.subscribeConnectionStatus((state) => {

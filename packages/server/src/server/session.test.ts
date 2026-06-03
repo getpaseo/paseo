@@ -236,6 +236,7 @@ interface SessionForTestOptions {
   providerSnapshotManager?: ProviderSnapshotManager;
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
+  pushTokenStore?: SessionOptions["pushTokenStore"];
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
 }
@@ -271,7 +272,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
     downloadTokenStore: asDownloadTokenStore(),
-    pushTokenStore: asPushTokenStore(),
+    pushTokenStore: options.pushTokenStore ?? asPushTokenStore(),
     paseoHome: "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
@@ -330,6 +331,54 @@ class FakeVoiceTurnDetectionSession extends EventEmitter implements TurnDetectio
   reset(): void {}
   close(): void {}
 }
+
+test("registers Web Push subscriptions through dotted RPC", async () => {
+  const messages: unknown[] = [];
+  const pushTokenStore = asPushTokenStore();
+  pushTokenStore.upsertWebPushSubscription = vi.fn();
+  const session = createSessionForTest({ messages, pushTokenStore });
+
+  await session.handleMessage({
+    type: "push.subscription.register.request",
+    requestId: "req-register",
+    subscription: {
+      kind: "webPush",
+      endpoint: "https://push.example.test/subscription/abc",
+      keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+    },
+  });
+
+  expect(pushTokenStore.upsertWebPushSubscription).toHaveBeenCalledWith({
+    kind: "webPush",
+    endpoint: "https://push.example.test/subscription/abc",
+    keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+  });
+  expect(messages).toContainEqual({
+    type: "push.subscription.register.response",
+    payload: { requestId: "req-register", success: true, error: null },
+  });
+});
+
+test("unregisters Web Push subscriptions through dotted RPC", async () => {
+  const messages: unknown[] = [];
+  const pushTokenStore = asPushTokenStore();
+  pushTokenStore.removeWebPushSubscription = vi.fn();
+  const session = createSessionForTest({ messages, pushTokenStore });
+
+  await session.handleMessage({
+    type: "push.subscription.unregister.request",
+    requestId: "req-unregister",
+    endpoint: "https://push.example.test/subscription/abc",
+  });
+
+  expect(pushTokenStore.removeWebPushSubscription).toHaveBeenCalledWith(
+    "https://push.example.test/subscription/abc",
+  );
+  expect(messages).toContainEqual({
+    type: "push.subscription.unregister.response",
+    payload: { requestId: "req-unregister", success: true, error: null },
+  });
+});
 
 class FakeVoiceSttSession extends EventEmitter implements StreamingTranscriptionSession {
   public readonly requiredSampleRate = 16000;

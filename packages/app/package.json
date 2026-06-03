@@ -83,6 +83,7 @@
     "lucide-react-native": "^0.546.0",
     "markdown-it": "^10.0.0",
     "mnemonic-id": "^3.2.7",
+    "paseo-unified-push": "file:modules/paseo-unified-push",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",

@@ -34,6 +34,7 @@ import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspa
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
+import { loadOrCreateVapidKeyPair, type VapidKeyPair } from "./push/vapid-keypair.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -354,6 +355,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushNotificationSender: PushNotificationSender;
+  private readonly vapidKeyPair: VapidKeyPair;
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -494,8 +496,17 @@ export class VoiceAssistantWebSocketServer {
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
+    this.vapidKeyPair = loadOrCreateVapidKeyPair(
+      pushLogger,
+      join(paseoHome, "push-vapid-keypair.json"),
+    );
     this.pushNotificationSender =
-      pushNotificationSender ?? createPushNotificationSender(pushLogger, this.pushTokenStore);
+      pushNotificationSender ??
+      createPushNotificationSender(pushLogger, this.pushTokenStore, {
+        subject: "mailto:push@getpaseo.dev",
+        publicKey: this.vapidKeyPair.publicKey,
+        privateKey: this.vapidKeyPair.privateKey,
+      });
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -1042,12 +1053,18 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private buildServerInfoStatusPayload(): ServerInfoStatusPayload {
+    const capabilities = {
+      ...this.serverCapabilities,
+      pushNotifications: {
+        webPushVapidPublicKey: this.vapidKeyPair.publicKey,
+      },
+    };
     return {
       status: "server_info",
       serverId: this.serverId,
       hostname: getHostname(),
       version: this.daemonVersion,
-      ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
+      capabilities,
       features: {
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
@@ -1061,6 +1078,8 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
+        // COMPAT(unifiedPush): added in v0.1.90, remove gate after 2026-12-03.
+        unifiedPush: true,
       },
     };
   }

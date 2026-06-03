@@ -4,9 +4,9 @@
 
 **Goal:** Add full Android UnifiedPush support using standards-based Web Push while preserving existing Expo Push behavior for iOS and legacy clients.
 
-**Architecture:** Keep Expo Push and Web Push as two concrete push channels behind the existing daemon notification sender. Add a typed subscription store, VAPID key management, endpoint SSRF validation, dotted push subscription RPCs, and an Android-only `expo-unified-push` registration path gated by `server_info.features.unifiedPush`.
+**Architecture:** Keep Expo Push and Web Push as two concrete push channels behind the existing daemon notification sender. Add a typed subscription store, VAPID key management, endpoint SSRF validation, dotted push subscription RPCs, and an Android-only in-repo UnifiedPush Expo module gated by `server_info.features.unifiedPush`.
 
-**Tech Stack:** TypeScript, Zod, Vitest, Node `dns`/`net`/`crypto`, `web-push`, Expo, `expo-unified-push`, `expo-notifications`, AsyncStorage.
+**Tech Stack:** TypeScript, Zod, Vitest, Node `dns`/`net`/`crypto`, `web-push`, Expo modules, Android UnifiedPush connector, `expo-notifications`, AsyncStorage.
 
 ---
 
@@ -29,18 +29,22 @@
 - Modify `packages/server/src/server/session.ts`: handle new push subscription RPCs.
 - Modify `packages/server/src/server/websocket-server.relay-reconnect.test.ts`: verify initial `server_info` advertises UnifiedPush and VAPID public key.
 - Modify `packages/server/src/server/session.test.ts`: verify push subscription register/unregister RPC responses.
-- Modify `packages/app/package.json` and root lockfile: add `expo-unified-push`.
+- Modify `packages/app/package.json` and root lockfile: add the local `paseo-unified-push` module dependency.
 - Modify `packages/server/package.json` and root lockfile: add `web-push` and types if needed.
-- Modify `packages/app/app.config.js`: add Android notification permission if `expo-unified-push` does not inject it.
+- Modify `packages/app/app.config.js`: add Android notification permission.
 - Add `packages/app/src/push/unified-push-shared.ts`: pure UnifiedPush registration/message parsing helpers.
 - Add `packages/app/src/push/unified-push-shared.test.ts`: pure helper tests that do not import native modules.
-- Add `packages/app/src/push/unified-push.ts`: Android UnifiedPush boundary module.
+- Add `packages/app/src/push/unified-push.ts`: no-op non-Android UnifiedPush boundary module.
+- Add `packages/app/src/push/unified-push.android.ts`: Android UnifiedPush boundary module.
+- Add `packages/app/src/push/paseo-unified-push-module.android.ts`: typed native module wrapper.
+- Add `packages/app/modules/paseo-unified-push`: in-repo Android Expo module using the UnifiedPush connector.
 - Modify `packages/app/src/hooks/use-push-token-registration.ts`: route Android UnifiedPush vs Expo registration.
 - Modify `docs/data-model.md`, `docs/architecture.md`, `docs/android.md`: document subscription store, server capability, and Android UnifiedPush requirements.
 
 ## Task 1: Protocol Schemas And Client RPCs
 
 **Files:**
+
 - Modify: `packages/protocol/src/messages.ts`
 - Create: `packages/protocol/src/messages.push-subscription.test.ts`
 - Modify: `packages/client/src/daemon-client.ts`
@@ -144,9 +148,7 @@ describe("push subscription protocol", () => {
     });
 
     expect(payload.features?.unifiedPush).toBe(true);
-    expect(payload.capabilities?.pushNotifications?.webPushVapidPublicKey).toBe(
-      "public-vapid-key",
-    );
+    expect(payload.capabilities?.pushNotifications?.webPushVapidPublicKey).toBe("public-vapid-key");
   });
 });
 ```
@@ -247,9 +249,7 @@ Add exported types beside the existing inferred message types:
 
 ```ts
 export type WebPushSubscription = z.infer<typeof WebPushSubscriptionSchema>;
-export type PushSubscriptionRegisterRequest = z.infer<
-  typeof PushSubscriptionRegisterRequestSchema
->;
+export type PushSubscriptionRegisterRequest = z.infer<typeof PushSubscriptionRegisterRequestSchema>;
 export type PushSubscriptionRegisterResponse = z.infer<
   typeof PushSubscriptionRegisterResponseSchema
 >;
@@ -444,6 +444,7 @@ git commit -m "feat: add push subscription protocol"
 ## Task 2: Push Subscription Store
 
 **Files:**
+
 - Modify: `packages/server/src/server/push/token-store.ts`
 - Modify: `packages/server/src/server/push/token-store.test.ts`
 - Modify: `docs/data-model.md`
@@ -463,10 +464,7 @@ test("loads legacy Expo token files as Expo subscriptions", () => {
   const home = mkdtempSync(path.join(tmpdir(), "paseo-push-tokens-"));
   const tokenPath = path.join(home, "push-tokens.json");
   try {
-    writeFileSync(
-      tokenPath,
-      JSON.stringify({ tokens: [" ExponentPushToken[test] ", "", 42] }),
-    );
+    writeFileSync(tokenPath, JSON.stringify({ tokens: [" ExponentPushToken[test] ", "", 42] }));
 
     const store = new PushTokenStore(createLogger(), tokenPath);
 
@@ -633,12 +631,12 @@ Expected: PASS.
 
 In `docs/data-model.md`, replace the Push Token Store section with:
 
-```md
+````md
 ## 8. Push Subscription Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
 
-~~~json
+```json
 {
   "version": 2,
   "subscriptions": [
@@ -657,10 +655,12 @@ In `docs/data-model.md`, replace the Push Token Store section with:
     }
   ]
 }
-~~~
+```
+````
 
 The store accepts the legacy `{ "tokens": [...] }` format and converts entries to Expo subscriptions on load. All writes use the versioned subscription format with atomic temp-file rename.
-```
+
+````
 
 - [ ] **Step 6: Commit subscription store**
 
@@ -669,11 +669,12 @@ Run:
 ```bash
 git add packages/server/src/server/push/token-store.ts packages/server/src/server/push/token-store.test.ts docs/data-model.md
 git commit -m "feat: store typed push subscriptions"
-```
+````
 
 ## Task 3: VAPID Keypair And Endpoint Security
 
 **Files:**
+
 - Create: `packages/server/src/server/push/vapid-keypair.ts`
 - Create: `packages/server/src/server/push/vapid-keypair.test.ts`
 - Create: `packages/server/src/server/push/endpoint-security.ts`
@@ -896,7 +897,10 @@ export function isPublicIpAddress(address: string): boolean {
 
 function isPublicIpv4(address: string): boolean {
   const parts = address.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   const [a, b] = parts;
@@ -915,7 +919,13 @@ function isPublicIpv6(address: string): boolean {
   const normalized = address.toLowerCase();
   if (normalized === "::" || normalized === "::1") return false;
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return false;
-  if (normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb")) return false;
+  if (
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  )
+    return false;
   if (normalized.startsWith("ff")) return false;
   return true;
 }
@@ -968,6 +978,7 @@ git commit -m "feat: add web push key and endpoint validation"
 ## Task 4: Server Web Push Sending
 
 **Files:**
+
 - Modify: `packages/server/src/server/push/push-service.ts`
 - Create: `packages/server/src/server/push/push-service.test.ts`
 - Modify: `packages/server/src/server/push/notifications.ts`
@@ -1091,7 +1102,9 @@ describe("PushService", () => {
     ]);
     const service = new PushService(createLogger(), store, {
       expoSend: vi.fn(),
-      webPushSend: vi.fn().mockRejectedValue(Object.assign(new Error("Timeout"), { statusCode: 503 })),
+      webPushSend: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("Timeout"), { statusCode: 503 })),
       validateWebPushEndpoint: async () => undefined,
     });
 
@@ -1146,8 +1159,12 @@ async sendPush(subscriptions: PushSubscription[], payload: PushPayload): Promise
 - Split subscriptions:
 
 ```ts
-const expoSubscriptions = subscriptions.filter((subscription): subscription is ExpoPushSubscription => subscription.kind === "expo");
-const webPushSubscriptions = subscriptions.filter((subscription): subscription is WebPushSubscription => subscription.kind === "webPush");
+const expoSubscriptions = subscriptions.filter(
+  (subscription): subscription is ExpoPushSubscription => subscription.kind === "expo",
+);
+const webPushSubscriptions = subscriptions.filter(
+  (subscription): subscription is WebPushSubscription => subscription.kind === "webPush",
+);
 ```
 
 - Expo path maps `subscription.token` into existing messages and batches.
@@ -1188,6 +1205,7 @@ git commit -m "feat: send notifications through web push"
 ## Task 5: Server Info And Session RPC Handling
 
 **Files:**
+
 - Modify: `packages/server/src/server/websocket-server.ts`
 - Modify: `packages/server/src/server/session.ts`
 - Modify: `packages/server/src/server/websocket-server.relay-reconnect.test.ts`
@@ -1329,7 +1347,7 @@ this.vapidKeyPair = loadOrCreateVapidKeyPair(
 - Pass VAPID keys to `createPushNotificationSender` if Task 4 made production Web Push sends require it:
 
 ```ts
-createPushNotificationSender(pushLogger, this.pushTokenStore, this.vapidKeyPair)
+createPushNotificationSender(pushLogger, this.pushTokenStore, this.vapidKeyPair);
 ```
 
 - Extend `buildServerInfoStatusPayload`:
@@ -1429,24 +1447,28 @@ git commit -m "feat: advertise and handle unified push subscriptions"
 ## Task 6: Android UnifiedPush App Integration
 
 **Files:**
+
 - Modify: `packages/app/package.json`
 - Modify: root `package-lock.json`
 - Modify: `packages/app/app.config.js`
+- Add: `packages/app/modules/paseo-unified-push`
+- Add: `packages/app/src/push/paseo-unified-push-module.android.ts`
 - Add: `packages/app/src/push/unified-push-shared.ts`
 - Add: `packages/app/src/push/unified-push-shared.test.ts`
 - Add: `packages/app/src/push/unified-push.ts`
+- Add: `packages/app/src/push/unified-push.android.ts`
 - Modify: `packages/app/src/hooks/use-push-token-registration.ts`
 - Modify: `docs/android.md`
 
-- [ ] **Step 1: Install app dependency**
+- [ ] **Step 1: Add local app module dependency**
 
-Run:
+Add the local module dependency:
 
-```bash
-npm install expo-unified-push --workspace=@getpaseo/app
+```json
+"paseo-unified-push": "file:modules/paseo-unified-push"
 ```
 
-Expected: `packages/app/package.json` and `package-lock.json` update.
+Then refresh the lockfile with npm. Expected: `packages/app/package.json` and `package-lock.json` reference the local module, with no external UnifiedPush package dependency.
 
 - [ ] **Step 2: Add Android permission if missing**
 
@@ -1458,16 +1480,15 @@ In `packages/app/app.config.js`, ensure Android permissions include:
 
 Keep existing permissions unchanged.
 
-- [ ] **Step 3: Create UnifiedPush boundary module**
+- [ ] **Step 3: Create UnifiedPush native module and boundary module**
 
-Inspect the installed package declarations so the boundary module matches the real `expo-unified-push` API:
+Create `packages/app/modules/paseo-unified-push` as an Android Expo module. It should:
 
-```bash
-sed -n '1,220p' node_modules/expo-unified-push/build/ExpoUnifiedPush.types.d.ts
-sed -n '1,220p' node_modules/expo-unified-push/build/index.d.ts
-```
-
-Expected: declarations include `registerDevice(vapidPublicKey, instance?)`, distributor shape, and notification/message helpers. Use the declared distributor field names in the next code block; for current `expo-unified-push`, use `id` and `isInternal`.
+- depend on `org.unifiedpush.android:connector` and `org.unifiedpush.android:embedded-fcm-distributor`;
+- expose `PaseoUnifiedPush.getDistributors()`, `getSavedDistributor()`, `saveDistributor()`, `registerDevice()`, and `unregisterDevice()`;
+- register a `PushService` for `org.unifiedpush.android.connector.PUSH_EVENT`;
+- forward registration/unregistration/message events to JS when the app process is alive;
+- display local notifications from the native service so background delivery works without active JS.
 
 Create `packages/app/src/push/unified-push-shared.ts`:
 
@@ -1507,7 +1528,8 @@ export function getUnifiedPushRegistrationConfig(
 export function normalizeRegisteredSubscription(data: unknown) {
   const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
   const endpoint = typeof record.endpoint === "string" ? record.endpoint.trim() : "";
-  const keys = record.keys && typeof record.keys === "object" ? (record.keys as Record<string, unknown>) : {};
+  const keys =
+    record.keys && typeof record.keys === "object" ? (record.keys as Record<string, unknown>) : {};
   const p256dh =
     typeof keys.p256dh === "string"
       ? keys.p256dh.trim()
@@ -1545,95 +1567,11 @@ export function parseUnifiedPushMessage(data: unknown): UnifiedPushPayload | nul
 }
 ```
 
-Create `packages/app/src/push/unified-push.ts`:
+Create the non-Android no-op module at `packages/app/src/push/unified-push.ts` and the Android implementation at `packages/app/src/push/unified-push.android.ts`.
 
-```ts
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import ExpoUnifiedPush, {
-  checkPermissions,
-  requestPermissions,
-  showLocalNotification,
-} from "expo-unified-push";
-import { subscribeDistributorMessages } from "expo-unified-push/ExpoUnifiedPushModule";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import {
-  normalizeRegisteredSubscription,
-  parseUnifiedPushMessage,
-} from "./unified-push-shared";
+The Android implementation should import `PaseoUnifiedPush` from `packages/app/src/push/paseo-unified-push-module.android.ts`, request `POST_NOTIFICATIONS`, select the saved distributor or first external distributor, save it, and register with `PaseoUnifiedPush.registerDevice(vapidPublicKey, serverId)`.
 
-const ENDPOINT_STORAGE_PREFIX = "@paseo:web-push-endpoint:";
-
-async function ensureUnifiedPushPermission(): Promise<boolean> {
-  if (await checkPermissions()) return true;
-  return (await requestPermissions()) === "granted";
-}
-
-export async function registerUnifiedPush(params: {
-  client: DaemonClient;
-  serverId: string;
-  vapidPublicKey: string;
-}): Promise<void> {
-  const granted = await ensureUnifiedPushPermission();
-  if (!granted) return;
-
-  const distributors = ExpoUnifiedPush.getDistributors();
-  const saved = ExpoUnifiedPush.getSavedDistributor();
-  const selected =
-    distributors.find((distributor) => distributor.id === saved) ??
-    distributors.find((distributor) => !distributor.isInternal) ??
-    distributors[0] ??
-    null;
-
-  if (!selected) {
-    console.warn("[UnifiedPush] No distributor available");
-    return;
-  }
-
-  ExpoUnifiedPush.saveDistributor(selected.id);
-  await ExpoUnifiedPush.registerDevice(params.vapidPublicKey, params.serverId);
-}
-
-export function subscribeUnifiedPush(params: {
-  client: DaemonClient;
-  serverId: string;
-}): () => void {
-  return subscribeDistributorMessages(({ action, data }) => {
-    if (action === "registered") {
-      const subscription = normalizeRegisteredSubscription(data);
-      if (!subscription) {
-        console.warn("[UnifiedPush] Ignoring malformed registration payload");
-        return;
-      }
-      void AsyncStorage.setItem(`${ENDPOINT_STORAGE_PREFIX}${params.serverId}`, subscription.endpoint);
-      void params.client.registerPushSubscription({ subscription });
-      return;
-    }
-
-    if (action === "unregistered") {
-      void AsyncStorage.getItem(`${ENDPOINT_STORAGE_PREFIX}${params.serverId}`).then((endpoint) => {
-        if (!endpoint) return;
-        void params.client.unregisterPushSubscription({ endpoint });
-        void AsyncStorage.removeItem(`${ENDPOINT_STORAGE_PREFIX}${params.serverId}`);
-      });
-      return;
-    }
-
-    if (action === "message") {
-      const parsed = parseUnifiedPushMessage(data);
-      if (!parsed) {
-        console.warn("[UnifiedPush] Ignoring malformed push payload");
-        return;
-      }
-      void showLocalNotification({
-        id: Date.now(),
-        title: parsed.title,
-        body: parsed.body,
-        data: parsed.data,
-      });
-    }
-  });
-}
-```
+It should subscribe to `PaseoUnifiedPush.addListener("message", ...)` and route events through the pure helpers in `unified-push-shared.ts`. Registration events send `client.registerPushSubscription`, unregistration events send `client.unregisterPushSubscription`, and message events are treated as already displayed by the native Android PushService.
 
 - [ ] **Step 4: Modify push registration hook**
 
@@ -1763,7 +1701,9 @@ describe("UnifiedPush helpers", () => {
 
     expect(parseUnifiedPushMessage({ decrypted: false, message: "{}" })).toBeNull();
     expect(parseUnifiedPushMessage({ decrypted: true, message: "{" })).toBeNull();
-    expect(parseUnifiedPushMessage({ decrypted: true, message: JSON.stringify({ title: "x" }) })).toBeNull();
+    expect(
+      parseUnifiedPushMessage({ decrypted: true, message: JSON.stringify({ title: "x" }) }),
+    ).toBeNull();
   });
 });
 ```
@@ -1800,6 +1740,7 @@ git commit -m "feat: register android unified push subscriptions"
 ## Task 7: Final Docs And Verification
 
 **Files:**
+
 - Modify: `docs/data-model.md`
 - Modify: `docs/architecture.md`
 - Modify: `docs/android.md`

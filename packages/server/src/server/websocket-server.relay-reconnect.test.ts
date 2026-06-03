@@ -87,6 +87,10 @@ vi.mock("./push/token-store.js", () => ({
     getAllTokens(): string[] {
       return [];
     }
+
+    getAllSubscriptions(): unknown[] {
+      return [];
+    }
   },
 }));
 
@@ -96,6 +100,13 @@ vi.mock("./push/push-service.js", () => ({
       // no-op
     }
   },
+}));
+
+vi.mock("./push/vapid-keypair.js", () => ({
+  loadOrCreateVapidKeyPair: vi.fn(() => ({
+    publicKey: "test-vapid-public-key",
+    privateKey: "test-vapid-private-key",
+  })),
 }));
 
 import { z } from "zod";
@@ -681,6 +692,29 @@ describe("relay external socket reconnect behavior", () => {
       speechReadiness.realtimeVoice.enabled,
     );
     expect(serverInfo.capabilities?.voice?.voice?.reason).toBe("");
+
+    await server.close();
+  });
+
+  test("includes UnifiedPush feature and Web Push VAPID capability in initial server_info", async () => {
+    const server = createServer();
+
+    const socket = new MockSocket();
+    const serverInfo = (await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-server-info-unified-push",
+    })) as {
+      features?: { unifiedPush?: unknown };
+      capabilities?: {
+        pushNotifications?: { webPushVapidPublicKey?: unknown };
+      };
+    };
+
+    expect(serverInfo.features?.unifiedPush).toBe(true);
+    expect(serverInfo.capabilities?.pushNotifications?.webPushVapidPublicKey).toBe(
+      "test-vapid-public-key",
+    );
 
     await server.close();
   });
