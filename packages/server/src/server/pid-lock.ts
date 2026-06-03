@@ -1,8 +1,18 @@
+import { execFileSync } from "node:child_process";
 import { open, readFile, unlink, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { z } from "zod";
+
+// The OS reuses PIDs. A stale lock left by an unclean daemon shutdown can name a
+// PID the OS has since handed to an unrelated process, so a bare "is this PID
+// alive?" check is not enough to prove the daemon is still running. If the live
+// process started materially later than the lock was written, the PID was
+// recycled and the lock is stale. lstart is second-granularity and the lock is
+// written a beat after the daemon starts, so a genuine daemon's two timestamps
+// sit within a few seconds; a recycled PID differs by the daemon's whole lifetime.
+const PID_REUSE_TOLERANCE_MS = 60_000;
 
 export const pidLockInfoSchema = z.object({
   pid: z.number(),
@@ -43,6 +53,42 @@ function isPidRunning(pid: number): boolean {
   }
 }
 
+// Wall-clock start time of a live process, or null if it can't be determined
+// (process gone, or `ps` unavailable e.g. on Windows). `ps -o lstart` is the
+// portable keyword present on both macOS (BSD) and Linux; LC_ALL=C forces an
+// English, Date.parse-able timestamp regardless of the user's locale.
+function getProcessStartTimeMs(pid: number): number | null {
+  try {
+    const output = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+    }).trim();
+    if (!output) {
+      return null;
+    }
+    const parsed = Date.parse(output);
+    return Number.isNaN(parsed) ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Whether the lock's PID still belongs to the daemon that wrote the lock, as
+// opposed to an unrelated process that inherited the PID after reuse.
+function isLockProcessAlive(lock: PidLockInfo): boolean {
+  if (!isPidRunning(lock.pid)) {
+    return false;
+  }
+  const liveStartMs = getProcessStartTimeMs(lock.pid);
+  const lockStartMs = Date.parse(lock.startedAt);
+  if (liveStartMs === null || Number.isNaN(lockStartMs)) {
+    // Can't compare start times — stay conservative and assume the daemon is
+    // still running rather than risk launching a second one.
+    return true;
+  }
+  return Math.abs(liveStartMs - lockStartMs) <= PID_REUSE_TOLERANCE_MS;
+}
+
 function getPidFilePath(paseoHome: string): string {
   return join(paseoHome, "paseo.pid");
 }
@@ -78,17 +124,17 @@ export async function acquirePidLock(
   // Check if existing lock is stale
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   if (existingLock) {
-    if (isPidRunning(existingLock.pid)) {
-      if (existingLock.pid === lockOwnerPid) {
-        return;
-      }
+    if (existingLock.pid === lockOwnerPid && isPidRunning(existingLock.pid)) {
+      return;
+    }
 
+    if (isLockProcessAlive(existingLock)) {
       throw new PidLockError(
         `Another Paseo daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
         existingLock,
       );
     }
-    // Stale lock - remove it
+    // Stale lock (process gone, or its PID was recycled by another process) - remove it
     await unlink(pidPath).catch(() => {});
   }
 
@@ -197,7 +243,7 @@ export async function isLocked(
   if (!info) {
     return { locked: false };
   }
-  if (!isPidRunning(info.pid)) {
+  if (!isLockProcessAlive(info)) {
     return { locked: false, info };
   }
   return { locked: true, info };
