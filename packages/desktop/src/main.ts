@@ -63,6 +63,7 @@ import {
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
+import { autoUpdateInstalledSkills } from "./integrations/skills/index.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -712,6 +713,11 @@ void runDesktopStartup({
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,
+  autoUpdateInstalledSkills: () => {
+    void autoUpdateInstalledSkills().catch((error) => {
+      log.error("[skills] auto-update failed", error);
+    });
+  },
 }).catch((error) => {
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   process.stderr.write(`${message}\n`);

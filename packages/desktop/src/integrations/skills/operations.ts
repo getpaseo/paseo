@@ -41,6 +41,7 @@ export const PASEO_SKILL_NAMES = [
 ] as const;
 
 type SkillFiles = Map<string, string>;
+type TargetSkills = Map<string, SkillFiles>;
 
 function resolveSkillTargets(): SkillTargets {
   return {
@@ -74,17 +75,29 @@ async function hashSkills(rootDir: string): Promise<Map<string, SkillFiles>> {
   return out;
 }
 
-function diff(bundle: Map<string, SkillFiles>, disk: Map<string, SkillFiles>): SkillOp[] {
+function diff(bundle: TargetSkills, disks: readonly TargetSkills[]): SkillOp[] {
   const ops: SkillOp[] = [];
   for (const name of PASEO_SKILL_NAMES) {
     const b = bundle.get(name);
-    const d = disk.get(name);
-    if (b && !d) ops.push({ kind: "add", name });
-    else if (b && d && !filesEqual(b, d)) ops.push({ kind: "update", name });
-    else if (!b && d) ops.push({ kind: "delete", name });
+    const targetFiles = disks.map((disk) => disk.get(name));
+    const installedTargets = targetFiles.filter(
+      (files): files is SkillFiles => files !== undefined,
+    );
+    if (b) {
+      const missingTargets = installedTargets.length < disks.length;
+      const changedTargets = installedTargets.some((files) => !filesEqual(b, files));
+      if (missingTargets) ops.push({ kind: "add", name });
+      else if (changedTargets) ops.push({ kind: "update", name });
+    } else if (installedTargets.length > 0) {
+      ops.push({ kind: "delete", name });
+    }
   }
   ops.sort((a, b) => compareStrings(a.name, b.name));
   return ops;
+}
+
+function hasInstalledPaseoSkill(disks: readonly TargetSkills[]): boolean {
+  return disks.some((disk) => disk.size > 0);
 }
 
 function filesEqual(a: SkillFiles, b: SkillFiles): boolean {
@@ -107,10 +120,16 @@ function compareStrings(a: string, b: string): number {
 
 export async function getSkillsStatus(targets?: SkillTargets): Promise<SkillsStatus> {
   const t = targets ?? resolveSkillTargets();
-  const [bundle, disk] = await Promise.all([hashSkills(t.sourceDir), hashSkills(t.agentsDir)]);
-  const ops = diff(bundle, disk);
+  const [bundle, agentsDisk, claudeDisk, codexDisk] = await Promise.all([
+    hashSkills(t.sourceDir),
+    hashSkills(t.agentsDir),
+    hashSkills(t.claudeDir),
+    hashSkills(t.codexDir),
+  ]);
+  const disks = [agentsDisk, claudeDisk, codexDisk];
+  const ops = diff(bundle, disks);
 
-  if (disk.size === 0) return { state: "not-installed", ops };
+  if (!hasInstalledPaseoSkill(disks)) return { state: "not-installed", ops };
   if (ops.length === 0) return { state: "up-to-date", ops };
   return { state: "drift", ops };
 }
@@ -149,6 +168,13 @@ export async function installSkills(targets?: SkillTargets): Promise<SkillsStatu
 
 export async function updateSkills(targets?: SkillTargets): Promise<SkillsStatus> {
   return applySkills(targets ?? resolveSkillTargets());
+}
+
+export async function autoUpdateInstalledSkills(targets?: SkillTargets): Promise<SkillsStatus> {
+  const t = targets ?? resolveSkillTargets();
+  const status = await getSkillsStatus(t);
+  if (status.state !== "drift") return status;
+  return applySkills(t);
 }
 
 export async function uninstallSkills(targets?: SkillTargets): Promise<SkillsStatus> {

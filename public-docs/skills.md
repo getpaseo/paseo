@@ -16,6 +16,8 @@ Two ways to install:
 - **Desktop app:** Settings → Integrations → Install
 - **Manual:** `npx skills add getpaseo/paseo`, this installs to `~/.agents/skills/` and sets up symlinks for each agent.
 
+When the desktop app finds installed Paseo skills, it keeps the bundled skills up to date on startup. If automatic update fails, use Settings → Integrations → Update or the manual command above.
+
 ## `/paseo`, Paseo Reference
 
 The foundational skill. Paseo reference for managing agents and worktrees. Load it when an agent needs to create agents, send them prompts, or manage worktrees.

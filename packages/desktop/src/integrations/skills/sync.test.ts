@@ -137,7 +137,7 @@ describe("syncSkills", () => {
     expect(await fs.readFile(path.join(customSkill, "SKILL.md"), "utf-8")).toBe("user content");
   });
 
-  it("does not delete files on disk that are no longer in the bundle", async () => {
+  it("removes stale files from managed skill dirs", async () => {
     await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "new" });
     const onDiskSkill = path.join(sandbox.agentsDir, "paseo");
     await fs.mkdir(path.join(onDiskSkill, "references"), { recursive: true });
@@ -153,9 +153,7 @@ describe("syncSkills", () => {
     });
 
     expect(await fs.readFile(path.join(onDiskSkill, "SKILL.md"), "utf-8")).toBe("new");
-    expect(await fs.readFile(path.join(onDiskSkill, "references", "stale.md"), "utf-8")).toBe(
-      "stale",
-    );
+    await expect(fs.access(path.join(onDiskSkill, "references", "stale.md"))).rejects.toThrow();
   });
 
   it("reports zero changed files on a no-op resync", async () => {

@@ -43,11 +43,18 @@ export async function listFilesRecursive(rootDir: string): Promise<string[]> {
 
 async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<number> {
   const files = await listFilesRecursive(srcDir);
+  const srcFileSet = new Set(files);
   let changed = 0;
   for (const rel of files) {
     if (await writeFileIfChanged(path.join(srcDir, rel), path.join(dstDir, rel))) {
       changed++;
     }
+  }
+  const dstFiles = await listFilesRecursive(dstDir).catch(() => []);
+  for (const rel of dstFiles) {
+    if (srcFileSet.has(rel)) continue;
+    await fs.rm(path.join(dstDir, rel), { force: true });
+    changed++;
   }
   return changed;
 }
