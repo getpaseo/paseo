@@ -2086,6 +2086,7 @@ export class Session {
         return this.handleCreatePaseoWorktreeRequest(msg);
       case "workspace_setup_status_request":
         return this.handleWorkspaceSetupStatusRequest(msg);
+      // COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer call daemon editor RPCs.
       case "list_available_editors_request":
         return this.handleLegacyListAvailableEditorsRequest(msg);
       case "open_in_editor_request":
@@ -7187,6 +7188,7 @@ export class Session {
     }
   }
 
+  // COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer call daemon editor RPCs.
   private async handleLegacyListAvailableEditorsRequest(
     request: Extract<SessionInboundMessage, { type: "list_available_editors_request" }>,
   ): Promise<void> {

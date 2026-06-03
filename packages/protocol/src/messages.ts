@@ -1568,6 +1568,7 @@ export const WorkspaceSetupStatusRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer call daemon editor RPCs.
 export const LegacyListAvailableEditorsRequestSchema = z.object({
   type: z.literal("list_available_editors_request"),
   requestId: z.string(),
@@ -2563,6 +2564,7 @@ export const StartWorkspaceScriptResponseMessageSchema = z.object({
   }),
 });
 
+// COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer parse daemon editor RPC responses.
 export const LegacyListAvailableEditorsResponseMessageSchema = z.object({
   type: z.literal("list_available_editors_response"),
   payload: z.object({
