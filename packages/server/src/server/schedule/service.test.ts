@@ -22,6 +22,7 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import { ScheduleService } from "./service.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
@@ -36,6 +37,15 @@ const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: false,
   supportsToolInvocations: true,
+};
+
+const NO_UNATTENDED_SCHEDULE_POLICY: Pick<
+  ProviderSnapshotManager,
+  "resolveUnattendedCreateConfig"
+> = {
+  async resolveUnattendedCreateConfig(input) {
+    return { modeId: undefined, featureValues: input.featureValues };
+  },
 };
 
 describe("ScheduleService", () => {
@@ -64,6 +74,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async (schedule) => ({
         agentId: "00000000-0000-0000-0000-000000000001",
@@ -102,6 +113,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({
         agentId: null,
@@ -137,6 +149,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({
         agentId: null,
@@ -176,6 +189,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
     });
 
@@ -350,6 +364,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
     });
 
@@ -391,6 +406,11 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: {
+        async resolveUnattendedCreateConfig(input) {
+          return { modeId: "bypassPermissions", featureValues: input.featureValues };
+        },
+      },
       now: () => now,
     });
 
@@ -419,12 +439,76 @@ describe("ScheduleService", () => {
     expect(agent?.archivedAt).toBeTruthy();
   });
 
+  test("defaults OpenCode new-agent schedules to build plus auto accept", async () => {
+    const createdConfigs: AgentSessionConfig[] = [];
+    const clients = createTestAgentClients();
+    const opencodeClient = clients.opencode;
+    if (!opencodeClient) {
+      throw new Error("Expected OpenCode test client");
+    }
+    clients.opencode = {
+      provider: opencodeClient.provider,
+      capabilities: opencodeClient.capabilities,
+      createSession: async (...args) => {
+        createdConfigs.push(args[0]);
+        return opencodeClient.createSession(...args);
+      },
+      resumeSession: (...args) => opencodeClient.resumeSession(...args),
+      listModels: (...args) => opencodeClient.listModels(...args),
+      isAvailable: () => opencodeClient.isAvailable(),
+    } satisfies AgentClient;
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients,
+      registry: agentStorage,
+    });
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: {
+        async resolveUnattendedCreateConfig(input) {
+          return {
+            modeId: "build",
+            featureValues: { ...input.featureValues, auto_accept: true },
+          };
+        },
+      },
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "Respond with exactly hello",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "opencode",
+          cwd: tempDir,
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs[0]?.error).toBeNull();
+    expect(createdConfigs[0]).toMatchObject({
+      modeId: "build",
+      featureValues: { auto_accept: true },
+    });
+  });
+
   test("advances stale nextRunAt on daemon restart", async () => {
     const service1 = new ScheduleService({
       paseoHome: tempDir,
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -449,6 +533,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -474,6 +559,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => {
         releaseRun?.();
@@ -522,6 +608,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
     });
 
@@ -579,6 +666,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -601,6 +689,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -624,6 +713,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -646,6 +736,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -669,6 +760,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async (schedule) => ({
         agentId: "00000000-0000-0000-0000-000000000099",
@@ -704,6 +796,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -756,6 +849,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -788,6 +882,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ran" }),
     });
@@ -819,6 +914,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -844,6 +940,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -868,6 +965,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -912,6 +1010,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -942,6 +1041,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -967,6 +1067,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });

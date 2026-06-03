@@ -5,6 +5,10 @@ const CLAUDE_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 const OPENCODE_MODES = ["build", "plan"];
 const CODEX_MODES = ["auto", "full-access"];
 
+function agentParent(provider: string, modeId: string | null, isUnattended = false) {
+  return { kind: "agent" as const, provider, modeId, isUnattended };
+}
+
 describe("resolveAndValidateCreateAgentMode", () => {
   it("returns the requested mode when it is valid for the target provider", () => {
     const resolved = resolveAndValidateCreateAgentMode({
@@ -43,7 +47,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: undefined,
       targetProvider: "claude",
-      parent: { provider: "claude", modeId: "bypassPermissions" },
+      parent: agentParent("claude", "bypassPermissions"),
       availableModes: CLAUDE_MODES,
     });
     expect(resolved).toBe("bypassPermissions");
@@ -53,7 +57,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: undefined,
       targetProvider: "claude",
-      parent: { provider: "claude", modeId: null },
+      parent: agentParent("claude", null),
       availableModes: CLAUDE_MODES,
     });
     expect(resolved).toBeUndefined();
@@ -64,7 +68,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       resolveAndValidateCreateAgentMode({
         requestedMode: undefined,
         targetProvider: "opencode",
-        parent: { provider: "claude", modeId: "bypassPermissions" },
+        parent: agentParent("claude", "bypassPermissions"),
         availableModes: OPENCODE_MODES,
       }),
     ).toThrow(
@@ -77,7 +81,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       resolveAndValidateCreateAgentMode({
         requestedMode: undefined,
         targetProvider: "codex",
-        parent: { provider: "opencode", modeId: null },
+        parent: agentParent("opencode", null),
         availableModes: CODEX_MODES,
       }),
     ).toThrow(
@@ -100,7 +104,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       resolveAndValidateCreateAgentMode({
         requestedMode: undefined,
         targetProvider: "zai-custom",
-        parent: { provider: "claude", modeId: "default" },
+        parent: agentParent("claude", "default"),
         availableModes: undefined,
       }),
     ).toThrow("Available modes for 'zai-custom': unknown");
@@ -110,7 +114,18 @@ describe("resolveAndValidateCreateAgentMode", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: undefined,
       targetProvider: "codex",
-      parent: { provider: "claude", modeId: "bypassPermissions", isUnattended: true },
+      parent: agentParent("claude", "bypassPermissions", true),
+      availableModes: CODEX_MODES,
+      targetUnattendedMode: "full-access",
+    });
+    expect(resolved).toBe("full-access");
+  });
+
+  it("inherits target's unattended mode for system unattended creation", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: undefined,
+      targetProvider: "codex",
+      parent: { kind: "system-unattended" },
       availableModes: CODEX_MODES,
       targetUnattendedMode: "full-access",
     });
@@ -122,7 +137,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       resolveAndValidateCreateAgentMode({
         requestedMode: undefined,
         targetProvider: "codex",
-        parent: { provider: "claude", modeId: "default", isUnattended: false },
+        parent: agentParent("claude", "default"),
         availableModes: CODEX_MODES,
         targetUnattendedMode: "full-access",
       }),
@@ -136,7 +151,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       resolveAndValidateCreateAgentMode({
         requestedMode: undefined,
         targetProvider: "zai-custom",
-        parent: { provider: "claude", modeId: "bypassPermissions", isUnattended: true },
+        parent: agentParent("claude", "bypassPermissions", true),
         availableModes: undefined,
         targetUnattendedMode: undefined,
       }),
@@ -149,7 +164,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: "auto",
       targetProvider: "codex",
-      parent: { provider: "claude", modeId: "bypassPermissions", isUnattended: true },
+      parent: agentParent("claude", "bypassPermissions", true),
       availableModes: CODEX_MODES,
       targetUnattendedMode: "full-access",
     });

@@ -155,6 +155,9 @@ export interface ProviderSnapshotManagerSpies {
   listModels: ReturnType<typeof vi.fn<[unknown], Promise<AgentModelDefinition[]>>>;
   listModes: ReturnType<typeof vi.fn<[unknown], Promise<AgentMode[]>>>;
   resolveCreateConfig: ReturnType<typeof vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>>;
+  resolveUnattendedCreateConfig: ReturnType<
+    typeof vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>
+  >;
   resolveDefaultModel: ReturnType<typeof vi.fn<[unknown], Promise<string | undefined>>>;
   getProviderDiagnostic: ReturnType<
     typeof vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>
@@ -193,6 +196,12 @@ export function createProviderSnapshotManagerStub(): {
     modeId: undefined,
     featureValues: undefined,
   }));
+  const resolveUnattendedCreateConfig = vi.fn<[unknown], Promise<ResolvedProviderCreateConfig>>(
+    async () => ({
+      modeId: undefined,
+      featureValues: undefined,
+    }),
+  );
   const resolveDefaultModel = vi.fn<[unknown], Promise<string | undefined>>(async () => undefined);
   const getProviderDiagnostic = vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>(
     async (provider) => ({ provider, diagnostic: "No diagnostic available for this provider." }),
@@ -218,6 +227,7 @@ export function createProviderSnapshotManagerStub(): {
     listModels,
     listModes,
     resolveCreateConfig,
+    resolveUnattendedCreateConfig,
     resolveDefaultModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
@@ -243,6 +253,7 @@ export function createProviderSnapshotManagerStub(): {
     listModels,
     listModes,
     resolveCreateConfig,
+    resolveUnattendedCreateConfig,
     resolveDefaultModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,

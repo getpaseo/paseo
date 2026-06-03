@@ -8,6 +8,7 @@ import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import type {
   AgentClient,
+  AgentCreateConfigParent,
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
@@ -64,6 +65,12 @@ interface ResolveProviderCreateConfigOptions {
   requestedMode: string | undefined;
   featureValues: Record<string, unknown> | undefined;
   parent: ManagedAgent | null;
+}
+
+export interface ResolveUnattendedProviderCreateConfigOptions {
+  cwd?: string | null;
+  provider: AgentProvider;
+  featureValues: Record<string, unknown> | undefined;
 }
 
 export interface ResolvedProviderCreateConfig {
@@ -310,6 +317,26 @@ export class ProviderSnapshotManager {
     });
   }
 
+  async resolveUnattendedCreateConfig(
+    input: ResolveUnattendedProviderCreateConfigOptions,
+  ): Promise<ResolvedProviderCreateConfig> {
+    const entry = await this.getReadyProvider({
+      cwd: input.cwd,
+      provider: input.provider,
+      wait: true,
+    });
+    const definition = this.requireProvider(input.provider);
+    return definition.resolveCreateConfig({
+      provider: input.provider,
+      requestedMode: undefined,
+      featureValues: input.featureValues,
+      parent: {
+        kind: "system-unattended",
+      },
+      availableModes: entry.modes ?? [],
+    });
+  }
+
   async getProviderDiagnostic(provider: AgentProvider): Promise<ProviderDiagnosticResult> {
     const client = this.providerClients[provider];
     if (!client) {
@@ -377,9 +404,10 @@ export class ProviderSnapshotManager {
     });
   }
 
-  private resolveParent(parent: ManagedAgent) {
+  private resolveParent(parent: ManagedAgent): AgentCreateConfigParent {
     const definition = this.requireProvider(parent.provider);
     return {
+      kind: "agent",
       provider: parent.provider,
       modeId: parent.currentModeId,
       isUnattended: definition.isCreateConfigUnattended({

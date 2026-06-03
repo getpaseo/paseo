@@ -14,6 +14,7 @@ import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
 import { resolveDefaultAgentCreateConfig } from "./create-agent-mode.js";
+import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
@@ -217,6 +218,7 @@ function createTerminalManagerStub(overrides: Partial<TerminalManager> = {}): Te
 }
 
 type ProviderSnapshotManagerStub = ReturnType<typeof createProviderSnapshotManagerStub>;
+const OPEN_CODE_CREATE_CONFIG_RESOLVER = new OpenCodeAgentClient(createTestLogger());
 
 interface ConfigureProviderEntry {
   provider: AgentProvider;
@@ -225,6 +227,27 @@ interface ConfigureProviderEntry {
   enabled?: boolean;
   defaultModeId?: string;
   modes?: AgentMode[];
+}
+
+function isStubParentUnattended(
+  parent: ManagedAgent | null,
+  modesByProvider: Record<string, AgentMode[]>,
+  openCodeProviderIds: Set<AgentProvider>,
+): boolean {
+  const parentModes = parent ? (modesByProvider[parent.provider] ?? []) : [];
+  const parentMode = parentModes.find((mode) => mode.id === parent?.currentModeId);
+  if (!parent || !openCodeProviderIds.has(parent.provider)) {
+    return parentMode?.isUnattended === true;
+  }
+  return (
+    parentMode?.isUnattended === true ||
+    OPEN_CODE_CREATE_CONFIG_RESOLVER.isCreateConfigUnattended({
+      modeId: parent?.currentModeId ?? null,
+      config: parent?.config ?? {},
+      features: parent?.features ?? [],
+      availableModes: parentModes,
+    })
+  );
 }
 
 // Builds a ProviderSnapshotEntry for tests that need to configure listProviders /
@@ -255,25 +278,34 @@ function buildSnapshotEntry(entry: ConfigureProviderEntry): ProviderSnapshotEntr
 }
 
 // Shared helper used by ~60 create_agent / update_agent / list_agents tests that
-// only need a "normal" provider catalog (claude, codex, opencode) and the
-// OpenCode resolveCreateConfig quirk: requestedMode="full-access" or an
-// unattended parent maps to build mode + auto_accept feature.
+// only need a "normal" provider catalog (claude, codex, opencode). OpenCode
+// create-config behavior delegates to the production provider client.
 //
 // NOTE: This is NOT a registry. It directly configures the public stub surface.
 // Per-test customization is done by overriding individual stub methods after
 // calling this helper.
-function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void {
+interface ConfigureOpenCodeProviderStubOptions {
+  customOpenCodeProvider?: AgentProvider;
+}
+
+function configureOpenCodeProviderStub(
+  stub: ProviderSnapshotManagerStub,
+  options: ConfigureOpenCodeProviderStubOptions = {},
+): void {
+  const openCodeCreateConfigResolver = new OpenCodeAgentClient(createTestLogger());
   const claudeModes: AgentMode[] = [
     { id: "default", label: "Default", description: "Ask first" },
     { id: "bypassPermissions", label: "Bypass", description: "No prompts", isUnattended: true },
   ];
   const codexModes: AgentMode[] = [
     { id: "default", label: "Default", description: "Default" },
-    { id: "auto", label: "Auto", description: "Auto", isUnattended: true },
+    { id: "auto", label: "Auto", description: "Auto" },
+    { id: "full-access", label: "Full Access", description: "No prompts", isUnattended: true },
   ];
   const opencodeModes: AgentMode[] = [
     { id: "build", label: "Build", description: "Can edit" },
     { id: "plan", label: "Plan", description: "Read-only" },
+    { id: "paseo-custom", label: "Paseo Custom", description: "Custom OpenCode agent" },
   ];
   const entries: ProviderSnapshotEntry[] = [
     buildSnapshotEntry({
@@ -298,13 +330,33 @@ function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void 
       modes: opencodeModes,
     }),
   ];
+  const customOpenCodeModes: AgentMode[] = [
+    ...opencodeModes,
+    { id: "paseo-custom", label: "Paseo Custom" },
+  ];
+  if (options.customOpenCodeProvider) {
+    entries.push(
+      buildSnapshotEntry({
+        provider: options.customOpenCodeProvider,
+        label: "OpenCode Custom",
+        description: "Custom OpenCode agent",
+        defaultModeId: "build",
+        modes: customOpenCodeModes,
+      }),
+    );
+  }
   const modesByProvider: Record<string, AgentMode[]> = {
     claude: claudeModes,
     codex: codexModes,
     opencode: opencodeModes,
   };
+  const openCodeProviderIds = new Set<AgentProvider>(["opencode"]);
+  if (options.customOpenCodeProvider) {
+    modesByProvider[options.customOpenCodeProvider] = customOpenCodeModes;
+    openCodeProviderIds.add(options.customOpenCodeProvider);
+  }
 
-  stub.listRegisteredProviderIds.mockReturnValue(["claude", "codex", "opencode"]);
+  stub.listRegisteredProviderIds.mockReturnValue(entries.map((entry) => entry.provider));
   stub.hasProvider.mockImplementation((provider) =>
     Object.prototype.hasOwnProperty.call(modesByProvider, provider),
   );
@@ -336,40 +388,38 @@ function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void 
       featureValues: Record<string, unknown> | undefined;
       parent: ManagedAgent | null;
     };
-    if (opts.provider === "opencode") {
-      if (opts.requestedMode === "full-access") {
-        return {
-          modeId: "build",
-          featureValues: { ...opts.featureValues, auto_accept: true },
-        };
-      }
-      // Cross-provider unattended inheritance: caller is in unattended mode and
-      // requested no explicit mode — map to build + auto_accept.
-      if (opts.requestedMode === undefined && opts.parent) {
-        const parentModes = modesByProvider[opts.parent.provider] ?? [];
-        const parentMode = parentModes.find((m) => m.id === opts.parent?.currentModeId);
-        if (parentMode?.isUnattended === true) {
-          return {
-            modeId: "build",
-            featureValues: { ...opts.featureValues, auto_accept: true },
-          };
-        }
-      }
-    }
+    const parentIsUnattended = isStubParentUnattended(
+      opts.parent,
+      modesByProvider,
+      openCodeProviderIds,
+    );
     const availableModes = modesByProvider[opts.provider] ?? [];
-    const parentModes = opts.parent ? (modesByProvider[opts.parent.provider] ?? []) : [];
-    const parentMode = opts.parent
-      ? parentModes.find((m) => m.id === opts.parent?.currentModeId)
-      : null;
+    if (openCodeProviderIds.has(opts.provider)) {
+      return openCodeCreateConfigResolver.resolveCreateConfig({
+        provider: opts.provider,
+        requestedMode: opts.requestedMode,
+        featureValues: opts.featureValues,
+        parent: opts.parent
+          ? {
+              kind: "agent",
+              provider: opts.parent.provider,
+              modeId: opts.parent.currentModeId,
+              isUnattended: parentIsUnattended,
+            }
+          : null,
+        availableModes,
+      });
+    }
     return resolveDefaultAgentCreateConfig({
       provider: opts.provider,
       requestedMode: opts.requestedMode,
       featureValues: opts.featureValues,
       parent: opts.parent
         ? {
+            kind: "agent",
             provider: opts.parent.provider,
             modeId: opts.parent.currentModeId,
-            isUnattended: parentMode?.isUnattended === true,
+            isUnattended: parentIsUnattended,
           }
         : null,
       availableModes,
@@ -378,12 +428,12 @@ function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void 
 }
 
 // Quick helper: returns a manager configured with the standard OpenCode catalog.
-function createOpenCodeManager(): {
+function createOpenCodeManager(options?: ConfigureOpenCodeProviderStubOptions): {
   manager: ProviderSnapshotManagerStub["manager"];
   stub: ProviderSnapshotManagerStub;
 } {
   const stub = createProviderSnapshotManagerStub();
-  configureOpenCodeProviderStub(stub);
+  configureOpenCodeProviderStub(stub, options);
   return { manager: stub.manager, stub };
 }
 
@@ -2128,6 +2178,166 @@ describe("create_agent MCP tool", () => {
 
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ modeId: "build", featureValues: { auto_accept: true } }),
+      undefined,
+      expect.any(Object),
+    );
+  });
+
+  it("maps unattended Claude callers to Codex full access", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "claude",
+      currentModeId: "bypassPermissions",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "full-access",
+      availableModes: [],
+      config: { title: "Child", modeId: "full-access" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.handler({
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ modeId: "full-access" }),
+      undefined,
+      expect.any(Object),
+    );
+  });
+
+  it("preserves an OpenCode custom parent agent while inheriting auto accept", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "opencode",
+      currentModeId: "paseo-custom",
+      config: {
+        provider: "opencode",
+        cwd: existingCwd,
+        modeId: "paseo-custom",
+        featureValues: { auto_accept: true },
+      },
+      features: [
+        {
+          type: "toggle",
+          id: "auto_accept",
+          label: "Auto Accept",
+          value: true,
+        },
+      ],
+      availableModes: [
+        { id: "build", label: "Build" },
+        { id: "plan", label: "Plan" },
+        { id: "paseo-custom", label: "Paseo Custom" },
+      ],
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "paseo-custom",
+      availableModes: [],
+      config: { title: "Child", featureValues: { auto_accept: true } },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.handler({
+      title: "Child",
+      provider: "opencode/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modeId: "paseo-custom",
+        featureValues: { auto_accept: true },
+      }),
+      undefined,
+      expect.any(Object),
+    );
+  });
+
+  it("preserves a custom OpenCode provider parent agent while inheriting auto accept", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const provider = "opencode-custom";
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider,
+      currentModeId: "paseo-custom",
+      config: {
+        provider,
+        cwd: existingCwd,
+        modeId: "paseo-custom",
+        featureValues: { auto_accept: true },
+      },
+      features: [
+        {
+          type: "toggle",
+          id: "auto_accept",
+          label: "Auto Accept",
+          value: true,
+        },
+      ],
+      availableModes: [
+        { id: "build", label: "Build" },
+        { id: "plan", label: "Plan" },
+        { id: "paseo-custom", label: "Paseo Custom" },
+      ],
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "paseo-custom",
+      availableModes: [],
+      config: { title: "Child", featureValues: { auto_accept: true } },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager({ customOpenCodeProvider: provider }).manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.handler({
+      title: "Child",
+      provider: `${provider}/gpt-5.4`,
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider,
+        modeId: "paseo-custom",
+        featureValues: { auto_accept: true },
+      }),
       undefined,
       expect.any(Object),
     );

@@ -94,11 +94,20 @@ export interface ProviderSnapshotEntry {
   defaultModeId?: string | null;
 }
 
-export interface AgentCreateConfigParent {
+export interface AgentCreateConfigAgentParent {
+  kind: "agent";
   provider: AgentProvider;
   modeId: string | null;
   isUnattended: boolean;
 }
+
+export interface AgentCreateConfigSystemUnattendedParent {
+  kind: "system-unattended";
+}
+
+export type AgentCreateConfigParent =
+  | AgentCreateConfigAgentParent
+  | AgentCreateConfigSystemUnattendedParent;
 
 export interface ResolveAgentCreateConfigInput {
   provider: AgentProvider;
