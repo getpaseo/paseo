@@ -1388,7 +1388,11 @@ export const en = {
         description: "App language",
         options: {
           system: "System",
+          ar: "Arabic",
           en: "English",
+          es: "Spanish",
+          fr: "French",
+          ru: "Russian",
           zhCN: "Simplified Chinese",
         },
       },

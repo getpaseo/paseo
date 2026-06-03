@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ar } from "./resources/ar";
 import { en } from "./resources/en";
+import { es } from "./resources/es";
+import { fr } from "./resources/fr";
+import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -60,8 +64,13 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
-  it("keeps Simplified Chinese keys in sync with English", () => {
-    expect(flattenKeys(zhCN).sort()).toEqual(flattenKeys(en).sort());
+  it("keeps UN official language keys in sync with English", () => {
+    const englishKeys = flattenKeys(en).sort();
+    expect(flattenKeys(ar).sort()).toEqual(englishKeys);
+    expect(flattenKeys(es).sort()).toEqual(englishKeys);
+    expect(flattenKeys(fr).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ru).sort()).toEqual(englishKeys);
+    expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
   });
 
   it("keeps local connection fallback errors translated", () => {

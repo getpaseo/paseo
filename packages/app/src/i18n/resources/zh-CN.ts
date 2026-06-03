@@ -1365,7 +1365,11 @@ export const zhCN: TranslationResources = {
         description: "应用语言",
         options: {
           system: "系统",
+          ar: "العربية",
           en: "English",
+          es: "Español",
+          fr: "Français",
+          ru: "Русский",
           zhCN: "简体中文",
         },
       },

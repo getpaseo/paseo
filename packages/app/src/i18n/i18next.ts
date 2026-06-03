@@ -1,7 +1,11 @@
 import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { observeI18nInit } from "./init";
+import { ar } from "./resources/ar";
 import { en } from "./resources/en";
+import { es } from "./resources/es";
+import { fr } from "./resources/fr";
+import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
 const i18n = createInstance();
@@ -12,7 +16,11 @@ observeI18nInit(
     fallbackLng: "en",
     lng: "en",
     resources: {
+      ar: { translation: ar },
       en: { translation: en },
+      es: { translation: es },
+      fr: { translation: fr },
+      ru: { translation: ru },
       "zh-CN": { translation: zhCN },
     },
     interpolation: {
