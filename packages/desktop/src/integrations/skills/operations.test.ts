@@ -133,6 +133,20 @@ describe("getSkillsStatus", () => {
     expect(status).toEqual({ state: "up-to-date", ops: [] });
   });
 
+  it("ignores user-added files inside current managed skill dirs", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await writeOnDiskSkillToAllTargets(sandbox.targets, "paseo", { "SKILL.md": "paseo-v1" });
+    await writeOnDiskSkillToAllTargets(sandbox.targets, "paseo-loop", { "SKILL.md": "loop-v1" });
+    await writeOnDiskSkill(sandbox.targets.agentsDir, "paseo", {
+      "SKILL.md": "paseo-v1",
+      "my-context.md": "user context",
+    });
+
+    const status = await getSkillsStatus(sandbox.targets);
+
+    expect(status).toEqual({ state: "up-to-date", ops: [] });
+  });
+
   it("returns drift with a single update op when one bundled file diverges", async () => {
     await writeCurrentBundle(sandbox.targets.sourceDir);
     await writeOnDiskSkill(sandbox.targets.agentsDir, "paseo", { "SKILL.md": "stale" });

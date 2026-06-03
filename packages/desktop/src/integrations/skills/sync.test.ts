@@ -137,12 +137,23 @@ describe("syncSkills", () => {
     expect(await fs.readFile(path.join(customSkill, "SKILL.md"), "utf-8")).toBe("user content");
   });
 
-  it("removes stale files from managed skill dirs", async () => {
-    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "new" });
+  it("removes stale files previously written to managed skill dirs", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", {
+      "SKILL.md": "old",
+      "references/stale.md": "stale",
+    });
     const onDiskSkill = path.join(sandbox.agentsDir, "paseo");
-    await fs.mkdir(path.join(onDiskSkill, "references"), { recursive: true });
-    await fs.writeFile(path.join(onDiskSkill, "SKILL.md"), "old");
-    await fs.writeFile(path.join(onDiskSkill, "references", "stale.md"), "stale");
+
+    await syncSkills({
+      sourceDir: sandbox.sourceDir,
+      agentsDir: sandbox.agentsDir,
+      claudeDir: sandbox.claudeDir,
+      codexDir: sandbox.codexDir,
+      skillNames: ["paseo"],
+    });
+
+    await fs.rm(path.join(sandbox.sourceDir, "paseo"), { recursive: true, force: true });
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "new" });
 
     await syncSkills({
       sourceDir: sandbox.sourceDir,
@@ -154,6 +165,32 @@ describe("syncSkills", () => {
 
     expect(await fs.readFile(path.join(onDiskSkill, "SKILL.md"), "utf-8")).toBe("new");
     await expect(fs.access(path.join(onDiskSkill, "references", "stale.md"))).rejects.toThrow();
+    await expect(fs.access(path.join(onDiskSkill, "references"))).rejects.toThrow();
+  });
+
+  it("preserves user-added files in managed skill dirs", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "new" });
+    const onDiskSkill = path.join(sandbox.agentsDir, "paseo");
+    await fs.mkdir(path.join(onDiskSkill, "references"), { recursive: true });
+    await fs.writeFile(path.join(onDiskSkill, "SKILL.md"), "old");
+    await fs.writeFile(path.join(onDiskSkill, "my-context.md"), "user context");
+    await fs.writeFile(path.join(onDiskSkill, "references", "notes.md"), "user notes");
+
+    await syncSkills({
+      sourceDir: sandbox.sourceDir,
+      agentsDir: sandbox.agentsDir,
+      claudeDir: sandbox.claudeDir,
+      codexDir: sandbox.codexDir,
+      skillNames: ["paseo"],
+    });
+
+    expect(await fs.readFile(path.join(onDiskSkill, "SKILL.md"), "utf-8")).toBe("new");
+    expect(await fs.readFile(path.join(onDiskSkill, "my-context.md"), "utf-8")).toBe(
+      "user context",
+    );
+    expect(await fs.readFile(path.join(onDiskSkill, "references", "notes.md"), "utf-8")).toBe(
+      "user notes",
+    );
   });
 
   it("reports zero changed files on a no-op resync", async () => {

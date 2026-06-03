@@ -85,7 +85,7 @@ function diff(bundle: TargetSkills, disks: readonly TargetSkills[]): SkillOp[] {
     );
     if (b) {
       const missingTargets = installedTargets.length < disks.length;
-      const changedTargets = installedTargets.some((files) => !filesEqual(b, files));
+      const changedTargets = installedTargets.some((files) => !bundleFilesMatch(b, files));
       if (missingTargets) ops.push({ kind: "add", name });
       else if (changedTargets) ops.push({ kind: "update", name });
     } else if (installedTargets.length > 0) {
@@ -100,10 +100,9 @@ function hasInstalledPaseoSkill(disks: readonly TargetSkills[]): boolean {
   return disks.some((disk) => disk.size > 0);
 }
 
-function filesEqual(a: SkillFiles, b: SkillFiles): boolean {
-  if (a.size !== b.size) return false;
-  for (const [rel, sha] of a) {
-    if (b.get(rel) !== sha) return false;
+function bundleFilesMatch(bundle: SkillFiles, disk: SkillFiles): boolean {
+  for (const [rel, sha] of bundle) {
+    if (disk.get(rel) !== sha) return false;
   }
   return true;
 }
@@ -134,8 +133,11 @@ export async function getSkillsStatus(targets?: SkillTargets): Promise<SkillsSta
   return { state: "drift", ops };
 }
 
-async function applySkills(targets: SkillTargets): Promise<SkillsStatus> {
-  const status = await getSkillsStatus(targets);
+async function applySkills(
+  targets: SkillTargets,
+  initialStatus?: SkillsStatus,
+): Promise<SkillsStatus> {
+  const status = initialStatus ?? (await getSkillsStatus(targets));
 
   const writes = status.ops
     .filter((op) => op.kind === "add" || op.kind === "update")
@@ -174,7 +176,7 @@ export async function autoUpdateInstalledSkills(targets?: SkillTargets): Promise
   const t = targets ?? resolveSkillTargets();
   const status = await getSkillsStatus(t);
   if (status.state !== "drift") return status;
-  return applySkills(t);
+  return applySkills(t, status);
 }
 
 export async function uninstallSkills(targets?: SkillTargets): Promise<SkillsStatus> {
