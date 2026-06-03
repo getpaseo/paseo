@@ -17,6 +17,43 @@ function flattenKeys(value: unknown, prefix = ""): string[] {
   return entries.flatMap(([key, child]) => flattenKeys(child, prefix ? `${prefix}.${key}` : key));
 }
 
+function flattenStrings(value: unknown, prefix = ""): Record<string, string> {
+  if (typeof value === "string") {
+    return { [prefix]: value };
+  }
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, child]) =>
+      Object.entries(flattenStrings(child, prefix ? `${prefix}.${key}` : key)),
+    ),
+  );
+}
+
+function countMatchingEnglishStrings(resource: unknown): number {
+  const englishStrings = flattenStrings(en);
+  const localeStrings = flattenStrings(resource);
+  return Object.entries(englishStrings).filter(([key, value]) => localeStrings[key] === value)
+    .length;
+}
+
+function findInterpolationMismatches(resource: unknown): string[] {
+  const interpolationPattern = /\{\{[^}]+\}\}/g;
+  const englishStrings = flattenStrings(en);
+  const localeStrings = flattenStrings(resource);
+  return Object.entries(englishStrings).flatMap(([key, value]) => {
+    const expected = [...value.matchAll(interpolationPattern)].map((match) => match[0]).sort();
+    const actual = [...(localeStrings[key] ?? "").matchAll(interpolationPattern)]
+      .map((match) => match[0])
+      .sort();
+    return expected.join("|") === actual.join("|")
+      ? []
+      : [`${key}: ${expected.join(", ")} -> ${actual.join(", ")}`];
+  });
+}
+
 const appSourceRoot = join(__dirname, "..");
 const untranslatedConnectionErrors = [
   "Daemon unavailable",
@@ -71,6 +108,23 @@ describe("translation resources", () => {
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
+  });
+
+  it("keeps non-English UN official languages translated beyond fallback labels", () => {
+    const totalStrings = Object.keys(flattenStrings(en)).length;
+    const maxFallbackStrings = Math.floor(totalStrings * 0.25);
+    expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
+  });
+
+  it("preserves interpolation placeholders in every language", () => {
+    expect(findInterpolationMismatches(ar)).toEqual([]);
+    expect(findInterpolationMismatches(es)).toEqual([]);
+    expect(findInterpolationMismatches(fr)).toEqual([]);
+    expect(findInterpolationMismatches(ru)).toEqual([]);
+    expect(findInterpolationMismatches(zhCN)).toEqual([]);
   });
 
   it("keeps local connection fallback errors translated", () => {
