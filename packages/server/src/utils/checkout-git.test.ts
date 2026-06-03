@@ -562,6 +562,52 @@ const x = 1;
     });
   });
 
+  it("reports a PR worktree as behind when its configured PR remote has newer commits", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    const prRemoteDir = join(tempDir, "pr-remote.git");
+    const prCloneDir = join(tempDir, "pr-clone");
+    execFileSync("git", ["init", "--bare", "-b", "main", prRemoteDir]);
+    execFileSync("git", ["checkout", "-b", "aaronzhongg/open-button-targets-active-file"], {
+      cwd: repoDir,
+    });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+    execFileSync("git", ["remote", "add", "paseo-pr-1285", prRemoteDir], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["push", "paseo-pr-1285", "HEAD:refs/heads/open-button-targets-active-file"],
+      { cwd: repoDir },
+    );
+    execFileSync(
+      "git",
+      ["config", "branch.aaronzhongg/open-button-targets-active-file.remote", "paseo-pr-1285"],
+      { cwd: repoDir },
+    );
+    execFileSync(
+      "git",
+      [
+        "config",
+        "branch.aaronzhongg/open-button-targets-active-file.merge",
+        "refs/heads/open-button-targets-active-file",
+      ],
+      { cwd: repoDir },
+    );
+    execFileSync("git", ["clone", prRemoteDir, prCloneDir]);
+    execFileSync("git", ["checkout", "open-button-targets-active-file"], { cwd: prCloneDir });
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: prCloneDir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: prCloneDir });
+    commitFile(prCloneDir, "remote.txt", "remote\n", "remote update");
+    execFileSync("git", ["push"], { cwd: prCloneDir });
+    execFileSync("git", ["fetch", "paseo-pr-1285"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+
+    expect(status).toMatchObject({
+      isGit: true,
+      currentBranch: "aaronzhongg/open-button-targets-active-file",
+      behindOfOrigin: 1,
+    });
+  });
+
   it("does not report the full branch history as ahead when the current branch remote is gone", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });

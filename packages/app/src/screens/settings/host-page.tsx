@@ -249,7 +249,7 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
   );
 }
 
-export function HostHostPage({
+export function HostSettingsPage({
   serverId,
   onHostRemoved,
 }: {

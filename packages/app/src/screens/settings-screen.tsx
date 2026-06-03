@@ -94,7 +94,7 @@ import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import {
   HostConnectionsPage,
   HostAgentsPage,
-  HostHostPage,
+  HostSettingsPage,
   HostProvidersPage,
   HostWorkspacesPage,
 } from "@/screens/settings/host-page";
@@ -1313,7 +1313,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
         case "providers":
           return <HostProvidersPage serverId={view.serverId} />;
         case "host":
-          return <HostHostPage serverId={view.serverId} onHostRemoved={handleHostRemoved} />;
+          return <HostSettingsPage serverId={view.serverId} onHostRemoved={handleHostRemoved} />;
       }
     }
     if (view.kind === "projects") {

@@ -1457,9 +1457,13 @@ async function getBehindOfOrigin(
   if (!currentBranch) {
     return null;
   }
+  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
+  if (!upstreamRef) {
+    return null;
+  }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${currentBranch}..origin/${currentBranch}`],
+      ["rev-list", "--count", `${currentBranch}..${upstreamRef}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
     const count = Number.parseInt(stdout.trim(), 10);
