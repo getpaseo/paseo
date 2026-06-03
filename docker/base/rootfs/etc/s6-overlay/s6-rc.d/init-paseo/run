@@ -28,9 +28,37 @@ esac
 
 PASEO_HOME="${PASEO_HOME:-/config}"
 mkdir -p "$PASEO_HOME"
-# Only chown the top level + paseo-owned subdirs; avoid clobbering a large
-# bind-mounted /config on every boot.
-chown paseo:paseo "$PASEO_HOME" || true
-chmod 700 "$PASEO_HOME" || true
+
+ensure_paseo_dir() {
+  local dir="$1"
+  local mode="${2:-700}"
+  local existed=0
+  if [[ -z "$dir" ]]; then
+    return 0
+  fi
+  [[ -d "$dir" ]] && existed=1
+  mkdir -p "$dir"
+  case "$dir" in
+    "$PASEO_HOME" | "$PASEO_HOME"/*)
+      chown paseo:paseo "$dir" || true
+      chmod "$mode" "$dir" || true
+      ;;
+    *)
+      if [[ "$existed" == 0 ]]; then
+        chown paseo:paseo "$dir" || true
+        chmod "$mode" "$dir" || true
+      fi
+      ;;
+  esac
+}
+
+# Only chown the top level + small paseo-owned config dirs; avoid clobbering a
+# large bind-mounted /config on every boot.
+ensure_paseo_dir "$PASEO_HOME" 700
+ensure_paseo_dir "${CLAUDE_CONFIG_DIR:-${PASEO_HOME}/.claude}" 700
+ensure_paseo_dir "${CODEX_HOME:-${PASEO_HOME}/.codex}" 700
+ensure_paseo_dir "${XDG_CONFIG_HOME:-${PASEO_HOME}/.config}" 700
+ensure_paseo_dir "${XDG_DATA_HOME:-${PASEO_HOME}/.local/share}" 700
+ensure_paseo_dir "${XDG_CACHE_HOME:-${PASEO_HOME}/.cache}" 700
 
 echo "[init] /config ready (PUID=${PUID} PGID=${PGID} home=${PASEO_HOME})"

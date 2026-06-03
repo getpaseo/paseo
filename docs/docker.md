@@ -78,6 +78,11 @@ A `docker compose` deployment is in
 | `/config`    | `PASEO_HOME` — `config.json`, `agents/`, `projects/`, `loops/`, logs, **and** agent credentials (`~/.claude`, `~/.codex`, ...). `HOME` is set to `/config`, so everything an agent writes to its home dir persists here. |
 | `/workspace` | The code Paseo operates on. Bind-mount one or more of your repos.                                                                                                                                                        |
 
+On boot, the image creates the small agent config directories under `/config`
+(`.claude`, `.codex`, `.config`, `.local/share`, `.cache`) and assigns them to
+the `paseo` user. Codex expects `CODEX_HOME` to exist before launch, so an empty
+fresh `/config` volume is still valid.
+
 Set `PUID`/`PGID` to the uid/gid that owns the bind-mounted folders on the host
 (`id -u` / `id -g`) so the daemon and agents can read and write your files.
 
