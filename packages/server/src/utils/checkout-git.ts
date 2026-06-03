@@ -802,7 +802,6 @@ export type CheckoutSnapshotFacts =
       comparisonBaseRef: string | null;
       branchRemoteName: string | null;
       branchMergeRef: string | null;
-      trackedOriginBranch: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
@@ -1595,8 +1594,6 @@ export async function getCheckoutSnapshotFacts(
       }
     }
   }
-  const trackedOriginBranch =
-    branchRemoteName === "origin" ? parseBranchMergeHeadRef(branchMergeRef) : null;
   const pullRequestLookupTarget = inspected.currentBranch
     ? buildPullRequestLookupTargetFromBranchConfig({
         currentBranch: inspected.currentBranch,
@@ -1620,7 +1617,6 @@ export async function getCheckoutSnapshotFacts(
     comparisonBaseRef,
     branchRemoteName,
     branchMergeRef,
-    trackedOriginBranch,
     pullRequestLookupTarget,
   };
 }

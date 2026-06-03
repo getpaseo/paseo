@@ -79,7 +79,6 @@ function createCheckoutFacts(
     comparisonBaseRef: null,
     branchRemoteName: null,
     branchMergeRef: null,
-    trackedOriginBranch: null,
     pullRequestLookupTarget: { headRef: "main" },
     ...overrides,
   };
@@ -890,7 +889,6 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
         currentBranch: "fork-owner/open-button-targets-active-file",
         branchRemoteName: "paseo-pr-1285",
         branchMergeRef: "refs/heads/open-button-targets-active-file",
-        trackedOriginBranch: "paseo-pr-1285/open-button-targets-active-file",
         pullRequestLookupTarget: {
           headRef: "open-button-targets-active-file",
           headRepositoryOwner: "fork-owner",
