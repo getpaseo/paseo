@@ -1,0 +1,41 @@
+# Example Paseo daemon deployment.
+#
+#   cp docker-compose.example.yml docker-compose.yml
+#   # edit PASEO_PASSWORD, DOCKER_MODS and the workspace mounts, then:
+#   docker compose up -d
+#
+# Connect the Paseo app/CLI to http://<host>:6767 with the password below.
+services:
+  paseo:
+    image: ghcr.io/getpaseo/paseo:debian
+    container_name: paseo
+    restart: unless-stopped
+    ports:
+      - "6767:6767"
+    environment:
+      # REQUIRED for any network-reachable deployment.
+      PASEO_PASSWORD: "change-me"
+
+      # Pick which agents to install at startup (pipe-separated).
+      # Each mod installs an agent CLI; Paseo auto-detects it on PATH.
+      DOCKER_MODS: "ghcr.io/getpaseo/mods:claude-code|ghcr.io/getpaseo/mods:codex"
+
+      # Match these to the owner of the bind-mounted folders below
+      # (run `id -u` / `id -g` on the host) so agents can write your files.
+      PUID: "1000"
+      PGID: "1000"
+
+      # Allow extra hostnames if you reach the daemon by DNS name (IPs and
+      # localhost are always allowed). Comma-separated, or "true" for any.
+      # PASEO_HOSTNAMES: "paseo.example.com,.lan"
+
+      # Agent credentials — provide whatever your chosen agents need.
+      # ANTHROPIC_API_KEY: "sk-ant-..."
+      # OPENAI_API_KEY: "sk-..."
+    volumes:
+      # Persistent state + agent auth/config (config.json, agents/, ~/.claude, ...).
+      - ./paseo-config:/config
+      # The code Paseo works on. Bind-mount one or more of your repos.
+      - ./workspace:/workspace
+      # Example: mount a specific host project read-write.
+      # - /home/me/projects/my-app:/workspace/my-app

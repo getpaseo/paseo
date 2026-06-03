@@ -1,0 +1,25 @@
+#!/command/with-contenv bash
+# Launch the Paseo daemon (supervisor entrypoint) in the foreground.
+# Runs as the unprivileged `paseo` user (svc-paseo applies s6-setuidgid).
+set -euo pipefail
+
+: "${PASEO_HOME:=/config}"
+export PASEO_HOME
+export HOME="$PASEO_HOME"
+: "${PASEO_LISTEN:=0.0.0.0:6767}"
+export PASEO_LISTEN
+
+if [[ -z "${PASEO_PASSWORD:-}" ]]; then
+  echo "[paseo] WARNING: PASEO_PASSWORD is not set." >&2
+  echo "[paseo] The daemon will accept connections without a password." >&2
+  echo "[paseo] Set -e PASEO_PASSWORD=... for any network-reachable deployment." >&2
+fi
+
+if [[ ! -f /etc/paseo-server-entry ]]; then
+  echo "[paseo] FATAL: /etc/paseo-server-entry missing (broken image build)." >&2
+  exit 1
+fi
+
+ENTRY="$(cat /etc/paseo-server-entry)"
+echo "[paseo] starting daemon: node ${ENTRY} (listen ${PASEO_LISTEN}, home ${PASEO_HOME})"
+exec node "$ENTRY"

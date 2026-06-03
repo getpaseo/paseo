@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+# Install Claude Code so Paseo exposes the `claude` provider.
+set -euo pipefail
+
+if command -v claude >/dev/null 2>&1; then
+  echo "[mod:claude-code] claude already on PATH — skipping install."
+  exit 0
+fi
+
+echo "[mod:claude-code] installing @anthropic-ai/claude-code"
+npm install -g @anthropic-ai/claude-code
+echo "[mod:claude-code] done ($(command -v claude))"

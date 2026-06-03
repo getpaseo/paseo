@@ -1,0 +1,161 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+    inputs:
+      paseo_version:
+        description: "Paseo npm version to bake (defaults to package.json version)."
+        required: false
+        default: ""
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  # Resolve the Paseo version to bake, the GHCR owner, and whether we publish.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      push: ${{ steps.v.outputs.push }}
+      owner: ${{ steps.v.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+            push=true
+          elif [[ -n "${{ inputs.paseo_version }}" ]]; then
+            version="${{ inputs.paseo_version }}"
+            push=true
+          else
+            version="$(node -p "require('./package.json').version")"
+            push=false
+          fi
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "push=${push}" >> "$GITHUB_OUTPUT"
+          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${version} push=${push} owner=${owner}"
+
+  base:
+    needs: setup
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian13
+            base: debian:13-slim
+            moving: debian
+            latest: true
+          - name: debian12
+            base: debian:12-slim
+          - name: ubuntu2404
+            base: ubuntu:24.04
+            moving: ubuntu
+          - name: ubuntu2204
+            base: ubuntu:22.04
+          - name: alpine
+            base: alpine:3.21
+            moving: alpine
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: tags
+        env:
+          IMAGE_BASE: ghcr.io/${{ needs.setup.outputs.owner }}/paseo
+        run: |
+          set -euo pipefail
+          V="${{ needs.setup.outputs.version }}"
+          tags="${IMAGE_BASE}:${V}-${{ matrix.name }}"
+          if [[ -n "${{ matrix.moving }}" ]]; then
+            tags="${tags}"$'\n'"${IMAGE_BASE}:${{ matrix.moving }}"
+          fi
+          if [[ "${{ matrix.latest }}" == "true" ]]; then
+            tags="${tags}"$'\n'"${IMAGE_BASE}:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: needs.setup.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.base }}
+            PASEO_VERSION=${{ needs.setup.outputs.version }}
+          tags: ${{ steps.tags.outputs.tags }}
+          push: ${{ needs.setup.outputs.push == 'true' }}
+          provenance: false
+          cache-from: type=gha,scope=base-${{ matrix.name }}
+          cache-to: type=gha,scope=base-${{ matrix.name }},mode=max
+
+  mods:
+    needs: setup
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude-code, codex, copilot, opencode, pi]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: needs.setup.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker/mods/${{ matrix.agent }}
+          file: docker/mods/${{ matrix.agent }}/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          tags: |
+            ghcr.io/${{ needs.setup.outputs.owner }}/mods:${{ matrix.agent }}
+            ghcr.io/${{ needs.setup.outputs.owner }}/mods:${{ matrix.agent }}-${{ needs.setup.outputs.version }}
+          push: ${{ needs.setup.outputs.push == 'true' }}
+          provenance: false

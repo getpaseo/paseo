@@ -1,0 +1,14 @@
+#!/command/with-contenv bash
+# Install OpenAI Codex so Paseo exposes the `codex` provider.
+# NOTE: @openai/codex ships a native (Rust) binary via npm and has no musl
+# build — this mod works on the glibc images (Debian/Ubuntu), not Alpine.
+set -euo pipefail
+
+if command -v codex >/dev/null 2>&1; then
+  echo "[mod:codex] codex already on PATH — skipping install."
+  exit 0
+fi
+
+echo "[mod:codex] installing @openai/codex"
+npm install -g @openai/codex
+echo "[mod:codex] done ($(command -v codex))"

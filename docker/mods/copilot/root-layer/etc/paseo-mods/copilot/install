@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+# Install GitHub Copilot CLI so Paseo exposes the `copilot` provider.
+set -euo pipefail
+
+if command -v copilot >/dev/null 2>&1; then
+  echo "[mod:copilot] copilot already on PATH — skipping install."
+  exit 0
+fi
+
+echo "[mod:copilot] installing @github/copilot"
+npm install -g @github/copilot
+echo "[mod:copilot] done ($(command -v copilot))"

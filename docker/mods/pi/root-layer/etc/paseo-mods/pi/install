@@ -1,0 +1,17 @@
+#!/command/with-contenv bash
+# Install the Pi coding agent so Paseo exposes the `pi` provider.
+#
+# Paseo only needs the `pi` binary on PATH (it talks to it via `pi --mode rpc`).
+# The repo does not pin Pi's package, so the npm package name is overridable
+# with the PI_NPM_PACKAGE env var if the default ever changes upstream.
+set -euo pipefail
+
+if command -v pi >/dev/null 2>&1; then
+  echo "[mod:pi] pi already on PATH — skipping install."
+  exit 0
+fi
+
+PI_NPM_PACKAGE="${PI_NPM_PACKAGE:-@mariozechner/pi}"
+echo "[mod:pi] installing ${PI_NPM_PACKAGE}"
+npm install -g "${PI_NPM_PACKAGE}"
+echo "[mod:pi] done ($(command -v pi || echo 'pi not found — check PI_NPM_PACKAGE'))"

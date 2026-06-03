@@ -1,0 +1,22 @@
+#!/command/with-contenv bash
+# Seed the /config volume and align the paseo user with the host volume owner.
+set -euo pipefail
+
+PUID="${PUID:-911}"
+PGID="${PGID:-911}"
+
+if [[ "$(id -g paseo)" != "$PGID" ]]; then
+  groupmod -o -g "$PGID" paseo || true
+fi
+if [[ "$(id -u paseo)" != "$PUID" ]]; then
+  usermod -o -u "$PUID" paseo || true
+fi
+
+PASEO_HOME="${PASEO_HOME:-/config}"
+mkdir -p "$PASEO_HOME"
+# Only chown the top level + paseo-owned subdirs; avoid clobbering a large
+# bind-mounted /config on every boot.
+chown paseo:paseo "$PASEO_HOME" || true
+chmod 700 "$PASEO_HOME" || true
+
+echo "[init] /config ready (PUID=${PUID} PGID=${PGID} home=${PASEO_HOME})"

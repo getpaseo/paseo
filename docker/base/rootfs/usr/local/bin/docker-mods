@@ -1,0 +1,171 @@
+#!/command/with-contenv bash
+# Minimal Docker Mods loader.
+#
+# Reads the DOCKER_MODS env var (pipe-separated OCI image refs), pulls each
+# image's layers straight from the registry (no docker-in-docker), extracts
+# them into the running container filesystem, then runs any install hooks the
+# mod dropped at /etc/paseo-mods/<name>/install.
+#
+#   DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code|ghcr.io/getpaseo/mods:codex
+#
+# Supports ghcr.io and Docker Hub. Public images only (anonymous pull).
+set -uo pipefail
+
+MODS="${DOCKER_MODS:-}"
+if [[ -z "${MODS// }" ]]; then
+  echo "[mods] DOCKER_MODS not set — no agent mods to apply."
+  exit 0
+fi
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+arch="$(uname -m)"
+case "$arch" in
+  x86_64) GOARCH=amd64 ;;
+  aarch64 | arm64) GOARCH=arm64 ;;
+  *) GOARCH=amd64 ;;
+esac
+
+# Parse "[registry/]repo[:tag]" into registry / repo / tag.
+parse_ref() {
+  local ref="$1" registry repo tag rest
+  case "$ref" in
+    *:*/*) registry=""; rest="$ref" ;;            # colon only inside a path is not a host
+    *) rest="$ref" ;;
+  esac
+  # Split optional registry host (contains a dot or a colon, or is localhost).
+  local first="${ref%%/*}"
+  if [[ "$first" == *.* || "$first" == *:* || "$first" == "localhost" ]]; then
+    registry="$first"
+    rest="${ref#*/}"
+  else
+    registry="docker.io"
+    rest="$ref"
+  fi
+  # Split tag.
+  if [[ "$rest" == *:* ]]; then
+    tag="${rest##*:}"
+    repo="${rest%:*}"
+  else
+    tag="latest"
+    repo="$rest"
+  fi
+  # Docker Hub shorthand: single-segment repos live under library/.
+  if [[ "$registry" == "docker.io" && "$repo" != */* ]]; then
+    repo="library/$repo"
+  fi
+  REG="$registry"; REPO="$repo"; TAG="$tag"
+}
+
+# Resolve the auth/registry endpoints for the well-known registries.
+auth_token() {
+  local registry="$1" repo="$2"
+  case "$registry" in
+    ghcr.io)
+      curl -fsSL "https://ghcr.io/token?scope=repository:${repo}:pull" | jq -r '.token // empty'
+      ;;
+    docker.io | registry-1.docker.io)
+      curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" | jq -r '.token // empty'
+      ;;
+    *)
+      # Best-effort: try the conventional /token endpoint on the registry itself.
+      curl -fsSL "https://${registry}/token?scope=repository:${repo}:pull" 2>/dev/null | jq -r '.token // empty'
+      ;;
+  esac
+}
+
+registry_host() {
+  case "$1" in
+    docker.io) echo "registry-1.docker.io" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+ACCEPT_MANIFEST="application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+
+apply_mod() {
+  local ref="$1"
+  parse_ref "$ref"
+  local host token
+  host="$(registry_host "$REG")"
+  echo "[mods] applying ${ref}  (registry=${REG} repo=${REPO} tag=${TAG})"
+
+  token="$(auth_token "$REG" "$REPO")"
+  local auth=()
+  [[ -n "$token" ]] && auth=(-H "Authorization: Bearer ${token}")
+
+  local manifest
+  manifest="$(curl -fsSL "${auth[@]}" -H "Accept: ${ACCEPT_MANIFEST}" \
+    "https://${host}/v2/${REPO}/manifests/${TAG}")" || {
+    echo "[mods] ERROR: failed to fetch manifest for ${ref}; skipping." >&2
+    return 1
+  }
+
+  # If this is a multi-arch index, resolve to the manifest for our arch.
+  local media digest
+  media="$(echo "$manifest" | jq -r '.mediaType // empty')"
+  if echo "$manifest" | jq -e '.manifests' >/dev/null 2>&1; then
+    digest="$(echo "$manifest" | jq -r \
+      --arg arch "$GOARCH" \
+      '.manifests[] | select(.platform.os=="linux" and .platform.architecture==$arch) | .digest' \
+      | head -n1)"
+    if [[ -z "$digest" ]]; then
+      digest="$(echo "$manifest" | jq -r '.manifests[0].digest')"
+    fi
+    manifest="$(curl -fsSL "${auth[@]}" -H "Accept: ${ACCEPT_MANIFEST}" \
+      "https://${host}/v2/${REPO}/manifests/${digest}")" || return 1
+  fi
+
+  local layers
+  layers="$(echo "$manifest" | jq -r '.layers[].digest')"
+  if [[ -z "$layers" ]]; then
+    echo "[mods] WARNING: ${ref} has no layers; nothing to extract." >&2
+    return 0
+  fi
+
+  local i=0 d blob
+  while IFS= read -r d; do
+    [[ -z "$d" ]] && continue
+    i=$((i + 1))
+    blob="${WORK}/layer-${i}.tar"
+    curl -fsSL "${auth[@]}" -o "$blob" \
+      "https://${host}/v2/${REPO}/blobs/${d}" || {
+      echo "[mods] ERROR: failed to download layer ${d}; skipping mod." >&2
+      return 1
+    }
+    # Layers are gzip-compressed tar by default; fall back to plain tar.
+    tar -C / -xzpf "$blob" 2>/dev/null || tar -C / -xpf "$blob"
+    rm -f "$blob"
+  done <<< "$layers"
+
+  echo "[mods] extracted ${ref}"
+}
+
+run_install_hooks() {
+  shopt -s nullglob
+  local hook dir
+  for hook in /etc/paseo-mods/*/install; do
+    dir="$(dirname "$hook")"
+    if [[ -f "${dir}/.done" ]]; then
+      continue
+    fi
+    echo "[mods] running install hook: ${hook}"
+    chmod +x "$hook" || true
+    if "$hook"; then
+      touch "${dir}/.done"
+    else
+      echo "[mods] WARNING: install hook failed: ${hook}" >&2
+    fi
+  done
+}
+
+IFS='|' read -ra REFS <<< "$MODS"
+for ref in "${REFS[@]}"; do
+  ref="${ref// /}"
+  [[ -z "$ref" ]] && continue
+  apply_mod "$ref" || echo "[mods] continuing after failure on ${ref}" >&2
+done
+
+run_install_hooks
+echo "[mods] done."

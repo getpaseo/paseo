@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+# Install OpenCode so Paseo exposes the `opencode` provider.
+set -euo pipefail
+
+if command -v opencode >/dev/null 2>&1; then
+  echo "[mod:opencode] opencode already on PATH — skipping install."
+  exit 0
+fi
+
+echo "[mod:opencode] installing opencode-ai"
+npm install -g opencode-ai
+echo "[mod:opencode] done ($(command -v opencode))"

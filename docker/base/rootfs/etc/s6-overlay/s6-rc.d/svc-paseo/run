@@ -1,0 +1,3 @@
+#!/command/with-contenv bash
+# Run the daemon as the unprivileged paseo user.
+exec s6-setuidgid paseo /usr/local/bin/paseo-run
