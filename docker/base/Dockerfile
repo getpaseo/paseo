@@ -77,7 +77,8 @@ RUN set -eux; \
       /usr/local/bin/paseo-run \
       /etc/s6-overlay/s6-rc.d/init-paseo/run \
       /etc/s6-overlay/s6-rc.d/init-docker-mods/run \
-      /etc/s6-overlay/s6-rc.d/svc-paseo/run
+      /etc/s6-overlay/s6-rc.d/svc-paseo/run \
+      /etc/s6-overlay/s6-rc.d/svc-paseo-pair/run
 
 EXPOSE 6767
 VOLUME /config

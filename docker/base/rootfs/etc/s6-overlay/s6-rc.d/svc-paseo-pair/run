@@ -1,0 +1,37 @@
+#!/command/with-contenv bash
+# Print the pairing QR code and link once the daemon is listening, so the user
+# can scan it straight from `docker logs`. Best-effort: never fail the boot.
+set -uo pipefail
+
+# Allow opting out: PASEO_PAIRING_QR in {0,false,no,off} skips the QR.
+case "$(printf '%s' "${PASEO_PAIRING_QR:-}" | tr '[:upper:]' '[:lower:]')" in
+  0 | false | no | n | off)
+    echo "[pair] PASEO_PAIRING_QR disabled; skipping pairing QR."
+    exit 0
+    ;;
+esac
+
+PORT="${PASEO_LISTEN##*:}"
+: "${PORT:=6767}"
+
+# Wait for the daemon to accept connections (s6 marks the longrun "up" before it
+# actually listens). Reuse the same net.connect probe as the HEALTHCHECK.
+ready=0
+for _ in $(seq 1 60); do
+  if node -e "require('net').connect(${PORT},'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$ready" -ne 1 ]]; then
+  echo "[pair] daemon did not start listening on port ${PORT} in time; skipping pairing QR." >&2
+  exit 0
+fi
+
+# Drop to the unprivileged paseo user (owns /config). Never fail the boot.
+s6-setuidgid paseo paseo daemon pair || \
+  echo "[pair] failed to generate pairing QR (relay disabled?); continuing." >&2
+
+exit 0

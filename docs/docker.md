@@ -119,6 +119,11 @@ You can also configure custom providers / API endpoints in
 | `PASEO_CORS_ORIGINS` | (unset)        | Comma-separated allowed CORS origins.                               |
 | `PUID` / `PGID`      | `911`          | uid/gid for the `paseo` user (match your volumes).                  |
 | `PASEO_HOME`         | `/config`      | State directory. Keep at `/config` unless you remap the volume.     |
+| `PASEO_PAIRING_QR`   | (enabled)      | Set to `0`/`false` to suppress the startup pairing QR in the logs.  |
+
+On startup the container prints a pairing QR code and link to its logs once the
+daemon is listening (s6 `svc-paseo-pair` oneshot, best-effort — never blocks
+boot). Scan it from `docker logs` with the Paseo app.
 
 ## Security
 

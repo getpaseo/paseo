@@ -25,6 +25,10 @@ docker run -d --name paseo \
 
 Then point the Paseo app/CLI at `http://<host>:6767`.
 
+On startup the container prints a pairing QR code and link to its logs once the
+daemon is listening — run `docker logs paseo` and scan it with the Paseo app.
+Set `-e PASEO_PAIRING_QR=0` to disable.
+
 ## Images
 
 | Image                                   | Notes                                    |
