@@ -1,6 +1,7 @@
 import type { AgentLifecycleStatus } from "./agent-lifecycle.js";
 import type { WorkspaceStateBucket } from "./messages.js";
 
+export type { WorkspaceStateBucket };
 export type AgentAttentionReason = "finished" | "error" | "permission" | null | undefined;
 
 export interface AgentStateBucketInput {
@@ -25,7 +26,7 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
   if (input.status === "error" || input.attentionReason === "error") {
     return "failed";
   }
-  if (input.status === "running") {
+  if (input.status === "running" || input.status === "initializing") {
     return "running";
   }
   if (input.requiresAttention) {

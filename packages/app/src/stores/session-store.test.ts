@@ -23,6 +23,7 @@ function createWorkspace(
     workspaceKind: input.workspaceKind ?? "local_checkout",
     name: input.name ?? "main",
     status: input.status ?? "done",
+    statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
@@ -76,6 +77,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       name: "main",
       archivingAt: null,
       status: "running",
+      statusEnteredAt: null,
       activityAt: "not-a-date",
       diffStat: null,
       scripts,
@@ -109,6 +111,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       name: "main",
       archivingAt: null,
       status: "done",
+      statusEnteredAt: null,
       activityAt: null,
       diffStat: null,
       scripts: [],
@@ -140,6 +143,42 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.archivingAt).toBeNull();
   });
 
+  it("normalizes statusEnteredAt strings to Date and missing or null values to null", () => {
+    const basePayload = {
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      status: "running",
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    } satisfies Omit<WorkspaceDescriptorPayload, "statusEnteredAt" | "archivingAt">;
+
+    const withString = normalizeWorkspaceDescriptor({
+      ...basePayload,
+      archivingAt: null,
+      statusEnteredAt: "2026-05-12T09:30:00.000Z",
+    });
+    const withNull = normalizeWorkspaceDescriptor({
+      ...basePayload,
+      archivingAt: null,
+      statusEnteredAt: null,
+    });
+    const missing = normalizeWorkspaceDescriptor({
+      ...basePayload,
+      archivingAt: null,
+    } as unknown as WorkspaceDescriptorPayload);
+
+    expect(withString.statusEnteredAt).toEqual(new Date("2026-05-12T09:30:00.000Z"));
+    expect(withNull.statusEnteredAt).toBeNull();
+    expect(missing.statusEnteredAt).toBeNull();
+  });
+
   it("preserves project placement from workspace descriptor payloads", () => {
     const workspace = normalizeWorkspaceDescriptor({
       id: "1",
@@ -152,6 +191,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       name: "main",
       archivingAt: null,
       status: "done",
+      statusEnteredAt: null,
       activityAt: null,
       diffStat: null,
       scripts: [],

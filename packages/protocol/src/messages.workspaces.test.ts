@@ -430,6 +430,73 @@ describe("workspace message schemas", () => {
     ).toBe(archivingAt);
   });
 
+  // The protocol `statusEnteredAt` field is optional and defaults to null.
+  // Old daemons omit it entirely and old clients must keep accepting that.
+  test("defaults statusEnteredAt to null for legacy descriptors", () => {
+    const baseWorkspace = {
+      id: "ws-status-entered",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "running",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).statusEnteredAt).toBeNull();
+  });
+
+  test("preserves statusEnteredAt when present", () => {
+    const baseWorkspace = {
+      id: "ws-status-entered",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "running",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    const statusEnteredAt = "2026-05-12T10:00:00.000Z";
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({
+        ...baseWorkspace,
+        statusEnteredAt,
+      }).statusEnteredAt,
+    ).toBe(statusEnteredAt);
+  });
+
+  test("preserves explicit statusEnteredAt: null for empty workspaces", () => {
+    // The server emits `statusEnteredAt: null` for workspaces with no
+    // contributing agents (the "done with no agents" case). The client must
+    // distinguish this from "field omitted" — both parse to null, but the
+    // round-trip must not lose the explicit null.
+    const baseWorkspace = {
+      id: "ws-status-entered",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    const parsed = WorkspaceDescriptorPayloadSchema.parse({
+      ...baseWorkspace,
+      statusEnteredAt: null,
+    });
+    expect(parsed.statusEnteredAt).toBeNull();
+  });
+
   test("parses legacy workspace descriptor enum values", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "workspace_update",

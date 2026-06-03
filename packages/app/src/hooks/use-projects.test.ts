@@ -84,6 +84,7 @@ function workspace(input: {
     name: input.id,
     archivingAt: null,
     status: "done",
+    statusEnteredAt: null,
     activityAt: null,
     diffStat: null,
     scripts: [],

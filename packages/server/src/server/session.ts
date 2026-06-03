@@ -239,6 +239,7 @@ import {
   WorkspaceDirectory,
   type WorkspaceUpdatesFilter,
 } from "./workspace-directory.js";
+import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
 import {
   attemptFirstAgentBranchAutoName,
   createPaseoWorktree,
@@ -6000,7 +6001,9 @@ export class Session {
     if (filter?.labels) {
       const filterLabels = filter.labels;
       agents = agents.filter((agent) =>
-        Object.entries(filterLabels).every(([key, value]) => agent.labels[key] === value),
+        Object.entries(filterLabels).every(
+          ([key, _value]) => agent.labels[key] === filterLabels[key],
+        ),
       );
     }
 
@@ -6292,6 +6295,7 @@ export class Session {
       name: workspace.displayName,
       archivingAt: null,
       status: "done",
+      statusEnteredAt: null,
       activityAt: null,
       diffStat,
       scripts:
@@ -6384,6 +6388,7 @@ export class Session {
       name: result.worktree.branchName || result.workspace.displayName,
       archivingAt: null,
       status: "done",
+      statusEnteredAt: null,
       activityAt: null,
       diffStat: { additions: 0, deletions: 0 },
       scripts: [],
@@ -6474,7 +6479,10 @@ export class Session {
   }
 
   private flushBootstrappedWorkspaceUpdates(options?: {
-    snapshotLatestActivityByWorkspaceId?: Map<string, number>;
+    snapshotByWorkspaceId?: Map<
+      string,
+      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
+    >;
   }): void {
     const subscription = this.workspaceUpdatesSubscription;
     if (!subscription || !subscription.isBootstrapping) {
@@ -6487,19 +6495,26 @@ export class Session {
 
     for (const payload of pending) {
       if (payload.kind === "upsert") {
-        const snapshotLatestActivity = options?.snapshotLatestActivityByWorkspaceId?.get(
-          payload.workspace.id,
-        );
-        if (typeof snapshotLatestActivity === "number") {
-          const updateLatestActivity = payload.workspace.activityAt
-            ? Date.parse(payload.workspace.activityAt)
-            : Number.NEGATIVE_INFINITY;
-          if (
-            !Number.isNaN(updateLatestActivity) &&
-            updateLatestActivity <= snapshotLatestActivity
-          ) {
-            continue;
-          }
+        const snapshot = options?.snapshotByWorkspaceId?.get(payload.workspace.id);
+        const updateActivityAtMs = payload.workspace.activityAt
+          ? Date.parse(payload.workspace.activityAt)
+          : null;
+        const shouldEmit = shouldEmitPendingBootstrapUpdate({
+          snapshot: snapshot
+            ? {
+                status: snapshot.status,
+                statusEnteredAt: snapshot.statusEnteredAt,
+                activityAtMs: snapshot.activityAtMs,
+              }
+            : null,
+          update: {
+            status: payload.workspace.status,
+            statusEnteredAt: payload.workspace.statusEnteredAt ?? null,
+            activityAtMs: Number.isNaN(updateActivityAtMs) ? null : updateActivityAtMs,
+          },
+        });
+        if (!shouldEmit) {
+          continue;
         }
       }
       this.emit({
@@ -7022,15 +7037,7 @@ export class Session {
         },
         "fetch_workspaces_response_ready",
       );
-      const snapshotLatestActivityByWorkspaceId = new Map<string, number>();
-      for (const entry of payload.entries) {
-        const parsedLatestActivity = entry.activityAt
-          ? Date.parse(entry.activityAt)
-          : Number.NEGATIVE_INFINITY;
-        if (!Number.isNaN(parsedLatestActivity)) {
-          snapshotLatestActivityByWorkspaceId.set(entry.id, parsedLatestActivity);
-        }
-      }
+      const snapshot = this.buildBootstrapSnapshot(payload.entries);
 
       this.emit({
         type: "fetch_workspaces_response",
@@ -7042,7 +7049,7 @@ export class Session {
       });
 
       if (subscriptionId && this.workspaceUpdatesSubscription?.subscriptionId === subscriptionId) {
-        this.flushBootstrappedWorkspaceUpdates({ snapshotLatestActivityByWorkspaceId });
+        this.flushBootstrappedWorkspaceUpdates(snapshot);
         void this.reconcileAndEmitWorkspaceUpdates();
       }
     } catch (error) {
@@ -7062,6 +7069,33 @@ export class Session {
         },
       });
     }
+  }
+
+  // Build the bootstrap snapshot used by `flushBootstrappedWorkspaceUpdates`
+  // to decide which pending updates to drop. Captures the status,
+  // statusEnteredAt, and activityAt (parsed to ms) for each workspace entry
+  // so a status-only change (e.g. the unmask case), a statusEnteredAt-only
+  // change (e.g. a fresh unmask time), AND a fresher activity all still
+  // ship to the client.
+  private buildBootstrapSnapshot(entries: FetchWorkspacesResponseEntry[]): {
+    snapshotByWorkspaceId: Map<
+      string,
+      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
+    >;
+  } {
+    const snapshotByWorkspaceId = new Map<
+      string,
+      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
+    >();
+    for (const entry of entries) {
+      const parsedActivity = entry.activityAt ? Date.parse(entry.activityAt) : null;
+      snapshotByWorkspaceId.set(entry.id, {
+        status: entry.status,
+        statusEnteredAt: entry.statusEnteredAt ?? null,
+        activityAtMs: Number.isNaN(parsedActivity) ? null : parsedActivity,
+      });
+    }
+    return { snapshotByWorkspaceId };
   }
 
   private async registerWorkspaceForImportedAgent(cwd: string): Promise<void> {

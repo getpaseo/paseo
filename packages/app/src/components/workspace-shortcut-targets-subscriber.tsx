@@ -1,8 +1,16 @@
 import { useEffect, useMemo } from "react";
+import {
+  useHydratedWorkspaceEntries,
+  useProjectNamesMap,
+} from "@/hooks/use-status-mode-workspaces";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-import { buildSidebarShortcutModel } from "@/utils/sidebar-shortcuts";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import {
+  buildSidebarShortcutModel,
+  buildStatusSidebarShortcutModel,
+} from "@/utils/sidebar-shortcuts";
 
 export function WorkspaceShortcutTargetsSubscriber({
   enabled,
@@ -12,6 +20,11 @@ export function WorkspaceShortcutTargetsSubscriber({
   serverId: string | null;
 }) {
   const { projects } = useSidebarWorkspacesList({ serverId, enabled });
+  const statusWorkspaces = useHydratedWorkspaceEntries(enabled ? serverId : null);
+  const projectNamesByKey = useProjectNamesMap(enabled ? serverId : null);
+  const groupMode = useSidebarViewStore((state) =>
+    enabled && serverId ? state.getGroupMode(serverId) : "project",
+  );
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -19,14 +32,19 @@ export function WorkspaceShortcutTargetsSubscriber({
     (state) => state.setSidebarShortcutWorkspaceTargets,
   );
 
-  const shortcutModel = useMemo(
-    () =>
-      buildSidebarShortcutModel({
-        projects,
-        collapsedProjectKeys,
-      }),
-    [collapsedProjectKeys, projects],
-  );
+  const shortcutModel = useMemo(() => {
+    if (groupMode === "status") {
+      return buildStatusSidebarShortcutModel({
+        workspaces: statusWorkspaces,
+        projectNamesByKey,
+      });
+    }
+
+    return buildSidebarShortcutModel({
+      projects,
+      collapsedProjectKeys,
+    });
+  }, [collapsedProjectKeys, groupMode, projectNamesByKey, projects, statusWorkspaces]);
 
   useEffect(() => {
     if (!enabled || !serverId) {

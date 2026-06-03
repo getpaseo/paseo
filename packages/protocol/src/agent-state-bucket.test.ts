@@ -50,7 +50,7 @@ describe("deriveAgentStateBucket", () => {
     ).toBe("attention");
   });
 
-  it("treats initializing agents as done for workspace buckets", () => {
+  it("treats initializing agents as running for workspace buckets", () => {
     expect(
       deriveAgentStateBucket({
         status: "initializing",
@@ -58,7 +58,7 @@ describe("deriveAgentStateBucket", () => {
         requiresAttention: false,
         attentionReason: null,
       }),
-    ).toBe("done");
+    ).toBe("running");
   });
 });
 

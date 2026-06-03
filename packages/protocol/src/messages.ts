@@ -2413,6 +2413,14 @@ export const WorkspaceDescriptorPayloadSchema = z
     name: z.string(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    // Best-effort workspace status entry timestamp. Old daemons omit the
+    // field; old clients treat missing and null equivalently. The transform
+    // coerces a missing field to `null` so downstream code never has to
+    // handle `undefined`.
+    statusEnteredAt: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? null),
     activityAt: z.string().nullable(),
     diffStat: z
       .object({
