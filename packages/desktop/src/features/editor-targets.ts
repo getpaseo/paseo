@@ -55,6 +55,10 @@ interface Launch {
   args: string[];
 }
 
+interface SpawnLaunch extends Launch {
+  shell: boolean;
+}
+
 const RUNTIME_CONTROL_ENV_KEYS = [
   "PASEO_NODE_ENV",
   "PASEO_DESKTOP_MANAGED",
@@ -173,6 +177,41 @@ function dirnameForPlatform(value: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? win32.dirname(value) : posix.dirname(value);
 }
 
+function isWindowsCommandScript(executable: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32") {
+    return false;
+  }
+  const extension = win32.extname(executable).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
+}
+
+function escapeWindowsCmdValue(value: string): string {
+  const isQuoted = value.startsWith('"') && value.endsWith('"');
+  const unquoted = isQuoted ? value.slice(1, -1) : value;
+  const escaped = unquoted.replace(/([&|^<>()!])/g, "^$1");
+
+  if (isQuoted || /[\s"]/u.test(unquoted)) {
+    const quoted = escaped
+      .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
+      .replace(/\\+$/u, (slashes) => `${slashes}${slashes}`);
+    return `"${quoted}"`;
+  }
+
+  return escaped;
+}
+
+function createSpawnLaunch(launch: Launch, platform: NodeJS.Platform): SpawnLaunch {
+  if (!isWindowsCommandScript(launch.command, platform)) {
+    return { ...launch, shell: false };
+  }
+
+  return {
+    command: escapeWindowsCmdValue(launch.command),
+    args: launch.args.map(escapeWindowsCmdValue),
+    shell: true,
+  };
+}
+
 function buildLaunch(input: {
   target: EditorTargetDefinition;
   path: string;
@@ -262,14 +301,15 @@ export async function openEditorTarget(
     platform,
     executable,
   });
+  const spawnLaunch = createSpawnLaunch(launch, platform);
 
   await new Promise<void>((resolve, reject) => {
     let child: SpawnedProcess;
     try {
-      child = spawn(launch.command, launch.args, {
+      child = spawn(spawnLaunch.command, spawnLaunch.args, {
         detached: true,
         env: createExternalProcessEnv(env),
-        shell: platform === "win32",
+        shell: spawnLaunch.shell,
         stdio: "ignore",
       });
     } catch (error) {

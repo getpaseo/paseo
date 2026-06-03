@@ -157,7 +157,58 @@ describe("desktop editor targets", () => {
 
     expect(recorder.calls[0]?.command).toBe("C:/Windows/explorer.exe");
     expect(recorder.calls[0]?.args).toEqual(["/select,", "C:/repo/src/index.ts"]);
-    expect(recorder.calls[0]?.options.shell).toBe(true);
+    expect(recorder.calls[0]?.options.shell).toBe(false);
+  });
+
+  it("keeps Windows shell metacharacters literal for direct executables", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      { editorId: "explorer", path: "C:/repo/src/file & calculator.ts", mode: "reveal" },
+      {
+        platform: "win32",
+        env: { PATH: "C:/Windows" },
+        existsSync: createExistsSync([
+          "C:/repo/src/file & calculator.ts",
+          "C:/Windows/explorer.exe",
+        ]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    expect(recorder.calls[0]).toMatchObject({
+      command: "C:/Windows/explorer.exe",
+      args: ["/select,", "C:/repo/src/file & calculator.ts"],
+      options: { shell: false },
+    });
+  });
+
+  it("escapes Windows shell metacharacters for command-script editor wrappers", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      {
+        editorId: "vscode",
+        path: "C:/repo/src/file & calculator.ts",
+        cwd: "C:/repo & workspace",
+      },
+      {
+        platform: "win32",
+        env: { PATH: "C:/Program Files/Editors/bin" },
+        existsSync: createExistsSync([
+          "C:/repo/src/file & calculator.ts",
+          "C:/repo & workspace",
+          "C:/Program Files/Editors/bin/code.cmd",
+        ]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    expect(recorder.calls[0]).toMatchObject({
+      command: '"C:/Program Files/Editors/bin/code.cmd"',
+      args: ['"C:/repo ^& workspace"', '"C:/repo/src/file ^& calculator.ts"'],
+      options: { shell: true },
+    });
   });
 
   it("reveals Linux files by opening the containing folder", async () => {
