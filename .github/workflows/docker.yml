@@ -104,8 +104,10 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - if: matrix.name != 'arch'
+        uses: docker/setup-qemu-action@v3
+      - if: matrix.name != 'arch'
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         if: needs.setup.outputs.push == 'true'
@@ -115,7 +117,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - if: matrix.name != 'arch'
+        uses: docker/build-push-action@v6
         with:
           context: docker/base
           file: docker/base/Dockerfile
@@ -128,6 +131,35 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=base-${{ matrix.name }}
           cache-to: type=gha,scope=base-${{ matrix.name }},mode=max
+
+      - name: Build and push Arch image
+        if: matrix.name == 'arch'
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          set -euo pipefail
+          mapfile -t tags <<< "${TAGS}"
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            if [[ -n "${tag}" ]]; then
+              tag_args+=("-t" "${tag}")
+            fi
+          done
+
+          docker build \
+            --platform linux/amd64 \
+            "${tag_args[@]}" \
+            --build-arg BASE_IMAGE=${{ matrix.base }} \
+            --build-arg PASEO_VERSION=${{ needs.setup.outputs.version }} \
+            docker/base
+
+          if [[ "${{ needs.setup.outputs.push }}" == "true" ]]; then
+            for tag in "${tags[@]}"; do
+              if [[ -n "${tag}" ]]; then
+                docker push "${tag}"
+              fi
+            done
+          fi
 
   mods:
     needs: setup
