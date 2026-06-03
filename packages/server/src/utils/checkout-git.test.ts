@@ -522,6 +522,46 @@ const x = 1;
     expect(divergedStatus.behindOfOrigin).toBe(1);
   });
 
+  it("reports a PR worktree as not ahead when its branch is pushed to the configured PR remote", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    const prRemoteDir = join(tempDir, "pr-remote.git");
+    execFileSync("git", ["init", "--bare", "-b", "main", prRemoteDir]);
+    execFileSync("git", ["checkout", "-b", "aaronzhongg/open-button-targets-active-file"], {
+      cwd: repoDir,
+    });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature commit");
+    execFileSync("git", ["remote", "add", "paseo-pr-1285", prRemoteDir], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["push", "paseo-pr-1285", "HEAD:refs/heads/open-button-targets-active-file"],
+      { cwd: repoDir },
+    );
+    execFileSync(
+      "git",
+      ["config", "branch.aaronzhongg/open-button-targets-active-file.remote", "paseo-pr-1285"],
+      {
+        cwd: repoDir,
+      },
+    );
+    execFileSync(
+      "git",
+      [
+        "config",
+        "branch.aaronzhongg/open-button-targets-active-file.merge",
+        "refs/heads/open-button-targets-active-file",
+      ],
+      { cwd: repoDir },
+    );
+
+    const status = await getCheckoutStatus(repoDir);
+
+    expect(status).toMatchObject({
+      isGit: true,
+      currentBranch: "aaronzhongg/open-button-targets-active-file",
+      aheadOfOrigin: 0,
+    });
+  });
+
   it("does not report the full branch history as ahead when the current branch remote is gone", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
@@ -557,11 +597,11 @@ const x = 1;
       isPaseoOwnedWorktree: true,
       baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
-      aheadOfOrigin: 0,
+      aheadOfOrigin: null,
     });
   });
 
-  it("reports local-only worktree commits as unpushed relative to base", async () => {
+  it("does not report local-only no-track worktree commits as ahead of origin", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     commitFile(repoDir, "second.txt", "second\n", "second commit");
     execFileSync("git", ["push"], { cwd: repoDir });
@@ -581,7 +621,7 @@ const x = 1;
       isPaseoOwnedWorktree: true,
       baseRef: "main",
       aheadBehind: { ahead: 1, behind: 0 },
-      aheadOfOrigin: 1,
+      aheadOfOrigin: null,
     });
   });
 
