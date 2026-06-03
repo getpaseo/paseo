@@ -1,6 +1,10 @@
 import { buildGitHubBlobUrl, buildGitHubBranchTreeUrl } from "@/git/github-url";
 import type { DesktopOpenTarget, OpenDesktopTargetInput } from "@/workspace/desktop-open-targets";
-import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
+import {
+  type ResolvedWorkspaceFilePaths,
+  resolveWorkspaceFilePaths,
+  type WorkspaceFileLocation,
+} from "@/workspace/file-open";
 
 interface CheckoutStatusForOpenTarget {
   isGit: boolean;
@@ -28,15 +32,33 @@ export type PlannedWorkspaceOpenTarget = PlannedDesktopOpenTarget | PlannedGitHu
 export interface PlanWorkspaceOpenTargetsInput {
   workspaceDirectory: string;
   activeFile?: WorkspaceFileLocation | null;
+  resolvedActiveFile?: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
   canUseDesktopBridge: boolean;
   isLocalExecution: boolean;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
 }
 
+function resolveActiveFileForOpenTargets(
+  input: Pick<
+    PlanWorkspaceOpenTargetsInput,
+    "activeFile" | "resolvedActiveFile" | "workspaceDirectory"
+  >,
+): ResolvedWorkspaceFilePaths | null {
+  if (input.resolvedActiveFile !== undefined) {
+    return input.resolvedActiveFile;
+  }
+  return input.activeFile
+    ? resolveWorkspaceFilePaths({
+        path: input.activeFile.path,
+        workspaceRoot: input.workspaceDirectory,
+      })
+    : null;
+}
+
 function planDesktopOpenTargets(input: {
   workspaceDirectory: string;
-  activeFile?: WorkspaceFileLocation | null;
+  resolvedFile: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
   canUseDesktopBridge: boolean;
   isLocalExecution: boolean;
@@ -44,15 +66,9 @@ function planDesktopOpenTargets(input: {
   if (!input.canUseDesktopBridge || !input.isLocalExecution) {
     return [];
   }
-  const resolvedFile = input.activeFile
-    ? resolveWorkspaceFilePaths({
-        path: input.activeFile.path,
-        workspaceRoot: input.workspaceDirectory,
-      })
-    : null;
 
   return input.desktopTargets.map((target) => {
-    if (!resolvedFile) {
+    if (!input.resolvedFile) {
       return {
         source: "desktop",
         id: target.id,
@@ -69,7 +85,7 @@ function planDesktopOpenTargets(input: {
         editorId: target.id,
         openInput: {
           editorId: target.id,
-          path: resolvedFile.absolutePath,
+          path: input.resolvedFile.absolutePath,
           cwd: input.workspaceDirectory,
         },
       };
@@ -81,7 +97,7 @@ function planDesktopOpenTargets(input: {
       editorId: target.id,
       openInput: {
         editorId: target.id,
-        path: resolvedFile.absolutePath,
+        path: input.resolvedFile.absolutePath,
         mode: "reveal",
       },
     };
@@ -89,24 +105,18 @@ function planDesktopOpenTargets(input: {
 }
 
 function planGitHubOpenTarget(input: {
-  workspaceDirectory: string;
   activeFile?: WorkspaceFileLocation | null;
+  resolvedFile: ResolvedWorkspaceFilePaths | null;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
 }): PlannedGitHubOpenTarget | null {
   if (!input.checkoutStatus?.isGit) {
     return null;
   }
-  const resolvedFile = input.activeFile
-    ? resolveWorkspaceFilePaths({
-        path: input.activeFile.path,
-        workspaceRoot: input.workspaceDirectory,
-      })
-    : null;
-  const url = resolvedFile?.relativePath
+  const url = input.resolvedFile?.relativePath
     ? buildGitHubBlobUrl({
         remoteUrl: input.checkoutStatus.remoteUrl,
         branch: input.checkoutStatus.currentBranch,
-        path: resolvedFile.relativePath,
+        path: input.resolvedFile.relativePath,
         lineStart: input.activeFile?.lineStart,
         lineEnd: input.activeFile?.lineEnd,
       })
@@ -129,7 +139,8 @@ function planGitHubOpenTarget(input: {
 export function planWorkspaceOpenTargets(
   input: PlanWorkspaceOpenTargetsInput,
 ): PlannedWorkspaceOpenTarget[] {
-  const desktopTargets = planDesktopOpenTargets(input);
-  const githubTarget = planGitHubOpenTarget(input);
+  const resolvedFile = resolveActiveFileForOpenTargets(input);
+  const desktopTargets = planDesktopOpenTargets({ ...input, resolvedFile });
+  const githubTarget = planGitHubOpenTarget({ ...input, resolvedFile });
   return githubTarget ? [...desktopTargets, githubTarget] : desktopTargets;
 }

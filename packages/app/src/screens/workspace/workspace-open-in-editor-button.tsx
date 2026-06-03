@@ -115,6 +115,7 @@ export function WorkspaceOpenInEditorButton({
       planWorkspaceOpenTargets({
         workspaceDirectory: cwd,
         activeFile,
+        resolvedActiveFile: resolvedFile,
         desktopTargets: desktopOpenTargets,
         canUseDesktopBridge: isDesktopOpenAvailable,
         isLocalExecution: isLocalDaemon,
@@ -135,7 +136,15 @@ export function WorkspaceOpenInEditorButton({
           onOpen: () => openDesktopTarget(target.openInput),
         };
       }),
-    [activeFile, checkoutStatus, cwd, desktopOpenTargets, isDesktopOpenAvailable, isLocalDaemon],
+    [
+      activeFile,
+      checkoutStatus,
+      cwd,
+      desktopOpenTargets,
+      isDesktopOpenAvailable,
+      isLocalDaemon,
+      resolvedFile,
+    ],
   );
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
