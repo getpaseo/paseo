@@ -15,7 +15,7 @@ const SECTION_LABELS = {
 
 export type SettingsSection = keyof typeof SECTION_LABELS | "projects";
 
-type HostSection = "connections" | "orchestration" | "providers" | "daemon";
+type HostSection = "connections" | "agents" | "workspaces" | "providers" | "host";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");
@@ -231,9 +231,9 @@ export async function openHostSection(
 }
 
 export async function expectHostActionCards(page: Page, serverId: string): Promise<void> {
-  // Restart + remove cards live on the Daemon section; providers moved to its
+  // Restart + remove cards live on the Host section; providers moved to its
   // own Providers section (asserted via expectHostProvidersCard).
-  await openSettingsHostSection(page, serverId, "daemon");
+  await openSettingsHostSection(page, serverId, "host");
   await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
   await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
   await expect(page.getByTestId("host-page-remove-host-card")).toBeVisible();
@@ -296,9 +296,10 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
 
   // Host group rows are now flat top-level sections (no drill-in).
   await expect(sidebar.getByTestId("settings-host-section-connections")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-orchestration")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-agents")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-workspaces")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-providers")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-daemon")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-host")).toBeVisible();
 
   // The old per-host entry rows are replaced by the host picker.
   await expect(sidebar.locator('[data-testid^="settings-host-entry-"]')).toHaveCount(0);
