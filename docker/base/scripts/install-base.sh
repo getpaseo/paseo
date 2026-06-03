@@ -15,6 +15,7 @@ if command -v apk >/dev/null 2>&1; then
     npm \
     procps \
     shadow \
+    sudo \
     tar \
     tini \
     xz
@@ -29,6 +30,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     gnupg \
     jq \
     procps \
+    sudo \
     xz-utils
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y --no-install-recommends nodejs
@@ -49,6 +51,7 @@ elif command -v pacman >/dev/null 2>&1; then
     npm \
     procps-ng \
     shadow \
+    sudo \
     tar \
     xz
   pacman -Scc --noconfirm >/dev/null 2>&1 || true

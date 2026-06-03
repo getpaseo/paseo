@@ -12,6 +12,20 @@ if [[ "$(id -u paseo)" != "$PUID" ]]; then
   usermod -o -u "$PUID" paseo || true
 fi
 
+SUDOERS_FILE="/etc/sudoers.d/paseo-enable-sudo"
+case "$(printf '%s' "${PASEO_ENABLE_SUDO:-}" | tr '[:upper:]' '[:lower:]')" in
+  true)
+    mkdir -p /etc/sudoers.d
+    printf 'paseo ALL=(ALL) NOPASSWD:ALL\n' > "$SUDOERS_FILE"
+    chmod 0440 "$SUDOERS_FILE"
+    echo "[init] PASEO_ENABLE_SUDO enabled: passwordless sudo granted to paseo."
+    ;;
+  *)
+    rm -f "$SUDOERS_FILE"
+    echo "[init] PASEO_ENABLE_SUDO disabled: passwordless sudo not granted."
+    ;;
+esac
+
 PASEO_HOME="${PASEO_HOME:-/config}"
 mkdir -p "$PASEO_HOME"
 # Only chown the top level + paseo-owned subdirs; avoid clobbering a large

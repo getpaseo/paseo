@@ -54,3 +54,7 @@ Combine them: `DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code|ghcr.io/getpaseo/mo
 Use the same Paseo daemon/provider env vars you would pass outside Docker; see
 [../docs/docker.md](../docs/docker.md) for volumes, env vars, agent auth,
 security, and how to build the images locally.
+
+Set `PASEO_ENABLE_SUDO=true` only when trusted agents need passwordless `sudo`
+inside the container, for example to install OS packages for project tests. See
+[../docs/docker.md](../docs/docker.md) for the security tradeoff.

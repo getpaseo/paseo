@@ -55,6 +55,13 @@ docker run -d --name paseo \
   ghcr.io/getpaseo/paseo:debian
 ```
 
+If agents need to install OS packages inside the container, opt in to
+passwordless sudo for the `paseo` user:
+
+```bash
+docker run -e PASEO_ENABLE_SUDO=true ...
+```
+
 Connect the app/CLI to `http://<host>:6767` using `PASEO_PASSWORD`:
 
 ```bash
@@ -175,11 +182,12 @@ into scripts/agents by Paseo at runtime; you do not set them on the container.
 
 ### Container-only env vars
 
-| Var                | Default   | Purpose                                                            |
-| ------------------ | --------- | ------------------------------------------------------------------ |
-| `DOCKER_MODS`      | (unset)   | Pipe-separated agent mod images to install.                        |
-| `PUID` / `PGID`    | `911`     | uid/gid for the `paseo` user (match your volumes).                 |
-| `PASEO_PAIRING_QR` | (enabled) | Set to `0`/`false` to suppress the startup pairing QR in the logs. |
+| Var                 | Default   | Purpose                                                            |
+| ------------------- | --------- | ------------------------------------------------------------------ |
+| `DOCKER_MODS`       | (unset)   | Pipe-separated agent mod images to install.                        |
+| `PUID` / `PGID`     | `911`     | uid/gid for the `paseo` user (match your volumes).                 |
+| `PASEO_ENABLE_SUDO` | `false`   | Set to `true` to grant passwordless sudo to `paseo`.               |
+| `PASEO_PAIRING_QR`  | (enabled) | Set to `0`/`false` to suppress the startup pairing QR in the logs. |
 
 On startup the container prints a pairing QR code and link to its logs once the
 daemon is listening (s6 `svc-paseo-pair` oneshot, best-effort — never blocks
@@ -193,6 +201,9 @@ boot). Scan it from `docker logs` with the Paseo app.
   [SECURITY.md](../SECURITY.md).
 - Agents execute arbitrary code on your mounted workspace. The container is the
   isolation boundary; the daemon and agents run as the non-root `paseo` user.
+- `PASEO_ENABLE_SUDO=true` lets the daemon and agents become root inside the
+  container with `sudo` and install or modify OS packages. Use it only for
+  trusted agents and trusted workspaces.
 - The Docker Mods loader pulls **public** images anonymously over HTTPS. Only
   list mod images you trust — their layers are extracted into the container.
 

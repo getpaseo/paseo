@@ -25,6 +25,10 @@ services:
       PUID: "1000"
       PGID: "1000"
 
+      # Optional: let agents run passwordless sudo inside the container.
+      # This grants root inside the container; enable only for trusted workspaces.
+      # PASEO_ENABLE_SUDO: "true"
+
       # Allow extra hostnames if you reach the daemon by DNS name (IPs and
       # localhost are always allowed). Comma-separated, or "true" for any.
       # PASEO_HOSTNAMES: "paseo.example.com,.lan"
