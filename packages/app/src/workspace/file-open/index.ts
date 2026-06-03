@@ -113,6 +113,22 @@ function normalizeRelativePath(value: string): string | null {
   return normalized || null;
 }
 
+function isWindowsPath(value: string): boolean {
+  return /^[A-Za-z]:\//.test(value);
+}
+
+function pathsEqual(left: string, right: string): boolean {
+  return isWindowsPath(left) || isWindowsPath(right)
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+function startsWithPath(value: string, prefix: string): boolean {
+  return isWindowsPath(value) || isWindowsPath(prefix)
+    ? value.toLowerCase().startsWith(prefix.toLowerCase())
+    : value.startsWith(prefix);
+}
+
 export interface ResolvedWorkspaceFilePaths {
   /** Absolute path on the host, suitable for opening in an editor / file manager. */
   absolutePath: string;
@@ -140,16 +156,17 @@ export function resolveWorkspaceFilePaths(input: {
     if (!normalizedFile) {
       return null;
     }
-    if (normalizedFile === workspaceRoot) {
+    if (pathsEqual(normalizedFile, workspaceRoot)) {
       return null;
     }
-    const relativePath = normalizedFile.startsWith(`${workspaceRoot}/`)
-      ? normalizedFile.slice(workspaceRoot.length + 1)
+    const prefix = `${workspaceRoot}/`;
+    const relativePath = startsWithPath(normalizedFile, prefix)
+      ? normalizedFile.slice(prefix.length)
       : null;
     return { absolutePath: normalizedFile, relativePath };
   }
 
-  if (filePath.startsWith("~")) {
+  if (filePath === "~" || filePath.startsWith("~/")) {
     return null;
   }
 

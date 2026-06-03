@@ -140,6 +140,37 @@ describe("resolveWorkspaceFilePaths", () => {
     expect(
       resolveWorkspaceFilePaths({ path: "~/notes.md", workspaceRoot: "/Users/me/repo" }),
     ).toBeNull();
+    expect(resolveWorkspaceFilePaths({ path: "~", workspaceRoot: "/Users/me/repo" })).toBeNull();
+  });
+
+  it("treats filenames that merely start with ~ as workspace-relative", () => {
+    expect(resolveWorkspaceFilePaths({ path: "~env.ts", workspaceRoot: "/Users/me/repo" })).toEqual(
+      {
+        absolutePath: "/Users/me/repo/~env.ts",
+        relativePath: "~env.ts",
+      },
+    );
+  });
+
+  it("matches Windows workspace paths case-insensitively", () => {
+    expect(
+      resolveWorkspaceFilePaths({
+        path: "C:\\Users\\Me\\Repo\\src\\app.ts",
+        workspaceRoot: "c:\\users\\me\\repo",
+      }),
+    ).toEqual({
+      absolutePath: "C:/Users/Me/Repo/src/app.ts",
+      relativePath: "src/app.ts",
+    });
+  });
+
+  it("treats a case-only difference from the Windows root as the root itself", () => {
+    expect(
+      resolveWorkspaceFilePaths({
+        path: "C:\\Users\\Me\\Repo",
+        workspaceRoot: "c:\\users\\me\\repo",
+      }),
+    ).toBeNull();
   });
 
   it("returns null when the workspace root is not absolute", () => {
