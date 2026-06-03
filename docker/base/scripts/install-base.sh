@@ -34,8 +34,27 @@ elif command -v apt-get >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends nodejs
   apt-get clean
   rm -rf /var/lib/apt/lists/*
+elif command -v pacman >/dev/null 2>&1; then
+  # Arch Linux. Rolling repos ship the current Node. Full upgrade because
+  # Arch does not support partial upgrades (avoids keyring/signature breakage).
+  # --disable-sandbox: pacman 7's download sandbox needs seccomp, which fails
+  # under qemu emulation (amd64-on-arm64 local builds); pointless in an
+  # ephemeral image build anyway.
+  pacman -Syu --noconfirm --needed --disable-sandbox \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    nodejs \
+    npm \
+    procps-ng \
+    shadow \
+    tar \
+    xz
+  pacman -Scc --noconfirm >/dev/null 2>&1 || true
+  rm -rf /var/cache/pacman/pkg/*
 else
-  echo "Unsupported base image: no apk or apt-get found" >&2
+  echo "Unsupported base image: no apk, apt-get or pacman found" >&2
   exit 1
 fi
 

@@ -77,6 +77,10 @@ jobs:
           - name: alpine
             base: alpine:3.21
             moving: alpine
+          - name: arch
+            base: archlinux:base
+            moving: arch
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -115,7 +119,7 @@ jobs:
         with:
           context: docker/base
           file: docker/base/Dockerfile
-          platforms: ${{ env.PLATFORMS }}
+          platforms: ${{ matrix.platforms || env.PLATFORMS }}
           build-args: |
             BASE_IMAGE=${{ matrix.base }}
             PASEO_VERSION=${{ needs.setup.outputs.version }}

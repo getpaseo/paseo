@@ -32,11 +32,15 @@ The image sources live in [`docker/`](../docker/).
 | `ghcr.io/getpaseo/paseo:debian`         | `debian:13-slim` | glibc (default) |
 | `ghcr.io/getpaseo/paseo:ubuntu`         | `ubuntu:24.04`   | glibc           |
 | `ghcr.io/getpaseo/paseo:alpine`         | `alpine:3.21`    | musl            |
+| `ghcr.io/getpaseo/paseo:arch`           | `archlinux:base` | glibc           |
 | `ghcr.io/getpaseo/paseo:<ver>-<distro>` | pinned           | —               |
 
-`<distro>` tags: `debian12`, `debian13`, `ubuntu2204`, `ubuntu2404`, `alpine`.
-The moving `:debian` / `:ubuntu` / `:alpine` tags track the newest version.
-`:latest` aliases `:debian`. All images are multi-arch (`amd64`, `arm64`).
+`<distro>` tags: `debian12`, `debian13`, `ubuntu2204`, `ubuntu2404`, `alpine`,
+`arch`. The moving `:debian` / `:ubuntu` / `:alpine` / `:arch` tags track the
+newest version. `:latest` aliases `:debian`. All images are multi-arch
+(`amd64`, `arm64`) **except `:arch`, which is `amd64`-only** (the official Arch
+base has no arm64 build — on Apple Silicon / arm64 hosts use Debian, Ubuntu, or
+Alpine).
 
 ## Quick start
 
@@ -54,7 +58,7 @@ docker run -d --name paseo \
 Connect the app/CLI to `http://<host>:6767` using `PASEO_PASSWORD`:
 
 ```bash
-PASEO_PASSWORD=change-me paseo --host <host>:6767 daemon status
+PASEO_HOST=<host>:6767 PASEO_PASSWORD=change-me paseo daemon status
 ```
 
 A `docker compose` deployment is in
@@ -142,6 +146,7 @@ boot). Scan it from `docker logs` with the Paseo app.
 # Base image for one distro:
 docker build --build-arg BASE_IMAGE=debian:13-slim -t paseo:debian docker/base
 docker build --build-arg BASE_IMAGE=alpine:3.21    -t paseo:alpine docker/base
+docker build --build-arg BASE_IMAGE=archlinux:base -t paseo:arch   docker/base
 
 # Pin a Paseo version (defaults to the latest published):
 docker build --build-arg BASE_IMAGE=ubuntu:24.04 --build-arg PASEO_VERSION=0.1.89 \
