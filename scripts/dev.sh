@@ -21,6 +21,9 @@ echo "  Home:    ${PASEO_HOME}"
 echo "  Models:  ${PASEO_LOCAL_MODELS_DIR}"
 echo "══════════════════════════════════════════════════════"
 
+npm run build:server
+npm run build --workspace=@getpaseo/expo-two-way-audio
+
 # Configure the daemon for the Portless app origin and let the app bootstrap
 # through the daemon's Portless URL instead of a fixed localhost port.
 APP_ORIGIN="$(portless get app)"
@@ -36,5 +39,5 @@ export PASEO_CORS_ORIGINS="*"
 concurrently \
   --names "daemon,metro" \
   --prefix-colors "cyan,magenta" \
-  "portless run --name daemon sh -c 'PASEO_LISTEN=0.0.0.0:\$PORT exec ./scripts/dev-daemon.sh'" \
-  "cd packages/app && BROWSER=none APP_VARIANT=development EXPO_PUBLIC_LOCAL_DAEMON='${DAEMON_ENDPOINT}' portless run --name app npx expo start"
+  "portless run --name daemon sh -c 'PASEO_SKIP_DEV_SERVER_BUILD=1 PASEO_LISTEN=0.0.0.0:\$PORT exec ./scripts/dev-daemon.sh'" \
+  "BROWSER=none APP_VARIANT=development EXPO_PUBLIC_LOCAL_DAEMON='${DAEMON_ENDPOINT}' portless run --name app npm run start:expo --workspace=@getpaseo/app"

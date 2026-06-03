@@ -10,7 +10,24 @@ npm run build:main
 
 # Prefer Metro's stable default port so dev browser storage keeps the same
 # localhost origin across restarts. Fall back only when earlier ports are busy.
-$env:EXPO_PORT = (npx get-port-cli 8081 8082 8083 8084 8085).Trim()
+$PreviousNoColor = $env:NO_COLOR
+$PreviousForceColor = $env:FORCE_COLOR
+try {
+    $env:NO_COLOR = "1"
+    $env:FORCE_COLOR = "0"
+    $env:EXPO_PORT = (npx get-port-cli 8081 8082 8083 8084 8085).Trim()
+} finally {
+    if ($null -eq $PreviousNoColor) {
+        Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+    } else {
+        $env:NO_COLOR = $PreviousNoColor
+    }
+    if ($null -eq $PreviousForceColor) {
+        Remove-Item Env:\FORCE_COLOR -ErrorAction SilentlyContinue
+    } else {
+        $env:FORCE_COLOR = $PreviousForceColor
+    }
+}
 
 # Set EXPO_DEV_URL in the environment so Electron inherits it
 $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"
