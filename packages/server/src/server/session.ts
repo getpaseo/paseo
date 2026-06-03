@@ -186,7 +186,7 @@ import {
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
-import type { ScriptRouteStore } from "./script-proxy.js";
+import type { ServiceProxySubsystem } from "./service-proxy.js";
 import {
   checkoutResolvedBranch,
   type CheckoutExistingBranchResult,
@@ -574,7 +574,7 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
-  scriptRouteStore?: ScriptRouteStore;
+  serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
   onBranchChanged?: (
@@ -584,6 +584,7 @@ export interface SessionOptions {
   ) => void;
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
+  serviceProxyPublicBaseUrl?: string | null;
   resolveScriptHealth?: (hostname: string) => ScriptHealthState | null;
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
@@ -788,7 +789,7 @@ export class Session {
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
-  private readonly scriptRouteStore: ScriptRouteStore | null;
+  private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private readonly onBranchChanged?: (
     workspaceId: string,
@@ -797,6 +798,7 @@ export class Session {
   ) => void;
   private readonly getDaemonTcpPort: (() => number | null) | null;
   private readonly getDaemonTcpHost: (() => string | null) | null;
+  private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
@@ -850,12 +852,13 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
-      scriptRouteStore,
+      serviceProxy,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
       onBranchChanged,
       getDaemonTcpPort,
       getDaemonTcpHost,
+      serviceProxyPublicBaseUrl,
       resolveScriptHealth,
       voice,
       voiceBridge,
@@ -934,12 +937,13 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager;
-    this.scriptRouteStore = scriptRouteStore ?? null;
+    this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
     this.onBranchChanged = onBranchChanged;
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
+    this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
     this.sttLanguage = sttLanguage ?? "en";
     this.subscribeToOptionalManagers();
@@ -6254,14 +6258,15 @@ export class Session {
       activityAt: null,
       diffStat,
       scripts:
-        this.scriptRouteStore && this.scriptRuntimeStore
+        this.serviceProxy && this.scriptRuntimeStore
           ? buildWorkspaceScriptPayloads({
               workspaceId: workspace.workspaceId,
               workspaceDirectory: workspace.cwd,
               paseoConfig: readPaseoConfigForProjection(workspace.cwd, this.sessionLogger),
-              routeStore: this.scriptRouteStore,
+              serviceProxy: this.serviceProxy,
               runtimeStore: this.scriptRuntimeStore,
               daemonPort: this.getDaemonTcpPort?.() ?? null,
+              serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
               gitMetadata: this.resolveWorkspaceScriptGitMetadata(workspace.cwd),
               resolveHealth: this.resolveScriptHealth ?? undefined,
             })
@@ -7082,16 +7087,17 @@ export class Session {
     workspaceId: string,
     workspaceDirectory: string,
   ): WorkspaceDescriptorPayload["scripts"] {
-    if (!this.scriptRouteStore || !this.scriptRuntimeStore) {
+    if (!this.serviceProxy || !this.scriptRuntimeStore) {
       return [];
     }
     return buildWorkspaceScriptPayloads({
       workspaceId,
       workspaceDirectory,
       paseoConfig: readPaseoConfigForProjection(workspaceDirectory, this.sessionLogger),
-      routeStore: this.scriptRouteStore,
+      serviceProxy: this.serviceProxy,
       runtimeStore: this.scriptRuntimeStore,
       daemonPort: this.getDaemonTcpPort?.() ?? null,
+      serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
       gitMetadata: this.resolveWorkspaceScriptGitMetadata(workspaceDirectory),
       resolveHealth: this.resolveScriptHealth ?? undefined,
     });
@@ -7127,7 +7133,7 @@ export class Session {
     request: StartWorkspaceScriptRequest,
   ): Promise<void> {
     try {
-      if (!this.terminalManager || !this.scriptRouteStore || !this.scriptRuntimeStore) {
+      if (!this.terminalManager || !this.serviceProxy || !this.scriptRuntimeStore) {
         throw new Error("Workspace scripts are not available on this daemon");
       }
 
@@ -7145,7 +7151,8 @@ export class Session {
         scriptName: request.scriptName,
         daemonPort: this.getDaemonTcpPort?.() ?? null,
         daemonListenHost: this.getDaemonTcpHost?.() ?? null,
-        routeStore: this.scriptRouteStore,
+        serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
+        serviceProxy: this.serviceProxy,
         runtimeStore: this.scriptRuntimeStore,
         terminalManager: this.terminalManager,
         logger: this.sessionLogger,
@@ -7255,10 +7262,11 @@ export class Session {
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
         archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
-        scriptRouteStore: this.scriptRouteStore,
+        serviceProxy: this.serviceProxy,
         scriptRuntimeStore: this.scriptRuntimeStore,
         getDaemonTcpPort: this.getDaemonTcpPort,
         getDaemonTcpHost: this.getDaemonTcpHost,
+        serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
         onScriptsChanged: (workspaceId, workspaceDirectory) => {
           this.emitWorkspaceScriptStatusUpdate(workspaceId, workspaceDirectory);
         },

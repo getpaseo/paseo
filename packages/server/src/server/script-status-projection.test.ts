@@ -54,15 +54,22 @@ function buildPayloads(input: {
   workspaceId: string;
   workspaceDirectory: string;
   paseoConfig?: PaseoConfig | null;
-  routeStore: ScriptRouteStore;
+  routeStore?: ScriptRouteStore;
+  serviceProxy?: ScriptRouteStore;
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null;
+  serviceProxyPublicBaseUrl?: string | null;
   gitMetadata?: { projectSlug: string; currentBranch: string | null };
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }) {
   const paseoConfig =
     input.paseoConfig !== undefined ? input.paseoConfig : loadConfig(input.workspaceDirectory);
-  return buildWorkspaceScriptPayloads({ ...input, paseoConfig });
+  const { routeStore, serviceProxy, ...rest } = input;
+  return buildWorkspaceScriptPayloads({
+    ...rest,
+    serviceProxy: serviceProxy ?? routeStore ?? new ScriptRouteStore(),
+    paseoConfig,
+  });
 }
 
 function loadConfig(repoRoot: string): PaseoConfig | null {
@@ -131,9 +138,11 @@ describe("script-status-projection", () => {
         {
           scriptName: "web",
           type: "service",
-          hostname: "web.repo.localhost",
+          hostname: "web--repo.localhost",
           port: 3000,
-          proxyUrl: "http://web.repo.localhost:6767",
+          localProxyUrl: "http://web--repo.localhost:6767",
+          publicProxyUrl: null,
+          proxyUrl: "http://web--repo.localhost:6767",
           lifecycle: "stopped",
           health: null,
           exitCode: null,
@@ -162,7 +171,7 @@ describe("script-status-projection", () => {
       const payloads = buildPayloads({
         workspaceId,
         workspaceDirectory: workspace.repoDir,
-        routeStore,
+        serviceProxy: routeStore,
         runtimeStore,
         daemonPort: 6767,
         gitMetadata: {
@@ -175,9 +184,54 @@ describe("script-status-projection", () => {
         {
           scriptName: "web",
           type: "service",
-          hostname: "web.feature-from-service.service-provided.localhost",
+          hostname: "web--feature-from-service--service-provided.localhost",
           port: 3000,
-          proxyUrl: "http://web.feature-from-service.service-provided.localhost:6767",
+          localProxyUrl: "http://web--feature-from-service--service-provided.localhost:6767",
+          publicProxyUrl: null,
+          proxyUrl: "http://web--feature-from-service--service-provided.localhost:6767",
+          lifecycle: "stopped",
+          health: null,
+          exitCode: null,
+          terminalId: null,
+        },
+      ]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
+  it("projects local and public service URLs while keeping proxyUrl public-first", () => {
+    const workspaceId = "workspace-public-service";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          web: { type: "service", command: "npm run web", port: 3000 },
+        },
+      },
+    });
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+
+    try {
+      expect(
+        buildPayloads({
+          workspaceId,
+          workspaceDirectory: workspace.repoDir,
+          routeStore,
+          runtimeStore,
+          daemonPort: 6767,
+          serviceProxyPublicBaseUrl: "https://services.example.com",
+          gitMetadata: { projectSlug: "repo", currentBranch: "feature/card" },
+        }),
+      ).toEqual([
+        {
+          scriptName: "web",
+          type: "service",
+          hostname: "web--feature-card--repo.localhost",
+          port: 3000,
+          localProxyUrl: "http://web--feature-card--repo.localhost:6767",
+          publicProxyUrl: "https://web--feature-card--repo.services.example.com",
+          proxyUrl: "https://web--feature-card--repo.services.example.com",
           lifecycle: "stopped",
           health: null,
           exitCode: null,
@@ -201,7 +255,7 @@ describe("script-status-projection", () => {
     });
     const routeStore = new ScriptRouteStore();
     routeStore.registerRoute({
-      hostname: "web.feature-card.repo.localhost",
+      hostname: "web--feature-card--repo.localhost",
       port: 4321,
       workspaceId,
       projectSlug: "repo",
@@ -231,9 +285,11 @@ describe("script-status-projection", () => {
         {
           scriptName: "web",
           type: "service",
-          hostname: "web.feature-card.repo.localhost",
+          hostname: "web--feature-card--repo.localhost",
           port: 4321,
-          proxyUrl: "http://web.feature-card.repo.localhost:6767",
+          localProxyUrl: "http://web--feature-card--repo.localhost:6767",
+          publicProxyUrl: null,
+          proxyUrl: "http://web--feature-card--repo.localhost:6767",
           lifecycle: "running",
           health: "healthy",
           exitCode: null,
@@ -256,7 +312,7 @@ describe("script-status-projection", () => {
     });
     const routeStore = new ScriptRouteStore();
     routeStore.registerRoute({
-      hostname: "web.repo.localhost",
+      hostname: "web--repo.localhost",
       port: 4321,
       workspaceId,
       projectSlug: "repo",
@@ -286,9 +342,11 @@ describe("script-status-projection", () => {
         {
           scriptName: "web",
           type: "service",
-          hostname: "web.repo.localhost",
+          hostname: "web--repo.localhost",
           port: 4321,
-          proxyUrl: "http://web.repo.localhost:6767",
+          localProxyUrl: "http://web--repo.localhost:6767",
+          publicProxyUrl: null,
+          proxyUrl: "http://web--repo.localhost:6767",
           lifecycle: "running",
           health: null,
           exitCode: null,
@@ -305,7 +363,7 @@ describe("script-status-projection", () => {
     const workspace = createWorkspaceRepo();
     const routeStore = new ScriptRouteStore();
     routeStore.registerRoute({
-      hostname: "docs.repo.localhost",
+      hostname: "docs--repo.localhost",
       port: 3002,
       workspaceId,
       projectSlug: "repo",
@@ -334,9 +392,11 @@ describe("script-status-projection", () => {
         {
           scriptName: "docs",
           type: "service",
-          hostname: "docs.repo.localhost",
+          hostname: "docs--repo.localhost",
           port: 3002,
-          proxyUrl: "http://docs.repo.localhost:6767",
+          localProxyUrl: "http://docs--repo.localhost:6767",
+          publicProxyUrl: null,
+          proxyUrl: "http://docs--repo.localhost:6767",
           lifecycle: "running",
           health: null,
           exitCode: null,
@@ -462,7 +522,7 @@ describe("script-status-projection", () => {
     });
     const routeStore = new ScriptRouteStore();
     routeStore.registerRoute({
-      hostname: "api.repo.localhost",
+      hostname: "api--repo.localhost",
       port: 3001,
       workspaceId,
       projectSlug: "repo",
@@ -481,7 +541,7 @@ describe("script-status-projection", () => {
     const session = { emit: vi.fn() };
     const emitUpdate = createScriptStatusEmitter({
       sessions: () => [session],
-      routeStore,
+      serviceProxy: routeStore,
       runtimeStore,
       daemonPort: 6767,
       resolveWorkspaceDirectory: async (requestedWorkspaceId) =>
@@ -493,7 +553,7 @@ describe("script-status-projection", () => {
       emitUpdate(workspaceId, [
         {
           scriptName: "api",
-          hostname: "api.repo.localhost",
+          hostname: "api--repo.localhost",
           port: 3001,
           health: "healthy",
         },
@@ -508,9 +568,11 @@ describe("script-status-projection", () => {
             {
               scriptName: "api",
               type: "service",
-              hostname: "api.repo.localhost",
+              hostname: "api--repo.localhost",
               port: 3001,
-              proxyUrl: "http://api.repo.localhost:6767",
+              localProxyUrl: "http://api--repo.localhost:6767",
+              publicProxyUrl: null,
+              proxyUrl: "http://api--repo.localhost:6767",
               lifecycle: "running",
               health: "healthy",
               exitCode: null,

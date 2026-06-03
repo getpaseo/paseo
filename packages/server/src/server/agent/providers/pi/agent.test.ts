@@ -97,6 +97,18 @@ class SessionEvents {
       .map((event) => event.item);
   }
 
+  timelineAndCompletionEvents() {
+    return this.events.flatMap((event) => {
+      if (event.type === "timeline") {
+        return [{ type: "timeline" as const, item: event.item }];
+      }
+      if (event.type === "turn_completed") {
+        return [{ type: "turn_completed" as const }];
+      }
+      return [];
+    });
+  }
+
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -456,6 +468,28 @@ describe("PiRpcAgentSession", () => {
 
     expect(events.timelineItems()).toEqual([
       { type: "user_message", text: "hello", messageId: "entry-user-1" },
+    ]);
+  });
+
+  test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("/show-status");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "Extension command output" }],
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: { type: "assistant_message", text: "Extension command output" },
+      },
+      { type: "turn_completed" },
     ]);
   });
 

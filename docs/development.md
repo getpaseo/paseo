@@ -158,11 +158,13 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 
 | Variable                    | Value                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `PASEO_SERVICE_<NAME>_URL`  | Proxied daemon URL for a declared peer service. Prefer this for peer discovery; it survives peer restarts.                |
+| `PASEO_SERVICE_<NAME>_URL`  | Proxied URL for a declared peer service. Prefer this for peer discovery; it survives peer restarts.                       |
 | `PASEO_SERVICE_<NAME>_PORT` | Raw ephemeral port for a declared peer service. Use only as a bypass escape hatch; it can go stale if that peer restarts. |
 | `PASEO_URL`                 | Self alias for `PASEO_SERVICE_<SELF>_URL`.                                                                                |
 | `PASEO_PORT`                | Self alias for `PASEO_SERVICE_<SELF>_PORT`.                                                                               |
 | `HOST`                      | Bind host for the service process.                                                                                        |
+
+Service proxy hostnames use the double-dash shape: `web--feature-auth--project.localhost` or, on the default branch, `web--project.localhost`. Optional public aliases use the same leftmost label under the configured public base host.
 
 `<NAME>` is normalized from the script name by uppercasing it, replacing each run of non-`A-Z0-9` characters with `_`, and trimming leading or trailing `_`. For example, `app-server` and `app.server` both normalize to `APP_SERVER`; that collision fails at spawn time with an actionable error.
 
@@ -201,6 +203,23 @@ For tighter loops, you can rebuild a single workspace:
 - Changed `packages/protocol/src/*` or `packages/client/src/*`: `npm run build:client`.
 - Changed `packages/server/src/*`, `packages/cli/src/*`, `packages/relay/src/*`, or `packages/highlight/src/*`: `npm run build:server`.
 - Changed app build dependencies: `npm run build:app-deps`.
+
+## ACP provider catalog versions
+
+The in-app ACP provider catalog pins package-runner entries (`npx`, `npm exec`,
+and `uvx`) to exact package versions. Run the drift checker regularly — and
+before releases — so catalog installs do not sit on stale agent versions:
+
+```bash
+npm run acp:version-drift        # report stale/non-exact package pins
+npm run acp:version-drift:check  # same, exits non-zero on drift
+npm run acp:version-drift:update # rewrite catalog pins to latest exact versions
+```
+
+The checker updates only package-runner catalog entries. Providers that use a
+preinstalled binary such as `opencode acp`, `cursor-agent acp`, or `goose acp`
+are reported as skipped because their versions are owned by the user's local
+install.
 
 ## CLI reference
 

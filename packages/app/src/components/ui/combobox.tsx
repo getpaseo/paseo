@@ -59,6 +59,7 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
+import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 
 const IS_WEB = isWeb;
 
@@ -1022,7 +1023,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
       keyboardBehavior="extend"
-      keyboardBlurBehavior="restore"
+      keyboardBlurBehavior="none"
     >
       {props.header ? (
         <SheetHeaderView header={props.header} onClose={props.onClose} />
@@ -1482,6 +1483,7 @@ export function Combobox({
   );
 
   useWebKeyboardListener(isOpen, handleDesktopKey);
+  useDismissKeyboardOnOpen(isOpen, isMobile);
 
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),

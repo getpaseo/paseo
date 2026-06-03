@@ -92,10 +92,10 @@ export function asWorkspaceGitService(stub: {
   return createStub<SessionOptions["workspaceGitService"]>(stub);
 }
 
-export function asScriptRouteStore(stub: {
-  [K in keyof SessionOptions["scriptRouteStore"]]?: unknown;
-}): SessionOptions["scriptRouteStore"] {
-  return createStub<SessionOptions["scriptRouteStore"]>(stub);
+export function asServiceProxy(stub: {
+  [K in keyof SessionOptions["serviceProxy"]]?: unknown;
+}): SessionOptions["serviceProxy"] {
+  return createStub<SessionOptions["serviceProxy"]>(stub);
 }
 
 export function asWorkspaceScriptRuntimeStore(stub: {

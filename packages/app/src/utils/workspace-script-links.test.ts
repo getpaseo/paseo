@@ -6,9 +6,11 @@ import { resolveWorkspaceScriptLink } from "./workspace-script-links";
 const runningService: WorkspaceScriptPayload = {
   scriptName: "web",
   type: "service",
-  hostname: "web.feature.paseo.localhost",
+  hostname: "web--feature--paseo.localhost",
   port: 3000,
-  proxyUrl: "http://web.feature.paseo.localhost:6767",
+  localProxyUrl: "http://web--feature--paseo.localhost:6767",
+  publicProxyUrl: null,
+  proxyUrl: "http://web--feature--paseo.localhost:6767",
   lifecycle: "running",
   health: "healthy",
   exitCode: null,
@@ -27,8 +29,8 @@ describe("resolveWorkspaceScriptLink", () => {
     expect(
       resolveLink({ type: "directTcp", endpoint: "localhost:6767", display: "localhost:6767" }),
     ).toEqual({
-      openUrl: "http://web.feature.paseo.localhost:6767",
-      labelUrl: "http://web.feature.paseo.localhost:6767",
+      openUrl: "http://web--feature--paseo.localhost:6767",
+      labelUrl: "http://web--feature--paseo.localhost:6767",
     });
   });
 
@@ -36,8 +38,8 @@ describe("resolveWorkspaceScriptLink", () => {
     expect(
       resolveLink({ type: "directSocket", endpoint: "/tmp/paseo.sock", display: "socket" }),
     ).toEqual({
-      openUrl: "http://web.feature.paseo.localhost:6767",
-      labelUrl: "http://web.feature.paseo.localhost:6767",
+      openUrl: "http://web--feature--paseo.localhost:6767",
+      labelUrl: "http://web--feature--paseo.localhost:6767",
     });
   });
 
@@ -59,7 +61,114 @@ describe("resolveWorkspaceScriptLink", () => {
       resolveLink({ type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" }),
     ).toEqual({
       openUrl: null,
-      labelUrl: "http://web.feature.paseo.localhost:6767",
+      labelUrl: "http://web--feature--paseo.localhost:6767",
+    });
+  });
+
+  it("opens the public URL over relay when one is provided", () => {
+    expect(
+      resolveWorkspaceScriptLink({
+        script: {
+          ...runningService,
+          publicProxyUrl: "https://web--feature--paseo.services.example.com",
+          proxyUrl: "https://web--feature--paseo.services.example.com",
+        },
+        activeConnection: { type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" },
+      }),
+    ).toEqual({
+      openUrl: "https://web--feature--paseo.services.example.com",
+      labelUrl: "https://web--feature--paseo.services.example.com",
+    });
+  });
+
+  it("uses local URL for direct loopback even when public URL exists", () => {
+    expect(
+      resolveWorkspaceScriptLink({
+        script: {
+          ...runningService,
+          publicProxyUrl: "https://web--feature--paseo.services.example.com",
+          proxyUrl: "https://web--feature--paseo.services.example.com",
+        },
+        activeConnection: { type: "directTcp", endpoint: "127.0.0.1:6767", display: "localhost" },
+      }),
+    ).toEqual({
+      openUrl: "http://web--feature--paseo.localhost:6767",
+      labelUrl: "http://web--feature--paseo.localhost:6767",
+    });
+  });
+
+  it("uses local URL for direct socket and pipe even when public URL exists", () => {
+    expect(
+      resolveWorkspaceScriptLink({
+        script: {
+          ...runningService,
+          publicProxyUrl: "https://web--feature--paseo.services.example.com",
+          proxyUrl: "https://web--feature--paseo.services.example.com",
+        },
+        activeConnection: { type: "directPipe", endpoint: "paseo", display: "pipe" },
+      }),
+    ).toEqual({
+      openUrl: "http://web--feature--paseo.localhost:6767",
+      labelUrl: "http://web--feature--paseo.localhost:6767",
+    });
+  });
+
+  it("uses public URL for direct remote TCP when split URLs exist", () => {
+    expect(
+      resolveWorkspaceScriptLink({
+        script: {
+          ...runningService,
+          publicProxyUrl: "https://web--feature--paseo.services.example.com",
+          proxyUrl: "https://web--feature--paseo.services.example.com",
+        },
+        activeConnection: {
+          type: "directTcp",
+          endpoint: "mac-mini.tail123.ts.net:6767",
+          display: "remote",
+        },
+      }),
+    ).toEqual({
+      openUrl: "https://web--feature--paseo.services.example.com",
+      labelUrl: "https://web--feature--paseo.services.example.com",
+    });
+  });
+
+  it("keeps old daemon local-only proxyUrl payloads working", () => {
+    const {
+      localProxyUrl: _localProxyUrl,
+      publicProxyUrl: _publicProxyUrl,
+      ...oldPayload
+    } = runningService;
+
+    expect(
+      resolveWorkspaceScriptLink({
+        script: oldPayload,
+        activeConnection: { type: "directTcp", endpoint: "localhost:6767", display: "localhost" },
+      }),
+    ).toEqual({
+      openUrl: "http://web--feature--paseo.localhost:6767",
+      labelUrl: "http://web--feature--paseo.localhost:6767",
+    });
+  });
+
+  it("keeps old daemon public proxyUrl payloads working over relay", () => {
+    const {
+      localProxyUrl: _localProxyUrl,
+      publicProxyUrl: _publicProxyUrl,
+      ...oldPayload
+    } = {
+      ...runningService,
+      proxyUrl: "https://web--feature--paseo.services.example.com",
+    };
+
+    expect(
+      resolveWorkspaceScriptLink({
+        script: oldPayload,
+        activeConnection: { type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" },
+      }),
+    ).toEqual({
+      openUrl: "https://web--feature--paseo.services.example.com",
+      labelUrl: "https://web--feature--paseo.services.example.com",
     });
   });
 });

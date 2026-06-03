@@ -1785,6 +1785,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
       md: -theme.spacing[3],
     },
     alignItems: "center",
+    paddingBottom: {
+      xs: 0,
+      md: theme.spacing[2],
+    },
   },
   footerContent: {
     width: "100%",

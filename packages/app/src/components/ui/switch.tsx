@@ -53,6 +53,11 @@ export function Switch({
   }));
 
   const thumbAnimatedStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      progress.value,
+      [0, 1],
+      [theme.colors.palette.white, theme.colors.accentForeground],
+    ),
     transform: [{ translateX: progress.value * thumbTravel }],
   }));
 
@@ -116,7 +121,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   thumb: {
-    backgroundColor: theme.colors.palette.white,
     shadowColor: "rgba(0, 0, 0, 0.25)",
     shadowOffset: { width: 0, height: 1 },
     shadowRadius: 2,

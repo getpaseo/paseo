@@ -9,6 +9,9 @@ A release has exactly two steps. The agent does the first, the user authorizes t
 **Preparation** (local, reversible — agent does this):
 
 - format, lint, typecheck all green
+- ACP provider catalog drift checked with `npm run acp:version-drift:check`;
+  if stale package-runner pins are intentional, say so explicitly, otherwise run
+  `npm run acp:version-drift:update` and commit the updated catalog
 - draft the changelog, show it to the user, wait for review
 - run the pre-release sanity check, surface findings to the user
 - confirm CI is green

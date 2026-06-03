@@ -152,6 +152,11 @@ interface ResolvedRelay {
   publicUseTls: boolean;
 }
 
+interface ResolvedServiceProxy {
+  publicBaseUrl: string | null;
+  standaloneListen: string | null;
+}
+
 function resolveTlsFromEnv(
   envValue: string | undefined,
   persistedValue: boolean | undefined,
@@ -196,6 +201,41 @@ interface ResolvedVoiceLlm {
   provider: AgentProvider | null;
   providerExplicit: boolean;
   model: string | null;
+}
+
+function resolveServiceProxyPublicBaseUrl(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  try {
+    return new URL(value).toString().replace(/\/$/, "");
+  } catch {
+    throw new Error(`Invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: ${value}`);
+  }
+}
+
+function resolveServiceProxyConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): ResolvedServiceProxy {
+  const enabledShim =
+    parseBooleanEnv(env.PASEO_SERVICE_PROXY_ENABLED) ?? persisted.daemon?.serviceProxy?.enabled;
+  // COMPAT(serviceProxyEnabled): added 2026-06-02, remove after 2026-12-02.
+  // `enabled=false` used to disable the separate service proxy listener. Localhost
+  // service proxying is now always enabled; this only suppresses optional layers.
+  const optionalLayersEnabled = enabledShim !== false;
+  const publicBaseUrl = optionalLayersEnabled
+    ? resolveServiceProxyPublicBaseUrl(
+        env.PASEO_SERVICE_PROXY_PUBLIC_BASE_URL ??
+          persisted.daemon?.serviceProxy?.publicBaseUrl ??
+          null,
+      )
+    : null;
+  const standaloneListen = optionalLayersEnabled
+    ? (env.PASEO_SERVICE_PROXY_LISTEN ?? persisted.daemon?.serviceProxy?.listen ?? null)
+    : null;
+
+  return { publicBaseUrl, standaloneListen };
 }
 
 function resolveVoiceLlmConfig(
@@ -322,6 +362,7 @@ export function loadConfig(
     cliRelayEnabled: options?.cli?.relayEnabled,
     cliRelayUseTls: options?.cli?.relayUseTls,
   });
+  const serviceProxy = resolveServiceProxyConfig(env, persisted);
 
   const { openai, speech } = resolveSpeechConfig({
     paseoHome,
@@ -354,6 +395,7 @@ export function loadConfig(
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,
     relayPublicUseTls: relay.publicUseTls,
+    serviceProxy,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

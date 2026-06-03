@@ -1499,6 +1499,20 @@ export class PiRpcAgentSession implements AgentSession {
     event: Extract<PiAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
   ): void {
+    if (event.message.role === "custom") {
+      const text = getUserMessageText(event.message.content);
+      if (text) {
+        this.emit({
+          type: "timeline",
+          provider: PI_PROVIDER,
+          turnId,
+          item: { type: "assistant_message", text },
+        });
+      }
+      this.completeTurn(turnId, []);
+      return;
+    }
+
     if (event.message.role !== "user") {
       return;
     }

@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.1.88",
+  "version": "0.1.89",
   "private": true,
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
   "keywords": [
@@ -62,6 +62,9 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "knip": "knip",
+    "acp:version-drift": "node scripts/check-acp-catalog-version-drift.mjs",
+    "acp:version-drift:check": "node scripts/check-acp-catalog-version-drift.mjs --fail-on-drift",
+    "acp:version-drift:update": "node scripts/check-acp-catalog-version-drift.mjs --update",
     "start": "npm run start --workspace=@getpaseo/server",
     "android": "npm run android --workspace=@getpaseo/app",
     "android:development": "npm run android:development --workspace=@getpaseo/app",
