@@ -65,6 +65,30 @@ describe("planWorkspaceOpenTargets", () => {
     });
   });
 
+  it("passes custom target ids through as strings", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/repo",
+      activeFile: { path: "src/app.ts" },
+      desktopTargets: [{ id: "script:open-in-nvim", label: "Open in Neovim", kind: "editor" }],
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
+    });
+
+    expect(targets).toEqual([
+      {
+        source: "desktop",
+        id: "script:open-in-nvim",
+        label: "Open in Neovim",
+        editorId: "script:open-in-nvim",
+        openInput: {
+          editorId: "script:open-in-nvim",
+          path: "/repo/src/app.ts",
+          cwd: "/repo",
+        },
+      },
+    ]);
+  });
+
   it("keeps GitHub target independent and uses blob and tree URLs", () => {
     const blobTargets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",

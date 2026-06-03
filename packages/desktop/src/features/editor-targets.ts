@@ -34,6 +34,7 @@ interface ListEditorTargetsDependencies {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   existsSync?: (path: string) => boolean;
+  targetDefinitions?: readonly EditorTargetDefinition[];
 }
 
 interface SpawnedProcess {
@@ -67,7 +68,7 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   "ELECTRON_NO_ATTACH_CONSOLE",
 ] as const;
 
-const EDITOR_TARGETS: readonly EditorTargetDefinition[] = [
+const BUILT_IN_EDITOR_TARGETS: readonly EditorTargetDefinition[] = [
   { id: "cursor", label: "Cursor", kind: "editor", command: "cursor" },
   { id: "vscode", label: "VS Code", kind: "editor", command: "code" },
   { id: "webstorm", label: "WebStorm", kind: "editor", command: "webstorm" },
@@ -161,8 +162,17 @@ function resolveExecutable(
   return null;
 }
 
-function findTarget(targetId: string): EditorTargetDefinition {
-  const target = EDITOR_TARGETS.find((entry) => entry.id === targetId);
+function resolveTargetDefinitions(
+  dependencies: ListEditorTargetsDependencies,
+): readonly EditorTargetDefinition[] {
+  return dependencies.targetDefinitions ?? BUILT_IN_EDITOR_TARGETS;
+}
+
+function findTarget(
+  targetId: string,
+  targetDefinitions: readonly EditorTargetDefinition[],
+): EditorTargetDefinition {
+  const target = targetDefinitions.find((entry) => entry.id === targetId);
   if (!target) {
     throw new Error(`Unknown editor target: ${targetId}`);
   }
@@ -253,7 +263,10 @@ export function listAvailableEditorTargets(
   const existsSync = dependencies.existsSync ?? nodeExistsSync;
   const env = dependencies.env ?? process.env;
 
-  return EDITOR_TARGETS.filter((target) => isTargetSupportedOnPlatform(target, platform))
+  const targetDefinitions = resolveTargetDefinitions(dependencies);
+
+  return targetDefinitions
+    .filter((target) => isTargetSupportedOnPlatform(target, platform))
     .filter((target) => resolveExecutable(target.command, { platform, env, existsSync }))
     .map((target) => ({ id: target.id, label: target.label, kind: target.kind }));
 }
@@ -276,7 +289,7 @@ export async function openEditorTarget(
     throw new Error(`Path does not exist: ${pathToOpen}`);
   }
 
-  const target = findTarget(parsedInput.editorId);
+  const target = findTarget(parsedInput.editorId, resolveTargetDefinitions(dependencies));
   if (!isTargetSupportedOnPlatform(target, platform)) {
     throw new Error(`Editor target unavailable: ${target.label}`);
   }

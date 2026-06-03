@@ -95,6 +95,26 @@ describe("desktop editor targets", () => {
     expect(targets).toEqual([{ id: "file-manager", label: "File Manager", kind: "file-manager" }]);
   });
 
+  it("can list future custom script targets without changing bridge types", () => {
+    const targets = listAvailableEditorTargets({
+      platform: "linux",
+      env: { PATH: "/usr/local/bin" },
+      existsSync: createExistsSync(["/usr/local/bin/open-in-nvim"]),
+      targetDefinitions: [
+        {
+          id: "script:open-in-nvim",
+          label: "Open in Neovim",
+          kind: "editor",
+          command: "open-in-nvim",
+        },
+      ],
+    });
+
+    expect(targets).toEqual([
+      { id: "script:open-in-nvim", label: "Open in Neovim", kind: "editor" },
+    ]);
+  });
+
   it("launches editors as detached external processes", async () => {
     const recorder = createSpawnRecorder();
 
@@ -261,6 +281,38 @@ describe("desktop editor targets", () => {
     );
 
     expect(recorder.calls[0]?.args).toEqual(["/tmp/repo", "/tmp/repo/src/index.ts"]);
+  });
+
+  it("can launch future custom script targets by string id", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      { editorId: "script:open-in-nvim", path: "/tmp/repo/src/index.ts", cwd: "/tmp/repo" },
+      {
+        platform: "linux",
+        env: { PATH: "/usr/local/bin" },
+        existsSync: createExistsSync([
+          "/tmp/repo/src/index.ts",
+          "/tmp/repo",
+          "/usr/local/bin/open-in-nvim",
+        ]),
+        spawn: recorder.spawn,
+        targetDefinitions: [
+          {
+            id: "script:open-in-nvim",
+            label: "Open in Neovim",
+            kind: "editor",
+            command: "open-in-nvim",
+          },
+        ],
+      },
+    );
+
+    expect(recorder.calls[0]).toMatchObject({
+      command: "/usr/local/bin/open-in-nvim",
+      args: ["/tmp/repo", "/tmp/repo/src/index.ts"],
+      options: { shell: false },
+    });
   });
 
   it("does not prepend invalid, equal, relative, or missing cwd values", async () => {

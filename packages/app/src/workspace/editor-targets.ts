@@ -1,12 +1,4 @@
 export type EditorTargetId = string;
-export type KnownEditorTargetId =
-  | "cursor"
-  | "vscode"
-  | "webstorm"
-  | "zed"
-  | "finder"
-  | "explorer"
-  | "file-manager";
 
 const KNOWN_EDITOR_TARGET_IDS: ReadonlySet<string> = new Set([
   "cursor",
@@ -18,6 +10,6 @@ const KNOWN_EDITOR_TARGET_IDS: ReadonlySet<string> = new Set([
   "file-manager",
 ]);
 
-export function isKnownEditorTargetId(editorId: EditorTargetId): editorId is KnownEditorTargetId {
+export function isKnownEditorTargetId(editorId: EditorTargetId): boolean {
   return KNOWN_EDITOR_TARGET_IDS.has(editorId);
 }
