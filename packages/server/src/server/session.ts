@@ -1,7 +1,5 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { TTLCache } from "@isaacs/ttlcache";
-import pMemoize from "p-memoize";
 import { realpathSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { basename, resolve, sep } from "path";
@@ -10,7 +8,6 @@ import { z } from "zod";
 import type { ToolSet } from "ai";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
-  isLegacyEditorTargetId,
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
   type AgentAttachment,
@@ -26,9 +23,6 @@ import {
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
-  type EditorTargetDescriptorPayload,
-  type EditorTargetId,
-  type OpenInEditorMode,
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
@@ -48,7 +42,6 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
-import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
 import { getPidLockInfo } from "./pid-lock.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import {
@@ -338,7 +331,6 @@ const LEGACY_MODE_ICONS = new Set<string>([
   "ShieldQuestionMark",
 ]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
-const MIN_VERSION_FLEXIBLE_EDITOR_IDS = "0.1.50";
 
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -417,10 +409,6 @@ function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boo
 
 function clientSupportsAllProviders(appVersion: string | null): boolean {
   return isAppVersionAtLeast(appVersion, MIN_VERSION_ALL_PROVIDERS);
-}
-
-function clientSupportsFlexibleEditorIds(appVersion: string | null): boolean {
-  return isAppVersionAtLeast(appVersion, MIN_VERSION_FLEXIBLE_EDITOR_IDS);
 }
 
 type DeleteFencedAgentStorage = AgentStorage & {
@@ -530,9 +518,6 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
 );
 const AgentIdSchema = z.string().uuid();
-const AVAILABLE_EDITOR_TARGETS_CACHE_TTL_MS = 60_000;
-const AVAILABLE_EDITOR_TARGETS_CACHE_KEY = "available";
-
 interface VoiceModeBaseConfig {
   systemPrompt?: string;
 }
@@ -816,21 +801,6 @@ export class Session {
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
-  private readonly availableEditorTargetsCache = new TTLCache<
-    string,
-    EditorTargetDescriptorPayload[]
-  >({
-    ttl: AVAILABLE_EDITOR_TARGETS_CACHE_TTL_MS,
-    max: 1,
-    checkAgeOnGet: true,
-  });
-  private readonly getMemoizedAvailableEditorTargets = pMemoize(
-    async () => this.resolveAvailableEditorTargets(),
-    {
-      cache: this.availableEditorTargetsCache,
-      cacheKey: () => AVAILABLE_EDITOR_TARGETS_CACHE_KEY,
-    },
-  );
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>();
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
@@ -1441,15 +1411,6 @@ export class Session {
       return true;
     }
     return LEGACY_PROVIDER_IDS.has(provider);
-  }
-
-  private filterEditorsForClient(
-    editors: EditorTargetDescriptorPayload[],
-  ): EditorTargetDescriptorPayload[] {
-    if (clientSupportsFlexibleEditorIds(this.appVersion)) {
-      return editors;
-    }
-    return editors.filter((editor) => isLegacyEditorTargetId(editor.id));
   }
 
   private agentThinkingOptionMatchesFilter(
@@ -2126,9 +2087,9 @@ export class Session {
       case "workspace_setup_status_request":
         return this.handleWorkspaceSetupStatusRequest(msg);
       case "list_available_editors_request":
-        return this.handleListAvailableEditorsRequest(msg);
+        return this.handleLegacyListAvailableEditorsRequest(msg);
       case "open_in_editor_request":
-        return this.handleOpenInEditorRequest(msg);
+        return this.handleLegacyOpenInEditorRequest(msg);
       case "open_project_request":
         return this.handleOpenProjectRequest(msg);
       case "archive_workspace_request":
@@ -7161,23 +7122,6 @@ export class Session {
     });
   }
 
-  async resolveAvailableEditorTargets(): Promise<EditorTargetDescriptorPayload[]> {
-    return listAvailableEditorTargets();
-  }
-
-  async getAvailableEditorTargets() {
-    return this.filterEditorsForClient(await this.getMemoizedAvailableEditorTargets());
-  }
-
-  async openEditorTarget(options: {
-    editorId: EditorTargetId;
-    path: string;
-    cwd?: string;
-    mode?: OpenInEditorMode;
-  }): Promise<void> {
-    await openInEditorTarget(options);
-  }
-
   private async handleStartWorkspaceScriptRequest(
     request: StartWorkspaceScriptRequest,
   ): Promise<void> {
@@ -7243,72 +7187,29 @@ export class Session {
     }
   }
 
-  private async handleListAvailableEditorsRequest(
+  private async handleLegacyListAvailableEditorsRequest(
     request: Extract<SessionInboundMessage, { type: "list_available_editors_request" }>,
   ): Promise<void> {
-    try {
-      const editors = await this.getAvailableEditorTargets();
-      this.emit({
-        type: "list_available_editors_response",
-        payload: {
-          requestId: request.requestId,
-          editors,
-          error: null,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to list available editors";
-      this.sessionLogger.error(
-        { err: error, requestType: request.type },
-        "Failed to list available editors",
-      );
-      this.emit({
-        type: "list_available_editors_response",
-        payload: {
-          requestId: request.requestId,
-          editors: [],
-          error: message,
-        },
-      });
-    }
+    this.emit({
+      type: "list_available_editors_response",
+      payload: {
+        requestId: request.requestId,
+        editors: [],
+        error: "Editor opening moved to the desktop app and is no longer supported by the daemon",
+      },
+    });
   }
 
-  private async handleOpenInEditorRequest(
+  private async handleLegacyOpenInEditorRequest(
     request: Extract<SessionInboundMessage, { type: "open_in_editor_request" }>,
   ): Promise<void> {
-    try {
-      await this.openEditorTarget({
-        editorId: request.editorId,
-        path: request.path,
-        cwd: request.cwd,
-        mode: request.mode,
-      });
-      this.emit({
-        type: "open_in_editor_response",
-        payload: {
-          requestId: request.requestId,
-          error: null,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to open in editor";
-      this.sessionLogger.error(
-        {
-          err: error,
-          editorId: request.editorId,
-          path: request.path,
-          requestType: request.type,
-        },
-        "Failed to open in editor",
-      );
-      this.emit({
-        type: "open_in_editor_response",
-        payload: {
-          requestId: request.requestId,
-          error: message,
-        },
-      });
-    }
+    this.emit({
+      type: "open_in_editor_response",
+      payload: {
+        requestId: request.requestId,
+        error: "Editor opening moved to the desktop app and is no longer supported by the daemon",
+      },
+    });
   }
 
   private async handleCreatePaseoWorktreeRequest(

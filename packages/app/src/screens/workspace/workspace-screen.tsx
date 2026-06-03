@@ -3090,10 +3090,10 @@ function WorkspaceScreenContent({
             hideLabels={showCompactButtonLabels}
           />
         ) : null}
-        {!isMobile ? (
+        {!isMobile && workspaceDirectory ? (
           <WorkspaceOpenInEditorButton
             serverId={normalizedServerId}
-            cwd={normalizedWorkspaceId}
+            cwd={workspaceDirectory}
             activeFile={activeFileLocation}
             hideLabels={showCompactButtonLabels}
           />
@@ -3201,6 +3201,7 @@ function WorkspaceScreenContent({
       workspaceDescriptor,
       normalizedServerId,
       normalizedWorkspaceId,
+      workspaceDirectory,
       activeFileLocation,
       liveTerminalIds,
       handleScriptTerminalStarted,

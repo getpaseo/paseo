@@ -6,10 +6,9 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { EditorTargetDescriptorPayload, OpenInEditorMode } from "@getpaseo/protocol/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
@@ -21,18 +20,15 @@ import {
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { buildGitHubBlobUrl, buildGitHubBranchTreeUrl } from "@/git/github-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
-import { useSessionStore } from "@/stores/session-store";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
+import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
 import type { Theme } from "@/styles/theme";
-import { filterTargetsForDaemonLocation } from "./workspace-open-targets";
-
-const FILE_MANAGER_TARGET_IDS = new Set<string>(["finder", "explorer", "file-manager"]);
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -45,7 +41,6 @@ interface OpenTarget {
   id: string;
   label: string;
   icon: ReactElement;
-  requiresLocalDaemon: boolean;
   onOpen: () => Promise<void> | void;
 }
 
@@ -89,13 +84,13 @@ export function WorkspaceOpenInEditorButton({
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
   const toast = useToast();
-  const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
-  const revealInFileManagerSupported = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.revealInFileManager === true,
-  );
+  const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
+    useDesktopOpenTargets({
+      isLocalExecution: isLocalDaemon,
+    });
 
   const resolvedFile = useMemo(
     () =>
@@ -107,114 +102,40 @@ export function WorkspaceOpenInEditorButton({
     [resolvedFile],
   );
 
-  const shouldQueryWorkspace =
-    isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
-  const shouldLoadEditorTargets = shouldQueryWorkspace && isLocalDaemon;
-
-  const availableEditorsQuery = useQuery<EditorTargetDescriptorPayload[]>({
-    queryKey: ["available-editors", serverId],
-    enabled: shouldLoadEditorTargets,
-    staleTime: 60_000,
-    retry: false,
-    queryFn: async () => {
-      if (!client) {
-        return [];
-      }
-      try {
-        const payload = await client.listAvailableEditors();
-        return payload.error ? [] : payload.editors;
-      } catch {
-        return [];
-      }
-    },
-  });
-
-  const availableEditors = useMemo(
-    () => availableEditorsQuery.data ?? [],
-    [availableEditorsQuery.data],
-  );
+  const canResolveWorkspace = isWeb && cwd.trim().length > 0 && isAbsolutePath(cwd);
+  const shouldQueryCheckout = canResolveWorkspace && isConnected;
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId,
-    cwd: shouldQueryWorkspace ? cwd : "",
+    cwd: shouldQueryCheckout ? cwd : "",
   });
 
-  const editorTargets = useMemo<OpenTarget[]>(
+  const targets = useMemo<OpenTarget[]>(
     () =>
-      availableEditors.map((editor) => ({
-        id: editor.id,
-        label: editor.label,
-        icon: <ThemedEditorAppIcon editorId={editor.id} size={16} uniProps={mutedColorMapping} />,
-        requiresLocalDaemon: true,
-        onOpen: async () => {
-          if (!client) {
-            throw new Error("Host is not connected");
-          }
-          const isFileManager = FILE_MANAGER_TARGET_IDS.has(editor.id);
-          let openPath = cwd;
-          let mode: OpenInEditorMode | undefined;
-          let workspaceCwd: string | undefined;
-          if (resolvedFile) {
-            if (!isFileManager) {
-              openPath = resolvedFile.absolutePath;
-              // Open the workspace folder alongside the file so the editor loads
-              // the project, not just the bare file.
-              workspaceCwd = cwd;
-            } else if (revealInFileManagerSupported) {
-              openPath = resolvedFile.absolutePath;
-              mode = "reveal";
-            }
-          }
-          const payload = await client.openInEditor(
-            openPath,
-            editor.id,
-            mode || workspaceCwd ? { mode, cwd: workspaceCwd } : undefined,
-          );
-          if (payload.error) {
-            throw new Error(payload.error);
-          }
-        },
-      })),
-    [availableEditors, client, cwd, resolvedFile, revealInFileManagerSupported],
-  );
-
-  const githubTarget = useMemo<OpenTarget | null>(() => {
-    if (!checkoutStatus?.isGit) {
-      return null;
-    }
-    const url = resolvedFile?.relativePath
-      ? buildGitHubBlobUrl({
-          remoteUrl: checkoutStatus.remoteUrl,
-          branch: checkoutStatus.currentBranch,
-          path: resolvedFile.relativePath,
-          lineStart: activeFile?.lineStart,
-          lineEnd: activeFile?.lineEnd,
-        })
-      : buildGitHubBranchTreeUrl({
-          remoteUrl: checkoutStatus.remoteUrl,
-          branch: checkoutStatus.currentBranch,
-        });
-    if (!url) {
-      return null;
-    }
-    return {
-      id: "github",
-      label: "GitHub",
-      icon: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
-      requiresLocalDaemon: false,
-      onOpen: () => openExternalUrl(url),
-    };
-  }, [checkoutStatus, resolvedFile, activeFile?.lineStart, activeFile?.lineEnd]);
-
-  const targets = useMemo(
-    () =>
-      filterTargetsForDaemonLocation(
-        githubTarget ? [...editorTargets, githubTarget] : editorTargets,
-        {
-          isLocalDaemon,
-        },
-      ),
-    [editorTargets, githubTarget, isLocalDaemon],
+      planWorkspaceOpenTargets({
+        workspaceDirectory: cwd,
+        activeFile,
+        desktopTargets: desktopOpenTargets,
+        canUseDesktopBridge: isDesktopOpenAvailable,
+        isLocalExecution: isLocalDaemon,
+        checkoutStatus,
+      }).map((target) => {
+        if (target.source === "github") {
+          return {
+            id: target.id,
+            label: target.label,
+            icon: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+            onOpen: () => openExternalUrl(target.url),
+          };
+        }
+        return {
+          id: target.id,
+          label: target.label,
+          icon: <ThemedEditorAppIcon editorId={target.id} size={16} uniProps={mutedColorMapping} />,
+          onOpen: () => openDesktopTarget(target.openInput),
+        };
+      }),
+    [activeFile, checkoutStatus, cwd, desktopOpenTargets, isDesktopOpenAvailable, isLocalDaemon],
   );
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
@@ -262,7 +183,7 @@ export function WorkspaceOpenInEditorButton({
     }
   }, [primaryOption, handleOpenTarget]);
 
-  if (!shouldQueryWorkspace || !primaryOption || targets.length === 0) {
+  if (!canResolveWorkspace || !primaryOption || targets.length === 0) {
     return null;
   }
 

@@ -51,6 +51,24 @@ export interface DesktopOpenerBridge {
   openUrl?: (url: string) => Promise<void>;
 }
 
+export interface DesktopEditorTargetDescriptor {
+  id: string;
+  label: string;
+  kind: "editor" | "file-manager";
+}
+
+export interface DesktopEditorOpenTargetInput {
+  editorId: string;
+  path: string;
+  cwd?: string;
+  mode?: "open" | "reveal";
+}
+
+export interface DesktopEditorBridge {
+  listTargets?: () => Promise<DesktopEditorTargetDescriptor[]>;
+  openTarget?: (input: DesktopEditorOpenTargetInput) => Promise<void>;
+}
+
 export interface DesktopWebUtilsBridge {
   getPathForFile?: (file: File) => string;
 }
@@ -111,6 +129,7 @@ export interface DesktopHostBridge {
   dialog?: DesktopDialogBridge;
   notification?: DesktopNotificationBridge;
   opener?: DesktopOpenerBridge;
+  editor?: DesktopEditorBridge;
   webUtils?: DesktopWebUtilsBridge;
   menu?: DesktopMenuBridge;
   browser?: DesktopBrowserBridge;

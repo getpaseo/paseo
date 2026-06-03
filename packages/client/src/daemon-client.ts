@@ -50,8 +50,6 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
-  ListAvailableEditorsResponseMessage,
-  OpenInEditorResponseMessage,
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
@@ -77,8 +75,6 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   SendAgentMessageRequest,
-  EditorTargetId,
-  OpenInEditorMode,
   PaseoConfigRaw,
   PaseoConfigRevision,
 } from "@getpaseo/protocol/messages";
@@ -642,12 +638,9 @@ export interface RenameTerminalInput {
   title: string;
   requestId?: string;
 }
-type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
-type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
-export type EditorTargetDescriptor = ListAvailableEditorsPayload["editors"][number];
 
 export interface FetchAgentResult {
   agent: AgentSnapshotPayload;
@@ -1775,47 +1768,6 @@ export class DaemonClient {
         scriptName,
       },
       responseType: "start_workspace_script_response",
-      timeout: 10000,
-    });
-  }
-
-  async listAvailableEditors(requestId?: string): Promise<ListAvailableEditorsPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "list_available_editors_request",
-      },
-      responseType: "list_available_editors_response",
-      timeout: 10000,
-    });
-  }
-
-  async openInEditor(
-    path: string,
-    editorId: EditorTargetId,
-    requestId?: string,
-  ): Promise<OpenInEditorPayload>;
-  async openInEditor(
-    path: string,
-    editorId: EditorTargetId,
-    options?: { mode?: OpenInEditorMode; cwd?: string; requestId?: string },
-  ): Promise<OpenInEditorPayload>;
-  async openInEditor(
-    path: string,
-    editorId: EditorTargetId,
-    request?: string | { mode?: OpenInEditorMode; cwd?: string; requestId?: string },
-  ): Promise<OpenInEditorPayload> {
-    const options = typeof request === "string" ? { requestId: request } : request;
-    return this.sendCorrelatedSessionRequest({
-      requestId: options?.requestId,
-      message: {
-        type: "open_in_editor_request",
-        path,
-        editorId,
-        ...(options?.mode ? { mode: options.mode } : {}),
-        ...(options?.cwd ? { cwd: options.cwd } : {}),
-      },
-      responseType: "open_in_editor_response",
       timeout: 10000,
     });
   }

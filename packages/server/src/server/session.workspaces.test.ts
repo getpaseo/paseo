@@ -5,11 +5,7 @@ import path from "node:path";
 import { expect, test, vi } from "vitest";
 import { z } from "zod";
 import { Session } from "./session.js";
-import type {
-  AgentSnapshotPayload,
-  EditorTargetDescriptorPayload,
-  SessionOutboundMessage,
-} from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import type {
@@ -123,10 +119,6 @@ interface SessionTestAccess {
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
-  getAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
-  filterEditorsForClient(...args: unknown[]): unknown;
-  openEditorTarget(input: { editorId: string; path: string }): Promise<unknown>;
-  resolveAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
   paseoHome: string;
   terminalManager: {
     killTerminal(id: string): unknown;
@@ -3492,137 +3484,16 @@ test.skip("open_project_request collapses a git subdirectory onto the repo root 
   expect(response?.payload.workspace?.id).toBe(repoRoot);
 });
 
-test("list_available_editors_request returns available targets", async () => {
+test("legacy editor RPC requests return daemon unsupported errors", async () => {
   const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests({ appVersion: "0.1.50" });
-
-  session.emit = (message) => {
-    if (isSessionOutboundMessage(message)) emitted.push(message);
-  };
-  session.getAvailableEditorTargets = async () =>
-    session.filterEditorsForClient([
-      { id: "cursor", label: "Cursor" },
-      { id: "webstorm", label: "WebStorm" },
-      { id: "finder", label: "Finder" },
-      { id: "unknown-editor", label: "Unknown Editor" },
-    ]);
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
 
   await session.handleMessage({
     type: "list_available_editors_request",
     requestId: "req-editors",
   });
-
-  const response = emitted.find((message) => message.type === "list_available_editors_response") as
-    | { payload: Record<string, unknown> }
-    | undefined;
-  expect(response?.payload.error).toBeNull();
-  expect(response?.payload.editors).toEqual([
-    { id: "cursor", label: "Cursor" },
-    { id: "webstorm", label: "WebStorm" },
-    { id: "finder", label: "Finder" },
-    { id: "unknown-editor", label: "Unknown Editor" },
-  ]);
-});
-
-test("list_available_editors_request coalesces concurrent discovery", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = asTestSession(
-    createSessionForWorkspaceTests({
-      appVersion: "0.1.50",
-      onMessage: (message) => emitted.push(message),
-    }),
-  );
-  let resolveDiscovery: (editors: EditorTargetDescriptorPayload[]) => void = () => {};
-  let discoveryCalls = 0;
-
-  vi.spyOn(session, "resolveAvailableEditorTargets").mockImplementation(async () => {
-    discoveryCalls += 1;
-    return await new Promise<EditorTargetDescriptorPayload[]>((resolve) => {
-      resolveDiscovery = resolve;
-    });
-  });
-
-  const first = session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-1",
-  });
-  const second = session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-2",
-  });
-
-  await Promise.resolve();
-  expect(discoveryCalls).toBe(1);
-
-  resolveDiscovery([{ id: "cursor", label: "Cursor" }]);
-  await Promise.all([first, second]);
-
-  const responses = emitted.filter(
-    (
-      message,
-    ): message is Extract<SessionOutboundMessage, { type: "list_available_editors_response" }> =>
-      message.type === "list_available_editors_response",
-  );
-  expect(responses).toHaveLength(2);
-  expect(responses.map((response) => response.payload.requestId)).toEqual([
-    "req-editors-1",
-    "req-editors-2",
-  ]);
-  expect(responses.map((response) => response.payload.editors)).toEqual([
-    [{ id: "cursor", label: "Cursor" }],
-    [{ id: "cursor", label: "Cursor" }],
-  ]);
-
-  await session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-3",
-  });
-
-  expect(discoveryCalls).toBe(1);
-});
-
-test("list_available_editors_request filters unsupported ids for legacy clients", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests({ appVersion: "0.1.49" });
-
-  session.emit = (message) => {
-    if (isSessionOutboundMessage(message)) emitted.push(message);
-  };
-  session.getAvailableEditorTargets = async () =>
-    session.filterEditorsForClient([
-      { id: "cursor", label: "Cursor" },
-      { id: "webstorm", label: "WebStorm" },
-      { id: "unknown-editor", label: "Unknown Editor" },
-      { id: "finder", label: "Finder" },
-    ]);
-
-  await session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-legacy",
-  });
-
-  const response = emitted.find((message) => message.type === "list_available_editors_response") as
-    | { payload: Record<string, unknown> }
-    | undefined;
-  expect(response?.payload.error).toBeNull();
-  expect(response?.payload.editors).toEqual([
-    { id: "cursor", label: "Cursor" },
-    { id: "finder", label: "Finder" },
-  ]);
-});
-
-test("open_in_editor_request launches the selected target", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests();
-  const calls: Array<{ editorId: string; path: string }> = [];
-
-  session.emit = (message) => {
-    if (isSessionOutboundMessage(message)) emitted.push(message);
-  };
-  session.openEditorTarget = async (input: { editorId: string; path: string }) => {
-    calls.push(input);
-  };
-
   await session.handleMessage({
     type: "open_in_editor_request",
     requestId: "req-open-editor",
@@ -3630,11 +3501,15 @@ test("open_in_editor_request launches the selected target", async () => {
     path: REPO_CWD,
   });
 
-  expect(calls).toEqual([{ editorId: "vscode", path: REPO_CWD }]);
-  const response = emitted.find((message) => message.type === "open_in_editor_response") as
-    | { payload: Record<string, unknown> }
-    | undefined;
-  expect(response?.payload.error).toBeNull();
+  const listResponse = findByType(emitted, "list_available_editors_response");
+  const openResponse = findByType(emitted, "open_in_editor_response");
+  expect(listResponse?.payload.editors).toEqual([]);
+  expect(listResponse?.payload.error).toBe(
+    "Editor opening moved to the desktop app and is no longer supported by the daemon",
+  );
+  expect(openResponse?.payload.error).toBe(
+    "Editor opening moved to the desktop app and is no longer supported by the daemon",
+  );
 });
 
 test("archive_workspace_request hides non-destructive workspace records", async () => {

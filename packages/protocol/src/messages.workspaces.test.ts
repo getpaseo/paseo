@@ -240,62 +240,42 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
-  test("parses list_available_editors_request", () => {
-    const parsed = SessionInboundMessageSchema.parse({
+  test("parses legacy editor RPC messages for compatibility", () => {
+    const listRequest = SessionInboundMessageSchema.parse({
       type: "list_available_editors_request",
       requestId: "req-editors",
     });
-
-    expect(parsed.type).toBe("list_available_editors_request");
-  });
-
-  test("parses open_in_editor_request with flexible editor ids", () => {
-    const knownEditor = SessionInboundMessageSchema.parse({
+    const openRequest = SessionInboundMessageSchema.parse({
       type: "open_in_editor_request",
-      requestId: "req-open-webstorm",
-      editorId: "webstorm",
-      path: "/tmp/repo",
-    });
-    const unknownEditor = SessionInboundMessageSchema.parse({
-      type: "open_in_editor_request",
-      requestId: "req-open-custom",
+      requestId: "req-open-editor",
       editorId: "unknown-editor",
       path: "/tmp/repo",
+      mode: "reveal",
+      cwd: "/tmp",
     });
-
-    expect(knownEditor.type).toBe("open_in_editor_request");
-    expect(unknownEditor.type).toBe("open_in_editor_request");
-  });
-
-  test("parses open_in_editor_response", () => {
-    const parsed = SessionOutboundMessageSchema.parse({
-      type: "open_in_editor_response",
-      payload: {
-        requestId: "req-open-editor",
-        error: null,
-      },
-    });
-
-    expect(parsed.type).toBe("open_in_editor_response");
-  });
-
-  test("parses list_available_editors_response with unknown editor ids", () => {
-    const parsed = SessionOutboundMessageSchema.parse({
+    const listResponse = SessionOutboundMessageSchema.parse({
       type: "list_available_editors_response",
       payload: {
         requestId: "req-editors",
-        editors: [
-          { id: "cursor", label: "Cursor" },
-          { id: "unknown-editor", label: "Unknown Editor" },
-        ],
+        editors: [{ id: "unknown-editor", label: "Unknown Editor" }],
         error: null,
       },
     });
+    const openResponse = SessionOutboundMessageSchema.parse({
+      type: "open_in_editor_response",
+      payload: {
+        requestId: "req-open-editor",
+        error: "Editor opening moved to the desktop app",
+      },
+    });
 
-    expect(parsed.type).toBe("list_available_editors_response");
+    expect(listRequest.type).toBe("list_available_editors_request");
+    expect(openRequest.type).toBe("open_in_editor_request");
+    expect(listResponse.type).toBe("list_available_editors_response");
+    expect(openResponse.type).toBe("open_in_editor_response");
   });
 
-  test("rejects empty editor ids", () => {
+  test("rejects empty legacy editor ids", () => {
     const result = SessionInboundMessageSchema.safeParse({
       type: "open_in_editor_request",
       requestId: "req-open-empty",
