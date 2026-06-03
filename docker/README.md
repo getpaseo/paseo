@@ -18,6 +18,7 @@ docker run -d --name paseo \
   -p 6767:6767 \
   -e PASEO_PASSWORD=change-me \
   -e DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
   -v "$PWD/paseo-config:/config" \
   -v "$PWD:/workspace" \
   ghcr.io/getpaseo/paseo:debian
@@ -50,5 +51,6 @@ Set `-e PASEO_PAIRING_QR=0` to disable.
 
 Combine them: `DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code|ghcr.io/getpaseo/mods:codex`.
 
-See [../docs/docker.md](../docs/docker.md) for volumes, env vars, agent auth,
+Use the same Paseo daemon/provider env vars you would pass outside Docker; see
+[../docs/docker.md](../docs/docker.md) for volumes, env vars, agent auth,
 security, and how to build the images locally.

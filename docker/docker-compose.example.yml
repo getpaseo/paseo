@@ -30,6 +30,7 @@ services:
       # PASEO_HOSTNAMES: "paseo.example.com,.lan"
 
       # Agent credentials — provide whatever your chosen agents need.
+      # Use the same Paseo daemon/provider env vars documented in docs/docker.md.
       # ANTHROPIC_API_KEY: "sk-ant-..."
       # OPENAI_API_KEY: "sk-..."
     volumes:
