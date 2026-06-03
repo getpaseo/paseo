@@ -121,64 +121,42 @@ You can also configure custom providers / API endpoints in
 
 ## Environment variables
 
-The Docker image does not define a separate Paseo env contract. Values passed
-with `docker run -e ...` or `compose.environment` are inherited by the daemon
-and by agent/provider processes the same way they are when you run Paseo
-directly on the host.
+Docker deployments use normal Paseo daemon/provider environment variables plus
+a small set of container-only variables.
 
 ### Paseo daemon env vars
 
-These are normal Paseo daemon/provider variables that are useful in containers.
-Provider credentials and custom provider env vars, such as `ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, or `OPENAI_BASE_URL`, are passed the
-same way.
+The Docker image does not define a separate Paseo daemon/provider environment
+contract. Values passed with `docker run -e ...` or `compose.environment` are
+inherited by the daemon and by agent/provider processes the same way they are
+when you run Paseo directly on the host. This includes provider credentials and
+endpoint variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`ANTHROPIC_BASE_URL`, and `OPENAI_BASE_URL`.
 
-| Var                                   | Default in image                  | Purpose                                                            |
-| ------------------------------------- | --------------------------------- | ------------------------------------------------------------------ |
-| `PASEO_PASSWORD`                      | (unset)                           | Daemon password. **Set it** for exposed servers.                   |
-| `PASEO_LISTEN`                        | `0.0.0.0:6767`                    | Listen address inside the container.                               |
-| `PASEO_HOME`                          | `/config`                         | State directory. Keep at `/config` unless you remap the volume.    |
-| `PASEO_HOSTNAMES`                     | (unset)                           | Extra allowed `Host` names; `true` allows any host.                |
-| `PASEO_ALLOWED_HOSTS`                 | (unset)                           | Compatibility alias for `PASEO_HOSTNAMES`.                         |
-| `PASEO_CORS_ORIGINS`                  | (unset)                           | Comma-separated allowed CORS origins.                              |
-| `PASEO_APP_BASE_URL`                  | `https://app.paseo.sh`            | App URL used in generated links/offers.                            |
-| `PASEO_LOG_LEVEL`                     | `info`                            | Daemon log level.                                                  |
-| `PASEO_LOG_FORMAT`                    | `json` in production              | Daemon log format.                                                 |
-| `PASEO_LOG_ROTATE_SIZE`               | persisted/default                 | Optional daemon log rotation size.                                 |
-| `PASEO_LOG_ROTATE_COUNT`              | persisted/default                 | Optional daemon log rotation file count.                           |
-| `PASEO_RELAY_ENABLED`                 | `true`                            | Enable or disable relay registration.                              |
-| `PASEO_RELAY_ENDPOINT`                | `relay.paseo.sh:443`              | Relay daemon endpoint.                                             |
-| `PASEO_RELAY_PUBLIC_ENDPOINT`         | relay endpoint                    | Client-facing relay endpoint.                                      |
-| `PASEO_RELAY_USE_TLS`                 | auto                              | TLS for the daemon-to-relay connection.                            |
-| `PASEO_RELAY_PUBLIC_USE_TLS`          | relay TLS value                   | TLS advertised to clients for the public relay endpoint.           |
-| `PASEO_SERVICE_PROXY_ENABLED`         | persisted/default                 | Compatibility shim; `false` suppresses optional proxy layers only. |
-| `PASEO_SERVICE_PROXY_LISTEN`          | (unset)                           | Starts the optional service-only listener, e.g. `0.0.0.0:8080`.    |
-| `PASEO_SERVICE_PROXY_PUBLIC_BASE_URL` | (unset)                           | Adds public service aliases and links.                             |
-| `PASEO_DICTATION_ENABLED`             | enabled                           | Enables/disables dictation.                                        |
-| `PASEO_VOICE_MODE_ENABLED`            | enabled                           | Enables/disables voice mode.                                       |
-| `PASEO_VOICE_LLM_PROVIDER`            | persisted/default                 | Voice-mode LLM provider override.                                  |
-| `PASEO_DICTATION_STT_PROVIDER`        | `local`                           | Dictation speech-to-text provider.                                 |
-| `PASEO_VOICE_TURN_DETECTION_PROVIDER` | `local`                           | Voice turn-detection provider.                                     |
-| `PASEO_VOICE_STT_PROVIDER`            | `local`                           | Voice-mode speech-to-text provider.                                |
-| `PASEO_VOICE_TTS_PROVIDER`            | `local`                           | Voice-mode text-to-speech provider.                                |
-| `PASEO_LOCAL_MODELS_DIR`              | `$PASEO_HOME/models/local-speech` | Local speech model cache directory.                                |
-| `PASEO_DICTATION_LOCAL_STT_MODEL`     | local default                     | Local STT model for dictation.                                     |
-| `PASEO_VOICE_LOCAL_STT_MODEL`         | local default                     | Local STT model for voice mode.                                    |
-| `PASEO_VOICE_LOCAL_TTS_MODEL`         | local default                     | Local TTS model for voice mode.                                    |
-| `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`    | model default                     | Local TTS speaker id.                                              |
-| `PASEO_VOICE_LOCAL_TTS_SPEED`         | model default                     | Local TTS speed.                                                   |
-| `PASEO_DICTATION_LANGUAGE`            | `en`                              | Dictation STT language.                                            |
-| `PASEO_VOICE_LANGUAGE`                | dictation language                | Voice-mode STT language.                                           |
-| `OPENAI_API_KEY`                      | (unset)                           | OpenAI key for OpenAI speech and OpenAI-compatible providers.      |
-| `OPENAI_REALTIME_TRANSCRIPTION_MODEL` | `gpt-4o-transcribe`               | OpenAI realtime transcription model.                               |
-| `STT_MODEL`                           | provider default                  | OpenAI STT model override.                                         |
-| `STT_CONFIDENCE_THRESHOLD`            | provider default                  | Optional STT confidence threshold.                                 |
-| `TTS_MODEL`                           | `tts-1`                           | OpenAI TTS model.                                                  |
-| `TTS_VOICE`                           | `alloy`                           | OpenAI TTS voice.                                                  |
+Set `PASEO_PASSWORD` for any daemon reachable beyond localhost.
+
+The image only changes a few container defaults:
+
+- `PASEO_HOME=/config`, matching the persistent volume described above.
+- `PASEO_LISTEN=0.0.0.0:6767`, so the daemon is reachable through Docker port
+  publishing.
+- `PASEO_LOG_FORMAT=json` in production.
+
+For daemon/runtime env details, use the existing references:
+
+- [development.md](development.md) for `PASEO_HOME`, daemon logs/log rotation,
+  CLI host/password env, and workspace service script env.
+- [service-proxy.md](service-proxy.md) for `PASEO_SERVICE_PROXY_*`.
+- [custom-providers.md](custom-providers.md) for provider credentials, custom
+  endpoints, and `agents.providers.*.env`.
+- [SECURITY.md](../SECURITY.md) for exposed daemons, `PASEO_PASSWORD`, relay,
+  and TLS guidance.
 
 Generated workspace/service env vars such as `PASEO_SERVICE_<NAME>_URL`,
 `PASEO_SERVICE_<NAME>_PORT`, `PASEO_PORT`, and `PASEO_WORKTREE_*` are injected
 into scripts/agents by Paseo at runtime; you do not set them on the container.
+See [development.md](development.md) for the generated service script env
+contract.
 
 ### Container-only env vars
 
