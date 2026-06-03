@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { expect, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { getE2EDaemonPort } from "./daemon-port";
@@ -64,6 +65,21 @@ export interface DesktopBridgeConfig {
    * false so tests that only assert copy don't inadvertently trigger state changes.
    */
   confirmShouldAccept?: boolean;
+  editorTargets?: DesktopEditorTargetConfig[];
+  editorRecordPath?: string;
+}
+
+interface DesktopEditorTargetConfig {
+  id: string;
+  label: string;
+  kind: "editor" | "file-manager";
+}
+
+interface DesktopEditorOpenRecord {
+  editorId: string;
+  path: string;
+  cwd?: string;
+  mode?: "open" | "reveal";
 }
 
 export interface ConfirmDialogCall {
@@ -74,6 +90,7 @@ export interface ConfirmDialogCall {
 declare global {
   interface Window {
     __capturedDialogCall: ConfirmDialogCall | undefined;
+    __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
   }
 }
 
@@ -87,6 +104,15 @@ declare global {
  * can assert dialog copy without depending on window.confirm concatenation.
  */
 export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfig): Promise<void> {
+  if (config.editorRecordPath) {
+    await page.exposeFunction(
+      "__recordDesktopEditorOpen",
+      async (input: DesktopEditorOpenRecord) => {
+        await appendFile(config.editorRecordPath as string, `${JSON.stringify(input)}\n`, "utf8");
+      },
+    );
+  }
+
   await page.addInitScript((cfg) => {
     // Mutable state shared across IPC calls within this page
     let manageDaemon = cfg.manageBuiltInDaemon ?? false;
@@ -108,7 +134,19 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       };
     }
 
-    (window as unknown as { paseoDesktop: unknown }).paseoDesktop = {
+    const desktopBridge: {
+      platform: string;
+      invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+      dialog: {
+        ask: (message: string, options?: Record<string, unknown>) => Promise<boolean>;
+      };
+      getPendingOpenProject: () => Promise<string | null>;
+      events: { on: () => Promise<() => void> };
+      editor?: {
+        listTargets: () => Promise<DesktopEditorTargetConfig[]>;
+        openTarget: (input: DesktopEditorOpenRecord) => Promise<void>;
+      };
+    } = {
       platform: "darwin",
       invoke: async (command: string, args?: Record<string, unknown>) => {
         if (command === "check_app_update") {
@@ -202,6 +240,17 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       getPendingOpenProject: async () => null,
       events: { on: async () => () => undefined },
     };
+
+    if (cfg.editorTargets) {
+      desktopBridge.editor = {
+        listTargets: async () => cfg.editorTargets ?? [],
+        openTarget: async (input: DesktopEditorOpenRecord) => {
+          await window.__recordDesktopEditorOpen?.(input);
+        },
+      };
+    }
+
+    (window as unknown as { paseoDesktop: unknown }).paseoDesktop = desktopBridge;
   }, config);
 }
 
