@@ -336,22 +336,19 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (canPush(input)) {
     return "push";
   }
+  if (canMergePr(input)) {
+    return getDefaultDirectPullRequestMergeActionId(input);
+  }
+  if (canEnablePrAutoMerge(input)) {
+    return getDefaultEnablePullRequestAutoMergeActionId(input);
+  }
+  if (!input.isOnBaseBranch && input.aheadCount > 0) {
+    return "merge-branch";
+  }
   if (!input.isOnBaseBranch && canMergeFromBase(input)) {
     return "merge-from-base";
   }
-  if (canMergePr(input) && input.shipDefault === "pr") {
-    return getDefaultDirectPullRequestMergeActionId(input);
-  }
-  if (canEnablePrAutoMerge(input) && input.shipDefault === "pr") {
-    return getDefaultEnablePullRequestAutoMergeActionId(input);
-  }
-  if (!input.isOnBaseBranch && input.aheadCount > 0 && input.shipDefault === "merge") {
-    return "merge-branch";
-  }
   if (input.githubFeaturesEnabled && input.hasPullRequest && input.pullRequestUrl) {
-    return "pr";
-  }
-  if (!input.isOnBaseBranch && input.aheadCount > 0) {
     return "pr";
   }
   return null;
