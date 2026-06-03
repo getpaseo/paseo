@@ -134,6 +134,7 @@ describe("OpenCode auto_accept feature", () => {
         requestedMode: "full-access",
         featureValues: undefined,
         parent: null,
+        unattended: false,
         availableModes: [
           { id: "build", label: "Build" },
           { id: "plan", label: "Plan" },
@@ -151,11 +152,11 @@ describe("OpenCode auto_accept feature", () => {
         requestedMode: undefined,
         featureValues: undefined,
         parent: {
-          kind: "agent",
           provider: "claude",
           modeId: "bypassPermissions",
           isUnattended: true,
         },
+        unattended: true,
         availableModes: [
           { id: "build", label: "Build" },
           { id: "plan", label: "Plan" },
@@ -164,7 +165,7 @@ describe("OpenCode auto_accept feature", () => {
     ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
   });
 
-  test("defaults system unattended creation to build plus auto accept", () => {
+  test("defaults unattended creation without a parent to build plus auto accept", () => {
     const client = new OpenCodeAgentClient(createTestLogger());
 
     expect(
@@ -172,7 +173,8 @@ describe("OpenCode auto_accept feature", () => {
         provider: "opencode",
         requestedMode: undefined,
         featureValues: undefined,
-        parent: { kind: "system-unattended" },
+        parent: null,
+        unattended: true,
         availableModes: [
           { id: "build", label: "Build" },
           { id: "plan", label: "Plan" },
@@ -190,11 +192,11 @@ describe("OpenCode auto_accept feature", () => {
         requestedMode: undefined,
         featureValues: undefined,
         parent: {
-          kind: "agent",
           provider: "opencode",
           modeId: "paseo-custom",
           isUnattended: true,
         },
+        unattended: true,
         availableModes: [
           { id: "build", label: "Build" },
           { id: "plan", label: "Plan" },

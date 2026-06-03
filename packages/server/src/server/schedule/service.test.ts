@@ -39,11 +39,9 @@ const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: true,
 };
 
-const NO_UNATTENDED_SCHEDULE_POLICY: Pick<
-  ProviderSnapshotManager,
-  "resolveUnattendedCreateConfig"
-> = {
-  async resolveUnattendedCreateConfig(input) {
+const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
+  async resolveCreateConfig(input) {
+    expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
     return { modeId: undefined, featureValues: input.featureValues };
   },
 };
@@ -407,7 +405,8 @@ describe("ScheduleService", () => {
       agentManager: manager,
       agentStorage,
       providerSnapshotManager: {
-        async resolveUnattendedCreateConfig(input) {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
           return { modeId: "bypassPermissions", featureValues: input.featureValues };
         },
       },
@@ -468,7 +467,8 @@ describe("ScheduleService", () => {
       agentManager: manager,
       agentStorage,
       providerSnapshotManager: {
-        async resolveUnattendedCreateConfig(input) {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
           return {
             modeId: "build",
             featureValues: { ...input.featureValues, auto_accept: true },

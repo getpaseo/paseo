@@ -59,18 +59,13 @@ interface ProviderSnapshotProviderOptions {
   wait?: boolean;
 }
 
-interface ResolveProviderCreateConfigOptions {
+export interface ResolveProviderCreateConfigOptions {
   cwd?: string | null;
   provider: AgentProvider;
   requestedMode: string | undefined;
   featureValues: Record<string, unknown> | undefined;
   parent: ManagedAgent | null;
-}
-
-export interface ResolveUnattendedProviderCreateConfigOptions {
-  cwd?: string | null;
-  provider: AgentProvider;
-  featureValues: Record<string, unknown> | undefined;
+  unattended: boolean;
 }
 
 export interface ResolvedProviderCreateConfig {
@@ -308,31 +303,13 @@ export class ProviderSnapshotManager {
       wait: true,
     });
     const definition = this.requireProvider(input.provider);
+    const parent = input.parent ? this.resolveParent(input.parent) : null;
     return definition.resolveCreateConfig({
       provider: input.provider,
       requestedMode: input.requestedMode,
       featureValues: input.featureValues,
-      parent: input.parent ? this.resolveParent(input.parent) : null,
-      availableModes: entry.modes ?? [],
-    });
-  }
-
-  async resolveUnattendedCreateConfig(
-    input: ResolveUnattendedProviderCreateConfigOptions,
-  ): Promise<ResolvedProviderCreateConfig> {
-    const entry = await this.getReadyProvider({
-      cwd: input.cwd,
-      provider: input.provider,
-      wait: true,
-    });
-    const definition = this.requireProvider(input.provider);
-    return definition.resolveCreateConfig({
-      provider: input.provider,
-      requestedMode: undefined,
-      featureValues: input.featureValues,
-      parent: {
-        kind: "system-unattended",
-      },
+      parent,
+      unattended: input.unattended || parent?.isUnattended === true,
       availableModes: entry.modes ?? [],
     });
   }
@@ -396,18 +373,36 @@ export class ProviderSnapshotManager {
   }
 
   private buildRegistry(): Record<AgentProvider, ProviderDefinition> {
-    return buildProviderRegistry(this.logger, {
+    const registry = buildProviderRegistry(this.logger, {
       runtimeSettings: this.runtimeSettings,
       providerOverrides: this.providerOverrides,
       workspaceGitService: this.workspaceGitService,
       isDev: this.isDev,
     });
+
+    for (const [provider, client] of Object.entries(this.extraClients) as Array<
+      [AgentProvider, AgentClient]
+    >) {
+      const definition = registry[provider];
+      if (!definition) continue;
+      registry[provider] = {
+        ...definition,
+        createClient: () => client,
+        resolveCreateConfig:
+          client.resolveCreateConfig?.bind(client) ?? definition.resolveCreateConfig,
+        isCreateConfigUnattended:
+          client.isCreateConfigUnattended?.bind(client) ?? definition.isCreateConfigUnattended,
+        fetchModels: client.listModels.bind(client),
+        fetchModes: client.listModes?.bind(client) ?? definition.fetchModes,
+      };
+    }
+
+    return registry;
   }
 
   private resolveParent(parent: ManagedAgent): AgentCreateConfigParent {
     const definition = this.requireProvider(parent.provider);
     return {
-      kind: "agent",
       provider: parent.provider,
       modeId: parent.currentModeId,
       isUnattended: definition.isCreateConfigUnattended({

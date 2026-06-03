@@ -12,7 +12,7 @@ import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
   ProviderSnapshotManager,
   ResolvedProviderCreateConfig,
-  ResolveUnattendedProviderCreateConfigOptions,
+  ResolveProviderCreateConfigOptions,
 } from "../agent/provider-snapshot-manager.js";
 import type {
   CreateScheduleInput,
@@ -138,17 +138,14 @@ function buildRunOutput(params: {
   return null;
 }
 
-type UnattendedCreateConfigResolver = Pick<
-  ProviderSnapshotManager,
-  "resolveUnattendedCreateConfig"
->;
+type CreateConfigResolver = Pick<ProviderSnapshotManager, "resolveCreateConfig">;
 
 export interface ScheduleServiceOptions {
   paseoHome: string;
   logger: Logger;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  providerSnapshotManager: UnattendedCreateConfigResolver;
+  providerSnapshotManager: CreateConfigResolver;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -158,7 +155,7 @@ export class ScheduleService {
   private readonly logger: Logger;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
-  private readonly unattendedCreateConfigResolver: UnattendedCreateConfigResolver;
+  private readonly createConfigResolver: CreateConfigResolver;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -172,7 +169,7 @@ export class ScheduleService {
     this.logger = options.logger.child({ module: "schedule-service" });
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
-    this.unattendedCreateConfigResolver = options.providerSnapshotManager;
+    this.createConfigResolver = options.providerSnapshotManager;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
@@ -562,10 +559,13 @@ export class ScheduleService {
     const targetConfig = schedule.target.config;
     const resolvedUnattendedConfig = targetConfig.modeId
       ? { modeId: targetConfig.modeId, featureValues: targetConfig.featureValues }
-      : await this.resolveUnattendedCreateConfig({
+      : await this.resolveProviderCreateConfig({
           provider: targetConfig.provider,
           cwd: targetConfig.cwd,
+          requestedMode: undefined,
           featureValues: targetConfig.featureValues,
+          parent: null,
+          unattended: true,
         });
     const config: AgentSessionConfig = {
       provider: targetConfig.provider,
@@ -615,9 +615,9 @@ export class ScheduleService {
     };
   }
 
-  private async resolveUnattendedCreateConfig(
-    input: ResolveUnattendedProviderCreateConfigOptions,
+  private async resolveProviderCreateConfig(
+    input: ResolveProviderCreateConfigOptions,
   ): Promise<ResolvedProviderCreateConfig> {
-    return this.unattendedCreateConfigResolver.resolveUnattendedCreateConfig(input);
+    return this.createConfigResolver.resolveCreateConfig(input);
   }
 }

@@ -133,11 +133,9 @@ function resolveOpenCodeCreateConfig(
   const legacyFullAccess = input.requestedMode === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID;
   const parent = input.parent;
   const inheritsUnattended =
-    input.requestedMode === undefined &&
-    parent !== null &&
-    (parent.kind === "system-unattended" || parent.isUnattended === true);
+    input.requestedMode === undefined && (input.unattended || parent?.isUnattended === true);
   const inheritedOpenCodeMode =
-    inheritsUnattended && parent?.kind === "agent" && parent.provider === input.provider
+    inheritsUnattended && parent?.provider === input.provider
       ? (parent.modeId ?? undefined)
       : undefined;
   const requestedMode = legacyFullAccess

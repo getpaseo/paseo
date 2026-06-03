@@ -256,6 +256,7 @@ async function resolveMcpCreateAgent(
       requestedMode: input.mode,
       featureValues: input.features,
       parent: parentAgent,
+      unattended: false,
     });
 
   const labels = mergeLabels({

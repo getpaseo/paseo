@@ -11,6 +11,7 @@ export interface ResolveCreateAgentModeInput {
   requestedMode: string | undefined;
   targetProvider: AgentProvider;
   parent: AgentCreateConfigParent | null;
+  unattended: boolean;
   // `undefined` = target provider's modes unknown: explicit modes pass through
   // unvalidated, but cross-provider inheritance is still refused.
   availableModes: string[] | undefined;
@@ -27,17 +28,15 @@ function listModes(modes: string[] | undefined): string {
 }
 
 function isUnattendedCreateConfigParent(parent: AgentCreateConfigParent): boolean {
-  return parent.kind === "system-unattended" || parent.isUnattended;
+  return parent.isUnattended;
 }
 
 function formatCreateConfigParentMode(parent: AgentCreateConfigParent): string {
-  return parent.kind === "agent" ? (parent.modeId ?? "<none>") : "<system-unattended>";
+  return parent.modeId ?? "<none>";
 }
 
 function formatCreateConfigParentSource(parent: AgentCreateConfigParent): string {
-  return parent.kind === "agent"
-    ? `caller (provider '${parent.provider}')`
-    : "system unattended request";
+  return `caller (provider '${parent.provider}')`;
 }
 
 export function resolveAndValidateCreateAgentMode(
@@ -55,14 +54,20 @@ export function resolveAndValidateCreateAgentMode(
   }
 
   if (!parent) {
+    if (input.unattended && input.targetUnattendedMode !== undefined) {
+      return input.targetUnattendedMode;
+    }
     return undefined;
   }
 
-  if (parent.kind === "agent" && parent.provider === targetProvider) {
+  if (parent.provider === targetProvider) {
     return parent.modeId ?? undefined;
   }
 
-  if (isUnattendedCreateConfigParent(parent) && input.targetUnattendedMode !== undefined) {
+  if (
+    (input.unattended || isUnattendedCreateConfigParent(parent)) &&
+    input.targetUnattendedMode !== undefined
+  ) {
     return input.targetUnattendedMode;
   }
 
@@ -80,6 +85,7 @@ export function resolveDefaultAgentCreateConfig(
       requestedMode: input.requestedMode,
       targetProvider: input.provider,
       parent: input.parent,
+      unattended: input.unattended,
       availableModes: availableModeIds,
       targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
     }),

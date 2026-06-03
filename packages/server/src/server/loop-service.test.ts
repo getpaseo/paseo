@@ -45,8 +45,9 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: false,
 };
 
-const NO_UNATTENDED_LOOP_POLICY: Pick<ProviderSnapshotManager, "resolveUnattendedCreateConfig"> = {
-  async resolveUnattendedCreateConfig(input) {
+const NO_UNATTENDED_LOOP_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
+  async resolveCreateConfig(input) {
+    expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
     return { modeId: undefined, featureValues: input.featureValues };
   },
 };
@@ -504,7 +505,8 @@ describe("LoopService", () => {
       agentManager: manager,
       logger,
       providerSnapshotManager: {
-        async resolveUnattendedCreateConfig(input) {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
           return { modeId: "bypassPermissions", featureValues: input.featureValues };
         },
       },
@@ -558,7 +560,8 @@ describe("LoopService", () => {
       agentManager: manager,
       logger,
       providerSnapshotManager: {
-        async resolveUnattendedCreateConfig(input) {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
           return {
             modeId: "build",
             featureValues: { ...input.featureValues, auto_accept: true },

@@ -17,7 +17,7 @@ import { execCommand, platformShell } from "../utils/spawn.js";
 import type {
   ProviderSnapshotManager,
   ResolvedProviderCreateConfig,
-  ResolveUnattendedProviderCreateConfigOptions,
+  ResolveProviderCreateConfigOptions,
 } from "./agent/provider-snapshot-manager.js";
 
 const LOOP_ID_LENGTH = 8;
@@ -210,10 +210,7 @@ function buildVerifierTitle(loop: LoopRecord, iterationIndex: number): string {
   return `${prefix} [loop ${iterationIndex} verifier]`;
 }
 
-type UnattendedCreateConfigResolver = Pick<
-  ProviderSnapshotManager,
-  "resolveUnattendedCreateConfig"
->;
+type CreateConfigResolver = Pick<ProviderSnapshotManager, "resolveCreateConfig">;
 
 function formatStreamLog(event: AgentStreamEvent): string | null {
   switch (event.type) {
@@ -313,7 +310,7 @@ export class LoopService {
       paseoHome: string;
       agentManager: AgentManager;
       logger: Logger;
-      providerSnapshotManager: UnattendedCreateConfigResolver;
+      providerSnapshotManager: CreateConfigResolver;
     },
   ) {
     this.storePath = path.join(options.paseoHome, "loops", "loops.json");
@@ -812,7 +809,7 @@ export class LoopService {
     const provider = loop.workerProvider ?? loop.provider;
     const resolvedUnattendedConfig = loop.modeId
       ? { modeId: loop.modeId, featureValues: undefined }
-      : await this.resolveUnattendedCreateConfig({ provider, cwd: loop.cwd });
+      : await this.resolveProviderCreateConfig({ provider, cwd: loop.cwd });
     return {
       provider,
       cwd: loop.cwd,
@@ -832,7 +829,7 @@ export class LoopService {
     const explicitModeId = loop.verifierModeId ?? loop.modeId;
     const resolvedUnattendedConfig = explicitModeId
       ? { modeId: explicitModeId, featureValues: undefined }
-      : await this.resolveUnattendedCreateConfig({ provider, cwd: loop.cwd });
+      : await this.resolveProviderCreateConfig({ provider, cwd: loop.cwd });
     return {
       provider,
       cwd: loop.cwd,
@@ -844,13 +841,16 @@ export class LoopService {
     };
   }
 
-  private resolveUnattendedCreateConfig(
-    input: Pick<ResolveUnattendedProviderCreateConfigOptions, "provider" | "cwd">,
+  private resolveProviderCreateConfig(
+    input: Pick<ResolveProviderCreateConfigOptions, "provider" | "cwd">,
   ): Promise<ResolvedProviderCreateConfig> {
-    return this.options.providerSnapshotManager.resolveUnattendedCreateConfig({
+    return this.options.providerSnapshotManager.resolveCreateConfig({
       provider: input.provider,
       cwd: input.cwd,
+      requestedMode: undefined,
       featureValues: undefined,
+      parent: null,
+      unattended: true,
     });
   }
 

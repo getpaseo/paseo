@@ -6,7 +6,7 @@ const OPENCODE_MODES = ["build", "plan"];
 const CODEX_MODES = ["auto", "full-access"];
 
 function agentParent(provider: string, modeId: string | null, isUnattended = false) {
-  return { kind: "agent" as const, provider, modeId, isUnattended };
+  return { provider, modeId, isUnattended };
 }
 
 describe("resolveAndValidateCreateAgentMode", () => {
@@ -15,6 +15,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: "plan",
       targetProvider: "opencode",
       parent: null,
+      unattended: false,
       availableModes: OPENCODE_MODES,
     });
     expect(resolved).toBe("plan");
@@ -26,6 +27,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
         requestedMode: "bypassPermissions",
         targetProvider: "opencode",
         parent: null,
+        unattended: false,
         availableModes: OPENCODE_MODES,
       }),
     ).toThrow(
@@ -38,6 +40,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: undefined,
       targetProvider: "claude",
       parent: null,
+      unattended: false,
       availableModes: CLAUDE_MODES,
     });
     expect(resolved).toBeUndefined();
@@ -48,6 +51,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: undefined,
       targetProvider: "claude",
       parent: agentParent("claude", "bypassPermissions"),
+      unattended: false,
       availableModes: CLAUDE_MODES,
     });
     expect(resolved).toBe("bypassPermissions");
@@ -58,6 +62,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: undefined,
       targetProvider: "claude",
       parent: agentParent("claude", null),
+      unattended: false,
       availableModes: CLAUDE_MODES,
     });
     expect(resolved).toBeUndefined();
@@ -69,6 +74,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
         requestedMode: undefined,
         targetProvider: "opencode",
         parent: agentParent("claude", "bypassPermissions"),
+        unattended: false,
         availableModes: OPENCODE_MODES,
       }),
     ).toThrow(
@@ -82,6 +88,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
         requestedMode: undefined,
         targetProvider: "codex",
         parent: agentParent("opencode", null),
+        unattended: false,
         availableModes: CODEX_MODES,
       }),
     ).toThrow(
@@ -94,6 +101,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: "default",
       targetProvider: "zai-custom",
       parent: null,
+      unattended: false,
       availableModes: undefined,
     });
     expect(resolved).toBe("default");
@@ -105,6 +113,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
         requestedMode: undefined,
         targetProvider: "zai-custom",
         parent: agentParent("claude", "default"),
+        unattended: false,
         availableModes: undefined,
       }),
     ).toThrow("Available modes for 'zai-custom': unknown");
@@ -115,17 +124,19 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: undefined,
       targetProvider: "codex",
       parent: agentParent("claude", "bypassPermissions", true),
+      unattended: false,
       availableModes: CODEX_MODES,
       targetUnattendedMode: "full-access",
     });
     expect(resolved).toBe("full-access");
   });
 
-  it("inherits target's unattended mode for system unattended creation", () => {
+  it("inherits target's unattended mode for unattended creation without a parent", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: undefined,
       targetProvider: "codex",
-      parent: { kind: "system-unattended" },
+      parent: null,
+      unattended: true,
       availableModes: CODEX_MODES,
       targetUnattendedMode: "full-access",
     });
@@ -138,6 +149,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
         requestedMode: undefined,
         targetProvider: "codex",
         parent: agentParent("claude", "default"),
+        unattended: false,
         availableModes: CODEX_MODES,
         targetUnattendedMode: "full-access",
       }),
@@ -152,6 +164,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
         requestedMode: undefined,
         targetProvider: "zai-custom",
         parent: agentParent("claude", "bypassPermissions", true),
+        unattended: false,
         availableModes: undefined,
         targetUnattendedMode: undefined,
       }),
@@ -165,6 +178,7 @@ describe("resolveAndValidateCreateAgentMode", () => {
       requestedMode: "auto",
       targetProvider: "codex",
       parent: agentParent("claude", "bypassPermissions", true),
+      unattended: false,
       availableModes: CODEX_MODES,
       targetUnattendedMode: "full-access",
     });
