@@ -38,7 +38,7 @@ export function buildSidebarShortcutModel(input: {
 
     for (const workspace of project.workspaces) {
       if (shortcutTargets.length >= maxShortcuts) {
-        continue;
+        break;
       }
 
       const shortcutNumber = shortcutTargets.length + 1;
@@ -63,7 +63,7 @@ export function buildStatusSidebarShortcutModel(input: {
   for (const group of groups) {
     for (const workspace of group.rows) {
       if (shortcutTargets.length >= maxShortcuts) {
-        continue;
+        break;
       }
 
       const shortcutNumber = shortcutTargets.length + 1;

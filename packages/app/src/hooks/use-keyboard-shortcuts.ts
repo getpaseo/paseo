@@ -216,16 +216,16 @@ export function useKeyboardShortcuts({
         },
       );
 
+      const handled = performShortcutAction(shortcutAction, event);
+      if (!handled) {
+        return;
+      }
+
       if (result.match.preventDefault) {
         event.preventDefault();
       }
       if (result.match.stopPropagation) {
         event.stopPropagation();
-      }
-
-      const handled = performShortcutAction(shortcutAction, event);
-      if (!handled) {
-        return;
       }
     };
 
