@@ -7,6 +7,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
+import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -528,9 +529,8 @@ export class ScheduleService {
     schedule: StoredSchedule,
     runId: string,
   ): Promise<ScheduleExecutionResult> {
-    const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
-
     if (schedule.target.type === "agent") {
+      const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
       const record = await this.agentStorage.get(schedule.target.agentId);
       if (record?.archivedAt) {
         throw new Error(`Agent ${schedule.target.agentId} is archived`);
@@ -583,14 +583,22 @@ export class ScheduleService {
       systemPrompt: targetConfig.systemPrompt,
       mcpServers: targetConfig.mcpServers as AgentSessionConfig["mcpServers"],
     };
+    const { provisionalTitle } = resolveCreateAgentTitles({
+      configTitle: config.title,
+      initialPrompt: schedule.prompt,
+    });
     const labels = {
       "paseo.schedule-id": schedule.id,
       "paseo.schedule-run": runId,
     };
-    const agent = await this.agentManager.createAgent(config, undefined, { labels });
+    const agent = await this.agentManager.createAgent(config, undefined, {
+      labels,
+      initialPrompt: schedule.prompt,
+      initialTitle: provisionalTitle,
+    });
     let result;
     try {
-      result = await this.agentManager.runAgent(agent.id, wrappedPrompt);
+      result = await this.agentManager.runAgent(agent.id, schedule.prompt);
     } catch (error) {
       try {
         await this.agentManager.archiveAgent(agent.id);
