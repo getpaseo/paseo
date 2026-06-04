@@ -247,6 +247,12 @@ Multi-arch builds and registry publishing are wired up in
 [`.github/workflows/docker.yml`](../.github/workflows/docker.yml), triggered on
 release tags.
 
+For Debian/Ubuntu base images, Node 22 is installed from the official Node.js
+tarball rather than the NodeSource apt repository. The NodeSource arm64 package
+can trip `libc-bin` post-install triggers under QEMU during GitHub Actions
+multi-arch builds, which has caused intermittent segmentation faults on
+Ubuntu 22.04 arm64.
+
 ## Troubleshooting
 
 - **Provider not showing up** — check the boot log (`docker logs paseo`) for
