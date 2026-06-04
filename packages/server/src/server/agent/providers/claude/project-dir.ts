@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ export async function claudeProjectDir(
 }
 
 export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOptions): string {
-  const canonical = cwd.normalize("NFC");
+  const canonical = canonicalizeSync(cwd);
   const projectsRoot = join(resolveConfigDir(options), "projects");
   return join(projectsRoot, encode(canonical));
 }
@@ -32,6 +33,14 @@ export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOpti
 async function canonicalize(input: string): Promise<string> {
   try {
     return (await realpath(input)).normalize("NFC");
+  } catch {
+    return input.normalize("NFC");
+  }
+}
+
+function canonicalizeSync(input: string): string {
+  try {
+    return realpathSync.native(input).normalize("NFC");
   } catch {
     return input.normalize("NFC");
   }
