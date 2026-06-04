@@ -1,5 +1,7 @@
 import type { ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../utils/executable.js";
@@ -332,11 +334,22 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 async function resolveOpenCodeBinary(): Promise<string> {
   const found = await findExecutable("opencode");
   if (found) {
-    return found;
+    return resolveWindowsExecutablePath(found);
   }
   throw new Error(
     "OpenCode binary not found. Install OpenCode (https://github.com/opencode-ai/opencode) and ensure it is available in your shell PATH.",
   );
+}
+
+function resolveWindowsExecutablePath(resolvedPath: string): string {
+  if (process.platform !== "win32") return resolvedPath;
+  if (path.extname(resolvedPath).toLowerCase() !== ".cmd") return resolvedPath;
+
+  const dir = path.dirname(resolvedPath);
+  const exeCandidate = path.join(dir, "node_modules", "opencode-ai", "bin", "opencode.exe");
+  if (existsSync(exeCandidate)) return exeCandidate;
+
+  return resolvedPath;
 }
 
 function findAvailablePort(): Promise<number> {
