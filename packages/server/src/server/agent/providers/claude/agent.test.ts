@@ -10,6 +10,7 @@ import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionUpdatedInput,
+  toClaudeSdkMcpConfig,
 } from "./agent.js";
 import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../../agent-sdk-types.js";
 
@@ -1663,5 +1664,65 @@ describe("ClaudeAgentSession context window usage", () => {
         messageId: "assistant-third-party-1",
       },
     ]);
+  });
+});
+
+describe("toClaudeSdkMcpConfig", () => {
+  test("preserves alwaysLoad on stdio servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "chrome-devtools-mcp@latest"],
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "chrome-devtools-mcp@latest"],
+      env: undefined,
+      alwaysLoad: true,
+    });
+  });
+
+  test("preserves alwaysLoad on http servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer x" },
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "http",
+      url: "https://example.com/mcp",
+      headers: { Authorization: "Bearer x" },
+      alwaysLoad: true,
+    });
+  });
+
+  test("preserves alwaysLoad on sse servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "sse",
+        url: "https://example.com/sse",
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "sse",
+      url: "https://example.com/sse",
+      headers: undefined,
+      alwaysLoad: true,
+    });
+  });
+
+  test("leaves alwaysLoad undefined when not provided (preserves default deferral)", () => {
+    const result = toClaudeSdkMcpConfig({
+      type: "stdio",
+      command: "uvx",
+      args: ["markitdown-mcp"],
+    });
+    expect(result.type).toBe("stdio");
+    expect("alwaysLoad" in result ? result.alwaysLoad : "missing").toBeUndefined();
   });
 });
