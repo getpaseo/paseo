@@ -621,7 +621,7 @@ function readPiAssistantContent(
       });
     }
   }
-  return content;
+  return content.length > 0 ? content : null;
 }
 
 function mapThinkingOption(option: (typeof PI_THINKING_OPTIONS)[number]) {

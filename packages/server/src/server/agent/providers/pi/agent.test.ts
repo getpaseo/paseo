@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   openSync,
   readSync,
+  rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -27,6 +28,15 @@ function createClient(
     runtime: pi,
     ...options,
   });
+}
+
+async function withTempPiSessionsRoot<T>(run: (sessionsRoot: string) => Promise<T>): Promise<T> {
+  const sessionsRoot = mkdtempSync(join(tmpdir(), "paseo-pi-sessions-"));
+  try {
+    return await run(sessionsRoot);
+  } finally {
+    rmSync(sessionsRoot, { recursive: true, force: true });
+  }
 }
 
 function rewindCapabilities(capabilities: PiRpcAgentSession["capabilities"]) {
@@ -677,129 +687,188 @@ describe("PiRpcAgentSession", () => {
 
 describe("PiRpcAgentClient", () => {
   test("lists persisted Pi JSONL sessions from disk", async () => {
-    const sessionsRoot = mkdtempSync(join(tmpdir(), "paseo-pi-sessions-"));
-    const projectDir = join(sessionsRoot, "--workspace-project--");
-    mkdirSync(projectDir, { recursive: true });
-    const sessionFile = join(projectDir, "2026-06-04T09-01-54-323Z_session-a.jsonl");
-    writeFileSync(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "session",
-          id: "session-a",
-          timestamp: "2026-06-04T09:01:54.323Z",
-          cwd: "/workspace/project",
-        }),
-        JSON.stringify({
-          type: "model_change",
-          provider: "openrouter",
-          modelId: "google/gemini-2.5-flash-lite",
-          timestamp: "2026-06-04T09:01:55.000Z",
-        }),
-        JSON.stringify({
-          type: "thinking_level_change",
-          thinkingLevel: "high",
-          timestamp: "2026-06-04T09:01:56.000Z",
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-user-1",
-          timestamp: "2026-06-04T09:01:57.000Z",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "Fix the importer" }],
-          },
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-assistant-1",
-          timestamp: "2026-06-04T09:01:58.000Z",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "Working on it" }],
-          },
-        }),
-      ].join("\n"),
-      "utf8",
-    );
-    const mtime = new Date("2026-06-04T09:02:00.000Z");
-    utimesSync(sessionFile, mtime, mtime);
+    await withTempPiSessionsRoot(async (sessionsRoot) => {
+      const projectDir = join(sessionsRoot, "--workspace-project--");
+      mkdirSync(projectDir, { recursive: true });
+      const sessionFile = join(projectDir, "2026-06-04T09-01-54-323Z_session-a.jsonl");
+      writeFileSync(
+        sessionFile,
+        [
+          JSON.stringify({
+            type: "session",
+            id: "session-a",
+            timestamp: "2026-06-04T09:01:54.323Z",
+            cwd: "/workspace/project",
+          }),
+          JSON.stringify({
+            type: "model_change",
+            provider: "openrouter",
+            modelId: "google/gemini-2.5-flash-lite",
+            timestamp: "2026-06-04T09:01:55.000Z",
+          }),
+          JSON.stringify({
+            type: "thinking_level_change",
+            thinkingLevel: "high",
+            timestamp: "2026-06-04T09:01:56.000Z",
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "entry-user-1",
+            timestamp: "2026-06-04T09:01:57.000Z",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Fix the importer" }],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "entry-assistant-1",
+            timestamp: "2026-06-04T09:01:58.000Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Working on it" }],
+            },
+          }),
+        ].join("\n"),
+        "utf8",
+      );
+      const mtime = new Date("2026-06-04T09:02:00.000Z");
+      utimesSync(sessionFile, mtime, mtime);
 
-    const descriptors = await createClient(new FakePi(), {
-      piSessionsRoot: sessionsRoot,
-    }).listPersistedAgents({ cwd: "/workspace/project", limit: 10 });
+      const descriptors = await createClient(new FakePi(), {
+        piSessionsRoot: sessionsRoot,
+      }).listPersistedAgents({ cwd: "/workspace/project", limit: 10 });
 
-    expect(descriptors).toEqual([
-      {
-        provider: "pi",
-        sessionId: "session-a",
-        cwd: "/workspace/project",
-        title: "Fix the importer",
-        lastActivityAt: mtime,
-        persistence: {
+      expect(descriptors).toEqual([
+        {
           provider: "pi",
           sessionId: "session-a",
-          nativeHandle: sessionFile,
-          metadata: {
+          cwd: "/workspace/project",
+          title: "Fix the importer",
+          lastActivityAt: mtime,
+          persistence: {
             provider: "pi",
-            cwd: "/workspace/project",
-            title: "Fix the importer",
-            model: "openrouter/google/gemini-2.5-flash-lite",
-            thinkingOptionId: "high",
+            sessionId: "session-a",
+            nativeHandle: sessionFile,
+            metadata: {
+              provider: "pi",
+              cwd: "/workspace/project",
+              title: "Fix the importer",
+              model: "openrouter/google/gemini-2.5-flash-lite",
+              thinkingOptionId: "high",
+            },
           },
+          timeline: [
+            {
+              type: "user_message",
+              text: "Fix the importer",
+              messageId: "entry-user-1",
+            },
+            {
+              type: "assistant_message",
+              text: "Working on it",
+            },
+          ],
         },
-        timeline: [
-          {
-            type: "user_message",
-            text: "Fix the importer",
-            messageId: "entry-user-1",
-          },
-          {
-            type: "assistant_message",
-            text: "Working on it",
-          },
-        ],
-      },
-    ]);
+      ]);
+    });
   });
 
   test("lists persisted Pi JSONL sessions stored directly in the sessions root", async () => {
-    const sessionsRoot = mkdtempSync(join(tmpdir(), "paseo-pi-sessions-"));
-    const sessionFile = join(sessionsRoot, "2026-06-04T09-01-54-323Z_session-root.jsonl");
-    writeFileSync(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "session",
-          id: "session-root",
-          cwd: "/workspace/root-layout",
-        }),
-        JSON.stringify({
-          type: "message",
-          id: "entry-user-root",
-          message: {
-            role: "user",
-            content: "Import the root session",
-          },
-        }),
-      ].join("\n"),
-      "utf8",
-    );
+    await withTempPiSessionsRoot(async (sessionsRoot) => {
+      const sessionFile = join(sessionsRoot, "2026-06-04T09-01-54-323Z_session-root.jsonl");
+      writeFileSync(
+        sessionFile,
+        [
+          JSON.stringify({
+            type: "session",
+            id: "session-root",
+            cwd: "/workspace/root-layout",
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "entry-user-root",
+            message: {
+              role: "user",
+              content: "Import the root session",
+            },
+          }),
+        ].join("\n"),
+        "utf8",
+      );
 
-    const descriptors = await createClient(new FakePi(), {
-      piSessionsRoot: sessionsRoot,
-    }).listPersistedAgents({ cwd: "/workspace/root-layout", limit: 10 });
+      const descriptors = await createClient(new FakePi(), {
+        piSessionsRoot: sessionsRoot,
+      }).listPersistedAgents({ cwd: "/workspace/root-layout", limit: 10 });
 
-    expect(descriptors).toHaveLength(1);
-    expect(descriptors[0]?.sessionId).toBe("session-root");
-    expect(descriptors[0]?.persistence.nativeHandle).toBe(sessionFile);
-    expect(descriptors[0]?.timeline).toEqual([
-      {
-        type: "user_message",
-        text: "Import the root session",
-        messageId: "entry-user-root",
-      },
-    ]);
+      expect(descriptors).toHaveLength(1);
+      expect(descriptors[0]?.sessionId).toBe("session-root");
+      expect(descriptors[0]?.persistence.nativeHandle).toBe(sessionFile);
+      expect(descriptors[0]?.timeline).toEqual([
+        {
+          type: "user_message",
+          text: "Import the root session",
+          messageId: "entry-user-root",
+        },
+      ]);
+    });
+  });
+
+  test("ignores persisted assistant messages without recognized content blocks", async () => {
+    await withTempPiSessionsRoot(async (sessionsRoot) => {
+      const sessionFile = join(sessionsRoot, "2026-06-04T09-01-54-323Z_session-empty.jsonl");
+      writeFileSync(
+        sessionFile,
+        [
+          JSON.stringify({
+            type: "session",
+            id: "session-empty",
+            cwd: "/workspace/empty-assistant",
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "entry-user-empty",
+            message: {
+              role: "user",
+              content: "Start here",
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "entry-assistant-unknown",
+            message: {
+              role: "assistant",
+              content: [{ type: "futureBlock", value: "not yet supported" }],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "entry-assistant-text",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Done" }],
+            },
+          }),
+        ].join("\n"),
+        "utf8",
+      );
+
+      const descriptors = await createClient(new FakePi(), {
+        piSessionsRoot: sessionsRoot,
+      }).listPersistedAgents({ cwd: "/workspace/empty-assistant", limit: 10 });
+
+      expect(descriptors[0]?.timeline).toEqual([
+        {
+          type: "user_message",
+          text: "Start here",
+          messageId: "entry-user-empty",
+        },
+        {
+          type: "assistant_message",
+          text: "Done",
+        },
+      ]);
+    });
   });
 
   test("lists models from a short-lived Pi session in the requested cwd", async () => {
