@@ -3,6 +3,7 @@ export {
   AssistantMarkdownCodeLink,
   AssistantMarkdownLink,
 } from "./link";
+export { type AssistantLinkPress, useAssistantLinkPress } from "./link-press-context";
 export {
   classifyAssistantFileLink,
   normalizeInlinePathTarget,

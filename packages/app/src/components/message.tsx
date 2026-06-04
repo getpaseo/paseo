@@ -99,8 +99,8 @@ import {
   AssistantMarkdownLink,
   type InlinePathTarget,
   useAssistantFileLinkActions,
+  useAssistantLinkPress,
 } from "@/assistant-file-links";
-import { useAssistantLinkPress } from "@/assistant-file-links/link-press-context";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
