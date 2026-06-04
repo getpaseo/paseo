@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type { AgentPersistenceHandle, AgentStreamEvent } from "../../agent-sdk-types.js";
 
@@ -14,10 +15,6 @@ let lastQuery: ReturnType<typeof buildSdkQueryMock> | null = null;
 const LIVE_REPLY_MARKER = "LIVE_ONLY_REPLY_MARKER";
 const HISTORY_USER_MARKER = "HISTORY_ONLY_USER_MARKER";
 const HISTORY_ASSISTANT_MARKER = "HISTORY_ONLY_ASSISTANT_MARKER";
-
-function sanitizeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[\\/._:]/g, "-");
-}
 
 function buildSdkQueryMock() {
   const events = [
@@ -100,12 +97,11 @@ describe("ClaudeAgentSession history replay regression", () => {
     });
 
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "claude-history-regression-"));
-    cwd = path.join(tempRoot, "repo");
+    cwd = path.join(tempRoot, "Michael Depies", "repo");
     configDir = path.join(tempRoot, "claude-config");
     mkdirSync(cwd, { recursive: true });
 
-    const sanitized = sanitizeClaudeProjectPath(cwd);
-    const historyDir = path.join(configDir, "projects", sanitized);
+    const historyDir = claudeProjectDirSync(cwd, { configDir });
     mkdirSync(historyDir, { recursive: true });
     const historyPath = path.join(historyDir, "history-session.jsonl");
     writeFileSync(

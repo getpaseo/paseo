@@ -45,6 +45,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
+import { claudeProjectDirSync } from "./project-dir.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -337,10 +338,6 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
     value === "xhigh" ||
     value === "max"
   );
-}
-
-function sanitizeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[\\/._:]/g, "-");
 }
 
 interface ClaudeOptionsLogSummary {
@@ -3985,14 +3982,15 @@ class ClaudeAgentSession implements AgentSession {
       // Fall back to the configured cwd when the path has already disappeared.
     }
     for (const candidate of candidates) {
-      const sanitized = sanitizeClaudeProjectPath(candidate);
-      const historyPath = path.join(configDir, "projects", sanitized, `${sessionId}.jsonl`);
+      const historyPath = path.join(
+        claudeProjectDirSync(candidate, { configDir }),
+        `${sessionId}.jsonl`,
+      );
       if (fs.existsSync(historyPath)) {
         return historyPath;
       }
     }
-    const sanitized = sanitizeClaudeProjectPath(cwd);
-    return path.join(configDir, "projects", sanitized, `${sessionId}.jsonl`);
+    return path.join(claudeProjectDirSync(cwd, { configDir }), `${sessionId}.jsonl`);
   }
 
   private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {
