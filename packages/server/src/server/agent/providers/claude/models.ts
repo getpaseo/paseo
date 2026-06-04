@@ -20,6 +20,11 @@ const CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS = [
   { id: "max", label: "Max" },
 ] as const;
 
+/**
+ * Standard model catalog for the Anthropic API.
+ * These versioned IDs (claude-opus-4-8, etc.) are resolved by the Claude SDK
+ * when connected directly to the Anthropic API.
+ */
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
@@ -86,6 +91,36 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
   },
 ];
 
+/**
+ * Bedrock-compatible model catalog.
+ * When Claude Code runs via Bedrock (CLAUDE_CODE_USE_BEDROCK=1), the CLI only
+ * recognizes generic family aliases (opus, sonnet, haiku) — not the versioned
+ * IDs like claude-opus-4-8 that work on the Anthropic API directly.
+ */
+const CLAUDE_BEDROCK_MODELS: AgentModelDefinition[] = [
+  {
+    provider: "claude",
+    id: "opus",
+    label: "Opus",
+    description: "Latest Opus · Most capable",
+    isDefault: true,
+    thinkingOptions: [...CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
+    id: "sonnet",
+    label: "Sonnet",
+    description: "Latest Sonnet · Best for everyday tasks",
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
+    id: "haiku",
+    label: "Haiku",
+    description: "Latest Haiku · Fastest for quick answers",
+  },
+];
+
 const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
   "ANTHROPIC_SMALL_FAST_MODEL",
@@ -94,8 +129,13 @@ const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 ] as const;
 
+function isBedrockTransport(): boolean {
+  return process.env.CLAUDE_CODE_USE_BEDROCK === "1";
+}
+
 export function getClaudeModels(): AgentModelDefinition[] {
-  return CLAUDE_MODELS.map((model) => ({ ...model }));
+  const models = isBedrockTransport() ? CLAUDE_BEDROCK_MODELS : CLAUDE_MODELS;
+  return models.map((model) => ({ ...model }));
 }
 
 export async function getClaudeModelsWithSettings(logger: Logger): Promise<AgentModelDefinition[]> {

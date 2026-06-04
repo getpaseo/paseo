@@ -60,6 +60,15 @@ describe("getClaudeModels", () => {
     expect(a).not.toBe(b);
     expect(a[0]).not.toBe(b[0]);
   });
+
+  it("returns bedrock-compatible aliases when CLAUDE_CODE_USE_BEDROCK=1", () => {
+    vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
+    const models = getClaudeModels();
+    expect(models.map((m) => m.id)).toEqual(["opus", "sonnet", "haiku"]);
+    const defaults = models.filter((m) => m.isDefault);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0].id).toBe("opus");
+  });
 });
 
 describe("ClaudeAgentClient.listModels", () => {
