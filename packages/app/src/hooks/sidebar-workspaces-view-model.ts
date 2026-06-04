@@ -42,7 +42,7 @@ export interface SidebarProjectEntry {
 
 function createStructuralWorkspaceEntry(input: {
   serverId: string;
-  project: WorkspaceStructureProject;
+  project: HostProjectListItem;
   workspaceId: string;
 }): SidebarWorkspaceEntry {
   return {

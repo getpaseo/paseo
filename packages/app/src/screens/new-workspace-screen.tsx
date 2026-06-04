@@ -415,7 +415,7 @@ function pickerItemLabel(item: PickerItem): string {
 }
 
 function pickerItemTriggerLabel(item: PickerItem): string {
-  return item.kind === "branch" ? item.name : formatPrLabel(item.item);
+  return pickerItemLabel(item);
 }
 
 function computePickerOptionData(
@@ -467,8 +467,7 @@ function useNewWorkspaceProjectPicker({
   projectId,
   displayName: displayNameProp,
 }: NewWorkspaceProjectPickerInput): NewWorkspaceProjectPickerState {
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const [hasManualProjectSelection, setHasManualProjectSelection] = useState(false);
+  const [manualProjectKey, setManualProjectKey] = useState<string | null>(null);
   const displayName = displayNameProp?.trim() ?? "";
   const projects = useHostProjects(serverId || null);
   const lastWorkspaceSelection = useLastWorkspaceSelection();
@@ -504,12 +503,7 @@ function useNewWorkspaceProjectPicker({
     [projects],
   );
 
-  useEffect(() => {
-    if (hasManualProjectSelection) {
-      return;
-    }
-    setSelectedProjectKey(initialProject?.projectKey ?? null);
-  }, [hasManualProjectSelection, initialProject?.projectKey]);
+  const selectedProjectKey = manualProjectKey ?? initialProject?.projectKey ?? null;
 
   const selectedProject = useMemo(
     () =>
@@ -529,8 +523,7 @@ function useNewWorkspaceProjectPicker({
     (id: string) => {
       const project = projectByOptionId.get(id);
       if (!project?.canCreateWorktree) return;
-      setHasManualProjectSelection(true);
-      setSelectedProjectKey(project.projectKey);
+      setManualProjectKey(project.projectKey);
     },
     [projectByOptionId],
   );
