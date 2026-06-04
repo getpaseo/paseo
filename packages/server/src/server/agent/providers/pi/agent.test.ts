@@ -1,4 +1,16 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
@@ -6,10 +18,14 @@ import type { AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
-function createClient(pi = new FakePi()): PiRpcAgentClient {
+function createClient(
+  pi = new FakePi(),
+  options: { piSessionsRoot?: string } = {},
+): PiRpcAgentClient {
   return new PiRpcAgentClient({
     logger: pino({ level: "silent" }),
     runtime: pi,
+    ...options,
   });
 }
 
@@ -660,6 +676,132 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentClient", () => {
+  test("lists persisted Pi JSONL sessions from disk", async () => {
+    const sessionsRoot = mkdtempSync(join(tmpdir(), "paseo-pi-sessions-"));
+    const projectDir = join(sessionsRoot, "--workspace-project--");
+    mkdirSync(projectDir, { recursive: true });
+    const sessionFile = join(projectDir, "2026-06-04T09-01-54-323Z_session-a.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          id: "session-a",
+          timestamp: "2026-06-04T09:01:54.323Z",
+          cwd: "/workspace/project",
+        }),
+        JSON.stringify({
+          type: "model_change",
+          provider: "openrouter",
+          modelId: "google/gemini-2.5-flash-lite",
+          timestamp: "2026-06-04T09:01:55.000Z",
+        }),
+        JSON.stringify({
+          type: "thinking_level_change",
+          thinkingLevel: "high",
+          timestamp: "2026-06-04T09:01:56.000Z",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-user-1",
+          timestamp: "2026-06-04T09:01:57.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Fix the importer" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-assistant-1",
+          timestamp: "2026-06-04T09:01:58.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Working on it" }],
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+    const mtime = new Date("2026-06-04T09:02:00.000Z");
+    utimesSync(sessionFile, mtime, mtime);
+
+    const descriptors = await createClient(new FakePi(), {
+      piSessionsRoot: sessionsRoot,
+    }).listPersistedAgents({ cwd: "/workspace/project", limit: 10 });
+
+    expect(descriptors).toEqual([
+      {
+        provider: "pi",
+        sessionId: "session-a",
+        cwd: "/workspace/project",
+        title: "Fix the importer",
+        lastActivityAt: mtime,
+        persistence: {
+          provider: "pi",
+          sessionId: "session-a",
+          nativeHandle: sessionFile,
+          metadata: {
+            provider: "pi",
+            cwd: "/workspace/project",
+            title: "Fix the importer",
+            model: "openrouter/google/gemini-2.5-flash-lite",
+            thinkingOptionId: "high",
+          },
+        },
+        timeline: [
+          {
+            type: "user_message",
+            text: "Fix the importer",
+            messageId: "entry-user-1",
+          },
+          {
+            type: "assistant_message",
+            text: "Working on it",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("lists persisted Pi JSONL sessions stored directly in the sessions root", async () => {
+    const sessionsRoot = mkdtempSync(join(tmpdir(), "paseo-pi-sessions-"));
+    const sessionFile = join(sessionsRoot, "2026-06-04T09-01-54-323Z_session-root.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          id: "session-root",
+          cwd: "/workspace/root-layout",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-user-root",
+          message: {
+            role: "user",
+            content: "Import the root session",
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const descriptors = await createClient(new FakePi(), {
+      piSessionsRoot: sessionsRoot,
+    }).listPersistedAgents({ cwd: "/workspace/root-layout", limit: 10 });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]?.sessionId).toBe("session-root");
+    expect(descriptors[0]?.persistence.nativeHandle).toBe(sessionFile);
+    expect(descriptors[0]?.timeline).toEqual([
+      {
+        type: "user_message",
+        text: "Import the root session",
+        messageId: "entry-user-root",
+      },
+    ]);
+  });
+
   test("lists models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

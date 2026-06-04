@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, promises as fsPromises, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
@@ -23,6 +23,7 @@ import {
   type AgentSessionConfig,
   type AgentSlashCommand,
   type AgentStreamEvent,
+  type AgentTimelineItem,
   type AgentUsage,
   type ListPersistedAgentsOptions,
   type ListModesOptions,
@@ -57,6 +58,7 @@ import type {
   PiAgentSessionEvent,
   PiAgentMessage,
   PiImageContent,
+  PiTextContent,
   PiModel,
   PiRpcSlashCommand,
   PiRuntimeEvent,
@@ -72,6 +74,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { createPathEquivalenceMatcher } from "../../../../utils/path.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -116,6 +119,7 @@ interface PiRpcAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   runtime?: PiRuntime;
+  piSessionsRoot?: string;
 }
 
 interface PiPromptPayload {
@@ -205,6 +209,21 @@ interface ExtensionUiMappingOptions {
   allowFreeform?: boolean;
 }
 
+interface PiPersistedSessionCandidate {
+  path: string;
+  mtime: Date;
+}
+
+interface PiPersistedSessionAccumulator {
+  sessionId: string | null;
+  cwd: string | null;
+  title: string | null;
+  model: string | null;
+  thinkingOptionId: PiThinkingLevel | null;
+  messages: PiAgentMessage[];
+  userEntries: PiCapturedUserMessageEntry[];
+}
+
 function normalizePiModelLabel(label: string): string {
   return label.trim().replace(/[_\s]+/g, " ");
 }
@@ -245,6 +264,364 @@ function normalizePiThinkingOption(value: string | null | undefined): PiThinking
     return null;
   }
   return isPiThinkingLevel(value) ? value : null;
+}
+
+async function collectPiPersistedAgentsFromDisk(input: {
+  sessionsRoot: string;
+  options?: ListPersistedAgentsOptions;
+}): Promise<PersistedAgentDescriptor[]> {
+  const limit = Math.max(input.options?.limit ?? 20, 0);
+  if (limit === 0) {
+    return [];
+  }
+
+  const candidates = await collectPiPersistedSessionCandidates(input.sessionsRoot);
+  const matchesCwd = input.options?.cwd ? createPathEquivalenceMatcher(input.options.cwd) : null;
+  const descriptors: PersistedAgentDescriptor[] = [];
+
+  for (const candidate of candidates) {
+    const descriptor = await parsePiPersistedSessionDescriptor(candidate, matchesCwd);
+    if (!descriptor) {
+      continue;
+    }
+    descriptors.push(descriptor);
+    if (descriptors.length >= limit) {
+      break;
+    }
+  }
+
+  return descriptors;
+}
+
+async function collectPiPersistedSessionCandidates(
+  sessionsRoot: string,
+): Promise<PiPersistedSessionCandidate[]> {
+  let rootEntries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  try {
+    rootEntries = await fsPromises.readdir(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const rootFiles = rootEntries
+    .filter((dirent) => dirent.isFile() && dirent.name.endsWith(".jsonl"))
+    .map((dirent) => join(sessionsRoot, dirent.name));
+  const perProjectFiles = await Promise.all(
+    rootEntries
+      .filter((dirent) => dirent.isDirectory())
+      .map(async (dirent) => {
+        const projectPath = join(sessionsRoot, dirent.name);
+        try {
+          const files = await fsPromises.readdir(projectPath, { withFileTypes: true });
+          return files
+            .filter((file) => file.isFile() && file.name.endsWith(".jsonl"))
+            .map((file) => join(projectPath, file.name));
+        } catch {
+          return [];
+        }
+      }),
+  );
+
+  const statResults = await Promise.all(
+    [...rootFiles, ...perProjectFiles.flat()].map(async (filePath) => {
+      try {
+        const stats = await fsPromises.stat(filePath);
+        return { path: filePath, mtime: stats.mtime };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return statResults
+    .filter((entry): entry is PiPersistedSessionCandidate => entry !== null)
+    .sort((left, right) => right.mtime.getTime() - left.mtime.getTime());
+}
+
+async function parsePiPersistedSessionDescriptor(
+  candidate: PiPersistedSessionCandidate,
+  matchesCwd: ((cwd: string) => boolean) | null,
+): Promise<PersistedAgentDescriptor | null> {
+  let content: string;
+  try {
+    content = await fsPromises.readFile(candidate.path, "utf8");
+  } catch {
+    return null;
+  }
+
+  const acc: PiPersistedSessionAccumulator = {
+    sessionId: null,
+    cwd: null,
+    title: null,
+    model: null,
+    thinkingOptionId: null,
+    messages: [],
+    userEntries: [],
+  };
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    applyPiPersistedSessionEntry(entry, acc);
+  }
+
+  const sessionId = acc.sessionId;
+  const cwd = acc.cwd;
+  if (!sessionId || !cwd || (matchesCwd && !matchesCwd(cwd))) {
+    return null;
+  }
+
+  const title = acc.title ?? `Pi session ${sessionId.slice(0, 8)}`;
+  const timeline = await collectPiPersistedSessionTimeline(acc.messages, acc.userEntries);
+  return {
+    provider: PI_PROVIDER,
+    sessionId,
+    cwd,
+    title,
+    lastActivityAt: candidate.mtime,
+    persistence: {
+      provider: PI_PROVIDER,
+      sessionId,
+      nativeHandle: candidate.path,
+      metadata: {
+        provider: PI_PROVIDER,
+        cwd,
+        title,
+        ...(acc.model ? { model: acc.model } : {}),
+        ...(acc.thinkingOptionId ? { thinkingOptionId: acc.thinkingOptionId } : {}),
+      },
+    },
+    timeline,
+  };
+}
+
+function applyPiPersistedSessionEntry(entryRaw: unknown, acc: PiPersistedSessionAccumulator): void {
+  const entry = isRecord(entryRaw) ? entryRaw : null;
+  if (!entry) {
+    return;
+  }
+
+  if (entry.type === "session") {
+    acc.sessionId ??= readTrimmedString(entry.id);
+    acc.cwd ??= readTrimmedString(entry.cwd);
+    return;
+  }
+
+  if (entry.type === "model_change") {
+    const modelId = readTrimmedString(entry.modelId);
+    if (modelId) {
+      const provider = readTrimmedString(entry.provider);
+      acc.model = provider ? `${provider}/${modelId}` : modelId;
+    }
+    return;
+  }
+
+  if (entry.type === "thinking_level_change") {
+    acc.thinkingOptionId = normalizePiThinkingOption(readTrimmedString(entry.thinkingLevel));
+    return;
+  }
+
+  if (entry.type !== "message") {
+    return;
+  }
+
+  const message = readPiPersistedMessage(entry.message);
+  if (!message) {
+    return;
+  }
+
+  if (message.role === "user") {
+    const text = getUserMessageText(message.content);
+    const entryId = readTrimmedString(entry.id);
+    if (entryId) {
+      acc.userEntries.push({ id: entryId, text });
+    }
+    if (!acc.title && text.trim()) {
+      acc.title = text.trim();
+    }
+  }
+
+  acc.messages.push(message);
+}
+
+async function collectPiPersistedSessionTimeline(
+  messages: PiAgentMessage[],
+  userEntries: PiCapturedUserMessageEntry[],
+): Promise<AgentTimelineItem[]> {
+  const timeline: AgentTimelineItem[] = [];
+  for await (const event of streamPiHistory(PI_PROVIDER, messages, userEntries)) {
+    if (event.type === "timeline") {
+      timeline.push(event.item);
+    }
+  }
+  return timeline;
+}
+
+function readTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readPiPersistedMessage(value: unknown): PiAgentMessage | null {
+  const message = isRecord(value) ? value : null;
+  if (!message) {
+    return null;
+  }
+
+  switch (message.role) {
+    case "user":
+      return readPiPersistedUserMessage(message);
+    case "assistant":
+      return readPiPersistedAssistantMessage(message);
+    case "toolResult":
+      return readPiPersistedToolResultMessage(message);
+    case "bashExecution":
+      return readPiPersistedBashExecutionMessage(message);
+    default:
+      return null;
+  }
+}
+
+function readPiPersistedUserMessage(
+  message: Record<string, unknown>,
+): Extract<PiAgentMessage, { role: "user" }> | null {
+  const content = readPiUserContent(message.content);
+  return content === null ? null : { role: "user", content };
+}
+
+function readPiPersistedAssistantMessage(
+  message: Record<string, unknown>,
+): Extract<PiAgentMessage, { role: "assistant" }> | null {
+  const content = readPiAssistantContent(message.content);
+  if (!content) {
+    return null;
+  }
+  return {
+    role: "assistant",
+    content,
+    ...(typeof message.provider === "string" ? { provider: message.provider } : {}),
+    ...(typeof message.model === "string" ? { model: message.model } : {}),
+    ...(typeof message.responseId === "string" ? { responseId: message.responseId } : {}),
+    ...(typeof message.responseModel === "string" ? { responseModel: message.responseModel } : {}),
+    ...(typeof message.errorMessage === "string" || message.errorMessage === null
+      ? { errorMessage: message.errorMessage }
+      : {}),
+    ...(typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+  };
+}
+
+function readPiPersistedToolResultMessage(
+  message: Record<string, unknown>,
+): Extract<PiAgentMessage, { role: "toolResult" }> | null {
+  const toolCallId = readTrimmedString(message.toolCallId);
+  const toolName = readTrimmedString(message.toolName);
+  if (!toolCallId || !toolName) {
+    return null;
+  }
+  return {
+    role: "toolResult",
+    toolCallId,
+    toolName,
+    content: message.content,
+    ...(typeof message.isError === "boolean" ? { isError: message.isError } : {}),
+  };
+}
+
+function readPiPersistedBashExecutionMessage(
+  message: Record<string, unknown>,
+): Extract<PiAgentMessage, { role: "bashExecution" }> | null {
+  const command = readTrimmedString(message.command);
+  if (!command || typeof message.timestamp !== "number") {
+    return null;
+  }
+  return {
+    role: "bashExecution",
+    command,
+    timestamp: message.timestamp,
+    ...(typeof message.output === "string" ? { output: message.output } : {}),
+    ...(typeof message.exitCode === "number" || message.exitCode === null
+      ? { exitCode: message.exitCode }
+      : {}),
+    ...(typeof message.cancelled === "boolean" ? { cancelled: message.cancelled } : {}),
+  };
+}
+
+function readPiUserContent(
+  value: unknown,
+): Extract<PiAgentMessage, { role: "user" }>["content"] | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const content: Array<PiTextContent | PiImageContent> = [];
+  for (const block of value) {
+    const record = isRecord(block) ? block : null;
+    if (!record) {
+      continue;
+    }
+    if (record.type === "text" && typeof record.text === "string") {
+      content.push({ type: "text", text: record.text });
+      continue;
+    }
+    if (
+      record.type === "image" &&
+      typeof record.data === "string" &&
+      typeof record.mimeType === "string"
+    ) {
+      content.push({
+        type: "image",
+        data: record.data,
+        mimeType: record.mimeType,
+      });
+    }
+  }
+  return content;
+}
+
+function readPiAssistantContent(
+  value: unknown,
+): Extract<PiAgentMessage, { role: "assistant" }>["content"] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const content: Extract<PiAgentMessage, { role: "assistant" }>["content"] = [];
+  for (const block of value) {
+    const record = isRecord(block) ? block : null;
+    if (!record) {
+      continue;
+    }
+    if (record.type === "text" && typeof record.text === "string") {
+      content.push({ type: "text", text: record.text });
+      continue;
+    }
+    if (record.type === "thinking" && typeof record.thinking === "string") {
+      content.push({ type: "thinking", thinking: record.thinking });
+      continue;
+    }
+    if (
+      record.type === "toolCall" &&
+      typeof record.id === "string" &&
+      typeof record.name === "string"
+    ) {
+      content.push({
+        type: "toolCall",
+        id: record.id,
+        name: record.name,
+        arguments: record.arguments,
+      });
+    }
+  }
+  return content;
 }
 
 function mapThinkingOption(option: (typeof PI_THINKING_OPTIONS)[number]) {
@@ -1605,11 +1982,13 @@ export class PiRpcAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtime: PiRuntime;
+  private readonly piSessionsRoot: string;
 
   constructor(options: PiRpcAgentClientOptions) {
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
     this.runtime = options.runtime ?? createRuntime(options.logger, options.runtimeSettings);
+    this.piSessionsRoot = options.piSessionsRoot ?? join(homedir(), ".pi", "agent", "sessions");
   }
 
   async createSession(
@@ -1718,9 +2097,12 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
+    options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    return [];
+    return collectPiPersistedAgentsFromDisk({
+      sessionsRoot: this.piSessionsRoot,
+      options,
+    });
   }
 
   async isAvailable(): Promise<boolean> {
