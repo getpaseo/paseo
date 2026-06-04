@@ -422,23 +422,14 @@ describe("ClaudeAgentClient.listModels", () => {
   });
 
   test("returns bedrock-compatible models when CLAUDE_CODE_USE_BEDROCK is set", async () => {
-    const prev = process.env.CLAUDE_CODE_USE_BEDROCK;
-    process.env.CLAUDE_CODE_USE_BEDROCK = "1";
-    try {
-      const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
-      const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
+    vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
+    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
+    const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
-      expect(models.map((m) => m.id)).toEqual(["opus", "sonnet", "haiku"]);
+    expect(models.map((m) => m.id)).toEqual(["opus", "sonnet", "haiku"]);
 
-      const defaultModel = models.find((m) => m.isDefault);
-      expect(defaultModel?.id).toBe("opus");
-    } finally {
-      if (prev === undefined) {
-        delete process.env.CLAUDE_CODE_USE_BEDROCK;
-      } else {
-        process.env.CLAUDE_CODE_USE_BEDROCK = prev;
-      }
-    }
+    const defaultModel = models.find((m) => m.isDefault);
+    expect(defaultModel?.id).toBe("opus");
   });
 });
 

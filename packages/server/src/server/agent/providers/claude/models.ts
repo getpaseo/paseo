@@ -228,6 +228,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Normalize a runtime model string (from SDK init message) to a known model ID.
  * Handles the `[1m]` suffix that the SDK appends for 1M context sessions.
+ *
+ * On Bedrock, the SDK init message includes versioned ARNs or region-prefixed IDs
+ * (e.g. `us.anthropic.claude-opus-4-6-v1:0`). We normalize these to the generic
+ * family alias (opus, sonnet, haiku) so the next turn doesn't send an invalid ID.
  */
 export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
   const trimmed = typeof value === "string" ? value.trim() : "";
@@ -235,22 +239,35 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     return null;
   }
 
-  // Check for exact match first (handles claude-opus-4-6[1m] directly)
-  if (CLAUDE_MODELS.some((model) => model.id === trimmed)) {
+  // Check for exact match in the active catalog (Bedrock or Anthropic)
+  const activeCatalog = isBedrockTransport() ? CLAUDE_BEDROCK_MODELS : CLAUDE_MODELS;
+  if (activeCatalog.some((model) => model.id === trimmed)) {
     return trimmed;
   }
 
   // Match: claude-{family}-{major}-{minor}[1m]? possibly followed by a date suffix
+  // Also matches Bedrock ARN patterns like: us.anthropic.claude-opus-4-6-v1:0
   const runtimeMatch = trimmed.match(
-    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(?:\d+)[-.](?:\d+)(\[1m\])?/i,
   );
   if (!runtimeMatch) {
     return null;
   }
 
   const family = runtimeMatch[1].toLowerCase();
-  const major = runtimeMatch[2];
-  const minor = runtimeMatch[3];
-  const suffix = runtimeMatch[4] ?? "";
-  return `claude-${family}-${major}-${minor}${suffix}`;
+  const suffix = runtimeMatch[2] ?? "";
+
+  // On Bedrock, return the generic family alias
+  if (isBedrockTransport()) {
+    return family;
+  }
+
+  // On Anthropic API, return the versioned ID
+  const fullMatch = trimmed.match(
+    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(\d+)[-. ](\d+)(\[1m\])?/i,
+  );
+  if (!fullMatch) {
+    return null;
+  }
+  return `claude-${fullMatch[1].toLowerCase()}-${fullMatch[2]}-${fullMatch[3]}${fullMatch[4] ?? ""}${suffix}`;
 }

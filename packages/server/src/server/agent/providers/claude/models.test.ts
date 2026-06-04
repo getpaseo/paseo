@@ -215,4 +215,27 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("gpt-5")).toBeNull();
     expect(normalizeClaudeRuntimeModelId("random")).toBeNull();
   });
+
+  describe("on Bedrock transport", () => {
+    it("returns exact match for bedrock aliases", () => {
+      vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
+      expect(normalizeClaudeRuntimeModelId("opus")).toBe("opus");
+      expect(normalizeClaudeRuntimeModelId("sonnet")).toBe("sonnet");
+      expect(normalizeClaudeRuntimeModelId("haiku")).toBe("haiku");
+    });
+
+    it("normalizes Bedrock ARNs to family alias", () => {
+      vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
+      expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-6-v1:0")).toBe("opus");
+      expect(normalizeClaudeRuntimeModelId("eu.anthropic.claude-sonnet-4-6-20260101-v1:0")).toBe("sonnet");
+      expect(normalizeClaudeRuntimeModelId("anthropic.claude-haiku-4-5-20251001-v1:0")).toBe("haiku");
+    });
+
+    it("normalizes versioned IDs to family alias", () => {
+      vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
+      expect(normalizeClaudeRuntimeModelId("claude-opus-4-8")).toBe("opus");
+      expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6")).toBe("sonnet");
+      expect(normalizeClaudeRuntimeModelId("claude-haiku-4-5")).toBe("haiku");
+    });
+  });
 });
