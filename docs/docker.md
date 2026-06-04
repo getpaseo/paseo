@@ -47,6 +47,7 @@ Alpine).
 
 ```bash
 docker run -d --name paseo \
+  --hostname paseo \
   -p 6767:6767 \
   -e PASEO_PASSWORD=change-me \
   -e DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code \
@@ -55,6 +56,10 @@ docker run -d --name paseo \
   -v "$PWD:/workspace" \
   ghcr.io/getpaseo/paseo:debian
 ```
+
+Docker keeps the container name and hostname separate. If you rename the
+container, keep `--name` and `--hostname` in sync; in Compose, keep
+`container_name` and `hostname` in sync.
 
 If agents need to install OS packages inside the container, opt in to
 passwordless sudo for the `paseo` user:
@@ -90,6 +95,7 @@ container path. For example, to store daemon state in a dedicated Docker volume:
 ```bash
 docker volume create paseo-state
 docker run -d --name paseo \
+  --hostname paseo \
   -p 6767:6767 \
   -e PASEO_PASSWORD=change-me \
   -e PASEO_HOME=/var/lib/paseo \

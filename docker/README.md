@@ -15,6 +15,7 @@ connect the Paseo app/CLI from anywhere.
 
 ```bash
 docker run -d --name paseo \
+  --hostname paseo \
   -p 6767:6767 \
   -e PASEO_PASSWORD=change-me \
   -e DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code \

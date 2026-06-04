@@ -9,6 +9,7 @@ services:
   paseo:
     image: ghcr.io/getpaseo/paseo:debian
     container_name: paseo
+    hostname: paseo
     restart: unless-stopped
     # Only needed if you do not want to use the relay and prefer to expose
     # the daemon directly on the host.
