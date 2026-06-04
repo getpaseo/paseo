@@ -30,7 +30,7 @@ import {
   Palette,
   Server,
   Network,
-  Workflow,
+  Bot,
   Boxes,
   Keyboard,
   Stethoscope,
@@ -93,9 +93,10 @@ import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pc
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import {
   HostConnectionsPage,
-  HostDaemonPage,
-  HostOrchestrationPage,
+  HostAgentsPage,
+  HostSettingsPage,
   HostProvidersPage,
+  HostWorkspacesPage,
 } from "@/screens/settings/host-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
@@ -148,9 +149,10 @@ interface HostSectionItem {
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "connections", label: "Connections", icon: Network },
-  { id: "orchestration", label: "Orchestration", icon: Workflow },
+  { id: "agents", label: "Agents", icon: Bot },
+  { id: "workspaces", label: "Workspaces", icon: FolderGit2 },
   { id: "providers", label: "Providers", icon: Boxes },
-  { id: "daemon", label: "Daemon", icon: Server },
+  { id: "host", label: "Host", icon: Server },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1304,12 +1306,14 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       switch (view.section) {
         case "connections":
           return <HostConnectionsPage serverId={view.serverId} />;
-        case "orchestration":
-          return <HostOrchestrationPage serverId={view.serverId} />;
+        case "agents":
+          return <HostAgentsPage serverId={view.serverId} />;
+        case "workspaces":
+          return <HostWorkspacesPage serverId={view.serverId} />;
         case "providers":
           return <HostProvidersPage serverId={view.serverId} />;
-        case "daemon":
-          return <HostDaemonPage serverId={view.serverId} onHostRemoved={handleHostRemoved} />;
+        case "host":
+          return <HostSettingsPage serverId={view.serverId} onHostRemoved={handleHostRemoved} />;
       }
     }
     if (view.kind === "projects") {

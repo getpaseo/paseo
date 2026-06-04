@@ -14,6 +14,19 @@ function isLoopbackHost(host: string): boolean {
   );
 }
 
+function isLocalOnlyUrl(url: string | null | undefined): boolean {
+  if (!url) {
+    return true;
+  }
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    return isLoopbackHost(hostname) || hostname.endsWith(".localhost");
+  } catch {
+    return true;
+  }
+}
+
 function buildDirectServiceUrl(endpoint: string, port: number): string | null {
   try {
     const { host, isIpv6 } = parseHostPort(endpoint);
@@ -37,21 +50,33 @@ export function resolveWorkspaceScriptLink(input: {
     return { openUrl: null, labelUrl: script.proxyUrl };
   }
 
+  const localProxyUrl = script.localProxyUrl ?? script.proxyUrl;
+  const publicProxyUrl =
+    script.publicProxyUrl ?? (!isLocalOnlyUrl(script.proxyUrl) ? script.proxyUrl : null);
+  const preferredProxyUrl = publicProxyUrl ?? localProxyUrl ?? script.proxyUrl;
+
   if (activeConnection.type === "relay") {
-    return { openUrl: null, labelUrl: script.proxyUrl };
+    return {
+      openUrl: publicProxyUrl,
+      labelUrl: publicProxyUrl ?? localProxyUrl ?? script.proxyUrl,
+    };
   }
 
   if (activeConnection.type === "directSocket" || activeConnection.type === "directPipe") {
-    return { openUrl: script.proxyUrl, labelUrl: script.proxyUrl };
+    return { openUrl: localProxyUrl, labelUrl: localProxyUrl };
   }
 
   try {
     const { host } = parseHostPort(activeConnection.endpoint);
     if (isLoopbackHost(host)) {
-      return { openUrl: script.proxyUrl, labelUrl: script.proxyUrl };
+      return { openUrl: localProxyUrl, labelUrl: localProxyUrl };
     }
   } catch {
-    return { openUrl: null, labelUrl: script.proxyUrl };
+    return { openUrl: null, labelUrl: preferredProxyUrl };
+  }
+
+  if (publicProxyUrl) {
+    return { openUrl: publicProxyUrl, labelUrl: publicProxyUrl };
   }
 
   if (script.port === null) {
@@ -61,6 +86,6 @@ export function resolveWorkspaceScriptLink(input: {
   const directUrl = buildDirectServiceUrl(activeConnection.endpoint, script.port);
   return {
     openUrl: directUrl,
-    labelUrl: directUrl ?? script.proxyUrl,
+    labelUrl: directUrl ?? preferredProxyUrl,
   };
 }

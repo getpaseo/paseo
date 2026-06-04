@@ -2638,12 +2638,13 @@ describe("Codex app-server provider", () => {
 });
 
 describe("Codex persisted sessions", () => {
-  test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
+  test("listPersistedAgents uses thread list metadata without hydrating thread history", async () => {
     const allThreads = [
       {
         id: "thread-a1",
         cwd: "/workspace/project-a",
         preview: "First A session",
+        name: "Named first A session",
         createdAt: 1000,
         updatedAt: 2000,
       },
@@ -2662,11 +2663,12 @@ describe("Codex persisted sessions", () => {
         updatedAt: 4000,
       },
     ];
+    const calls: Array<{ method: string; params?: unknown }> = [];
 
     const fakeClient = {
-      request: async (method: string) => {
+      request: async (method: string, params?: unknown) => {
+        calls.push({ method, params });
         if (method === "thread/list") return { data: allThreads };
-        if (method === "thread/read") return { thread: { turns: [] } };
         return {};
       },
       notify: () => {},
@@ -2693,5 +2695,16 @@ describe("Codex persisted sessions", () => {
 
     expect(descriptors.map((d) => d.sessionId).sort()).toEqual(["thread-a1", "thread-a2"]);
     expect(descriptors.every((d) => d.cwd === "/workspace/project-a")).toBe(true);
+    expect(descriptors[0]).toEqual(
+      expect.objectContaining({
+        sessionId: "thread-a1",
+        title: "Named first A session",
+        timeline: [{ type: "user_message", text: "First A session" }],
+      }),
+    );
+    expect(calls).toEqual([
+      { method: "initialize", params: expect.any(Object) },
+      { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
+    ]);
   });
 });

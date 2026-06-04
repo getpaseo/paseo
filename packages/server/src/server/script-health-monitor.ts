@@ -1,5 +1,5 @@
 import net from "node:net";
-import type { ScriptRouteEntry, ScriptRouteStore } from "./script-proxy.js";
+import type { ServiceProxyHealthTarget, ServiceProxySubsystem } from "./service-proxy.js";
 
 export type ScriptHealthState = "pending" | "healthy" | "unhealthy";
 
@@ -18,7 +18,7 @@ interface RouteHealthState {
 }
 
 export class ScriptHealthMonitor {
-  private readonly routeStore: ScriptRouteStore;
+  private readonly serviceProxy: ServiceProxySubsystem;
   private readonly onChange: (workspaceId: string, scripts: ScriptHealthEntry[]) => void;
   private readonly pollIntervalMs: number;
   private readonly probeTimeoutMs: number;
@@ -31,21 +31,21 @@ export class ScriptHealthMonitor {
   private pollInFlight = false;
 
   constructor({
-    routeStore,
+    serviceProxy,
     onChange,
     pollIntervalMs = 3_000,
     probeTimeoutMs = 500,
     graceMs = 5_000,
     failuresBeforeStopped = 2,
   }: {
-    routeStore: ScriptRouteStore;
+    serviceProxy: ServiceProxySubsystem;
     onChange: (workspaceId: string, scripts: ScriptHealthEntry[]) => void;
     pollIntervalMs?: number;
     probeTimeoutMs?: number;
     graceMs?: number;
     failuresBeforeStopped?: number;
   }) {
-    this.routeStore = routeStore;
+    this.serviceProxy = serviceProxy;
     this.onChange = onChange;
     this.pollIntervalMs = pollIntervalMs;
     this.probeTimeoutMs = probeTimeoutMs;
@@ -59,7 +59,7 @@ export class ScriptHealthMonitor {
     }
 
     const now = Date.now();
-    for (const route of this.routeStore.listRoutes()) {
+    for (const route of this.serviceProxy.getHealthCheckTargets()) {
       this.getOrCreateState(route, now);
     }
 
@@ -93,7 +93,7 @@ export class ScriptHealthMonitor {
 
     this.pollInFlight = true;
     try {
-      const routes = this.routeStore.listRoutes();
+      const routes = this.serviceProxy.getHealthCheckTargets();
       const activeHostnames = new Set(routes.map((route) => route.hostname));
       const changedWorkspaceIds = new Set<string>();
       const now = Date.now();
@@ -142,7 +142,7 @@ export class ScriptHealthMonitor {
   }
 
   private getOrCreateState(
-    route: Pick<ScriptRouteEntry, "hostname" | "workspaceId">,
+    route: Pick<ServiceProxyHealthTarget, "hostname" | "workspaceId">,
     registeredAt: number,
   ): RouteHealthState {
     const existing = this.routeStates.get(route.hostname);
@@ -171,7 +171,7 @@ export class ScriptHealthMonitor {
   }
 
   private buildWorkspaceScriptList(workspaceId: string): ScriptHealthEntry[] {
-    return this.routeStore.listRoutesForWorkspace(workspaceId).flatMap((route) => {
+    return this.serviceProxy.getWorkspaceHealthTargets(workspaceId).flatMap((route) => {
       const state = this.routeStates.get(route.hostname);
       if (!state) {
         return [];
@@ -186,7 +186,7 @@ export class ScriptHealthMonitor {
       return state.health;
     }
 
-    const route = this.routeStore.getRouteEntry(hostname);
+    const route = this.serviceProxy.getHealthTargetForHostname(hostname);
     if (!route) {
       return null;
     }
@@ -195,7 +195,7 @@ export class ScriptHealthMonitor {
   }
 
   private toScriptHealthEntry(
-    route: ScriptRouteEntry,
+    route: ServiceProxyHealthTarget,
     health: ScriptHealthEntry["health"],
   ): ScriptHealthEntry {
     return {

@@ -15,7 +15,9 @@ This usually runs for hours, often overnight. By the time agents are working, yo
 
 ## Prerequisites
 
-This is a Paseo skill. Load the **paseo** skill first — it carries the surface (worktrees, agents, waiting, scheduling, preferences). Every agent you spawn reads it too.
+This is a Paseo skill. Load the **paseo** skill first — it carries the surface (worktrees, agents, waiting, heartbeats, preferences). Every agent you spawn reads it too.
+
+Before choosing any provider, read `~/.paseo/orchestration-preferences.json`. Do not create planner, reviewer, researcher, implementer, or auditor agents until you have read it.
 
 **Do not use your own subagents.** All agents in this skill are Paseo agents, spawned through the Paseo MCP. Your harness's native subagent stack is not in play here.
 
@@ -290,8 +292,8 @@ Never push to main directly. Never force-push without explicit permission. Never
 2. **Rebase if behind main.** Spawn an agent. Provider from `impl`. Tell it to rebase onto origin/main, resolve conflicts by intent (never blanket-accept one side), confirm typecheck and tests still pass, do not push.
 3. **Push the branch** — `git -C <worktree> push -u origin <branch-from-frontmatter>`.
 4. **Open the PR** — `gh pr create` with summary from plan Objective + Phases and test plan from acceptance lines. Capture URL → frontmatter `pr:`. Status → `pr-open`.
-5. **Monitor CI.** Either watch directly (`gh pr checks <n> --watch`), or spawn an agent to babysit the build. Provider from `impl`. Tell it to drive the PR to green: when checks fail, read failure logs, fix, push, repeat. Don't merge — your call.
-   When green: append Notes, frontmatter `status: ready-to-merge`.
+5. **Babysit the PR.** Spawn an agent to drive the PR to green. Provider from `impl`. Tell it to load `/babysit-pr`, use `create_heartbeat` wakeups instead of polling, read PR reviews as part of the job, address Greptile automated review comments unless they are wrong or obsolete, and fix/push/re-watch until every check is green. Don't merge — your call.
+   When CI is green and actionable reviews are handled: append Notes, frontmatter `status: ready-to-merge`.
 6. **Merge** when green — ask the user (`AskUserQuestion`: squash / rebase / merge / wait). Read repo convention from recent merged PRs (`gh pr list --state merged -L 5 --json mergeCommit,title`).
    ```bash
    gh pr merge <n> --squash --delete-branch

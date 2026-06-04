@@ -38,7 +38,7 @@ import {
   getDownloadOptions,
   useDetectedPlatform,
   AppleIcon,
-  AndroidIcon,
+  PlayStoreIcon,
   TerminalIcon,
   GlobeIcon,
 } from "~/downloads";
@@ -87,8 +87,11 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
       <div className="bg-background">
         <main className="p-6 md:p-20 md:pt-40 max-w-5xl mx-auto">
           <div className="space-y-24">
+            <SocialProofWall />
             <MultiProviderSection />
             <SelfHostedSection />
+            <WorkflowSection />
+            <SplitPanelsSection />
             <ServiceProxySection />
             <ShortcutsSection />
             <LocalVoiceSection />
@@ -128,6 +131,88 @@ const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
 
 const FEATURED_AGENT_COUNT = 5;
 const ADDITIONAL_AGENT_COUNT = AGENT_PAGES.length - FEATURED_AGENT_COUNT;
+
+const SOCIAL_PROOF_TWEETS = [
+  {
+    name: "Cam",
+    handle: "@ceeebeeebeee",
+    date: "Apr 6, 2026",
+    avatar: "/social-proof/ceeebeeebeee.jpg",
+    url: "https://x.com/ceeebeeebeee/status/2041008798798864537",
+    text: "without a doubt the most slept on orchestrator right now. Open source, every OS, and a mobile experience that truly blew me away.",
+  },
+  {
+    name: "Erik Sherman",
+    handle: "@erikksherman",
+    date: "Apr 11, 2026",
+    avatar: "/social-proof/erikksherman.jpg",
+    url: "https://x.com/erikksherman/status/2043011630590751008",
+    text: "control agents from anywhere - mac, phone, web. one simple change transformed my health while INCREASING productivity",
+  },
+  {
+    name: "Aman Kumar Jagdev",
+    handle: "@amankumarjagdev",
+    date: "Apr 16, 2026",
+    avatar: "/social-proof/amankumarjagdev.jpg",
+    url: "https://x.com/amankumarjagdev/status/2044815258414674307",
+    text: "I have tried 100s of agent orchestrator, cli and gui. the best one i have found. Please give it a try! it's really good",
+  },
+  {
+    name: "RUI",
+    handle: "@tietougongshiba",
+    date: "May 3, 2026",
+    avatar: "/social-proof/tietougongshiba.jpg",
+    url: "https://x.com/tietougongshiba/status/2050886374941925754",
+    text: "Being able to check and manage agent progress from my phone while I'm out is so convenient.",
+  },
+  {
+    name: "Jason Torres",
+    handle: "@jasontorres",
+    date: "May 11, 2026",
+    avatar: "/social-proof/jasontorres.jpg",
+    url: "https://x.com/jasontorres/status/2053875385515790731",
+    text: "Can interchange between Codex, Claude Code, Opencode, Pi. Stable mobile and desktop apps connected through a secure relay from your VMs.",
+  },
+  {
+    name: "A9",
+    handle: "@aadtyn",
+    date: "May 29, 2026",
+    avatar: "/social-proof/aadtyn.jpg",
+    url: "https://x.com/aadtyn/status/2060371229773803943",
+    text: "cross platform agent orchestration with inbuilt relay and tailscale / self host daemon options + the best UI ive seen in this segment",
+  },
+  {
+    name: "boris evstratov",
+    handle: "@bevstratov",
+    date: "May 30, 2026",
+    avatar: "/social-proof/bevstratov.jpg",
+    url: "https://x.com/bevstratov/status/2060733983042781550",
+    text: "It’s an incredible piece of software. The last building block I needed to fully work from my phone. everything super smooth.",
+  },
+  {
+    name: "Arnold Gamboa",
+    handle: "@arnoldgamboa",
+    date: "May 28, 2026",
+    avatar: "/social-proof/arnoldgamboa.jpg",
+    url: "https://x.com/arnoldgamboa/status/2059832028099436921",
+    text: "Paseo is a really good interface for Pi. It’s not the only thing it does, but that’s my current use case for now.",
+  },
+  {
+    name: "Dong",
+    handle: "@dongnaebi",
+    date: "Apr 12, 2026",
+    avatar: "/social-proof/dongnaebi.jpg",
+    url: "https://x.com/dongnaebi/status/2043162391941398735",
+    text: "Paseo is the best software I've used this year. Absolutely amazing!",
+  },
+] as const;
+
+const SOCIAL_PROOF_ROWS = [
+  { id: "top", tweets: SOCIAL_PROOF_TWEETS.slice(0, 5), reverse: false },
+  { id: "bottom", tweets: SOCIAL_PROOF_TWEETS.slice(5), reverse: true },
+] as const;
+
+type SocialProofTweet = (typeof SOCIAL_PROOF_TWEETS)[number];
 
 function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
   const [hovered, setHovered] = React.useState(false);
@@ -173,14 +258,97 @@ function FeatureSection({
       whileInView={FADE_IN}
       viewport={VIEWPORT_60}
       transition={EASE_OUT_05}
-      className="space-y-8"
     >
-      <div className="space-y-2">
-        <h2 className="text-3xl font-medium">{title}</h2>
-        <p className="text-base text-muted-foreground max-w-lg">{description}</p>
-      </div>
+      <SectionTitle title={title} description={description} />
       {children}
     </motion.section>
+  );
+}
+
+function SectionTitle({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="mb-12 space-y-2">
+      <h2 className="text-3xl font-medium">{title}</h2>
+      <p className="text-base text-muted-foreground max-w-lg">{description}</p>
+    </div>
+  );
+}
+
+function SocialProofWall() {
+  return (
+    <motion.section
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
+    >
+      <SectionTitle
+        title="Loved by developers"
+        description="See what developers are saying about Paseo."
+      />
+
+      <div className="social-proof-marquee space-y-4 overflow-hidden">
+        {SOCIAL_PROOF_ROWS.map((row) => (
+          <SocialProofRow key={row.id} tweets={row.tweets} reverse={row.reverse} />
+        ))}
+      </div>
+    </motion.section>
+  );
+}
+
+function SocialProofRow({
+  tweets,
+  reverse,
+}: {
+  tweets: readonly SocialProofTweet[];
+  reverse: boolean;
+}) {
+  return (
+    <div className="social-proof-row">
+      <div className={`social-proof-track ${reverse ? "social-proof-track-reverse" : ""}`}>
+        <div className="flex shrink-0 gap-4 pr-4">
+          {tweets.map((tweet) => (
+            <SocialProofCard key={tweet.url} tweet={tweet} />
+          ))}
+        </div>
+        <div className="flex shrink-0 gap-4 pr-4" aria-hidden="true">
+          {tweets.map((tweet) => (
+            <SocialProofCard key={`${tweet.url}-clone`} tweet={tweet} inert />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: boolean }) {
+  return (
+    <a
+      href={tweet.url}
+      target="_blank"
+      rel="noreferrer"
+      tabIndex={inert ? -1 : undefined}
+      className="group flex h-[154px] w-[320px] shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05] md:w-[420px]"
+      aria-label={`Read ${tweet.name}'s original post`}
+    >
+      <div>
+        <div className="flex min-w-0 items-center gap-3">
+          <img
+            src={tweet.avatar}
+            alt=""
+            width={28}
+            height={28}
+            loading="lazy"
+            decoding="async"
+            className="h-7 w-7 shrink-0 rounded-full bg-white/10 object-cover"
+          />
+          <p className="truncate text-sm font-medium text-white/60">{tweet.handle}</p>
+        </div>
+        <p className="social-proof-card-text mt-4 text-sm leading-relaxed text-white/72">
+          {tweet.text}
+        </p>
+      </div>
+    </a>
   );
 }
 
@@ -195,22 +363,11 @@ function MultiProviderSection() {
 
   return (
     <FeatureSection
-      title="Use the best agent for the job"
-      description="Run multiple providers from a single interface. Paseo runs the native agent harness as you'd normally run it, with your skills, config and MCP servers intact."
+      title="Works with your tools"
+      description="Run your agents from one interface. Paseo uses each provider's native harness, so your subscriptions, skills, config, and MCP servers keep working."
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {providers.slice(0, 3).map((p) => (
-          <div
-            key={p.name}
-            className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
-          >
-            <span className="text-white/80">{p.icon}</span>
-            <span className="font-medium">{p.name}</span>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:w-full">
-        {providers.slice(3).map((p) => (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {providers.map((p) => (
           <div
             key={p.name}
             className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
@@ -506,11 +663,209 @@ function SelfHostedDiagram() {
 function SelfHostedSection() {
   return (
     <FeatureSection
-      title="Your agents, every surface"
-      description="Run agents on your laptop, a VM, or a dev server. Control them from any device with a direct connection or an E2E encrypted relay."
+      title="Runs where you work"
+      description="Start agents on your laptop, a VM, or a dev server. Use them from any device over a direct connection or the end-to-end encrypted relay."
     >
       <SelfHostedDiagram />
     </FeatureSection>
+  );
+}
+
+const WORKFLOW_STEPS = ["Worktree", "Preview", "Review", "Commit", "PR", "Merge"] as const;
+
+const REVIEW_FILES = [
+  { path: "src/auth/session.ts", delta: "+42" },
+  { path: "src/auth/middleware.ts", delta: "+18 -9" },
+  { path: "tests/auth.test.ts", delta: "+31" },
+] as const;
+
+function WorkflowSection() {
+  return (
+    <FeatureSection
+      title="Review, preview, ship"
+      description="Create branches, preview the app in the browser, review the diff inline, then commit, open a PR, and merge without leaving Paseo."
+    >
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+        <WorkflowHeader />
+        <div className="grid gap-4 p-4 md:grid-cols-[1.1fr_0.9fr]">
+          <WorkflowPreview />
+          <WorkflowReviewAndShip />
+        </div>
+      </div>
+    </FeatureSection>
+  );
+}
+
+function WorkflowHeader() {
+  return (
+    <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-2.5">
+        <div className="h-2 w-2 rounded-full bg-emerald-400" />
+        <span className="text-sm text-white/80">fix-auth</span>
+        <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/40">worktree</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
+        {WORKFLOW_STEPS.map((step) => (
+          <span key={step} className="rounded-full border border-white/10 px-2 py-1">
+            {step}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowPreview() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20">
+      <BrowserChrome />
+      <div className="space-y-5 p-5">
+        <PreviewHeader />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <PreviewFormCard titleWidth="w-16" ctaClassName="bg-white/[0.06]" />
+          <PreviewFormCard titleWidth="w-20" ctaClassName="bg-emerald-400/20" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BrowserChrome() {
+  return (
+    <div className="flex items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-2">
+      <div className="flex gap-1.5">
+        <span className="h-2.5 w-2.5 rounded-full bg-red-400/60" />
+        <span className="h-2.5 w-2.5 rounded-full bg-amber-300/60" />
+        <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/60" />
+      </div>
+      <div className="min-w-0 flex-1 rounded-md bg-black/30 px-2 py-1 text-center font-mono text-[10px] text-white/35">
+        web.fix-auth.my-app.localhost
+      </div>
+    </div>
+  );
+}
+
+function PreviewHeader() {
+  return (
+    <div className="space-y-2">
+      <div className="h-3 w-28 rounded-full bg-white/25" />
+      <div className="h-2 w-44 rounded-full bg-white/10" />
+    </div>
+  );
+}
+
+function PreviewFormCard({
+  titleWidth,
+  ctaClassName,
+}: {
+  titleWidth: string;
+  ctaClassName: string;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className={`h-2 rounded-full bg-white/15 ${titleWidth}`} />
+      <div className="h-8 rounded-md bg-white/10" />
+      <div className={`h-8 rounded-md ${ctaClassName}`} />
+    </div>
+  );
+}
+
+function WorkflowReviewAndShip() {
+  return (
+    <div className="space-y-4">
+      <InlineReviewPanel />
+      <ShipPanel />
+    </div>
+  );
+}
+
+function InlineReviewPanel() {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="text-sm text-white/80">Inline review</span>
+        <span className="text-xs text-white/35">3 files changed</span>
+      </div>
+      <div className="space-y-2">
+        {REVIEW_FILES.map((file) => (
+          <ReviewFileRow key={file.path} path={file.path} delta={file.delta} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewFileRow({ path, delta }: { path: string; delta: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="truncate font-mono text-white/50">{path}</span>
+      <span className="flex gap-1 font-mono">
+        {delta.split(" ").map((part) => (
+          <span
+            key={part}
+            className={part.startsWith("-") ? "text-red-300/70" : "text-emerald-300/70"}
+          >
+            {part}
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function ShipPanel() {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="text-sm text-white/80">Ready to ship</span>
+        <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">
+          checks passed
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center text-xs">
+        <div className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-white/70">
+          Commit
+        </div>
+        <div className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-white/70">
+          Open PR
+        </div>
+        <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/15 px-3 py-2 text-emerald-200">
+          Merge
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SplitPanelsSection() {
+  return (
+    <FeatureSection
+      title="Split panels"
+      description="Open agents, browsers, terminals, diffs, and logs in the same workspace. Split them side by side or group them in tabs."
+    >
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+        <div className="grid gap-3 md:h-[360px] md:grid-cols-[1.05fr_0.95fr]">
+          <PanelTile label="Agent" className="min-h-48 md:min-h-0" />
+          <div className="grid gap-3 md:grid-rows-[1fr_0.75fr]">
+            <PanelTile label="Browser" className="min-h-36" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <PanelTile label="Terminal" className="min-h-28" />
+              <PanelTile label="Diff" className="min-h-28" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </FeatureSection>
+  );
+}
+
+function PanelTile({ label, className }: { label: string; className: string }) {
+  return (
+    <div
+      className={`flex items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-sm text-white/70 ${className}`}
+    >
+      {label}
+    </div>
   );
 }
 
@@ -802,7 +1157,7 @@ function LocalVoiceSection() {
 
   return (
     <FeatureSection
-      title="Local voice"
+      title="Voice control, fully local"
       description="Fully local voice stack. Speech-to-text and text-to-speech run entirely on your machine, nothing leaves your network."
     >
       <div className="relative w-full rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
@@ -877,7 +1232,7 @@ function GetStarted() {
           className="inline-flex items-center justify-center rounded-lg border border-white/20 px-3 py-2 text-white hover:bg-white/10 transition-colors"
           aria-label="Google Play"
         >
-          <AndroidIcon className="h-5 w-5" />
+          <PlayStoreIcon className="h-5 w-5" />
         </a>
         <ServerInstallButton />
       </div>
@@ -1422,7 +1777,7 @@ function CLISection() {
       title="Fully scriptable"
       description="Everything you can do in the app, you can do from the terminal."
     >
-      <div className="flex flex-wrap gap-2">
+      <div className="mb-3 flex flex-wrap gap-2">
         {cliExamples.map((example, i) => (
           <CLITabButton
             key={example.title}
@@ -1434,7 +1789,7 @@ function CLISection() {
         ))}
       </div>
 
-      <div className="space-y-3">
+      <div className="mb-3">
         <CLICodeBlock>{active.code}</CLICodeBlock>
       </div>
 
@@ -1554,10 +1909,14 @@ function SponsorCTA() {
     >
       <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
         <p>
-          I built Paseo because I wanted better tools for coding agents on my own setup. It&apos;s
-          an independent open source project, built around freedom of choice and real workflows. If
-          you like what I&apos;m building, consider becoming a supporter.
+          Paseo is an independent open source project for running coding agents across your own
+          machines, phone, desktop, and CLI.
         </p>
+        <p>
+          It&apos;s built around freedom of choice: use the provider you want, run it on your own
+          infrastructure, and keep your workflow portable.
+        </p>
+        <p>If you like Paseo, sponsorship is the best way to support continued development.</p>
         <p>- Mo</p>
       </div>
       <div className="pt-2">

@@ -131,9 +131,16 @@ function resolveOpenCodeCreateConfig(
   input: ResolveAgentCreateConfigInput,
 ): ResolveAgentCreateConfigResult {
   const legacyFullAccess = input.requestedMode === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID;
+  const parent = input.parent;
   const inheritsUnattended =
-    input.requestedMode === undefined && input.parent?.isUnattended === true;
-  const requestedMode = legacyFullAccess ? OPENCODE_BUILD_MODE_ID : input.requestedMode;
+    input.requestedMode === undefined && (input.unattended || parent?.isUnattended === true);
+  const inheritedOpenCodeMode =
+    inheritsUnattended && parent?.provider === input.provider
+      ? (parent.modeId ?? undefined)
+      : undefined;
+  const requestedMode = legacyFullAccess
+    ? OPENCODE_BUILD_MODE_ID
+    : (input.requestedMode ?? inheritedOpenCodeMode);
   const featureValues =
     legacyFullAccess ||
     (inheritsUnattended && input.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === undefined)

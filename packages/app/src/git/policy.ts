@@ -336,22 +336,22 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (canPush(input)) {
     return "push";
   }
-  if (!input.isOnBaseBranch && canMergeFromBase(input)) {
-    return "merge-from-base";
-  }
-  if (canMergePr(input) && input.shipDefault === "pr") {
+  if (canMergePr(input)) {
     return getDefaultDirectPullRequestMergeActionId(input);
   }
-  if (canEnablePrAutoMerge(input) && input.shipDefault === "pr") {
+  if (canEnablePrAutoMerge(input)) {
     return getDefaultEnablePullRequestAutoMergeActionId(input);
   }
-  if (!input.isOnBaseBranch && input.aheadCount > 0 && input.shipDefault === "merge") {
-    return "merge-branch";
-  }
-  if (input.githubFeaturesEnabled && input.hasPullRequest && input.pullRequestUrl) {
+  if (hasEnabledPrAutoMerge(input)) {
     return "pr";
   }
   if (!input.isOnBaseBranch && input.aheadCount > 0) {
+    return "merge-branch";
+  }
+  if (!input.isOnBaseBranch && canMergeFromBase(input)) {
+    return "merge-from-base";
+  }
+  if (input.githubFeaturesEnabled && input.hasPullRequest && input.pullRequestUrl) {
     return "pr";
   }
   return null;
@@ -554,6 +554,16 @@ function canEnablePrAutoMerge(input: BuildGitActionsInput): boolean {
     !github.isMergeQueueEnabled &&
     !github.isInMergeQueue &&
     getAllowedAutoMergeEnableActionModels(input).length > 0
+  );
+}
+
+function hasEnabledPrAutoMerge(input: BuildGitActionsInput): boolean {
+  return (
+    input.githubFeaturesEnabled &&
+    input.hasPullRequest &&
+    input.pullRequestUrl !== null &&
+    hasPullRequestGithubFacts(input.pullRequestGithub) &&
+    input.pullRequestGithub.autoMergeRequest !== null
   );
 }
 

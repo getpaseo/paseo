@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type pino from "pino";
 import { z } from "zod";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 import {
   ChatMessageSchema,
   ChatRoomDetailSchema,
@@ -364,10 +365,7 @@ export class FileBackedChatService {
         .flat()
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     };
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    await fs.writeFile(tempPath, JSON.stringify(payload, null, 2), "utf8");
-    await fs.rename(tempPath, this.filePath);
+    await writeJsonFileAtomic(this.filePath, payload);
   }
 
   private findRoomByName(name: string): ChatRoom | null {

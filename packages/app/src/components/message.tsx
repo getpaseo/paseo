@@ -1622,6 +1622,67 @@ export const AssistantMessage = memo(function AssistantMessage({
           {children}
         </MarkdownInheritedText>
       ),
+      // strong/em/s have no custom rule in react-native-markdown-display's
+      // defaults beyond wrapping children in a plain RN <Text>. On iOS the
+      // paragraph/textgroup are native UITextViews (see markdown-text.ios.tsx),
+      // and a plain <Text> nested inside one is not hoisted into a
+      // UITextViewChild, so its content renders invisibly. Route these inline
+      // marks through MarkdownTextSpan (same path as text/textgroup) so the
+      // styled content composes and stays visible + selectable on iOS.
+      strong: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.strong}
+        >
+          {children}
+        </MarkdownInheritedText>
+      ),
+      em: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.em}
+        >
+          {children}
+        </MarkdownInheritedText>
+      ),
+      s: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
+      ) => (
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.s}
+        >
+          {children}
+        </MarkdownInheritedText>
+      ),
+      // hardbreak/softbreak fall back to react-native-markdown-display's
+      // default, a plain RN <Text>{"\n"}. Inside the paragraph UITextView that
+      // plain <Text> is not hoisted into a UITextViewChild and is dropped (same
+      // root cause as strong/em/s) — so on iOS a hard line break vanished, and
+      // a softbreak between words jammed them together ("one\ntwo" -> "onetwo").
+      // Emit the break through MarkdownTextSpan so it composes on iOS; web and
+      // Android keep the same "\n" they rendered before.
+      hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
+      softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
       code_block: (
         node: ASTNode,
         _children: ReactNode[],

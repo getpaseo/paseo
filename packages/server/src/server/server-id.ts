@@ -2,7 +2,7 @@ import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
-import { ensurePrivateFile, writePrivateFileSync } from "./private-files.js";
+import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
@@ -49,7 +49,7 @@ export function getOrCreateServerId(
     // Persist the override for consistent identity across restarts.
     if (!existsSync(serverIdPath)) {
       try {
-        writePrivateFileSync(serverIdPath, `${envOverride}\n`);
+        writePrivateFileAtomicSync(serverIdPath, `${envOverride}\n`);
         log?.info({ serverId: envOverride }, "Persisted PASEO_SERVER_ID override");
       } catch (error) {
         log?.warn({ error }, "Failed to persist PASEO_SERVER_ID override");
@@ -75,7 +75,7 @@ export function getOrCreateServerId(
 
   const created = generateServerId();
   try {
-    writePrivateFileSync(serverIdPath, `${created}\n`);
+    writePrivateFileAtomicSync(serverIdPath, `${created}\n`);
   } catch (error) {
     log?.warn({ error }, "Failed to persist serverId (continuing with in-memory id)");
   }

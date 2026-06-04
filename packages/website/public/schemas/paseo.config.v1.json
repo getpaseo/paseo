@@ -93,6 +93,25 @@
               },
               "additionalProperties": false
             },
+            "serviceProxy": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "description": "Compatibility shim. false suppresses optional service proxy listen/public layers only; localhost proxying remains enabled.",
+                  "type": "boolean"
+                },
+                "listen": {
+                  "description": "Optional service-only listener address. Presence enables the standalone service proxy listener.",
+                  "type": "string"
+                },
+                "publicBaseUrl": {
+                  "description": "Optional public base URL for service host aliases.",
+                  "type": "string",
+                  "format": "uri"
+                }
+              },
+              "additionalProperties": false
+            },
             "auth": {
               "type": "object",
               "properties": {
@@ -111,6 +130,16 @@
           "properties": {
             "baseUrl": {
               "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "worktrees": {
+          "type": "object",
+          "properties": {
+            "root": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false

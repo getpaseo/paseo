@@ -105,6 +105,7 @@ export interface ResolveAgentCreateConfigInput {
   requestedMode: string | undefined;
   featureValues: Record<string, unknown> | undefined;
   parent: AgentCreateConfigParent | null;
+  unattended: boolean;
   availableModes: AgentMode[] | undefined;
 }
 

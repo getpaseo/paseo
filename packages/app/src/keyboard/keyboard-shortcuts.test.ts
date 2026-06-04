@@ -329,6 +329,8 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, isDesktop: false },
       action: "workspace.navigate.relative",
       payload: { delta: -1 },
+      preventDefault: true,
+      stopPropagation: true,
     },
     {
       name: "matches Alt+] to next workspace on macOS web when Option substitutes event.key",
@@ -336,6 +338,8 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, isDesktop: false },
       action: "workspace.navigate.relative",
       payload: { delta: 1 },
+      preventDefault: true,
+      stopPropagation: true,
     },
     {
       name: "matches Alt+Shift+W to close current tab on macOS web when Option substitutes event.key",

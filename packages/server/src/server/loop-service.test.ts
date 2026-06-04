@@ -31,6 +31,7 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { LoopService } from "./loop-service.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { createTestLogger } from "../test-utils/test-logger.js";
@@ -42,6 +43,13 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: false,
   supportsToolInvocations: false,
+};
+
+const NO_UNATTENDED_LOOP_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
+  async resolveCreateConfig(input) {
+    expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+    return { modeId: undefined, featureValues: input.featureValues };
+  },
 };
 
 interface ScriptedAgentBehavior {
@@ -266,7 +274,12 @@ describe("LoopService", () => {
         registry: storage,
         logger,
       });
-      const service = new LoopService({ paseoHome, agentManager: manager, logger });
+      const service = new LoopService({
+        paseoHome,
+        agentManager: manager,
+        logger,
+        providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
+      });
       await service.initialize();
 
       const loop = await service.runLoop({
@@ -317,7 +330,12 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({ paseoHome, agentManager: manager, logger });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
+    });
     await service.initialize();
 
     const loop = await service.runLoop({
@@ -378,7 +396,12 @@ describe("LoopService", () => {
       archivedAgentIds.push(agentId);
       await archiveAgent(agentId);
     };
-    const service = new LoopService({ paseoHome, agentManager: manager, logger });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
+    });
     await service.initialize();
 
     const loop = await service.runLoop({
@@ -430,7 +453,12 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({ paseoHome, agentManager: manager, logger });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
+    });
     await service.initialize();
 
     const loop = await service.runLoop({
@@ -472,7 +500,17 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({ paseoHome, agentManager: manager, logger });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+          return { modeId: "bypassPermissions", featureValues: input.featureValues };
+        },
+      },
+    });
     await service.initialize();
 
     const loop = await service.runLoop({
@@ -486,6 +524,71 @@ describe("LoopService", () => {
 
     expect(workerConfigs[0]?.modeId).toBe("bypassPermissions");
     expect(verifierConfigs[0]?.modeId).toBe("bypassPermissions");
+  });
+
+  test("defaults OpenCode workers and verifiers to build plus auto accept", async () => {
+    class CapturingScriptedAgentClient extends ScriptedAgentClient {
+      readonly createdConfigs: AgentSessionConfig[] = [];
+
+      override async createSession(
+        config: AgentSessionConfig,
+        launchContext?: AgentLaunchContext,
+      ): Promise<AgentSession> {
+        this.createdConfigs.push(config);
+        return super.createSession(config, launchContext);
+      }
+    }
+
+    const opencodeClient = new CapturingScriptedAgentClient("opencode", {
+      async onRun({ config }) {
+        if (config.title?.includes("worker")) {
+          writeFileSync(path.join(workspaceDir, "done.txt"), "ok");
+          return "created done.txt";
+        }
+        return '{"passed":true,"reason":"ok"}';
+      },
+    });
+    const manager = new AgentManager({
+      clients: {
+        opencode: opencodeClient,
+      },
+      registry: storage,
+      logger,
+    });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+          return {
+            modeId: "build",
+            featureValues: { ...input.featureValues, auto_accept: true },
+          };
+        },
+      },
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Create done.txt",
+      cwd: workspaceDir,
+      provider: "opencode",
+      verifyPrompt: "Confirm that done.txt exists in the workspace.",
+      maxIterations: 1,
+    });
+
+    await waitForLoopCompletion(service, loop.id);
+
+    expect(opencodeClient.createdConfigs[0]).toMatchObject({
+      modeId: "build",
+      featureValues: { auto_accept: true },
+    });
+    expect(opencodeClient.createdConfigs[1]).toMatchObject({
+      modeId: "build",
+      featureValues: { auto_accept: true },
+    });
   });
 
   test("explicit modeId wins over unattended default", async () => {
@@ -508,7 +611,12 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({ paseoHome, agentManager: manager, logger });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
+    });
     await service.initialize();
 
     const loop = await service.runLoop({
@@ -546,7 +654,12 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({ paseoHome, agentManager: manager, logger });
+    const service = new LoopService({
+      paseoHome,
+      agentManager: manager,
+      logger,
+      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
+    });
     await service.initialize();
 
     const loop = await service.runLoop({

@@ -24,7 +24,7 @@ export function resolveArchiveSubagentDialog(
   input: ResolveArchiveSubagentDialogInput,
 ): ConfirmDialogInput {
   const subagentLabel = resolveSubagentLabel(input.title) ?? "this subagent";
-  const isRunning = input.status === "running" || input.status === "initializing";
+  const isRunning = input.status === "running";
 
   return {
     title: isRunning ? "Archive running subagent?" : "Archive subagent?",

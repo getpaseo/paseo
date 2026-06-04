@@ -5,11 +5,13 @@ import type {
   WorkspaceScriptPayload,
 } from "@getpaseo/protocol/messages";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { buildScriptHostname } from "../utils/script-hostname.js";
 import { getScriptConfigs, isServiceScript, readPaseoConfig } from "../utils/worktree.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";
-import type { ScriptRouteStore } from "./script-proxy.js";
+import type {
+  ServiceProxySubsystem,
+  ServiceProxyWorkspaceScriptProjection,
+} from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 
 interface SessionEmitter {
@@ -20,9 +22,10 @@ interface BuildWorkspaceScriptPayloadsOptions {
   workspaceId: string;
   workspaceDirectory: string;
   paseoConfig: PaseoConfig | null;
-  routeStore: ScriptRouteStore;
+  serviceProxy: ServiceProxySubsystem;
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null;
+  serviceProxyPublicBaseUrl?: string | null;
   gitMetadata?: {
     projectSlug: string;
     currentBranch: string | null;
@@ -52,13 +55,6 @@ function resolveDaemonPort(daemonPort: number | null | (() => number | null)): n
   return daemonPort;
 }
 
-function toServiceProxyUrl(hostname: string, daemonPort: number | null): string | null {
-  if (daemonPort === null) {
-    return null;
-  }
-  return `http://${hostname}:${daemonPort}`;
-}
-
 function toWireHealth(health: ScriptHealthState | null): WorkspaceScriptPayload["health"] {
   if (health === "pending" || health === null) {
     return null;
@@ -76,43 +72,92 @@ function sortPayloads(payloads: WorkspaceScriptPayload[]): WorkspaceScriptPayloa
 }
 
 type RuntimeEntry = ReturnType<WorkspaceScriptRuntimeStore["listForWorkspace"]>[number];
-type RouteEntry = ReturnType<ScriptRouteStore["listRoutesForWorkspace"]>[number];
-
 interface BuildPayloadContext {
   projectSlug: string;
   branchName: string | null;
   daemonPort: number | null;
+  serviceProxyPublicBaseUrl?: string | null;
+  serviceProxy: ServiceProxySubsystem;
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
+}
+
+function projectWorkspaceServiceState(params: {
+  workspaceId: string;
+  scriptName: string;
+  ctx: BuildPayloadContext;
+}): ServiceProxyWorkspaceScriptProjection {
+  return params.ctx.serviceProxy.projectWorkspaceServiceState({
+    workspaceId: params.workspaceId,
+    projectSlug: params.ctx.projectSlug,
+    branchName: params.ctx.branchName,
+    scriptName: params.scriptName,
+    daemonPort: params.ctx.daemonPort,
+    publicBaseUrl: params.ctx.serviceProxyPublicBaseUrl,
+  });
+}
+
+function buildConfiguredPlainScriptPayload(
+  scriptName: string,
+  runtimeEntry: RuntimeEntry | null,
+): WorkspaceScriptPayload {
+  return {
+    scriptName,
+    type: "script",
+    hostname: scriptName,
+    port: null,
+    proxyUrl: null,
+    lifecycle: runtimeEntry?.lifecycle ?? "stopped",
+    health: null,
+    exitCode: runtimeEntry?.exitCode ?? null,
+    terminalId: runtimeEntry?.terminalId ?? null,
+  };
 }
 
 function buildConfiguredScriptPayload(
   scriptName: string,
   config: ReturnType<typeof getScriptConfigs> extends Map<string, infer V> ? V : never,
   runtimeEntry: RuntimeEntry | null,
-  routeEntry: RouteEntry | null,
+  serviceState: ServiceProxyWorkspaceScriptProjection | null,
   ctx: BuildPayloadContext,
 ): WorkspaceScriptPayload {
   const configIsService = isServiceScript(config);
-  const type = configIsService ? "service" : "script";
-  const configuredPort = configIsService ? (config.port ?? null) : null;
-  const hostname =
-    type === "service"
-      ? (routeEntry?.hostname ??
-        buildScriptHostname({
-          projectSlug: ctx.projectSlug,
-          branchName: ctx.branchName,
-          scriptName,
-        }))
-      : scriptName;
+  if (!configIsService) {
+    return buildConfiguredPlainScriptPayload(scriptName, runtimeEntry);
+  }
+
+  const type = "service";
+  const configuredPort = config.port ?? null;
+  const hostname = (
+    serviceState ??
+    ctx.serviceProxy.projectWorkspaceService({
+      projectSlug: ctx.projectSlug,
+      branchName: ctx.branchName,
+      scriptName,
+      daemonPort: ctx.daemonPort,
+      publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
+    })
+  ).hostname;
+
+  const urls =
+    serviceState ??
+    ctx.serviceProxy.projectUrls({
+      projectSlug: ctx.projectSlug,
+      branchName: ctx.branchName,
+      scriptName,
+      daemonPort: ctx.daemonPort,
+      publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
+    });
 
   return {
     scriptName,
     type,
     hostname,
-    port: type === "service" ? (routeEntry?.port ?? configuredPort) : null,
-    proxyUrl: type === "service" ? toServiceProxyUrl(hostname, ctx.daemonPort) : null,
+    port: serviceState?.port ?? configuredPort,
+    localProxyUrl: urls.localProxyUrl,
+    publicProxyUrl: urls.publicProxyUrl,
+    proxyUrl: urls.proxyUrl,
     lifecycle: runtimeEntry?.lifecycle ?? "stopped",
-    health: type === "service" ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null) : null,
+    health: toWireHealth(ctx.resolveHealth?.(hostname) ?? null),
     exitCode: runtimeEntry?.exitCode ?? null,
     terminalId: runtimeEntry?.terminalId ?? null,
   };
@@ -120,28 +165,47 @@ function buildConfiguredScriptPayload(
 
 function buildOrphanRuntimePayload(
   runtimeEntry: RuntimeEntry,
-  routeEntry: RouteEntry | null,
+  serviceState: ServiceProxyWorkspaceScriptProjection | null,
   ctx: BuildPayloadContext,
 ): WorkspaceScriptPayload {
   const type = runtimeEntry.type;
   const hostname =
     type === "service"
-      ? (routeEntry?.hostname ??
-        buildScriptHostname({
-          projectSlug: ctx.projectSlug,
-          branchName: ctx.branchName,
-          scriptName: runtimeEntry.scriptName,
-        }))
+      ? (
+          serviceState ??
+          ctx.serviceProxy.projectWorkspaceService({
+            projectSlug: ctx.projectSlug,
+            branchName: ctx.branchName,
+            scriptName: runtimeEntry.scriptName,
+            daemonPort: ctx.daemonPort,
+            publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
+          })
+        ).hostname
       : runtimeEntry.scriptName;
+  const urls =
+    serviceState ??
+    ctx.serviceProxy.projectUrls({
+      projectSlug: ctx.projectSlug,
+      branchName: ctx.branchName,
+      scriptName: runtimeEntry.scriptName,
+      daemonPort: ctx.daemonPort,
+      publicBaseUrl: ctx.serviceProxyPublicBaseUrl,
+    });
+
   return {
     scriptName: runtimeEntry.scriptName,
     type,
     hostname,
-    port: type === "service" ? (routeEntry?.port ?? null) : null,
-    proxyUrl: type === "service" ? toServiceProxyUrl(hostname, ctx.daemonPort) : null,
+    port: type === "service" ? (serviceState?.port ?? null) : null,
+    ...(type === "service"
+      ? { localProxyUrl: urls.localProxyUrl, publicProxyUrl: urls.publicProxyUrl }
+      : {}),
+    proxyUrl: type === "service" ? urls.proxyUrl : null,
     lifecycle: runtimeEntry.lifecycle,
     health:
-      type === "service" && routeEntry ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null) : null,
+      type === "service" && serviceState?.port !== null
+        ? toWireHealth(ctx.resolveHealth?.(hostname) ?? null)
+        : null,
     exitCode: runtimeEntry.exitCode,
     terminalId: runtimeEntry.terminalId,
   };
@@ -160,16 +224,12 @@ export function buildWorkspaceScriptPayloads(
       .listForWorkspace(workspaceId)
       .map((entry) => [entry.scriptName, entry] as const),
   );
-  const routesByScriptName = new Map(
-    options.routeStore
-      .listRoutesForWorkspace(workspaceId)
-      .map((entry) => [entry.scriptName, entry] as const),
-  );
-
   const ctx: BuildPayloadContext = {
     projectSlug,
     branchName,
     daemonPort: options.daemonPort,
+    serviceProxyPublicBaseUrl: options.serviceProxyPublicBaseUrl,
+    serviceProxy: options.serviceProxy,
     resolveHealth: options.resolveHealth,
   };
 
@@ -177,16 +237,23 @@ export function buildWorkspaceScriptPayloads(
 
   for (const [scriptName, config] of scriptConfigs.entries()) {
     const runtimeEntry = runtimeEntries.get(scriptName) ?? null;
-    const routeEntry = routesByScriptName.get(scriptName) ?? null;
-    payloads.push(buildConfiguredScriptPayload(scriptName, config, runtimeEntry, routeEntry, ctx));
+    const serviceState = isServiceScript(config)
+      ? projectWorkspaceServiceState({ workspaceId, scriptName, ctx })
+      : null;
+    payloads.push(
+      buildConfiguredScriptPayload(scriptName, config, runtimeEntry, serviceState, ctx),
+    );
   }
 
   for (const runtimeEntry of runtimeEntries.values()) {
     if (scriptConfigs.has(runtimeEntry.scriptName) || runtimeEntry.lifecycle !== "running") {
       continue;
     }
-    const routeEntry = routesByScriptName.get(runtimeEntry.scriptName) ?? null;
-    payloads.push(buildOrphanRuntimePayload(runtimeEntry, routeEntry, ctx));
+    const serviceState =
+      runtimeEntry.type === "service"
+        ? projectWorkspaceServiceState({ workspaceId, scriptName: runtimeEntry.scriptName, ctx })
+        : null;
+    payloads.push(buildOrphanRuntimePayload(runtimeEntry, serviceState, ctx));
   }
 
   return sortPayloads(payloads);
@@ -207,16 +274,18 @@ function buildScriptStatusUpdateMessage(params: {
 
 export function createScriptStatusEmitter({
   sessions,
-  routeStore,
+  serviceProxy,
   runtimeStore,
   daemonPort,
+  serviceProxyPublicBaseUrl,
   resolveWorkspaceDirectory,
   logger,
 }: {
   sessions: () => SessionEmitter[];
-  routeStore: ScriptRouteStore;
+  serviceProxy: ServiceProxySubsystem;
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null | (() => number | null);
+  serviceProxyPublicBaseUrl?: string | null;
   resolveWorkspaceDirectory: (workspaceId: string) => string | null | Promise<string | null>;
   logger: Logger;
 }): (workspaceId: string, scripts: ScriptHealthEntry[]) => void {
@@ -236,9 +305,10 @@ export function createScriptStatusEmitter({
         workspaceId,
         workspaceDirectory,
         paseoConfig: readPaseoConfigForProjection(workspaceDirectory, logger),
-        routeStore,
+        serviceProxy,
         runtimeStore,
         daemonPort: resolvedDaemonPort,
+        serviceProxyPublicBaseUrl,
         resolveHealth: (hostname) => scriptHealthByHostname.get(hostname) ?? null,
       });
 

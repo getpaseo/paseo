@@ -1,4 +1,10 @@
-import { slugify } from "./worktree.js";
+import {
+  buildLocalServiceHostname,
+  buildPublicServiceHostname,
+  buildPublicServiceProxyUrl,
+} from "../server/service-proxy.js";
+
+// Compatibility boundary for older tests/imports; new service proxy code owns hostname rules.
 
 interface BuildScriptHostnameOptions {
   projectSlug: string;
@@ -6,8 +12,8 @@ interface BuildScriptHostnameOptions {
   scriptName: string;
 }
 
-function toHostnameLabel(value: string): string {
-  return slugify(value) || "untitled";
+interface BuildPublicScriptHostnameOptions extends BuildScriptHostnameOptions {
+  publicBaseUrl: string;
 }
 
 export function buildScriptHostname({
@@ -15,13 +21,16 @@ export function buildScriptHostname({
   branchName,
   scriptName,
 }: BuildScriptHostnameOptions): string {
-  const serviceHostnameLabel = toHostnameLabel(scriptName);
-  const projectHostnameLabel = toHostnameLabel(projectSlug);
-  const isDefaultBranch = branchName === null || branchName === "main" || branchName === "master";
+  return buildLocalServiceHostname({ projectSlug, branchName, scriptName });
+}
 
-  if (isDefaultBranch) {
-    return `${serviceHostnameLabel}.${projectHostnameLabel}.localhost`;
-  }
+export function buildPublicScriptHostname({
+  publicBaseUrl,
+  ...script
+}: BuildPublicScriptHostnameOptions): string {
+  return buildPublicServiceHostname({ publicBaseUrl, ...script });
+}
 
-  return `${serviceHostnameLabel}.${toHostnameLabel(branchName)}.${projectHostnameLabel}.localhost`;
+export function buildPublicScriptProxyUrl(options: BuildPublicScriptHostnameOptions): string {
+  return buildPublicServiceProxyUrl(options);
 }

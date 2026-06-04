@@ -366,45 +366,62 @@ describe("git-actions-policy", () => {
     );
   });
 
-  it("respects the ship preference when choosing between PR merge and local merge", () => {
-    const prPreferredActions = buildGitActions(
+  it("promotes ready PR merge over update-from-base", () => {
+    const actions = buildGitActions(
       createInput({
         hasRemote: true,
         isOnBaseBranch: false,
         aheadCount: 2,
+        behindBaseCount: 3,
         hasPullRequest: true,
         pullRequestUrl: "https://example.com/pr/456",
         pullRequestState: "open",
         pullRequestMergeable: "MERGEABLE",
-        pullRequestGithub: githubStatus(),
-        shipDefault: "pr",
-      }),
-    );
-    const localMergePreferredActions = buildGitActions(
-      createInput({
-        hasRemote: true,
-        isOnBaseBranch: false,
-        aheadCount: 2,
-        hasPullRequest: true,
-        pullRequestUrl: "https://example.com/pr/456",
-        pullRequestState: "open",
-        pullRequestMergeable: "MERGEABLE",
-        pullRequestGithub: githubStatus(),
-        shipDefault: "merge",
+        pullRequestGithub: githubStatus({ mergeStateStatus: "CLEAN" }),
       }),
     );
 
-    expect(prPreferredActions.primary).toMatchObject({
+    expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
       label: "Squash and merge",
     });
-    expect(localMergePreferredActions.primary).toMatchObject({
+  });
+
+  it("promotes local merge over update-from-base", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        behindBaseCount: 3,
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({
       id: "merge-branch",
       label: "Merge locally",
     });
-    expect(
-      localMergePreferredActions.secondary.some((action) => action.id === "merge-pr-squash"),
-    ).toBe(true);
+  });
+
+  it("promotes ready PR merge over local merge", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        pullRequestGithub: githubStatus(),
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({
+      id: "merge-pr-squash",
+      label: "Squash and merge",
+    });
+    expect(actions.secondary.some((action) => action.id === "merge-branch")).toBe(true);
   });
 
   it("keeps the merge-pr actions in the feature branch menu", () => {
@@ -648,7 +665,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
-    expect(actions.primary).toMatchObject({ id: "pr", label: "View PR" });
+    expect(actions.primary).toMatchObject({ id: "merge-branch", label: "Merge locally" });
     expect(actions.secondary.some((action) => action.id.startsWith("enable-pr-auto-merge"))).toBe(
       false,
     );
@@ -675,6 +692,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
+    expect(actions.primary).toMatchObject({ id: "pr", label: "View PR" });
     expect(actions.secondary).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -748,7 +766,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
-    expect(actions.primary).toMatchObject({ id: "pr", label: "View PR" });
+    expect(actions.primary).toMatchObject({ id: "merge-branch", label: "Merge locally" });
     expect(
       actions.secondary.some((action) =>
         ["merge-pr-squash", "merge-pr-merge", "merge-pr-rebase"].includes(action.id),

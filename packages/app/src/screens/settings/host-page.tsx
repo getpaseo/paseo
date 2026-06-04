@@ -188,7 +188,7 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
   );
 }
 
-export function HostOrchestrationPage({ serverId }: { serverId: string }) {
+export function HostAgentsPage({ serverId }: { serverId: string }) {
   const host = useHostProfile(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
@@ -199,13 +199,36 @@ export function HostOrchestrationPage({ serverId }: { serverId: string }) {
   return (
     <View>
       {isConnected ? (
-        <SettingsSection title="Orchestration">
+        <SettingsSection title="Agents">
           <InjectPaseoToolsCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />
         </SettingsSection>
       ) : (
         <View style={EMPTY_CARD_STYLE}>
-          <Text style={styles.emptyText}>Connect to this host to manage orchestration</Text>
+          <Text style={styles.emptyText}>Connect to this host to manage agents</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export function HostWorkspacesPage({ serverId }: { serverId: string }) {
+  const host = useHostProfile(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
+      {isConnected ? (
+        <SettingsSection title="Workspaces">
+          <AutoArchiveMergedWorkspacesCard serverId={serverId} />
+        </SettingsSection>
+      ) : (
+        <View style={EMPTY_CARD_STYLE}>
+          <Text style={styles.emptyText}>Connect to this host to manage workspaces</Text>
         </View>
       )}
     </View>
@@ -226,7 +249,7 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
   );
 }
 
-export function HostDaemonPage({
+export function HostSettingsPage({
   serverId,
   onHostRemoved,
 }: {
@@ -620,6 +643,45 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
           value={config?.mcp.injectIntoAgents !== false}
           onValueChange={handleValueChange}
           accessibilityLabel="Inject Paseo tools"
+        />
+      </View>
+    </View>
+  );
+}
+
+function AutoArchiveMergedWorkspacesCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({ autoArchiveAfterMerge: next }).catch((error) => {
+        console.error("[HostPage] Failed to update auto-archive after merge", error);
+        Alert.alert(
+          "Unable to update workspaces",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    },
+    [patchConfig],
+  );
+
+  if (!isConnected) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-auto-archive-merged-workspaces-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Archive merged PR workspaces</Text>
+          <Text style={settingsStyles.rowHint}>
+            Automatically archive clean Paseo workspaces after their pull request is merged
+          </Text>
+        </View>
+        <Switch
+          value={config?.autoArchiveAfterMerge === true}
+          onValueChange={handleValueChange}
+          accessibilityLabel="Archive merged PR workspaces"
+          testID="host-page-auto-archive-merged-workspaces-switch"
         />
       </View>
     </View>

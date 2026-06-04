@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { StoredScheduleSchema, type StoredSchedule } from "@getpaseo/protocol/schedule/types";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 
 function generateScheduleId(): string {
   return randomBytes(4).toString("hex");
@@ -53,7 +54,7 @@ export class ScheduleStore {
 
   async put(schedule: StoredSchedule): Promise<void> {
     await this.ensureDir();
-    await writeFile(this.filePath(schedule.id), JSON.stringify(schedule, null, 2), "utf-8");
+    await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
   }
 
   async delete(id: string): Promise<void> {

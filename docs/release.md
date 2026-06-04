@@ -9,6 +9,9 @@ A release has exactly two steps. The agent does the first, the user authorizes t
 **Preparation** (local, reversible — agent does this):
 
 - format, lint, typecheck all green
+- ACP provider catalog drift checked with `npm run acp:version-drift:check`;
+  if stale package-runner pins are intentional, say so explicitly, otherwise run
+  `npm run acp:version-drift:update` and commit the updated catalog
 - draft the changelog, show it to the user, wait for review
 - run the pre-release sanity check, surface findings to the user
 - confirm CI is green
@@ -191,6 +194,9 @@ cd packages/app
 # Recent builds (newest first). Pipe to jq for status only.
 npx eas build:list --limit 8 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'
 
+# Recent EAS workflow runs. This is the source of truth for submit/review jobs.
+npx eas workflow:runs --json | jq '.[] | {status, workflowName, trigger, gitCommitHash, startedAt, finishedAt}'
+
 # Filter by platform.
 npx eas build:list --platform ios --limit 5 --non-interactive --json
 npx eas build:list --platform android --limit 5 --non-interactive --json
@@ -198,35 +204,52 @@ npx eas build:list --platform android --limit 5 --non-interactive --json
 # Inspect a specific build.
 npx eas build:view <build-id>
 
+# Inspect the full release workflow, including submit_ios, submit_android,
+# and submit_ios_for_review.
+npx eas workflow:view <workflow-run-id> --json
+
+# Read failed submit/review job logs.
+npx eas workflow:logs <workflow-job-id> --all-steps --non-interactive
+
 # Stream logs for a build.
 npx eas build:view <build-id> --json | jq '.logFiles[]'
 ```
 
-A build's `gitCommitHash` must match the release tag commit. `status` walks through `NEW` → `IN_QUEUE` → `IN_PROGRESS` → `FINISHED` (or `ERRORED`/`CANCELED`).
+A build's `gitCommitHash` must match the release tag commit. `status` walks through `NEW` → `IN_QUEUE` → `IN_PROGRESS` → `FINISHED` (or `ERRORED`/`CANCELED`). The EAS workflow run's `gitCommitHash` and `trigger` must also match the release tag.
 
-Once a build is `FINISHED`, EAS auto-submits it to the store: Android via the `submit` block in `eas.json` (EAS-managed Play Console credentials), iOS via the Fastlane `submit_review` lane (uploads to TestFlight, then submits for App Store review). To confirm the submission landed, run `npx eas build:view <build-id>` and open the `Logs` URL it prints — the build's Expo dashboard page has a Submissions section listing each attempt with its store response. App Store Connect (TestFlight tab → ready for review) and the Play Console (Internal testing / Production tracks) are the final ground truth.
+Once a build is `FINISHED`, EAS still has release-critical work to do: Android must submit to the Play Store, and iOS must upload to TestFlight **and** submit the build for App Store review. The release is not done until all platforms are on their way through the stores.
+
+For the `Release Mobile` EAS workflow, these jobs must pass:
+
+- `build_ios` — iOS binary built
+- `submit_ios` — iOS binary uploaded to App Store Connect/TestFlight
+- `submit_ios_for_review` — iOS build submitted for App Store review via Fastlane
+- `build_android` — Android store binary built
+- `submit_android` — Android binary submitted to the Play Store
+
+Do not treat `build_ios: SUCCESS` or `submit_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
+
+To confirm the submission landed, inspect the EAS workflow with `npx eas workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
 
 ### Babysitting mobile after a release
 
-The user rarely opens the Expo dashboard. A failed EAS build can sit silently until users complain about a stale version. After every stable release, set up a long-delay babysit that re-checks both EAS builds and GitHub Actions for the release tag. If anything is `ERRORED` or `FAILED`, surface it immediately. If everything is `FINISHED`/`SUCCESS`, confirm and stop.
+The user rarely opens the Expo dashboard. A failed EAS build or submit/review job can sit silently until users complain about a stale version. After every stable release, set up a long-delay babysit that re-checks GitHub Actions, EAS builds, and the EAS `Release Mobile` workflow for the release tag. If any build is `ERRORED`/`CANCELED`, any workflow is `FAILURE`, or any required submit/review job fails, surface it immediately. If all builds are `FINISHED` and all required submit/review jobs are `SUCCESS`, confirm and stop.
 
-**Use a heartbeat schedule, never a new-agent schedule.** Babysitting fires back into the current conversation as a wake-up prompt — `target: "self"` in `mcp__paseo__create_schedule`. Never use `target: "new-agent"`. A new agent spawns a fresh conversation the user has to find and read; a heartbeat surfaces the build status inline in the conversation that owns the release, where it is impossible to miss. If you find yourself reaching for `new-agent` for a release babysit, you are about to ship a status report into a void.
+**Use `create_heartbeat`, never `create_schedule`, for release babysitting.** Babysitting fires back into the current conversation as a wake-up prompt. `create_schedule` starts a fresh agent the user has to find and read; `create_heartbeat` surfaces the build status inline in the conversation that owns the release, where it is impossible to miss. If you find yourself reaching for `create_schedule` for a release babysit, you are about to ship a status report into a void.
 
 Pattern:
 
 ```jsonc
-// mcp__paseo__create_schedule arguments
+// mcp__paseo__create_heartbeat arguments
 {
   "name": "vX.Y.Z release babysit heartbeat",
-  "every": "15m",
+  "cron": "*/15 * * * *",
   "maxRuns": 8, // covers ~2h of build + store-submission window
-  "target": "self", // heartbeat, NOT "new-agent"
-  "cwd": "/path/to/paseo",
-  "prompt": "Heartbeat: check vX.Y.Z release builds. Run gh run list + eas build:list, report concisely; flag any ERRORED/FAILED/CANCELED.",
+  "prompt": "Heartbeat: check vX.Y.Z release. Run gh run list, eas build:list, eas workflow:runs, and eas workflow:view for the matching Release Mobile run. Report concisely. The release is not done until desktop/APK workflows are green, EAS builds are FINISHED, Android submit_android is SUCCESS, and iOS submit_ios + submit_ios_for_review are SUCCESS. Flag any ERRORED/FAILED/CANCELED/FAILURE loudly.",
 }
 ```
 
-Tight cadence on purpose. The first run fires immediately, giving a near-real-time status check before the conversation closes. Subsequent runs at 15-minute intervals catch transitions quickly: a failed EAS build that errors at +20m should not wait until +50m to surface. Keep the prompt short — the heartbeat is a status probe, not a research task — and have it bail out as soon as everything is green so the remaining runs do not generate noise.
+Tight cadence on purpose. The first run fires immediately, giving a near-real-time status check before the conversation closes. Subsequent runs at 15-minute intervals catch transitions quickly: a failed EAS build or failed App Store review submission at +20m should not wait until +50m to surface. Keep the prompt short — the heartbeat is a status probe, not a research task — and have it bail out as soon as every platform is actually on its store path so the remaining runs do not generate noise.
 
 ## Release notes on GitHub
 
@@ -413,5 +436,9 @@ The changelog covers **stable-to-stable**. Betas are not represented. When you p
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
-- [ ] EAS iOS production build for the same tag completes and submits via Fastlane
-- [ ] EAS Android production build for the same tag completes and auto-submits to the Play Store
+- [ ] EAS `Release Mobile` workflow for the same tag is green
+- [ ] EAS iOS `build_ios` completes for the same tag
+- [ ] EAS iOS `submit_ios` succeeds, uploading the build to App Store Connect/TestFlight
+- [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review
+- [ ] EAS Android `build_android` completes for the same tag
+- [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track

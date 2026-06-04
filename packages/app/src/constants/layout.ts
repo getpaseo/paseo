@@ -13,6 +13,7 @@ export const HEADER_TOP_PADDING_MOBILE = 8;
 
 // Max width for chat content (stream view, input area, new agent form)
 export const MAX_CONTENT_WIDTH = 820;
+export const COMPACT_FORM_FACTOR_WIDTH = 500;
 
 // Desktop app constants for macOS traffic light buttons
 // These buttons (close/minimize/maximize) overlay the top-left corner

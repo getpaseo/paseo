@@ -17,6 +17,7 @@ function buildWorkspacePayload() {
     name: "project",
     archivingAt: null,
     status: "done" as const,
+    statusEnteredAt: null,
     activityAt: null,
     diffStat: null,
     scripts: [],

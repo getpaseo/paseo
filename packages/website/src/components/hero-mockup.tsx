@@ -157,7 +157,6 @@ interface TabDef {
 const TABS: TabDef[] = [
   { name: "Orchestrator", provider: "claude", done: false, active: true },
   { name: "Implement", provider: "codex", done: true },
-  { name: "Review", provider: "claude", done: true },
 ];
 
 // ── Diff data ──────────────────────────────────────────
@@ -424,12 +423,12 @@ function Composer({
   const Icon = provider === "claude" ? ClaudeIcon : CodexIcon;
   return (
     <div className="px-3 pb-3 flex-shrink-0">
-      <div className="bg-mock-surface1 border border-mock-border-accent rounded-2xl px-3 py-2 flex flex-col gap-[10px]">
+      <div className="bg-mock-surface1 border border-mock-border-accent rounded-2xl px-3 py-3 flex flex-col gap-[12px]">
         <div className="flex items-center">
           {focused && (
-            <span className="inline-block w-[1px] h-[13px] bg-mock-fg animate-pulse mr-[1px] flex-shrink-0" />
+            <span className="inline-block w-[1px] h-[14px] bg-mock-fg animate-pulse mr-[1px] flex-shrink-0" />
           )}
-          <span className="text-[11px] text-mock-zinc500 leading-[1.4] select-none whitespace-nowrap overflow-hidden text-ellipsis">
+          <span className="text-[11px] text-mock-fg-muted/40 leading-[1.4] select-none whitespace-nowrap overflow-hidden text-ellipsis">
             Message the agent, tag @files, or use /commands and /skills
           </span>
         </div>
@@ -491,7 +490,7 @@ function SidebarWorkspaceRow({ workspace }: { workspace: SidebarWorkspace }) {
         <div className="relative w-[14px] h-4 flex-shrink-0 flex items-center justify-center">
           <WorkspaceIcon workspace={workspace} />
         </div>
-        <span className="text-[12px] text-mock-fg/[0.76] font-normal truncate flex-1 min-w-0 leading-[1.4]">
+        <span className="text-[10px] text-mock-fg/[0.76] font-normal truncate flex-1 min-w-0 leading-[1.4]">
           {workspace.name}
         </span>
         {workspace.diffStat && (
@@ -628,7 +627,7 @@ function TerminalPane() {
     <div className="flex flex-col flex-1 min-w-0 min-h-0 bg-mock-surface0">
       <div className="flex-1 overflow-hidden px-3 py-2">
         {TERMINAL_LINES.map((line) => (
-          <div key={line.id} className="leading-[1.3]">
+          <div key={line.id} className="leading-[1.15]">
             <code className={`text-[10px] font-mono ${line.cls} whitespace-pre`}>{line.text}</code>
           </div>
         ))}
@@ -825,8 +824,8 @@ function Sidebar() {
 
       {/* Sessions header */}
       <div className="flex items-center gap-2 pl-3 pr-2 py-2 border-b border-mock-border">
-        <MessagesSquare size={16} className="text-mock-fg-muted flex-shrink-0" />
-        <span className="text-sm text-mock-fg-muted">Sessions</span>
+        <MessagesSquare size={14} className="text-mock-fg-muted flex-shrink-0" />
+        <span className="text-[12px] text-mock-fg-muted">Sessions</span>
       </div>
 
       {/* Project list */}
@@ -840,7 +839,7 @@ function Sidebar() {
                   {project.initial}
                 </span>
               </div>
-              <span className="text-[13px] text-mock-fg font-normal truncate flex-1 min-w-0 leading-5">
+              <span className="text-[11px] text-mock-fg font-normal truncate flex-1 min-w-0 leading-5">
                 {project.name}
               </span>
             </div>
@@ -857,7 +856,7 @@ function Sidebar() {
       <div className="flex items-center justify-between pl-3 pr-2 py-3 border-t border-mock-border">
         <div className="flex items-center gap-2 min-w-0 flex-shrink">
           <div className="w-2 h-2 rounded-full bg-mock-green flex-shrink-0" />
-          <span className="text-[13px] text-mock-fg-muted truncate">MacBook Pro</span>
+          <span className="text-[11px] text-mock-fg-muted truncate">MacBook Pro</span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           <div className="w-6 h-6 flex items-center justify-center">

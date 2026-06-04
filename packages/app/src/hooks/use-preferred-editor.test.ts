@@ -20,6 +20,12 @@ describe("resolvePreferredEditorId", () => {
     );
   });
 
+  it("keeps custom script target ids as plain strings", () => {
+    expect(resolvePreferredEditorId(["script:open-in-nvim", "cursor"], "script:open-in-nvim")).toBe(
+      "script:open-in-nvim",
+    );
+  });
+
   it("returns null when no editors are available", () => {
     expect(resolvePreferredEditorId([], "cursor")).toBeNull();
   });

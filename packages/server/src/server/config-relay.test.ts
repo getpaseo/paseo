@@ -83,3 +83,95 @@ describe("daemon relay config", () => {
     expect(config.relayPublicUseTls).toBe(true);
   });
 });
+
+describe("daemon service proxy config", () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("loads public base URL from env before persisted config", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        serviceProxy: {
+          publicBaseUrl: "https://persisted.example.com",
+        },
+      },
+    });
+
+    const config = loadConfig(home, {
+      env: { PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: "https://env.example.com/" },
+    });
+
+    expect(config.serviceProxy).toEqual({
+      publicBaseUrl: "https://env.example.com",
+      standaloneListen: null,
+    });
+  });
+
+  test("does not synthesize a standalone service listener from enabled true", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { serviceProxy: { enabled: true } },
+    });
+
+    expect(loadConfig(home, { env: {} }).serviceProxy).toEqual({
+      publicBaseUrl: null,
+      standaloneListen: null,
+    });
+  });
+
+  test("enabled false suppresses optional service proxy layers only", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        serviceProxy: {
+          enabled: false,
+          listen: "127.0.0.1:9999",
+          publicBaseUrl: "https://persisted.example.com",
+        },
+      },
+    });
+
+    expect(loadConfig(home, { env: {} }).serviceProxy).toEqual({
+      publicBaseUrl: null,
+      standaloneListen: null,
+    });
+  });
+
+  test("rejects invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL values", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    expect(() =>
+      loadConfig(home, {
+        env: { PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: "not-a-url" },
+      }),
+    ).toThrow("Invalid PASEO_SERVICE_PROXY_PUBLIC_BASE_URL: not-a-url");
+  });
+});
+
+describe("daemon worktree root config", () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("resolves relative worktrees.root against PASEO_HOME", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: "custom-worktrees" },
+    });
+
+    expect(loadConfig(home, { env: {} }).worktreesRoot).toBe(path.join(home, "custom-worktrees"));
+  });
+
+  test("keeps absolute worktrees.root absolute", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: path.join(os.tmpdir(), "paseo-custom-worktrees") },
+    });
+
+    expect(loadConfig(home, { env: {} }).worktreesRoot).toBe(
+      path.join(os.tmpdir(), "paseo-custom-worktrees"),
+    );
+  });
+});

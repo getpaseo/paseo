@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
+import { MarkdownTextSpan } from "@/components/markdown-text";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -57,16 +58,21 @@ export function AssistantMarkdownLink({
   );
 
   if (isNative) {
+    // Must be a MarkdownTextSpan, not a plain <Text>: on iOS the link renders
+    // inside the paragraph's native UITextView, and a plain <Text> nested there
+    // is not hoisted into a UITextViewChild, so its text is silently dropped
+    // (the link disappears). The span composes correctly and stays selectable;
+    // onPress is forwarded (reliable tap-to-open on iOS is tracked by #21).
     return (
       <FileLinkHoverTooltip filePath={tooltipPath}>
-        <Text
+        <MarkdownTextSpan
           accessibilityRole="link"
-          dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}
+          monoSurface={monoSurface}
           onPress={onPress}
           style={style}
         >
           {children}
-        </Text>
+        </MarkdownTextSpan>
       </FileLinkHoverTooltip>
     );
   }

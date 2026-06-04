@@ -1,6 +1,29 @@
 # Changelog
 
-## 0.1.88 - 2026-05-31
+## 0.1.89 - 2026-06-02
+
+### Added
+
+- **Open workspace services through public service proxy links** ([#1280](https://github.com/getpaseo/paseo/pull/1280) by [@mcowger](https://github.com/mcowger))
+- **Choose where new worktrees are created** ([#1230](https://github.com/getpaseo/paseo/pull/1230) by [@mcowger](https://github.com/mcowger))
+- **Desktop windows reopen at the same size and position** ([#1224](https://github.com/getpaseo/paseo/pull/1224) by [@everton-dgn](https://github.com/everton-dgn))
+- **Delegated agents can run independently and send recurring heartbeat updates**
+
+### Improved
+
+- Composer controls fit better in narrow panes
+- Fork pull request badges stay visible in worktrees
+- Cline in the ACP catalog is updated to v3
+
+### Fixed
+
+- Archiving a worktree finishes even if teardown hits an error ([#1260](https://github.com/getpaseo/paseo/pull/1260) by [@mcowger](https://github.com/mcowger))
+- iOS chat messages render bold, italics, strikethrough, and line breaks correctly ([#1254](https://github.com/getpaseo/paseo/pull/1254) by [@outofrange-consulting](https://github.com/outofrange-consulting))
+- Right-edge split pane resizing no longer clips ([#1261](https://github.com/getpaseo/paseo/pull/1261) by [@everton-dgn](https://github.com/everton-dgn))
+- Pi extension command output no longer hangs
+- Delegated agents no longer appear in workspace alert counts
+
+## 0.1.88 - 2026-06-01
 
 ### Added
 
@@ -10,12 +33,15 @@
 - **Adjust the interface text size**
 - **Adjust the code text size**
 - **Choose a syntax highlighting theme**
+- **Keep cron schedules aligned to a chosen time zone** ([#1232](https://github.com/getpaseo/paseo/pull/1232) by [@damselem](https://github.com/damselem))
 
 ### Improved
 
 - Settings now has a flatter sidebar with a host picker
 - Workspace tab switching is faster
+- Compact composers now show context usage as a percentage
 - Agent terminals opened in workspace subdirectories now appear with the rest of the workspace terminals
+- macOS displays can idle normally while the desktop app is open ([#1242](https://github.com/getpaseo/paseo/pull/1242) by [@fireblue](https://github.com/fireblue))
 - Large generated diffs now show a clear too-large placeholder instead of trying to render the whole file
 
 ### Fixed
@@ -24,6 +50,7 @@
 - Terminal panes keep the right size after splitting or resizing panes
 - Restored terminal snapshots reflow correctly after the pane size changes
 - Workspace scripts menus keep the right size after launching a service
+- iOS chat messages no longer hide inline links, URLs, or linked file paths ([#1257](https://github.com/getpaseo/paseo/pull/1257) by [@outofrange-consulting](https://github.com/outofrange-consulting))
 
 ## 0.1.87 - 2026-05-30
 

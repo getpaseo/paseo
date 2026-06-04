@@ -35,7 +35,7 @@ describe("deriveSidebarStateBucket", () => {
     ).toBe("attention");
   });
 
-  it("treats initializing agents as done", () => {
+  it("does not count initializing agents as running", () => {
     expect(
       deriveSidebarStateBucket({
         status: "initializing",

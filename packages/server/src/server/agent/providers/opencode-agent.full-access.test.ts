@@ -134,6 +134,7 @@ describe("OpenCode auto_accept feature", () => {
         requestedMode: "full-access",
         featureValues: undefined,
         parent: null,
+        unattended: false,
         availableModes: [
           { id: "build", label: "Build" },
           { id: "plan", label: "Plan" },
@@ -155,12 +156,54 @@ describe("OpenCode auto_accept feature", () => {
           modeId: "bypassPermissions",
           isUnattended: true,
         },
+        unattended: true,
         availableModes: [
           { id: "build", label: "Build" },
           { id: "plan", label: "Plan" },
         ],
       }),
     ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
+  });
+
+  test("defaults unattended creation without a parent to build plus auto accept", () => {
+    const client = new OpenCodeAgentClient(createTestLogger());
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "opencode",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent: null,
+        unattended: true,
+        availableModes: [
+          { id: "build", label: "Build" },
+          { id: "plan", label: "Plan" },
+        ],
+      }),
+    ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
+  });
+
+  test("preserves the selected OpenCode agent when inheriting auto accept from an OpenCode parent", () => {
+    const client = new OpenCodeAgentClient(createTestLogger());
+
+    expect(
+      client.resolveCreateConfig({
+        provider: "opencode",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent: {
+          provider: "opencode",
+          modeId: "paseo-custom",
+          isUnattended: true,
+        },
+        unattended: true,
+        availableModes: [
+          { id: "build", label: "Build" },
+          { id: "plan", label: "Plan" },
+          { id: "paseo-custom", label: "Paseo Custom" },
+        ],
+      }),
+    ).toEqual({ modeId: "paseo-custom", featureValues: { auto_accept: true } });
   });
 
   test("auto-approves tool permissions when auto accept is enabled", async () => {

@@ -50,8 +50,6 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
-  ListAvailableEditorsResponseMessage,
-  OpenInEditorResponseMessage,
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
@@ -77,7 +75,6 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   SendAgentMessageRequest,
-  EditorTargetId,
   PaseoConfigRaw,
   PaseoConfigRevision,
 } from "@getpaseo/protocol/messages";
@@ -641,12 +638,9 @@ export interface RenameTerminalInput {
   title: string;
   requestId?: string;
 }
-type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
-type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
-export type EditorTargetDescriptor = ListAvailableEditorsPayload["editors"][number];
 
 export interface FetchAgentResult {
   agent: AgentSnapshotPayload;
@@ -1528,6 +1522,33 @@ export class DaemonClient {
     });
   }
 
+  async clearWorkspaceAttention(workspaceId: string | string[]): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "workspace.clear_attention.request",
+      workspaceId,
+      requestId,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "workspace.clear_attention.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "Failed to clear workspace attention");
+    }
+  }
+
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -1774,34 +1795,6 @@ export class DaemonClient {
         scriptName,
       },
       responseType: "start_workspace_script_response",
-      timeout: 10000,
-    });
-  }
-
-  async listAvailableEditors(requestId?: string): Promise<ListAvailableEditorsPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "list_available_editors_request",
-      },
-      responseType: "list_available_editors_response",
-      timeout: 10000,
-    });
-  }
-
-  async openInEditor(
-    path: string,
-    editorId: EditorTargetId,
-    requestId?: string,
-  ): Promise<OpenInEditorPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "open_in_editor_request",
-        path,
-        editorId,
-      },
-      responseType: "open_in_editor_response",
       timeout: 10000,
     });
   }

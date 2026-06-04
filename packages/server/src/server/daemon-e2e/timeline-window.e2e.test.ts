@@ -9,6 +9,42 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
 }
 
+async function appendToolLifecycleAcrossCursor(
+  ctx: DaemonTestContext,
+  agentId: string,
+): Promise<void> {
+  await ctx.daemon.daemon.agentManager.appendTimelineItem(agentId, {
+    type: "tool_call",
+    callId: "call_1",
+    name: "shell",
+    status: "running",
+    error: null,
+    detail: {
+      type: "unknown",
+      input: { cmd: "sleep 10" },
+      output: null,
+    },
+  });
+  for (let seq = 2; seq <= 249; seq += 1) {
+    await ctx.daemon.daemon.agentManager.appendTimelineItem(agentId, {
+      type: "assistant_message",
+      text: `background ${seq}`,
+    });
+  }
+  await ctx.daemon.daemon.agentManager.appendTimelineItem(agentId, {
+    type: "tool_call",
+    callId: "call_1",
+    name: "shell",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "unknown",
+      input: { cmd: "sleep 10" },
+      output: { stdout: "done" },
+    },
+  });
+}
+
 describe("daemon E2E - timeline window", () => {
   let ctx: DaemonTestContext;
 
@@ -124,7 +160,7 @@ describe("daemon E2E - timeline window", () => {
       const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "tail",
         limit: 100,
-        projection: "canonical",
+        projection: "projected",
       });
 
       const toolEntries = timeline.entries.filter((entry) => entry.item.type === "tool_call");
@@ -142,46 +178,17 @@ describe("daemon E2E - timeline window", () => {
     }
   });
 
-  test("after fetch returns the full projected tool item for a new lifecycle update", async () => {
+  test("canonical after fetch returns only committed rows after the cursor", async () => {
     const cwd = tmpCwd();
     try {
       const agent = await ctx.client.createAgent({
         provider: "codex",
         cwd,
-        title: "Timeline Tool Catch-up Test",
+        title: "Timeline Canonical Catch-up Test",
         modeId: "full-access",
       });
 
-      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
-        type: "tool_call",
-        callId: "call_1",
-        name: "shell",
-        status: "running",
-        error: null,
-        detail: {
-          type: "unknown",
-          input: { cmd: "sleep 10" },
-          output: null,
-        },
-      });
-      for (let seq = 2; seq <= 249; seq += 1) {
-        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
-          type: "assistant_message",
-          text: `background ${seq}`,
-        });
-      }
-      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
-        type: "tool_call",
-        callId: "call_1",
-        name: "shell",
-        status: "completed",
-        error: null,
-        detail: {
-          type: "unknown",
-          input: { cmd: "sleep 10" },
-          output: { stdout: "done" },
-        },
-      });
+      await appendToolLifecycleAcrossCursor(ctx, agent.id);
 
       const baseline = await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "tail",
@@ -194,6 +201,43 @@ describe("daemon E2E - timeline window", () => {
         projection: "canonical",
       });
 
+      expect(timeline.projection).toBe("canonical");
+      expect(timeline.entries).toHaveLength(1);
+      expect(timeline.startCursor?.seq).toBe(250);
+      expect(timeline.endCursor?.seq).toBe(250);
+      expect(timeline.entries[0]?.seqStart).toBe(250);
+      expect(timeline.entries[0]?.seqEnd).toBe(250);
+      expect(timeline.entries[0]?.sourceSeqRanges).toEqual([{ startSeq: 250, endSeq: 250 }]);
+      expect(timeline.entries[0]?.item.type).toBe("tool_call");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("projected after fetch returns the full projected tool item for a new lifecycle update", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Timeline Tool Catch-up Test",
+        modeId: "full-access",
+      });
+
+      await appendToolLifecycleAcrossCursor(ctx, agent.id);
+
+      const baseline = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        limit: 0,
+      });
+      const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: baseline.epoch, seq: 249 },
+        limit: 100,
+        projection: "projected",
+      });
+
+      expect(timeline.projection).toBe("projected");
       expect(timeline.entries).toHaveLength(1);
       expect(timeline.startCursor?.seq).toBe(250);
       expect(timeline.endCursor?.seq).toBe(250);
@@ -313,6 +357,45 @@ describe("daemon E2E - timeline window", () => {
           ([, options]) => options?.direction === "tail" && options.limit === 0,
         ),
       ).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("projected empty after fetch preserves older history availability", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Timeline Empty After HasOlder Test",
+        modeId: "full-access",
+      });
+      for (let seq = 1; seq <= 160; seq += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `row ${seq}`,
+        });
+      }
+
+      const tail = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        limit: 100,
+        projection: "projected",
+      });
+      expect(tail.hasOlder).toBe(true);
+      expect(tail.startCursor?.seq).toBe(61);
+      expect(tail.endCursor?.seq).toBe(160);
+
+      const after = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: tail.epoch, seq: tail.endCursor?.seq ?? 160 },
+        limit: 100,
+        projection: "projected",
+      });
+
+      expect(after.entries).toHaveLength(0);
+      expect(after.hasOlder).toBe(true);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

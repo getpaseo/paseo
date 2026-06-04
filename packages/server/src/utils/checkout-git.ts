@@ -19,7 +19,7 @@ import {
 } from "../services/github-service.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
-import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
+import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import { readPaseoWorktreeMetadata } from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
@@ -779,6 +779,7 @@ export interface MergeFromBaseOptions {
 
 export interface CheckoutContext {
   paseoHome?: string;
+  worktreesRoot?: string;
   logger?: Pick<Logger, "trace">;
   facts?: CheckoutSnapshotFacts | null;
 }
@@ -801,7 +802,6 @@ export type CheckoutSnapshotFacts =
       comparisonBaseRef: string | null;
       branchRemoteName: string | null;
       branchMergeRef: string | null;
-      trackedOriginBranch: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
@@ -882,6 +882,7 @@ export async function getMainRepoRoot(cwd: string): Promise<string> {
 async function getMainRepoRootFromCommonDir(
   cwd: string,
   commonDir: string | null,
+  context?: CheckoutContext,
 ): Promise<string> {
   if (!commonDir) {
     throw new Error("Not in a git repository");
@@ -897,7 +898,14 @@ async function getMainRepoRootFromCommonDir(
     envOverlay: READ_ONLY_GIT_ENV,
   });
   const worktrees = parseWorktreeList(worktreeOut);
-  const nonBareNonPaseo = worktrees.filter((wt) => !wt.isBare && !isPaseoWorktreePath(wt.path));
+  const nonBareNonPaseo = worktrees.filter(
+    (wt) =>
+      !wt.isBare &&
+      !isPaseoWorktreePath(wt.path, {
+        paseoHome: context?.paseoHome,
+        worktreesRoot: context?.worktreesRoot,
+      }),
+  );
   const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => isDescendantPath(wt.path, normalized));
   const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
   return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
@@ -909,8 +917,14 @@ export interface GitWorktreeEntry {
   isBare?: boolean;
 }
 
-/** Check whether a path contains a `.paseo/worktrees/` segment (both `/` and `\`). */
-export function isPaseoWorktreePath(p: string): boolean {
+/** Check whether a path is under Paseo's worktree root. */
+export function isPaseoWorktreePath(
+  p: string,
+  options?: { paseoHome?: string; worktreesRoot?: string },
+): boolean {
+  if (options?.worktreesRoot || options?.paseoHome) {
+    return isDescendantPath(p, resolvePaseoWorktreesBaseRoot(options));
+  }
   return /[/\\]\.paseo[/\\]worktrees[/\\]/.test(p);
 }
 
@@ -1008,7 +1022,10 @@ async function getPaseoWorktreeForCwd(
     return { isPaseoOwnedWorktree: false };
   }
 
-  const ownership = await isPaseoOwnedWorktreeCwd(cwd, { paseoHome: context?.paseoHome });
+  const ownership = await isPaseoOwnedWorktreeCwd(cwd, {
+    paseoHome: context?.paseoHome,
+    worktreesRoot: context?.worktreesRoot,
+  });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };
   }
@@ -1389,57 +1406,46 @@ async function getAheadBehind(
 async function getAheadOfOrigin(
   cwd: string,
   currentBranch: string,
-  baseRef: string | null,
   context?: CheckoutContext,
 ): Promise<number | null> {
   if (!currentBranch) {
     return null;
   }
-  const trackedOriginBranch = await getTrackedOriginBranch(cwd, currentBranch, context);
-  const originBranch = trackedOriginBranch ?? currentBranch;
+  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
+  if (!upstreamRef) {
+    return null;
+  }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `origin/${originBranch}..${currentBranch}`],
+      ["rev-list", "--count", `${upstreamRef}..${currentBranch}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
     const count = Number.parseInt(stdout.trim(), 10);
     return Number.isNaN(count) ? null : count;
   } catch {
-    if (trackedOriginBranch) {
-      return null;
-    }
-    if (!baseRef || normalizeLocalBranchRefName(baseRef) === currentBranch) {
-      return null;
-    }
-    try {
-      const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef, context);
-      const { stdout } = await runGitCommand(
-        ["rev-list", "--count", `${comparisonBaseRef}..${currentBranch}`],
-        { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-      );
-      const count = Number.parseInt(stdout.trim(), 10);
-      return Number.isNaN(count) ? null : count;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
-async function getTrackedOriginBranch(
+async function getConfiguredUpstreamRef(
   cwd: string,
   currentBranch: string,
   context?: CheckoutContext,
 ): Promise<string | null> {
-  if (context?.facts?.isGit && context.facts.currentBranch === currentBranch) {
-    return context.facts.trackedOriginBranch;
-  }
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
-  if (remoteName !== "origin") {
+  const remoteName =
+    context?.facts?.isGit && context.facts.currentBranch === currentBranch
+      ? context.facts.branchRemoteName
+      : await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
+  if (!remoteName) {
     return null;
   }
 
-  const mergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
-  return parseBranchMergeHeadRef(mergeRef);
+  const mergeRef =
+    context?.facts?.isGit && context.facts.currentBranch === currentBranch
+      ? context.facts.branchMergeRef
+      : await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
+  const upstreamBranch = parseBranchMergeHeadRef(mergeRef);
+  return upstreamBranch ? `${remoteName}/${upstreamBranch}` : null;
 }
 
 async function getBehindOfOrigin(
@@ -1450,9 +1456,13 @@ async function getBehindOfOrigin(
   if (!currentBranch) {
     return null;
   }
+  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
+  if (!upstreamRef) {
+    return null;
+  }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${currentBranch}..origin/${currentBranch}`],
+      ["rev-list", "--count", `${currentBranch}..${upstreamRef}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
     const count = Number.parseInt(stdout.trim(), 10);
@@ -1548,9 +1558,11 @@ export async function getCheckoutSnapshotFacts(
     ? readPaseoWorktreeBaseRef(inspected.paseoWorktree.worktreeRoot)
     : null;
   const resolvedBaseRef = storedBaseRef ?? (await resolveBaseRef(cwd));
-  const mainRepoRoot = await getMainRepoRootFromCommonDir(cwd, inspected.gitCommonDir).catch(
-    () => null,
-  );
+  const mainRepoRoot = await getMainRepoRootFromCommonDir(
+    cwd,
+    inspected.gitCommonDir,
+    context,
+  ).catch(() => null);
   let comparisonBaseRef: string | null = null;
   if (
     resolvedBaseRef &&
@@ -1582,8 +1594,6 @@ export async function getCheckoutSnapshotFacts(
       }
     }
   }
-  const trackedOriginBranch =
-    branchRemoteName === "origin" ? parseBranchMergeHeadRef(branchMergeRef) : null;
   const pullRequestLookupTarget = inspected.currentBranch
     ? buildPullRequestLookupTargetFromBranchConfig({
         currentBranch: inspected.currentBranch,
@@ -1607,7 +1617,6 @@ export async function getCheckoutSnapshotFacts(
     comparisonBaseRef,
     branchRemoteName,
     branchMergeRef,
-    trackedOriginBranch,
     pullRequestLookupTarget,
   };
 }
@@ -1745,7 +1754,7 @@ export async function getCheckoutStatus(
       ? getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
-      ? getAheadOfOrigin(cwd, currentBranch, baseRef, factsContext)
+      ? getAheadOfOrigin(cwd, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
       ? getBehindOfOrigin(cwd, currentBranch, factsContext)

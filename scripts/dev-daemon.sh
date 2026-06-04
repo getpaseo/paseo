@@ -22,4 +22,8 @@ echo "════════════════════════�
 export PASEO_CORS_ORIGINS="${PASEO_CORS_ORIGINS:-*}"
 export PASEO_NODE_INSPECT="${PASEO_NODE_INSPECT:---inspect=0}"
 
+if [ "${PASEO_SKIP_DEV_SERVER_BUILD:-0}" = "1" ]; then
+  exec npm run dev:server:watch
+fi
+
 exec npm run dev:server

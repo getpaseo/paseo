@@ -391,12 +391,30 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
   return (SETTINGS_SECTION_SLUGS as readonly string[]).includes(value);
 }
 
-export const HOST_SECTION_SLUGS = ["connections", "orchestration", "providers", "daemon"] as const;
+export const HOST_SECTION_SLUGS = [
+  "connections",
+  "agents",
+  "workspaces",
+  "providers",
+  "host",
+] as const;
 
 export type HostSectionSlug = (typeof HOST_SECTION_SLUGS)[number];
 
+const LEGACY_HOST_SECTION_SLUGS: Record<string, HostSectionSlug> = {
+  orchestration: "agents",
+  daemon: "host",
+};
+
 export function isHostSectionSlug(value: string): value is HostSectionSlug {
   return (HOST_SECTION_SLUGS as readonly string[]).includes(value);
+}
+
+export function normalizeHostSectionSlug(value: string): HostSectionSlug | null {
+  if (isHostSectionSlug(value)) {
+    return value;
+  }
+  return LEGACY_HOST_SECTION_SLUGS[value] ?? null;
 }
 
 export function buildSettingsRoute() {

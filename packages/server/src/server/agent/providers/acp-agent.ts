@@ -929,6 +929,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private readonly messageAssemblies = new Map<string, MessageAssemblyState>();
+  private readonly submittedUserMessageIds = new Set<string>();
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
@@ -957,8 +958,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
-  private suppressUserEchoMessageId: string | null = null;
-  private suppressUserEchoText: string | null = null;
   private bootstrapThreadEventPending = false;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
@@ -1066,7 +1065,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async startTurn(
     prompt: AgentPromptInput,
-    _options?: AgentRunOptions,
+    options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
@@ -1079,12 +1078,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const turnId = randomUUID();
-    const messageId = randomUUID();
+    const messageId = options?.messageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
-    this.suppressUserEchoMessageId = messageId;
-    this.suppressUserEchoText = extractPromptText(prompt);
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+    this.emitSubmittedUserMessage(prompt, messageId, turnId);
 
     void this.connection
       .prompt({
@@ -1945,12 +1943,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         if (!item) {
           return [];
         }
-        const shouldSuppress =
-          this.suppressUserEchoMessageId &&
-          update.messageId === this.suppressUserEchoMessageId &&
-          this.suppressUserEchoText &&
-          item.text === this.suppressUserEchoText;
-        if (shouldSuppress) {
+        if (update.messageId && this.submittedUserMessageIds.has(update.messageId)) {
           return [];
         }
         return [this.wrapTimeline(item)];
@@ -2154,6 +2147,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  private emitSubmittedUserMessage(
+    prompt: AgentPromptInput,
+    messageId: string,
+    turnId: string,
+  ): void {
+    const text = extractPromptText(prompt);
+    if (text.trim().length === 0) {
+      return;
+    }
+    this.submittedUserMessageIds.add(messageId);
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: { type: "user_message", text, messageId },
+    });
+  }
+
   private runtimeInfo(): AgentRuntimeInfo {
     return {
       provider: this.provider,
@@ -2172,8 +2183,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.activeForegroundTurnId = null;
-    this.suppressUserEchoMessageId = null;
-    this.suppressUserEchoText = null;
     this.pushEvent(event);
   }
 

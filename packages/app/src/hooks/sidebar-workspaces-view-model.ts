@@ -17,6 +17,7 @@ export interface SidebarWorkspaceEntry {
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   statusBucket: SidebarStateBucket;
+  statusEnteredAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
@@ -50,6 +51,7 @@ function createStructuralWorkspaceEntry(input: {
     workspaceKind: "checkout",
     name: input.workspaceId,
     statusBucket: "done",
+    statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,
     prHint: null,

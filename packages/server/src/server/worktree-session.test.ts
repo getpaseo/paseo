@@ -107,7 +107,7 @@ function createWorkflowForRequestTest(options: {
         sessionLogger: createLogger(),
         terminalManager: null,
         archiveWorkspaceRecord: async () => {},
-        scriptRouteStore: null,
+        serviceProxy: null,
         scriptRuntimeStore: null,
         getDaemonTcpPort: null,
         getDaemonTcpHost: null,
@@ -416,7 +416,7 @@ describe("create-agent worktree setup boundary", () => {
           sessionLogger: createLogger(),
           terminalManager: null,
           archiveWorkspaceRecord: async () => {},
-          scriptRouteStore: null,
+          serviceProxy: null,
           scriptRuntimeStore: null,
           getDaemonTcpPort: null,
           getDaemonTcpHost: null,
@@ -1935,8 +1935,20 @@ describe("archivePaseoWorktree", () => {
     });
   });
 
-  test("clears archiving state and leaves workspace records active when worktree delete fails", async () => {
-    const { tempDir, repoDir } = createGitRepo();
+  test("archives the workspace record even when the teardown script fails", async () => {
+    const teardownLogPath = isPlatform("win32")
+      ? 'Set-Content -Path (Join-Path $env:PASEO_SOURCE_CHECKOUT_PATH "teardown-start.log") -Value "started"'
+      : 'echo "started" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-start.log"';
+    const failingTeardownCommand = isPlatform("win32")
+      ? 'Write-Error "boom"; exit 9'
+      : "echo boom 1>&2; exit 9";
+    const { tempDir, repoDir } = createGitRepo({
+      paseoConfig: {
+        worktree: {
+          teardown: [teardownLogPath, failingTeardownCommand],
+        },
+      },
+    });
     cleanupPaths.push(tempDir);
 
     const paseoHome = path.join(tempDir, ".paseo");
@@ -1949,12 +1961,21 @@ describe("archivePaseoWorktree", () => {
       paseoHome,
     });
     const archivingByWorkspaceId = new Map<string, string>();
-    const emittedUpdates: Array<{
-      kind: "upsert";
-      workspaceId: string;
-      archivingAt: string | null;
-    }> = [];
-    const archiveWorkspaceRecord = vi.fn(async () => {});
+    const archivedWorkspaceIds = new Set<string>();
+    const emittedUpdates: Array<
+      | {
+          kind: "upsert";
+          workspaceId: string;
+          archivingAt: string | null;
+        }
+      | {
+          kind: "remove";
+          workspaceId: string;
+        }
+    > = [];
+    const archiveWorkspaceRecord = vi.fn(async (workspaceId: string) => {
+      archivedWorkspaceIds.add(workspaceId);
+    });
 
     await expect(
       archivePaseoWorktree(
@@ -1973,6 +1994,13 @@ describe("archivePaseoWorktree", () => {
           archiveWorkspaceRecord,
           emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async (workspaceIds: Iterable<string>) => {
             for (const workspaceId of workspaceIds) {
+              if (archivedWorkspaceIds.has(workspaceId)) {
+                emittedUpdates.push({
+                  kind: "remove",
+                  workspaceId,
+                });
+                continue;
+              }
               emittedUpdates.push({
                 kind: "upsert",
                 workspaceId,
@@ -1996,23 +2024,23 @@ describe("archivePaseoWorktree", () => {
         },
         {
           targetPath: created.worktreePath,
-          repoRoot: null,
+          repoRoot: repoDir,
           requestId: "req-archive-delete-fails",
         },
       ),
-    ).rejects.toThrow("cwd or worktreesRoot is required to delete a Paseo worktree");
+    ).rejects.toThrow("Worktree teardown command failed");
 
     expect(existsSync(created.worktreePath)).toBe(true);
-    expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
+    expect(existsSync(path.join(repoDir, "teardown-start.log"))).toBe(true);
+    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(created.worktreePath);
     expect(emittedUpdates[0]).toEqual({
       kind: "upsert",
       workspaceId: created.worktreePath,
       archivingAt: expect.any(String),
     });
     expect(emittedUpdates.at(-1)).toEqual({
-      kind: "upsert",
+      kind: "remove",
       workspaceId: created.worktreePath,
-      archivingAt: null,
     });
   });
 

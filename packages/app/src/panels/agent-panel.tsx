@@ -22,7 +22,7 @@ import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
@@ -36,6 +36,7 @@ import {
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -1317,7 +1318,11 @@ function ActiveAgentComposer({
   onMessageSent: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
+    COMPACT_FORM_FACTOR_WIDTH,
+    { initialIsBelow: isCompactFormFactor },
+  );
   const paneContext = usePaneContext();
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();
@@ -1355,14 +1360,14 @@ function ActiveAgentComposer({
       };
       openFileExplorerForCheckout({
         checkout,
-        isCompact,
+        isCompact: isCompactFormFactor,
       });
       setExplorerTabForCheckout({
         ...checkout,
         tab: "changes",
       });
     },
-    [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
+    [isCompactFormFactor, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
   );
 
   const handleClientSlashCommand = useCallback(
@@ -1414,14 +1419,19 @@ function ActiveAgentComposer({
 
   const composerFooter = useMemo(
     () =>
-      isCompact ? (
-        <AgentModeControl serverId={serverId} agentId={agentId} placement="footer" />
+      isCompactComposerLayout ? (
+        <AgentModeControl
+          serverId={serverId}
+          agentId={agentId}
+          placement="footer"
+          isCompactLayout={isCompactComposerLayout}
+        />
       ) : undefined,
-    [isCompact, serverId, agentId],
+    [isCompactComposerLayout, serverId, agentId],
   );
 
   return (
-    <ReanimatedAnimated.View style={inputAreaStyle}>
+    <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
@@ -1449,6 +1459,7 @@ function ActiveAgentComposer({
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
         footer={composerFooter}
+        isCompactLayout={isCompactComposerLayout}
       />
     </ReanimatedAnimated.View>
   );

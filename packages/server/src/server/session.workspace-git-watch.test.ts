@@ -2,10 +2,11 @@ import { describe, expect, test, vi } from "vitest";
 import path from "node:path";
 import type pino from "pino";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
-import { ScriptRouteStore } from "./script-proxy.js";
+import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { Session, type SessionOptions } from "./session.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
+import { createTestLogger } from "../test-utils/test-logger.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
   WorkspaceGitListener,
@@ -102,7 +103,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     oldBranch: string | null,
     newBranch: string | null,
   ) => void;
-  scriptRouteStore?: ScriptRouteStore;
+  serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
 }): {
   session: Session;
@@ -234,7 +235,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     tts: null,
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
-    scriptRouteStore: options?.scriptRouteStore,
+    serviceProxy: options?.serviceProxy,
     scriptRuntimeStore: options?.scriptRuntimeStore,
     onBranchChanged: options?.onBranchChanged,
     getDaemonTcpPort: () => 6767,
@@ -425,12 +426,12 @@ describe("workspace git watch targets", () => {
   });
 
   test("updates running service script URLs when the git branch changes", async () => {
-    const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
-      hostname: "app.old-branch.paseo.localhost",
+    const serviceProxy = createServiceProxySubsystem({ logger: createTestLogger() });
+    serviceProxy.registerWorkspaceService({
       port: 4321,
       workspaceId: "ws-10",
       projectSlug: "paseo",
+      branchName: "old-branch",
       scriptName: "app",
     });
     const runtimeStore = new WorkspaceScriptRuntimeStore();
@@ -444,12 +445,12 @@ describe("workspace git watch targets", () => {
     });
 
     const handleBranchChange = createBranchChangeRouteHandler({
-      routeStore,
+      serviceProxy,
       onRoutesChanged: vi.fn(),
     });
     const { session, projects, workspaces, subscriptions } = createSessionForWorkspaceGitWatchTests(
       {
-        scriptRouteStore: routeStore,
+        serviceProxy,
         scriptRuntimeStore: runtimeStore,
         onBranchChanged: handleBranchChange,
       },
@@ -474,18 +475,19 @@ describe("workspace git watch targets", () => {
       }),
     );
 
-    expect(routeStore.listRoutesForWorkspace("ws-10")).toEqual([
+    expect(serviceProxy.getWorkspaceHealthTargets("ws-10")).toEqual([
       expect.objectContaining({
-        hostname: "app.new-branch.paseo.localhost",
-        projectSlug: "paseo",
+        hostname: "app--new-branch--paseo.localhost",
         scriptName: "app",
       }),
     ]);
     expect(sessionAny.buildWorkspaceScriptPayloadSnapshot("ws-10", "/tmp/repo")).toEqual([
       expect.objectContaining({
         scriptName: "app",
-        hostname: "app.new-branch.paseo.localhost",
-        proxyUrl: "http://app.new-branch.paseo.localhost:6767",
+        hostname: "app--new-branch--paseo.localhost",
+        localProxyUrl: "http://app--new-branch--paseo.localhost:6767",
+        publicProxyUrl: null,
+        proxyUrl: "http://app--new-branch--paseo.localhost:6767",
       }),
     ]);
 

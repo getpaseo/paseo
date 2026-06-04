@@ -63,6 +63,18 @@ describe("PersistedConfigSchema daemon relay config", () => {
   });
 });
 
+describe("PersistedConfigSchema worktrees config", () => {
+  test("accepts optional worktree root", () => {
+    const parsed = PersistedConfigSchema.parse({
+      worktrees: {
+        root: "/mnt/fast/paseo-worktrees",
+      },
+    });
+
+    expect(parsed.worktrees?.root).toBe("/mnt/fast/paseo-worktrees");
+  });
+});
+
 describe("PersistedConfigSchema daemon append system prompt", () => {
   test("accepts optional append system prompt", () => {
     const parsed = PersistedConfigSchema.parse({

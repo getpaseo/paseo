@@ -642,6 +642,7 @@ export interface GitHubService {
   retainCurrentPullRequestStatusPoll?(options: {
     cwd: string;
     headRef: string;
+    headRepositoryOwner?: string;
     onStatus?: (status: GitHubCurrentPullRequestStatus | null) => void;
     onError?: (error: unknown) => void;
   }): { unsubscribe: () => void };
@@ -720,6 +721,7 @@ interface InFlightCacheEntry {
 interface GitHubPollTarget {
   cwd: string;
   headRef: string;
+  headRepositoryOwner?: string;
   retainCount: number;
   timer: NodeJS.Timeout | null;
   latestStatus: GitHubCurrentPullRequestStatus | null;
@@ -813,17 +815,25 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     }
   }
 
-  function getPollTargetKey(target: { cwd: string; headRef: string }): string {
+  function getPollTargetKey(target: {
+    cwd: string;
+    headRef: string;
+    headRepositoryOwner?: string;
+  }): string {
     return buildCacheKey({
       cwd: target.cwd,
       method: "getCurrentPullRequestStatus",
-      args: { headRef: target.headRef },
+      args: {
+        headRef: target.headRef,
+        headRepositoryOwner: target.headRepositoryOwner,
+      },
     });
   }
 
   function updatePollTargetAfterSuccess(update: {
     cwd: string;
     headRef: string;
+    headRepositoryOwner?: string;
     status: GitHubCurrentPullRequestStatus | null;
     notify: boolean;
   }): void {
@@ -872,6 +882,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       await api.getCurrentPullRequestStatus({
         cwd: target.cwd,
         headRef: target.headRef,
+        headRepositoryOwner: target.headRepositoryOwner,
         reason: "self-heal-github",
       });
     } catch (error) {
@@ -1027,6 +1038,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         updatePollTargetAfterSuccess({
           cwd: input.cwd,
           headRef: input.headRef,
+          headRepositoryOwner: input.headRepositoryOwner,
           status,
           notify: input.reason === "self-heal-github",
         });
@@ -1241,6 +1253,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         target = {
           cwd: input.cwd,
           headRef: input.headRef,
+          headRepositoryOwner: input.headRepositoryOwner,
           retainCount: 0,
           timer: null,
           latestStatus: null,

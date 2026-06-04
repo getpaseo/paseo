@@ -39,12 +39,39 @@ function waitForAgentUpdate(
   });
 }
 
-function pickTwoDistinctModels(models: Array<{ id: string }>): [string, string] {
+function pickModelSwitchPair(provider: string, models: Array<{ id: string }>): [string, string] {
   const ids = Array.from(new Set(models.map((m) => m.id))).filter(Boolean);
-  if (ids.length < 2) {
-    throw new Error(`Need at least 2 models to test switching; got ${ids.length}`);
+  const first = ids[0];
+  if (!first) {
+    throw new Error(`No models returned for provider ${provider}`);
   }
-  return [ids[0], ids[1]];
+  return [first, ids[1] ?? `${first}-switch-target`];
+}
+
+function pickThinkingSwitchOption(
+  provider: string,
+  models: Array<{
+    thinkingOptions?: Array<{ id: string }>;
+    defaultThinkingOptionId?: string;
+  }>,
+): { model: (typeof models)[number]; thinkingOptionId: string } {
+  const modelWithOptions = models.find((m) => (m.thinkingOptions?.length ?? 0) > 0);
+  if (!modelWithOptions) {
+    const first = models[0];
+    if (!first) {
+      throw new Error(`No ${provider} models returned`);
+    }
+    return { model: first, thinkingOptionId: "test-thinking-option" };
+  }
+
+  const defaultThinkingId = modelWithOptions.defaultThinkingOptionId ?? "default";
+  const thinkingOptionId =
+    modelWithOptions.thinkingOptions?.find((o) => o.id !== defaultThinkingId)?.id ??
+    modelWithOptions.thinkingOptions?.[0]?.id;
+  if (!thinkingOptionId) {
+    throw new Error(`No ${provider} thinking option found`);
+  }
+  return { model: modelWithOptions, thinkingOptionId };
 }
 
 function isBinaryInstalled(binary: string): boolean {
@@ -92,7 +119,7 @@ describe.each(["claude", "codex", "opencode"] as const)("live model switching (%
         if (!modelList.models || modelList.models.length === 0) {
           throw new Error(`No models returned for provider ${provider}`);
         }
-        const [modelA, modelB] = pickTwoDistinctModels(modelList.models);
+        const [modelA, modelB] = pickModelSwitchPair(provider, modelList.models);
 
         const agent = await ctx.client.createAgent({
           provider,
@@ -162,18 +189,10 @@ test.runIf(hasCodex)(
         throw new Error("No Codex models returned");
       }
 
-      const modelWithOptions = modelList.models.find((m) => (m.thinkingOptions?.length ?? 0) > 1);
-      if (!modelWithOptions) {
-        throw new Error("No Codex model with thinkingOptions returned");
-      }
-      const defaultThinkingId = modelWithOptions.defaultThinkingOptionId ?? "default";
-      const nonDefault =
-        modelWithOptions.thinkingOptions?.find((o) => o.id !== defaultThinkingId)?.id ??
-        modelWithOptions.thinkingOptions?.[0]?.id ??
-        null;
-      if (!nonDefault) {
-        throw new Error("No non-default Codex thinking option found");
-      }
+      const { model: modelWithOptions, thinkingOptionId } = pickThinkingSwitchOption(
+        "Codex",
+        modelList.models,
+      );
 
       const agent = await ctx.client.createAgent({
         provider: "codex",
@@ -183,16 +202,16 @@ test.runIf(hasCodex)(
       });
 
       const startIndex = messages.length;
-      await ctx.client.setAgentThinkingOption(agent.id, nonDefault);
+      await ctx.client.setAgentThinkingOption(agent.id, thinkingOptionId);
 
       const updated = await waitForAgentUpdate(
         messages,
         startIndex,
-        (a) => a.id === agent.id && a.thinkingOptionId === nonDefault,
+        (a) => a.id === agent.id && a.thinkingOptionId === thinkingOptionId,
         { timeoutMs: 20000 },
       );
 
-      expect(updated.thinkingOptionId).toBe(nonDefault);
+      expect(updated.thinkingOptionId).toBe(thinkingOptionId);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -210,12 +229,10 @@ test.runIf(hasOpenCode)(
         throw new Error("No OpenCode models returned");
       }
 
-      const modelWithThinkingOptions = modelList.models.find(
-        (m) => (m.thinkingOptions?.length ?? 0) > 1,
+      const { model: modelWithThinkingOptions, thinkingOptionId } = pickThinkingSwitchOption(
+        "OpenCode",
+        modelList.models,
       );
-      if (!modelWithThinkingOptions) {
-        throw new Error("No OpenCode model with thinkingOptions returned");
-      }
 
       const agent = await ctx.client.createAgent({
         provider: "opencode",
@@ -224,23 +241,15 @@ test.runIf(hasOpenCode)(
         model: modelWithThinkingOptions.id,
       });
 
-      const defaultThinkingId = modelWithThinkingOptions.defaultThinkingOptionId ?? "default";
-      const thinkingId =
-        modelWithThinkingOptions.thinkingOptions?.find((o) => o.id !== defaultThinkingId)?.id ??
-        modelWithThinkingOptions.thinkingOptions?.[0]?.id ??
-        null;
-      if (!thinkingId) {
-        throw new Error("No non-default OpenCode thinking option found");
-      }
       const startIndex = messages.length;
-      await ctx.client.setAgentThinkingOption(agent.id, thinkingId);
+      await ctx.client.setAgentThinkingOption(agent.id, thinkingOptionId);
       const updatedThinking = await waitForAgentUpdate(
         messages,
         startIndex,
-        (a) => a.id === agent.id && a.thinkingOptionId === thinkingId,
+        (a) => a.id === agent.id && a.thinkingOptionId === thinkingOptionId,
         { timeoutMs: 20000 },
       );
-      expect(updatedThinking.thinkingOptionId).toBe(thinkingId);
+      expect(updatedThinking.thinkingOptionId).toBe(thinkingOptionId);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

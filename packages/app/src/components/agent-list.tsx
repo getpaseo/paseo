@@ -324,7 +324,7 @@ export function AgentList({
 
   const handleAgentLongPress = useCallback(
     (agent: AggregatedAgent) => {
-      const isRunning = agent.status === "running" || agent.status === "initializing";
+      const isRunning = agent.status === "running";
       if (isRunning) {
         setActionAgent(agent);
         return;
