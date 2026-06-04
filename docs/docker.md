@@ -85,20 +85,21 @@ assigns them to the `paseo` user. Codex expects `CODEX_HOME` to exist before
 launch, so an empty fresh `/home/paseo` volume is still valid.
 
 To use a different persistent home, set `PASEO_HOME` and mount the same
-container path. For example, to keep the old `/config` layout:
+container path. For example, to store daemon state in a dedicated Docker volume:
 
 ```bash
+docker volume create paseo-state
 docker run -d --name paseo \
   -p 6767:6767 \
   -e PASEO_PASSWORD=change-me \
-  -e PASEO_HOME=/config \
-  -v "$PWD/paseo-config:/config" \
+  -e PASEO_HOME=/var/lib/paseo \
+  -v paseo-state:/var/lib/paseo \
   -v "$PWD:/workspace" \
   ghcr.io/getpaseo/paseo:debian
 ```
 
-There is no automatic fallback for existing `/config` deployments. If you mount
-`/config`, also set `PASEO_HOME=/config`; otherwise Paseo uses `/home/paseo`.
+If `PASEO_HOME` is set, the mounted container path must match it; otherwise
+Paseo uses `/home/paseo`.
 
 Set `PUID`/`PGID` to the uid/gid that owns the bind-mounted folders on the host
 (`id -u` / `id -g`) so the daemon and agents can read and write your files.

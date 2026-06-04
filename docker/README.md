@@ -28,8 +28,7 @@ Then point the Paseo app/CLI at `http://<host>:6767`.
 
 The default persistent home is `/home/paseo`. To use another path, set
 `PASEO_HOME` and mount that same path, for example
-`-e PASEO_HOME=/config -v "$PWD/paseo-config:/config"`. Existing `/config`
-deployments must opt in this way; the image does not fall back automatically.
+`-e PASEO_HOME=/var/lib/paseo -v paseo-state:/var/lib/paseo`.
 
 On startup the container prints a pairing QR code and link to its logs once the
 daemon is listening — run `docker logs paseo` and scan it with the Paseo app.

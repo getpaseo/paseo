@@ -32,7 +32,7 @@ services:
       # PASEO_ENABLE_SUDO: "true"
 
       # Optional: move the persistent home. If set, add a matching volume below.
-      # PASEO_HOME: "/config"
+      # PASEO_HOME: "/var/lib/paseo"
 
       # Allow extra hostnames if you reach the daemon by DNS name (IPs and
       # localhost are always allowed). Comma-separated, or "true" for any.
@@ -45,9 +45,12 @@ services:
     volumes:
       # Persistent state + agent auth/config (config.json, agents/, ~/.claude, ...).
       - ./paseo-home:/home/paseo
-      # If using PASEO_HOME=/config above, mount that path instead:
-      # - ./paseo-config:/config
+      # If using PASEO_HOME=/var/lib/paseo above, mount that path instead:
+      # - paseo-state:/var/lib/paseo
       # The code Paseo works on. Bind-mount one or more of your repos.
       - ./workspace:/workspace
       # Example: mount a specific host project read-write.
       # - /home/me/projects/my-app:/workspace/my-app
+
+# volumes:
+#   paseo-state:
