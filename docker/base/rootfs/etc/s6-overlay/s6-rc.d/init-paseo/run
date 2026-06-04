@@ -1,5 +1,5 @@
 #!/command/with-contenv bash
-# Seed the /config volume and align the paseo user with the host volume owner.
+# Seed PASEO_HOME and align the paseo user with the host volume owner.
 set -euo pipefail
 
 PUID="${PUID:-911}"
@@ -26,8 +26,25 @@ case "$(printf '%s' "${PASEO_ENABLE_SUDO:-}" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 
-PASEO_HOME="${PASEO_HOME:-/config}"
+DEFAULT_PASEO_HOME="/home/paseo"
+PASEO_HOME="${PASEO_HOME:-$DEFAULT_PASEO_HOME}"
 mkdir -p "$PASEO_HOME"
+
+home_scoped_dir() {
+  local name="$1"
+  local suffix="$2"
+  local image_default="${DEFAULT_PASEO_HOME}${suffix}"
+  local value="${!name:-}"
+  if [[ -z "$value" || ( "$PASEO_HOME" != "$DEFAULT_PASEO_HOME" && "$value" == "$image_default" ) ]]; then
+    printf -v "$name" '%s' "${PASEO_HOME}${suffix}"
+  fi
+}
+
+home_scoped_dir CLAUDE_CONFIG_DIR "/.claude"
+home_scoped_dir CODEX_HOME "/.codex"
+home_scoped_dir XDG_CONFIG_HOME "/.config"
+home_scoped_dir XDG_DATA_HOME "/.local/share"
+home_scoped_dir XDG_CACHE_HOME "/.cache"
 
 ensure_paseo_dir() {
   local dir="$1"
@@ -53,12 +70,12 @@ ensure_paseo_dir() {
 }
 
 # Only chown the top level + small paseo-owned config dirs; avoid clobbering a
-# large bind-mounted /config on every boot.
+# large bind-mounted PASEO_HOME on every boot.
 ensure_paseo_dir "$PASEO_HOME" 700
-ensure_paseo_dir "${CLAUDE_CONFIG_DIR:-${PASEO_HOME}/.claude}" 700
-ensure_paseo_dir "${CODEX_HOME:-${PASEO_HOME}/.codex}" 700
-ensure_paseo_dir "${XDG_CONFIG_HOME:-${PASEO_HOME}/.config}" 700
-ensure_paseo_dir "${XDG_DATA_HOME:-${PASEO_HOME}/.local/share}" 700
-ensure_paseo_dir "${XDG_CACHE_HOME:-${PASEO_HOME}/.cache}" 700
+ensure_paseo_dir "$CLAUDE_CONFIG_DIR" 700
+ensure_paseo_dir "$CODEX_HOME" 700
+ensure_paseo_dir "$XDG_CONFIG_HOME" 700
+ensure_paseo_dir "$XDG_DATA_HOME" 700
+ensure_paseo_dir "$XDG_CACHE_HOME" 700
 
-echo "[init] /config ready (PUID=${PUID} PGID=${PGID} home=${PASEO_HOME})"
+echo "[init] PASEO_HOME ready (PUID=${PUID} PGID=${PGID} home=${PASEO_HOME})"

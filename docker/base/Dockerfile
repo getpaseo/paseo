@@ -18,14 +18,14 @@ ARG S6_OVERLAY_VERSION=3.2.0.2
 # Paseo version to install from npm. Defaults to latest; CI pins to the release version.
 ARG PASEO_VERSION=latest
 
-ENV PASEO_HOME=/config \
-    HOME=/config \
+ENV PASEO_HOME=/home/paseo \
+    HOME=/home/paseo \
     PASEO_LISTEN=0.0.0.0:6767 \
-    CLAUDE_CONFIG_DIR=/config/.claude \
-    CODEX_HOME=/config/.codex \
-    XDG_CONFIG_HOME=/config/.config \
-    XDG_DATA_HOME=/config/.local/share \
-    XDG_CACHE_HOME=/config/.cache \
+    CLAUDE_CONFIG_DIR=/home/paseo/.claude \
+    CODEX_HOME=/home/paseo/.codex \
+    XDG_CONFIG_HOME=/home/paseo/.config \
+    XDG_DATA_HOME=/home/paseo/.local/share \
+    XDG_CACHE_HOME=/home/paseo/.cache \
     ONNXRUNTIME_NODE_INSTALL=skip \
     PUID=911 \
     PGID=911 \
@@ -62,10 +62,10 @@ RUN PASEO_VERSION="${PASEO_VERSION}" /tmp/install-paseo.sh && rm -f /tmp/install
 RUN set -eux; \
     if [ -f /etc/alpine-release ]; then \
       addgroup -g 911 paseo; \
-      adduser -D -H -u 911 -G paseo -s /sbin/nologin paseo; \
+      adduser -D -H -h /home/paseo -u 911 -G paseo -s /sbin/nologin paseo; \
     else \
       groupadd -g 911 paseo; \
-      useradd -u 911 -g paseo -M -s /usr/sbin/nologin paseo; \
+      useradd -u 911 -g paseo -d /home/paseo -M -s /usr/sbin/nologin paseo; \
     fi
 
 # s6 service definitions, the docker-mods loader and the daemon launcher.
@@ -81,7 +81,7 @@ RUN set -eux; \
       /etc/s6-overlay/s6-rc.d/svc-paseo-pair/run
 
 EXPOSE 6767
-VOLUME /config
+VOLUME /home/paseo
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "require('net').connect(6767,'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})" || exit 1

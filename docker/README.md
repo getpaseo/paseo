@@ -19,12 +19,17 @@ docker run -d --name paseo \
   -e PASEO_PASSWORD=change-me \
   -e DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code \
   -e ANTHROPIC_API_KEY=sk-ant-... \
-  -v "$PWD/paseo-config:/config" \
+  -v "$PWD/paseo-home:/home/paseo" \
   -v "$PWD:/workspace" \
   ghcr.io/getpaseo/paseo:debian
 ```
 
 Then point the Paseo app/CLI at `http://<host>:6767`.
+
+The default persistent home is `/home/paseo`. To use another path, set
+`PASEO_HOME` and mount that same path, for example
+`-e PASEO_HOME=/config -v "$PWD/paseo-config:/config"`. Existing `/config`
+deployments must opt in this way; the image does not fall back automatically.
 
 On startup the container prints a pairing QR code and link to its logs once the
 daemon is listening — run `docker logs paseo` and scan it with the Paseo app.

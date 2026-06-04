@@ -3,6 +3,10 @@
 # can scan it straight from `docker logs`. Best-effort: never fail the boot.
 set -uo pipefail
 
+: "${PASEO_HOME:=/home/paseo}"
+export PASEO_HOME
+export HOME="$PASEO_HOME"
+
 # Allow opting out: PASEO_PAIRING_QR in {0,false,no,off} skips the QR.
 case "$(printf '%s' "${PASEO_PAIRING_QR:-}" | tr '[:upper:]' '[:lower:]')" in
   0 | false | no | n | off)
@@ -30,7 +34,7 @@ if [[ "$ready" -ne 1 ]]; then
   exit 0
 fi
 
-# Drop to the unprivileged paseo user (owns /config). Never fail the boot.
+# Drop to the unprivileged paseo user (owns PASEO_HOME). Never fail the boot.
 s6-setuidgid paseo paseo daemon pair || \
   echo "[pair] failed to generate pairing QR (relay disabled?); continuing." >&2
 

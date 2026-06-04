@@ -14,7 +14,8 @@ The image sources live in [`docker/`](../docker/).
   vendored [s6-overlay](https://github.com/just-containers/s6-overlay) as PID 1,
   and a small Docker Mods loader.
 - **Boot sequence** (s6 services, in order):
-  1. `init-paseo` — re-maps the `paseo` user to `PUID`/`PGID` and prepares `/config`.
+  1. `init-paseo` — re-maps the `paseo` user to `PUID`/`PGID` and prepares
+     `PASEO_HOME`.
   2. `init-docker-mods` — runs the loader: for each image in `DOCKER_MODS` it
      pulls the layers straight from the registry, extracts them, and runs the
      mod's install hook (`/etc/paseo-mods/<name>/install`).
@@ -50,7 +51,7 @@ docker run -d --name paseo \
   -e PASEO_PASSWORD=change-me \
   -e DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code \
   -e ANTHROPIC_API_KEY=sk-ant-... \
-  -v "$PWD/paseo-config:/config" \
+  -v "$PWD/paseo-home:/home/paseo" \
   -v "$PWD:/workspace" \
   ghcr.io/getpaseo/paseo:debian
 ```
@@ -73,15 +74,31 @@ A `docker compose` deployment is in
 
 ## Volumes
 
-| Mount        | Purpose                                                                                                                                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/config`    | `PASEO_HOME` — `config.json`, `agents/`, `projects/`, `loops/`, logs, **and** agent credentials (`~/.claude`, `~/.codex`, ...). `HOME` is set to `/config`, so everything an agent writes to its home dir persists here. |
-| `/workspace` | The code Paseo operates on. Bind-mount one or more of your repos.                                                                                                                                                        |
+| Mount         | Purpose                                                                                                                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/home/paseo` | Default `PASEO_HOME` and `HOME` — `config.json`, `agents/`, `projects/`, `loops/`, logs, **and** agent credentials (`~/.claude`, `~/.codex`, ...). Everything an agent writes to its home dir persists here when this path is mounted. |
+| `/workspace`  | The code Paseo operates on. Bind-mount one or more of your repos.                                                                                                                                                                      |
 
-On boot, the image creates the small agent config directories under `/config`
-(`.claude`, `.codex`, `.config`, `.local/share`, `.cache`) and assigns them to
-the `paseo` user. Codex expects `CODEX_HOME` to exist before launch, so an empty
-fresh `/config` volume is still valid.
+On boot, the image creates the small agent config directories under
+`PASEO_HOME` (`.claude`, `.codex`, `.config`, `.local/share`, `.cache`) and
+assigns them to the `paseo` user. Codex expects `CODEX_HOME` to exist before
+launch, so an empty fresh `/home/paseo` volume is still valid.
+
+To use a different persistent home, set `PASEO_HOME` and mount the same
+container path. For example, to keep the old `/config` layout:
+
+```bash
+docker run -d --name paseo \
+  -p 6767:6767 \
+  -e PASEO_PASSWORD=change-me \
+  -e PASEO_HOME=/config \
+  -v "$PWD/paseo-config:/config" \
+  -v "$PWD:/workspace" \
+  ghcr.io/getpaseo/paseo:debian
+```
+
+There is no automatic fallback for existing `/config` deployments. If you mount
+`/config`, also set `PASEO_HOME=/config`; otherwise Paseo uses `/home/paseo`.
 
 Set `PUID`/`PGID` to the uid/gid that owns the bind-mounted folders on the host
 (`id -u` / `id -g`) so the daemon and agents can read and write your files.
@@ -111,17 +128,18 @@ binary is already present (e.g. after `docker restart`).
 
 ### Agent credentials
 
-Each agent manages its own auth and stores it under `HOME` (`/config`), so it
-persists across restarts. Provide credentials via env vars or by logging in once:
+Each agent manages its own auth and stores it under `HOME` (`/home/paseo` by
+default), so it persists across restarts. Provide credentials via env vars or by
+logging in once:
 
-- **Claude** — `ANTHROPIC_API_KEY`, or run `claude` once to OAuth; config in `/config/.claude`.
-- **Codex** — `OPENAI_API_KEY`; config in `/config/.codex`.
+- **Claude** — `ANTHROPIC_API_KEY`, or run `claude` once to OAuth; config in `/home/paseo/.claude`.
+- **Codex** — `OPENAI_API_KEY`; config in `/home/paseo/.codex`.
 - **Copilot** — GitHub auth handled by the CLI.
 - **OpenCode** — provider env vars (`OPENAI_API_KEY`, etc.).
-- **Pi** — `/config/.pi/agent/auth.json`.
+- **Pi** — `/home/paseo/.pi/agent/auth.json`.
 
 You can also configure custom providers / API endpoints in
-`/config/config.json` under `agents.providers` — see
+`/home/paseo/config.json` under `agents.providers` — see
 [custom-providers.md](custom-providers.md).
 
 ## Environment variables
@@ -142,7 +160,7 @@ Set `PASEO_PASSWORD` for any daemon reachable beyond localhost.
 
 The image only changes a few container defaults:
 
-- `PASEO_HOME=/config`, matching the persistent volume described above.
+- `PASEO_HOME=/home/paseo`, matching the persistent volume described above.
 - `PASEO_LISTEN=0.0.0.0:6767`, so the daemon is reachable through Docker port
   publishing.
 - `PASEO_LOG_FORMAT=json` in production.
@@ -219,4 +237,4 @@ release tags.
   name; IPs and `localhost` are allowed by default.
 - **Permission errors on your repo** — set `PUID`/`PGID` to match the host owner
   of the bind mount.
-- **Daemon logs** — `docker exec paseo tail -f /config/daemon.log`.
+- **Daemon logs** — `docker exec paseo tail -f /home/paseo/daemon.log`.

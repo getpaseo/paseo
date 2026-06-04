@@ -29,6 +29,9 @@ services:
       # This grants root inside the container; enable only for trusted workspaces.
       # PASEO_ENABLE_SUDO: "true"
 
+      # Optional: move the persistent home. If set, add a matching volume below.
+      # PASEO_HOME: "/config"
+
       # Allow extra hostnames if you reach the daemon by DNS name (IPs and
       # localhost are always allowed). Comma-separated, or "true" for any.
       # PASEO_HOSTNAMES: "paseo.example.com,.lan"
@@ -39,7 +42,9 @@ services:
       # OPENAI_API_KEY: "sk-..."
     volumes:
       # Persistent state + agent auth/config (config.json, agents/, ~/.claude, ...).
-      - ./paseo-config:/config
+      - ./paseo-home:/home/paseo
+      # If using PASEO_HOME=/config above, mount that path instead:
+      # - ./paseo-config:/config
       # The code Paseo works on. Bind-mount one or more of your repos.
       - ./workspace:/workspace
       # Example: mount a specific host project read-write.
