@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
@@ -495,12 +496,35 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
 async function resolveOpenCodeBinary(): Promise<string> {
   const found = await findExecutable("opencode");
-  if (found) {
-    return found;
+  if (!found) {
+    throw new Error(
+      "OpenCode binary not found. Install OpenCode (https://github.com/opencode-ai/opencode) and ensure it is available in your shell PATH.",
+    );
   }
-  throw new Error(
-    "OpenCode binary not found. Install OpenCode (https://github.com/opencode-ai/opencode) and ensure it is available in your shell PATH.",
-  );
+
+  if (process.platform === "win32" && path.extname(found).toLowerCase() === ".cmd") {
+    // Global npm: <prefix>/opencode.cmd → <prefix>/node_modules/opencode-ai/bin/opencode.exe
+    const globalCandidate = path.join(
+      path.dirname(found),
+      "node_modules",
+      "opencode-ai",
+      "bin",
+      "opencode.exe",
+    );
+    if (existsSync(globalCandidate)) return globalCandidate;
+
+    // Local/pnpm: <project>/node_modules/.bin/opencode.cmd → <project>/node_modules/opencode-ai/bin/opencode.exe
+    const localCandidate = path.join(
+      path.dirname(found),
+      "..",
+      "opencode-ai",
+      "bin",
+      "opencode.exe",
+    );
+    if (existsSync(localCandidate)) return localCandidate;
+  }
+
+  return found;
 }
 
 function findAvailablePort(): Promise<number> {
