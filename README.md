@@ -88,6 +88,21 @@ For full setup and configuration, see:
 - [Docs](https://paseo.sh/docs)
 - [Configuration reference](https://paseo.sh/docs/configuration)
 
+### Docker
+
+Run the Paseo daemon headless in Docker:
+
+```bash
+docker run -d --name paseo \
+  -p 6767:6767 \
+  -e PASEO_PASSWORD=change-me \
+  -v "$PWD/paseo-home:/home/paseo" \
+  -v "$PWD:/workspace" \
+  ghcr.io/getpaseo/paseo:debian
+```
+
+Docker starts the daemon only. Configure agents and credentials with environment variables, volumes, and Docker Mods. See the [Docker documentation](docs/docker.md) for full setup details.
+
 ## CLI
 
 Everything you can do in the app, you can do from the terminal.
