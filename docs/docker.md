@@ -129,17 +129,36 @@ binary is already present (e.g. after `docker restart`).
 ### Agent credentials
 
 Each agent manages its own auth and stores it under `HOME` (`/home/paseo` by
-default), so it persists across restarts. Provide credentials via env vars or by
-logging in once:
+default), so it persists across restarts. If you set `PASEO_HOME` to another
+path, the image also moves the default agent config paths under that same home.
+Provide credentials via env vars or by logging in once:
 
-- **Claude** — `ANTHROPIC_API_KEY`, or run `claude` once to OAuth; config in `/home/paseo/.claude`.
-- **Codex** — `OPENAI_API_KEY`; config in `/home/paseo/.codex`.
+- **Claude** — `ANTHROPIC_API_KEY`, or run `claude` once to OAuth; config in `$PASEO_HOME/.claude`.
+- **Codex** — `OPENAI_API_KEY`; config in `$PASEO_HOME/.codex`.
 - **Copilot** — GitHub auth handled by the CLI.
 - **OpenCode** — provider env vars (`OPENAI_API_KEY`, etc.).
-- **Pi** — `/home/paseo/.pi/agent/auth.json`.
+- **Pi** — `$PASEO_HOME/.pi/agent/auth.json`.
+
+For interactive agent auth in Docker, the credential files must exist inside
+the container's `paseo` user home. Either mount the whole persistent home
+(`-v "$PWD/paseo-home:/home/paseo"` by default, or your configured
+`PASEO_HOME` path), or mount the specific agent config/auth directories into
+that home. If you do not mount existing host credentials, run the agent CLI once
+inside the container so it can create them there. You can do that from a Paseo
+Terminal, or from the host with `docker exec`:
+
+```bash
+docker exec -it --user paseo paseo claude
+docker exec -it --user paseo paseo codex
+```
+
+This first-run login step is not needed for providers configured entirely with
+API key environment variables passed to the container, such as
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; those env vars are inherited by the
+daemon and by the agent processes it launches.
 
 You can also configure custom providers / API endpoints in
-`/home/paseo/config.json` under `agents.providers` — see
+`$PASEO_HOME/config.json` under `agents.providers` — see
 [custom-providers.md](custom-providers.md).
 
 ## Environment variables
