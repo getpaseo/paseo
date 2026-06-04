@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, Home, MessagesSquare, Search, Settings, X } from "lucide-react-native";
+import { FolderPlus, Home, MessagesSquare, Plus, Search, Settings, X } from "lucide-react-native";
 import {
   type Dispatch,
   memo,
@@ -66,6 +66,7 @@ import { formatConnectionStatus } from "@/utils/daemons";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import {
   buildHostOpenProjectRoute,
+  buildHostNewWorkspaceRoute,
   buildHostSessionsRoute,
   buildSettingsRoute,
   mapPathnameToServer,
@@ -962,6 +963,12 @@ function WorkspacesSectionHeader({ serverId }: { serverId: string | null }) {
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const commandCenterKeys = useShortcutKeys("toggle-command-center");
   const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
+  const handleNewWorkspacePress = useCallback(() => {
+    if (!serverId) {
+      return;
+    }
+    router.push(buildHostNewWorkspaceRoute(serverId));
+  }, [serverId]);
   const searchButtonStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.workspacesHeaderIconButton,
@@ -974,6 +981,29 @@ function WorkspacesSectionHeader({ serverId }: { serverId: string | null }) {
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
       <View style={styles.workspacesSectionActions}>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New workspace"
+              testID="sidebar-new-workspace"
+              style={searchButtonStyle}
+              onPress={handleNewWorkspacePress}
+            >
+              {({ hovered, pressed }) => (
+                <Plus
+                  size={14}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
+            </Pressable>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <HeaderIconTooltipContent label="New workspace" />
+          </TooltipContent>
+        </Tooltip>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <Pressable

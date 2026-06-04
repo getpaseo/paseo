@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
-import {
-  normalizeWorkspaceDescriptor,
-  useSessionStore,
-  type WorkspaceDescriptor,
-} from "@/stores/session-store";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
-import { useWorkspaceStructure } from "@/stores/session-store-hooks";
+import { useHostProjects } from "@/projects/host-projects";
+import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
-  buildSidebarProjectsFromStructure,
+  buildSidebarProjectsFromHostProjects,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
@@ -21,6 +17,7 @@ import {
 export {
   appendMissingOrderKeys,
   applyStoredOrdering,
+  buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
@@ -68,10 +65,6 @@ export interface SidebarWorkspacesListResult {
   refreshAll: () => void;
 }
 
-function toWorkspaceDescriptor(payload: WorkspaceDescriptorPayload): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor(payload);
-}
-
 export function useSidebarWorkspacesList(options?: {
   serverId?: string | null;
   enabled?: boolean;
@@ -89,7 +82,7 @@ export function useSidebarWorkspacesList(options?: {
   const hasHydratedWorkspaces = useSessionStore((state) =>
     isActive && serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
   );
-  const workspaceStructure = useWorkspaceStructure(isActive ? serverId : null);
+  const hostProjects = useHostProjects(isActive ? serverId : null);
 
   const connectionStatus = useSyncExternalStore(
     (onStoreChange) =>
@@ -111,14 +104,13 @@ export function useSidebarWorkspacesList(options?: {
   );
 
   const projects = useMemo(() => {
-    if (!serverId || workspaceStructure.projects.length === 0) {
+    if (!serverId || hostProjects.length === 0) {
       return EMPTY_PROJECTS;
     }
-    return buildSidebarProjectsFromStructure({
-      serverId,
-      projects: workspaceStructure.projects,
+    return buildSidebarProjectsFromHostProjects({
+      projects: hostProjects,
     });
-  }, [serverId, workspaceStructure]);
+  }, [hostProjects, serverId]);
 
   useEffect(() => {
     if (!serverId) {
@@ -156,24 +148,16 @@ export function useSidebarWorkspacesList(options?: {
     }
     void (async () => {
       const next = new Map<string, WorkspaceDescriptor>();
-      let cursor: string | null = null;
       try {
-        while (true) {
-          const payload = await client.fetchWorkspaces({
-            sort: [{ key: "activity_at", direction: "desc" }],
-            page: cursor ? { limit: 200, cursor } : { limit: 200 },
-          });
-          for (const entry of payload.entries) {
-            const workspace = toWorkspaceDescriptor(entry);
-            if (shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
-              continue;
-            }
-            next.set(workspace.id, workspace);
+        const workspaces = await fetchAllWorkspaceDescriptors({
+          client,
+          sort: [{ key: "activity_at", direction: "desc" }],
+        });
+        for (const workspace of workspaces) {
+          if (shouldSuppressWorkspaceForLocalArchive({ serverId, workspace })) {
+            continue;
           }
-          if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) {
-            break;
-          }
-          cursor = payload.pageInfo.nextCursor;
+          next.set(workspace.id, workspace);
         }
         const store = useSessionStore.getState();
         store.setWorkspaces(serverId, next);
@@ -181,7 +165,6 @@ export function useSidebarWorkspacesList(options?: {
       } catch (error) {
         console.error("[WorkspaceFetch][sidebar-refresh] failed", {
           serverId,
-          cursor,
           error,
         });
         // ignore explicit refresh failures; hook keeps existing data

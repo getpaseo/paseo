@@ -124,19 +124,43 @@ export async function openNewWorkspaceComposer(
   });
 }
 
-export async function clickNewWorkspaceButton(
+export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-new-workspace").click();
+
+  await expect(page).toHaveURL(/\/h\/[^/]+\/new(?:\?.*)?$/, {
+    timeout: 30_000,
+  });
+}
+
+export async function expectNewWorkspaceProjectSelected(
   page: Page,
-  input: { projectKey: string; projectDisplayName: string; prompt?: string },
+  projectDisplayName: string,
 ): Promise<void> {
-  await openNewWorkspaceComposer(page, input);
+  const projectPicker = page.getByRole("button", { name: "Workspace project" });
+  await expect(projectPicker).toBeVisible({ timeout: 30_000 });
+  await expect(projectPicker).toContainText(projectDisplayName);
+}
+
+export async function submitNewWorkspacePrompt(
+  page: Page,
+  prompt = "Hello from e2e",
+): Promise<void> {
   const composer = page.getByRole("textbox", { name: "Message agent..." });
   await expect(composer).toBeVisible({ timeout: 30_000 });
-  await composer.fill(input.prompt ?? "Hello from e2e");
+  await composer.fill(prompt);
   const createButton = page
     .getByTestId("message-input-root")
     .getByRole("button", { name: "Create" });
   await expect(createButton).toBeVisible({ timeout: 30_000 });
   await createButton.click();
+}
+
+export async function clickNewWorkspaceButton(
+  page: Page,
+  input: { projectKey: string; projectDisplayName: string; prompt?: string },
+): Promise<void> {
+  await openNewWorkspaceComposer(page, input);
+  await submitNewWorkspacePrompt(page, input.prompt);
 }
 
 export async function openStartingRefPicker(page: Page): Promise<void> {
@@ -177,7 +201,9 @@ export async function selectPickerOptionByKeyboard(page: Page, label: string): P
   const searchInput = page.getByPlaceholder("Search branches and PRs");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await page.keyboard.type(label);
-  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId(`new-workspace-ref-picker-branch-${label}`)).toBeVisible({
+    timeout: 10_000,
+  });
   await page.keyboard.press("Enter");
 }
 

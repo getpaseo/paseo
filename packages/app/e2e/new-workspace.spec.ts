@@ -7,16 +7,17 @@ import {
   archiveWorkspaceFromDaemon,
   archiveLocalWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
-  clickNewWorkspaceButton,
   closeBranchPicker,
   connectNewWorkspaceDaemonClient,
   createWorktreeViaDaemon,
   delayBrowserAgentCreatedStatus,
   expectComposerGithubAttachmentPill,
+  expectNewWorkspaceProjectSelected,
   expectPickerClosed,
   expectPickerOpen,
   expectPickerSelected,
   expectStartingRefPickerTriggerPr,
+  openGlobalNewWorkspaceComposer,
   openBranchPicker,
   openNewWorkspaceComposer,
   openProjectViaDaemon,
@@ -24,6 +25,7 @@ import {
   selectBranchInPicker,
   selectGitHubPrInPicker,
   selectPickerOptionByKeyboard,
+  submitNewWorkspacePrompt,
 } from "./helpers/new-workspace";
 import { createTempGitRepo, readWorktreeBranchInfo } from "./helpers/workspace";
 import { getServerId } from "./helpers/server-id";
@@ -193,7 +195,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("clicking new workspace redirects, renders header, shows sidebar row, and keeps one agent tab", async ({
+  test("global new workspace uses the last active project and creates one agent tab", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -217,10 +219,9 @@ test.describe("New workspace flow", () => {
         subtitle: openedProject.projectDisplayName,
       });
 
-      await clickNewWorkspaceButton(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
-      });
+      await openGlobalNewWorkspaceComposer(page);
+      await expectNewWorkspaceProjectSelected(page, openedProject.projectDisplayName);
+      await submitNewWorkspacePrompt(page);
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
@@ -400,7 +401,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("branch picker opens via keyboard, navigates options, and selects on Enter", async ({
+  test("branch picker opens via keyboard and selects the filtered option on Enter", async ({
     page,
   }) => {
     const tempRepo = await createTempGitRepo("picker-keyboard-", { branches: ["main", "dev"] });

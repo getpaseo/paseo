@@ -1,15 +1,15 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { projectIconToDataUri, useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
+import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { settingsStyles } from "@/styles/settings";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
-import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
+import type { ProjectSummary } from "@/utils/projects";
 
 interface ProjectsScreenProps {
   view: { kind: "projects" } | { kind: "project"; projectKey: string };
@@ -18,6 +18,25 @@ interface ProjectsScreenProps {
 export default function ProjectsScreen({ view }: ProjectsScreenProps) {
   const { projects, hostErrors, isLoading } = useProjects();
   const selectedProjectKey = view.kind === "project" ? view.projectKey : null;
+  const iconTargets = useMemo(
+    () =>
+      projects.flatMap((project) => {
+        const host = project.hosts[0];
+        if (!host) return [];
+        return [
+          {
+            serverId: host.serverId,
+            projectKey: project.projectKey,
+            iconWorkingDir: host.repoRoot,
+          },
+        ];
+      }),
+    [projects],
+  );
+  const iconDataByProjectKey = useProjectIconDataByProjectKey({
+    serverId: null,
+    projects: iconTargets,
+  });
 
   if (isLoading && projects.length === 0) {
     return (
@@ -45,6 +64,7 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
             project={project}
             isFirst={index === 0}
             isSelected={selectedProjectKey === project.projectKey}
+            iconDataUri={iconDataByProjectKey.get(project.projectKey) ?? null}
           />
         ))}
       </View>
@@ -68,12 +88,12 @@ interface ProjectRowProps {
   project: ProjectSummary;
   isFirst: boolean;
   isSelected: boolean;
+  iconDataUri: string | null;
 }
 
-function ProjectRow({ project, isFirst, isSelected }: ProjectRowProps) {
+function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowProps) {
   const { theme } = useUnistyles();
-  const { hosts, projectKey, projectName } = project;
-  const leadingHost = hosts[0];
+  const { projectKey, projectName } = project;
 
   const handleNavigate = useCallback(() => {
     router.navigate(buildProjectSettingsRoute(projectKey));
@@ -102,7 +122,11 @@ function ProjectRow({ project, isFirst, isSelected }: ProjectRowProps) {
     >
       <View style={styles.rowMain}>
         <View style={styles.leading}>
-          <ProjectRowIcon host={leadingHost} projectName={projectName} projectKey={projectKey} />
+          <ProjectRowIcon
+            iconDataUri={iconDataUri}
+            projectName={projectName}
+            projectKey={projectKey}
+          />
         </View>
         <Text style={settingsStyles.rowTitle} numberOfLines={1}>
           {projectName}
@@ -114,22 +138,18 @@ function ProjectRow({ project, isFirst, isSelected }: ProjectRowProps) {
 }
 
 function ProjectRowIcon({
-  host,
+  iconDataUri,
   projectName,
   projectKey,
 }: {
-  host: ProjectHostEntry | undefined;
+  iconDataUri: string | null;
   projectName: string;
   projectKey: string;
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
-  const { icon } = useProjectIconQuery({
-    serverId: host?.serverId ?? "",
-    cwd: host?.repoRoot ?? "",
-  });
   return (
     <ProjectIconView
-      iconDataUri={projectIconToDataUri(icon)}
+      iconDataUri={iconDataUri}
       initial={initial}
       projectKey={projectKey}
       imageStyle={styles.iconImage}

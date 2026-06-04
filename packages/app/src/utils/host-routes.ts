@@ -357,7 +357,7 @@ export function buildHostOpenProjectRoute(serverId: string) {
 
 export function buildHostNewWorkspaceRoute(
   serverId: string,
-  sourceDirectory: string,
+  sourceDirectory?: string,
   options?: { displayName?: string; projectId?: string },
 ) {
   const base = buildHostRootRoute(serverId);
@@ -365,14 +365,20 @@ export function buildHostNewWorkspaceRoute(
     return "/" as const;
   }
   const params = new URLSearchParams();
-  params.set("dir", sourceDirectory);
+  if (sourceDirectory) {
+    params.set("dir", sourceDirectory);
+  }
   if (options?.displayName) {
     params.set("name", options.displayName);
   }
   if (options?.projectId) {
     params.set("projectId", options.projectId);
   }
-  return `${base}/new?${params.toString()}` as const;
+  const query = params.toString();
+  if (!query) {
+    return `${base}/new` as const;
+  }
+  return `${base}/new?${query}` as const;
 }
 
 export const SETTINGS_SECTION_SLUGS = [
