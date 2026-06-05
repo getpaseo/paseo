@@ -899,7 +899,10 @@ function RootStack() {
         already-mounted workspace screen. Keep workspace identity/retention
         outside this route-level native-stack API.
       */}
-      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" options={GESTURE_DISABLED_OPTIONS} />
+      <Stack.Screen
+        name="h/[serverId]/workspace/[workspaceId]"
+        options={GESTURE_DISABLED_OPTIONS}
+      />
       <Stack.Screen name="h/[serverId]/agent/[agentId]" options={GESTURE_DISABLED_OPTIONS} />
       <Stack.Screen name="h/[serverId]/index" options={GESTURE_DISABLED_OPTIONS} />
       <Stack.Screen name="h/[serverId]/sessions" options={GESTURE_DISABLED_OPTIONS} />
