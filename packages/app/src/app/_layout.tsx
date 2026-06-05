@@ -861,7 +861,12 @@ function FaviconStatusSync() {
   return null;
 }
 
-const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
+// Disable the native back-swipe gesture on screens that live inside the
+// MobileGestureWrapper.  On those screens a right-swipe should open the
+// sidebar, not navigate back.  The wrapper's own Pan gesture handles the
+// sidebar interaction; the native gesture would fight it and cause
+// unexpected back-navigation (often to a different host).
+const GESTURE_DISABLED_OPTIONS = { gestureEnabled: false };
 
 function RootStack() {
   const storeReady = useStoreReady();
@@ -894,11 +899,11 @@ function RootStack() {
         already-mounted workspace screen. Keep workspace identity/retention
         outside this route-level native-stack API.
       */}
-      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
-      <Stack.Screen name="h/[serverId]/index" />
-      <Stack.Screen name="h/[serverId]/sessions" />
-      <Stack.Screen name="h/[serverId]/open-project" />
+      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" options={GESTURE_DISABLED_OPTIONS} />
+      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={GESTURE_DISABLED_OPTIONS} />
+      <Stack.Screen name="h/[serverId]/index" options={GESTURE_DISABLED_OPTIONS} />
+      <Stack.Screen name="h/[serverId]/sessions" options={GESTURE_DISABLED_OPTIONS} />
+      <Stack.Screen name="h/[serverId]/open-project" options={GESTURE_DISABLED_OPTIONS} />
       <Stack.Screen name="h/[serverId]/settings" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
