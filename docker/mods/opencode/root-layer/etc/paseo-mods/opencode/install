@@ -5,6 +5,7 @@ set -euo pipefail
 PASEO_HOME="${PASEO_HOME:-/home/paseo}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PASEO_HOME/.config}"
 XDG_DATA_HOME="${XDG_DATA_HOME:-$PASEO_HOME/.local/share}"
+XDG_STATE_HOME="${XDG_STATE_HOME:-$PASEO_HOME/.local/state}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-$PASEO_HOME/.cache}"
 
 ensure_opencode_dir() {
@@ -14,13 +15,28 @@ ensure_opencode_dir() {
   chmod 700 "$dir" || true
 }
 
+repair_opencode_tree() {
+  local dir="$1"
+  if [[ ! -d "$dir" ]]; then
+    return 0
+  fi
+  chown -R paseo:paseo "$dir" || true
+  chmod 700 "$dir" || true
+}
+
 ensure_opencode_dir "$XDG_CONFIG_HOME/opencode"
 ensure_opencode_dir "$XDG_DATA_HOME/opencode"
 ensure_opencode_dir "$XDG_DATA_HOME/opencode/log"
 ensure_opencode_dir "$XDG_DATA_HOME/opencode/project"
 ensure_opencode_dir "$XDG_DATA_HOME/opencode/bin"
+ensure_opencode_dir "$XDG_STATE_HOME/opencode"
 ensure_opencode_dir "$XDG_CACHE_HOME/opencode"
 ensure_opencode_dir "$XDG_CACHE_HOME/opencode/bin"
+
+repair_opencode_tree "$XDG_CONFIG_HOME/opencode"
+repair_opencode_tree "$XDG_DATA_HOME/opencode"
+repair_opencode_tree "$XDG_STATE_HOME/opencode"
+repair_opencode_tree "$XDG_CACHE_HOME/opencode"
 
 if command -v opencode >/dev/null 2>&1; then
   echo "[mod:opencode] opencode already on PATH — skipping install."

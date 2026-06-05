@@ -45,6 +45,7 @@ home_scoped_dir CLAUDE_CONFIG_DIR "/.claude"
 home_scoped_dir CODEX_HOME "/.codex"
 home_scoped_dir XDG_CONFIG_HOME "/.config"
 home_scoped_dir XDG_DATA_HOME "/.local/share"
+home_scoped_dir XDG_STATE_HOME "/.local/state"
 home_scoped_dir XDG_CACHE_HOME "/.cache"
 
 ensure_paseo_dir() {
@@ -77,6 +78,7 @@ ensure_paseo_dir "$CLAUDE_CONFIG_DIR" 700
 ensure_paseo_dir "$CODEX_HOME" 700
 ensure_paseo_dir "$XDG_CONFIG_HOME" 700
 ensure_paseo_dir "$XDG_DATA_HOME" 700
+ensure_paseo_dir "$XDG_STATE_HOME" 700
 ensure_paseo_dir "$XDG_CACHE_HOME" 700
 
 echo "[init] PASEO_HOME ready (PUID=${PUID} PGID=${PGID} home=${PASEO_HOME})"

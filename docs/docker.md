@@ -85,9 +85,9 @@ A `docker compose` deployment is in
 | `/workspace`  | The code Paseo operates on. Bind-mount one or more of your repos.                                                                                                                                                                      |
 
 On boot, the image creates the small agent config directories under
-`PASEO_HOME` (`.claude`, `.codex`, `.config`, `.local/share`, `.cache`) and
-assigns them to the `paseo` user. Codex expects `CODEX_HOME` to exist before
-launch, so an empty fresh `/home/paseo` volume is still valid.
+`PASEO_HOME` (`.claude`, `.codex`, `.config`, `.local/share`, `.local/state`,
+`.cache`) and assigns them to the `paseo` user. Codex expects `CODEX_HOME` to
+exist before launch, so an empty fresh `/home/paseo` volume is still valid.
 
 To use a different persistent home, set `PASEO_HOME` and mount the same
 container path. For example, to store daemon state in a dedicated Docker volume:
@@ -271,11 +271,14 @@ Ubuntu 22.04 arm64.
   stop the daemon. On Alpine, native agents (Codex) will not install.
 - **Can't connect / 403** — set `PASEO_HOSTNAMES` if reaching the daemon by a DNS
   name; IPs and `localhost` are allowed by default.
-- **OpenCode says `unable to open database file` on first run** — check that
-  the OpenCode mod ran and that `/home/paseo/.local/share/opencode` and its
-  `log` directory are owned by the container's `paseo` user. If `/home/paseo` is
-  bind-mounted, set `PUID`/`PGID` to match the host owner of that mounted
-  folder.
+- **OpenCode says `unable to open database file` or fails on
+  `PRAGMA wal_checkpoint(PASSIVE)`** — check that the OpenCode mod ran and that
+  `/home/paseo/.local/share/opencode` and its `log` directory are owned by the
+  container's `paseo` user. If `/home/paseo` is bind-mounted, set `PUID`/`PGID`
+  to match the host owner of that mounted folder. Running `opencode` with
+  `sudo` can leave root-owned OpenCode database, WAL, SHM, or log files in the
+  persistent home; the OpenCode mod repairs ownership for its config, data, and
+  state/cache directories on the next container start.
 - **Permission errors on your repo** — set `PUID`/`PGID` to match the host owner
   of the bind mount.
 - **Daemon logs** — `docker exec paseo tail -f /home/paseo/daemon.log`.

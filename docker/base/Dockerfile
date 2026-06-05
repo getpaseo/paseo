@@ -25,6 +25,7 @@ ENV PASEO_HOME=/home/paseo \
     CODEX_HOME=/home/paseo/.codex \
     XDG_CONFIG_HOME=/home/paseo/.config \
     XDG_DATA_HOME=/home/paseo/.local/share \
+    XDG_STATE_HOME=/home/paseo/.local/state \
     XDG_CACHE_HOME=/home/paseo/.cache \
     ONNXRUNTIME_NODE_INSTALL=skip \
     PUID=911 \
@@ -66,7 +67,9 @@ RUN set -eux; \
     else \
       groupadd -g 911 paseo; \
       useradd -u 911 -g paseo -d /home/paseo -M -s /bin/bash paseo; \
-    fi
+    fi; \
+    paseo_shell="$(awk -F: '$1 == "paseo" { print $7 }' /etc/passwd)"; \
+    [ "$paseo_shell" = "/bin/bash" ]
 
 # s6 service definitions, the docker-mods loader and the daemon launcher.
 COPY rootfs/ /
