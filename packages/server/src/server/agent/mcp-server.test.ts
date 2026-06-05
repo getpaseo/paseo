@@ -607,7 +607,12 @@ describe("browser MCP tools", () => {
       workspaceId: REPO_CWD,
       command: { command: "list_tabs", args: { workspaceId: REPO_CWD } },
     });
-    expect(response.content).toEqual([{ type: "text", text: "No Paseo browser tabs are open." }]);
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: "No Paseo browser tabs are open. Call browser_new_tab to create one, then use the returned browserId or omit browserId for the active tab.",
+      },
+    ]);
     expect(response.structuredContent).toEqual({
       ok: true,
       result: { command: "list_tabs", tabs: [] },
