@@ -7,3 +7,6 @@ node_modules/
 
 # TypeScript
 *.tsbuildinfo
+
+# Isolated dev environment (PASEO_HOME + Electron userData) created by scripts/dev.sh
+.dev/
