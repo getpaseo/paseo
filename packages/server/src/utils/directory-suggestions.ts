@@ -81,6 +81,8 @@ const NO_WORKSPACE_MATCH_TIER = 5;
 const IGNORED_SUGGESTION_DIRECTORY_NAMES = new Set([
   "node_modules",
   "venv",
+  "env",
+  "virtualenv",
   "dist",
   "build",
   "target",

@@ -95,16 +95,20 @@ describe("searchHomeDirectories", () => {
 
   it("does not let Python virtual environments crowd out top-level project matches", async () => {
     const projectPath = path.join(homeDir, "django-po-merge");
-    const dependencyPath = path.join(
-      homeDir,
-      "other-project",
-      "venv",
-      "Lib",
-      "site-packages",
-      "django",
-    );
     mkdirSync(projectPath, { recursive: true });
-    mkdirSync(dependencyPath, { recursive: true });
+    const dependencyPaths = ["venv", "env", "virtualenv"].map((environmentDirectoryName) =>
+      path.join(
+        homeDir,
+        `${environmentDirectoryName}-project`,
+        environmentDirectoryName,
+        "Lib",
+        "site-packages",
+        "django",
+      ),
+    );
+    for (const dependencyPath of dependencyPaths) {
+      mkdirSync(dependencyPath, { recursive: true });
+    }
 
     const results = await searchHomeDirectories({
       homeDir,
@@ -114,9 +118,10 @@ describe("searchHomeDirectories", () => {
 
     const resolvedResults = results.map((result) => realpathSync.native(result));
     const projectIndex = resolvedResults.indexOf(realpathSync.native(projectPath));
-    const dependencyIndex = resolvedResults.indexOf(realpathSync.native(dependencyPath));
     expect(projectIndex).toBeGreaterThanOrEqual(0);
-    expect(dependencyIndex).toBe(-1);
+    for (const dependencyPath of dependencyPaths) {
+      expect(resolvedResults).not.toContain(realpathSync.native(dependencyPath));
+    }
   });
 
   it("prioritizes partial matches that appear earlier in the path", async () => {
