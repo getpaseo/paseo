@@ -111,6 +111,7 @@ export interface PiRpcSlashCommand {
 
 export type PiRpcCommand =
   | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "compact"; customInstructions?: string }
   | { id?: string; type: "abort" }
   | { id?: string; type: "get_state" }
   | { id?: string; type: "get_messages" }

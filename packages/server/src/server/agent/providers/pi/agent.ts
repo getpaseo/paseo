@@ -86,6 +86,14 @@ const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
 const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
 
+const PI_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
+  {
+    name: "compact",
+    description: "Manually compact the session context",
+    argumentHint: "[instructions]",
+  },
+];
+
 const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -203,6 +211,11 @@ interface PendingCombinedAskUserResponse {
 interface ExtensionUiMappingOptions {
   combineOptionalComment?: boolean;
   allowFreeform?: boolean;
+}
+
+interface PiSlashCommandInvocation {
+  commandName: string;
+  args?: string;
 }
 
 function normalizePiModelLabel(label: string): string {
@@ -922,6 +935,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly seenUserEntryIds = new Set<string>();
   private readonly pendingUserMessages: PendingPiUserMessage[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
+  private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private state: PiSessionState;
   private closed = false;
 
@@ -1127,11 +1141,34 @@ export class PiRpcAgentSession implements AgentSession {
 
   async listCommands(): Promise<AgentSlashCommand[]> {
     const commands = await this.runtimeSession.getCommands();
-    return commands.map((command) => ({
-      name: command.name,
-      description: command.description ?? command.source,
-      argumentHint: "",
-    }));
+    const mappedCommands = new Map<string, AgentSlashCommand>(
+      PI_HANDLED_BUILTIN_SLASH_COMMANDS.map((command) => [command.name, { ...command }]),
+    );
+    for (const command of commands) {
+      mappedCommands.set(command.name, {
+        name: command.name,
+        description: command.description ?? command.source,
+        argumentHint: "",
+      });
+    }
+    return [...mappedCommands.values()];
+  }
+
+  tryHandleOutOfBand(
+    prompt: AgentPromptInput,
+  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+    if (typeof prompt !== "string") {
+      return null;
+    }
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed || parsed.commandName !== "compact") {
+      return null;
+    }
+    return {
+      run: async ({ emit }) => {
+        await this.executeCompactCommand(parsed.args, emit);
+      },
+    };
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -1170,6 +1207,50 @@ export class PiRpcAgentSession implements AgentSession {
 
   private currentTurnIdForEvent(): string | undefined {
     return this.activeTurnId ?? undefined;
+  }
+
+  private parseSlashCommandInput(text: string): PiSlashCommandInvocation | null {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/") || trimmed.length <= 1) {
+      return null;
+    }
+    const withoutPrefix = trimmed.slice(1);
+    const firstWhitespaceIdx = withoutPrefix.search(/\s/);
+    const commandName =
+      firstWhitespaceIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, firstWhitespaceIdx);
+    if (!commandName || commandName.includes("/")) {
+      return null;
+    }
+    const rawArgs =
+      firstWhitespaceIdx === -1 ? "" : withoutPrefix.slice(firstWhitespaceIdx + 1).trim();
+    return rawArgs.length > 0 ? { commandName, args: rawArgs } : { commandName };
+  }
+
+  private async executeCompactCommand(
+    customInstructions: string | undefined,
+    emit: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
+    if (this.outOfBandCompactionEmit) {
+      throw new Error("A Pi compact command is already running");
+    }
+    this.outOfBandCompactionEmit = emit;
+    try {
+      await this.runtimeSession.compact(customInstructions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        item: {
+          type: "assistant_message",
+          text: `[Error] Failed to compact context: ${message}`,
+        },
+      });
+    } finally {
+      if (this.outOfBandCompactionEmit === emit) {
+        this.outOfBandCompactionEmit = null;
+      }
+    }
   }
 
   private async requestEntryCapture(reason: string): Promise<void> {
@@ -1433,9 +1514,7 @@ export class PiRpcAgentSession implements AgentSession {
         return;
       }
       case "compaction_start":
-        this.emit({
-          type: "timeline",
-          provider: PI_PROVIDER,
+        this.emitCompactionTimeline({
           turnId,
           item: {
             type: "compaction",
@@ -1445,9 +1524,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "compaction_end":
-        this.emit({
-          type: "timeline",
-          provider: PI_PROVIDER,
+        this.emitCompactionTimeline({
           turnId,
           item: {
             type: "compaction",
@@ -1461,6 +1538,24 @@ export class PiRpcAgentSession implements AgentSession {
       default:
         return;
     }
+  }
+
+  private emitCompactionTimeline(input: {
+    turnId: string | undefined;
+    item: Extract<AgentStreamEvent, { type: "timeline" }>["item"];
+  }): void {
+    const emitOutOfBand = this.outOfBandCompactionEmit;
+    const event: AgentStreamEvent = {
+      type: "timeline",
+      provider: PI_PROVIDER,
+      ...(emitOutOfBand ? {} : { turnId: input.turnId }),
+      item: input.item,
+    };
+    if (emitOutOfBand) {
+      emitOutOfBand(event);
+      return;
+    }
+    this.emit(event);
   }
 
   private handleMessageUpdate(

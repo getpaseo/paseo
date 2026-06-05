@@ -51,6 +51,7 @@ export class FakePi implements PiRuntime {
 
 export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
   readonly setThinkingLevelRequests: string[] = [];
   readonly treeNavigationRequests: string[] = [];
@@ -100,6 +101,12 @@ export class FakePiSession implements PiRuntimeSession {
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
     this.handleTreeNavigationCommand(message);
     this.handleEntryCaptureCommand(message);
+  }
+
+  async compact(customInstructions?: string): Promise<void> {
+    this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
+    this.emit({ type: "compaction_start", reason: "manual" });
+    this.emit({ type: "compaction_end", reason: "manual" });
   }
 
   async abort(): Promise<void> {

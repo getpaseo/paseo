@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import type { AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
@@ -693,9 +693,52 @@ describe("PiRpcAgentClient", () => {
     ];
 
     await expect(session.listCommands()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Manually compact the session context",
+        argumentHint: "[instructions]",
+      },
       { name: "review", description: "Review changes", argumentHint: "" },
       { name: "fix-tests", description: "Fix tests", argumentHint: "" },
       { name: "skill:docs", description: "Read docs", argumentHint: "" },
+    ]);
+  });
+
+  test("lists Pi compact even when RPC get_commands omits built-in slash commands", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().commands = [
+      { name: "review", description: "Review changes", source: "extension" },
+    ];
+
+    await expect(session.listCommands()).resolves.toContainEqual({
+      name: "compact",
+      description: "Manually compact the session context",
+      argumentHint: "[instructions]",
+    });
+  });
+
+  test("executes Pi compact through RPC instead of prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact focus on tests");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.compactRequests).toEqual([{ customInstructions: "focus on tests" }]);
+    expect(fakeSession.prompts).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "completed" },
+      },
     ]);
   });
 
