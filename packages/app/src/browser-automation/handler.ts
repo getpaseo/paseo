@@ -37,6 +37,8 @@ export interface BrowserAutomationHandlerOptions {
   serverId?: string;
   getHost?: () => DesktopHostBridge | null;
   navigateToWorkspace?: (serverId: string, workspaceId: string) => void;
+  registrationWaitTimeoutMs?: number;
+  registrationPollIntervalMs?: number;
 }
 
 export function mountBrowserAutomationHandler(
@@ -50,6 +52,12 @@ export function mountBrowserAutomationHandler(
       request,
       serverId: options.serverId,
       navigateToWorkspace: options.navigateToWorkspace ?? navigateToWorkspaceRoute,
+      ...(options.registrationWaitTimeoutMs !== undefined
+        ? { registrationWaitTimeoutMs: options.registrationWaitTimeoutMs }
+        : {}),
+      ...(options.registrationPollIntervalMs !== undefined
+        ? { registrationPollIntervalMs: options.registrationPollIntervalMs }
+        : {}),
     });
   });
 }
@@ -70,8 +78,18 @@ async function handleBrowserAutomationRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
   navigateToWorkspace: (serverId: string, workspaceId: string) => void;
+  registrationWaitTimeoutMs?: number;
+  registrationPollIntervalMs?: number;
 }): Promise<void> {
-  const { client, getHost, request, serverId, navigateToWorkspace } = params;
+  const {
+    client,
+    getHost,
+    request,
+    serverId,
+    navigateToWorkspace,
+    registrationWaitTimeoutMs,
+    registrationPollIntervalMs,
+  } = params;
   const executeAutomationCommand = getHost()?.browser?.executeAutomationCommand;
 
   if (request.command.command === "new_tab") {
@@ -82,6 +100,8 @@ async function handleBrowserAutomationRequest(params: {
         serverId,
         executeAutomationCommand,
         navigateToWorkspace,
+        ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
+        ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
       }),
     });
     return;
@@ -120,8 +140,17 @@ async function openBrowserTabForRequest(params: {
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationResponsePayload>;
   navigateToWorkspace: (serverId: string, workspaceId: string) => void;
+  registrationWaitTimeoutMs?: number;
+  registrationPollIntervalMs?: number;
 }): Promise<BrowserAutomationResponsePayload> {
-  const { request, serverId, executeAutomationCommand, navigateToWorkspace } = params;
+  const {
+    request,
+    serverId,
+    executeAutomationCommand,
+    navigateToWorkspace,
+    registrationWaitTimeoutMs,
+    registrationPollIntervalMs,
+  } = params;
   const command = request.command as Extract<
     BrowserAutomationExecuteRequest["command"],
     { command: "new_tab" }
@@ -149,19 +178,37 @@ async function openBrowserTabForRequest(params: {
   navigateToWorkspace(serverId, workspaceId);
 
   if (executeAutomationCommand) {
-    const registered = await waitForBrowserRegistration({
+    let registered = await waitForBrowserRegistration({
       request,
       browserId,
       workspaceId,
       executeAutomationCommand,
+      ...(registrationWaitTimeoutMs !== undefined ? { timeoutMs: registrationWaitTimeoutMs } : {}),
+      ...(registrationPollIntervalMs !== undefined
+        ? { pollIntervalMs: registrationPollIntervalMs }
+        : {}),
     });
     if (!registered) {
       await mountFallbackAutomationWebview({ browserId, workspaceId, url: normalizedUrl });
-      await waitForBrowserRegistration({
+      registered = await waitForBrowserRegistration({
         request,
         browserId,
         workspaceId,
         executeAutomationCommand,
+        ...(registrationWaitTimeoutMs !== undefined
+          ? { timeoutMs: registrationWaitTimeoutMs }
+          : {}),
+        ...(registrationPollIntervalMs !== undefined
+          ? { pollIntervalMs: registrationPollIntervalMs }
+          : {}),
+      });
+    }
+    if (!registered) {
+      return browserAutomationFailure({
+        requestId: request.requestId,
+        code: "browser_timeout",
+        message: `Timed out waiting for browser tab ${browserId} to register with desktop automation. Try browser_new_tab again.`,
+        retryable: true,
       });
     }
   }
@@ -180,8 +227,10 @@ async function waitForBrowserRegistration(params: {
   executeAutomationCommand: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationResponsePayload>;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
 }): Promise<boolean> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + (params.timeoutMs ?? 5_000);
   while (Date.now() < deadline) {
     const payload = await params.executeAutomationCommand({
       type: "browser.automation.execute.request",
@@ -196,7 +245,7 @@ async function waitForBrowserRegistration(params: {
         return true;
       }
     }
-    await delay(100);
+    await delay(params.pollIntervalMs ?? 100);
   }
   return false;
 }

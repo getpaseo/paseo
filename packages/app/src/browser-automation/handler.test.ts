@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
@@ -65,8 +65,43 @@ function browserAutomationRequest(): BrowserAutomationExecuteRequest {
   };
 }
 
+function browserNewTabRequest(): BrowserAutomationExecuteRequest {
+  return {
+    type: "browser.automation.execute.request",
+    requestId: "req-new",
+    workspaceId: "/repo",
+    command: { command: "new_tab", args: { workspaceId: "/repo", url: "https://example.com" } },
+  };
+}
+
+function emptyListTabsPayload(requestId = "req-new:list_tabs") {
+  return {
+    requestId,
+    ok: true as const,
+    result: {
+      command: "list_tabs" as const,
+      tabs: [],
+    },
+  };
+}
+
+function currentListTabsPayload(requestId = "req-new:list_tabs") {
+  return {
+    requestId,
+    ok: true as const,
+    result: {
+      command: "list_tabs" as const,
+      tabs: currentBrowserTabs(),
+    },
+  };
+}
+
 function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function waitForAsyncWork(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 function currentBrowserTabs() {
@@ -81,19 +116,15 @@ function currentBrowserTabs() {
 }
 
 describe("mountBrowserAutomationHandler", () => {
-  test("creates and focuses a workspace browser tab for browser_new_tab", async () => {
+  beforeEach(() => {
     useBrowserStore.setState({ browsersById: {} });
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
+  });
+
+  test("creates and focuses a workspace browser tab for browser_new_tab", async () => {
     const client = new FakeDaemonClient();
     const navigateToWorkspace = vi.fn();
-    const executeAutomationCommand = vi.fn(async () => ({
-      requestId: "req-new:list_tabs",
-      ok: true as const,
-      result: {
-        command: "list_tabs" as const,
-        tabs: currentBrowserTabs(),
-      },
-    }));
+    const executeAutomationCommand = vi.fn(async () => currentListTabsPayload());
     mountBrowserAutomationHandler({
       client,
       serverId: "server-1",
@@ -101,12 +132,7 @@ describe("mountBrowserAutomationHandler", () => {
       navigateToWorkspace,
     });
 
-    client.receive({
-      type: "browser.automation.execute.request",
-      requestId: "req-new",
-      workspaceId: "/repo",
-      command: { command: "new_tab", args: { workspaceId: "/repo", url: "https://example.com" } },
-    });
+    client.receive(browserNewTabRequest());
     await flushPromises();
 
     const payload = client.sentResponses[0]?.payload;
@@ -124,6 +150,63 @@ describe("mountBrowserAutomationHandler", () => {
       expect.objectContaining({ target: { kind: "browser", browserId: payload.result.browserId } }),
     );
     expect(navigateToWorkspace).toHaveBeenCalledWith("server-1", "/repo");
+    expect(executeAutomationCommand).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns success when fallback webview registration succeeds", async () => {
+    const client = new FakeDaemonClient();
+    const executeAutomationCommand = vi
+      .fn()
+      .mockResolvedValueOnce(emptyListTabsPayload())
+      .mockImplementation(async () => currentListTabsPayload());
+    mountBrowserAutomationHandler({
+      client,
+      serverId: "server-1",
+      getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
+      navigateToWorkspace: vi.fn(),
+      registrationWaitTimeoutMs: 1,
+      registrationPollIntervalMs: 1,
+    });
+
+    client.receive(browserNewTabRequest());
+    await waitForAsyncWork();
+
+    expect(client.sentResponses[0]?.payload).toMatchObject({
+      requestId: "req-new",
+      ok: true,
+      result: { command: "new_tab", workspaceId: "/repo", url: "https://example.com" },
+    });
+    expect(executeAutomationCommand).toHaveBeenCalledTimes(2);
+  });
+
+  test("returns browser_timeout when fallback registration also fails", async () => {
+    const client = new FakeDaemonClient();
+    const executeAutomationCommand = vi.fn(async () => emptyListTabsPayload());
+    mountBrowserAutomationHandler({
+      client,
+      serverId: "server-1",
+      getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
+      navigateToWorkspace: vi.fn(),
+      registrationWaitTimeoutMs: 1,
+      registrationPollIntervalMs: 1,
+    });
+
+    client.receive(browserNewTabRequest());
+    await waitForAsyncWork();
+
+    expect(client.sentResponses[0]?.payload).toMatchObject({
+      requestId: "req-new",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        retryable: true,
+      },
+    });
+    expect(client.sentResponses[0]?.payload).not.toMatchObject({
+      ok: true,
+      result: { command: "new_tab" },
+    });
+    expect(executeAutomationCommand).toHaveBeenCalledTimes(2);
   });
 
   test("sends a success response from the desktop bridge", async () => {
