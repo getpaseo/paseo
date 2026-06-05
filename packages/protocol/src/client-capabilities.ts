@@ -11,6 +11,8 @@ export const CLIENT_CAPS = {
   // Old clients use a strict TerminalState schema and would reject the extra fields.
   // Drop the gate (always send the flags) when floor >= v0.1.88.
   terminalReflowableSnapshot: "terminal_reflowable_snapshot",
+  desktopBrowserAutomation: "desktop_browser_automation",
+  desktopBrowserInteractionAutomation: "desktop_browser_interaction_automation",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

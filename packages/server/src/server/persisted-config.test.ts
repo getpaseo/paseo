@@ -46,6 +46,18 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon browser tools config", () => {
+  test("accepts optional browser tools opt-in", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        browserTools: { enabled: true },
+      },
+    });
+
+    expect(parsed.daemon?.browserTools?.enabled).toBe(true);
+  });
+});
+
 describe("PersistedConfigSchema daemon relay config", () => {
   test("accepts optional relay TLS setting", () => {
     const parsed = PersistedConfigSchema.parse({

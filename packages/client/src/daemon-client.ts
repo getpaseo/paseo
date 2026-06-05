@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
   AgentCreateFailedStatusPayloadSchema,
   AgentCreatedStatusPayloadSchema,
@@ -119,6 +119,10 @@ import {
 } from "./daemon-client-transport.js";
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
+import type {
+  BrowserAutomationExecuteRequest,
+  BrowserAutomationExecuteResponse,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -221,6 +225,8 @@ export type DaemonEvent =
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
+export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
+export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
 
 export interface DaemonClientConfig {
   url: string;
@@ -246,6 +252,7 @@ export interface DaemonClientConfig {
   };
   runtimeMetricsIntervalMs?: number;
   runtimeMetricsWindowMs?: number;
+  capabilities?: Partial<Record<ClientCapability, boolean>>;
 }
 
 export interface SendMessageOptions {
@@ -3850,6 +3857,10 @@ export class DaemonClient {
     });
   }
 
+  sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
+    this.sendSessionMessageStrict(response);
+  }
+
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4648,6 +4659,13 @@ export class DaemonClient {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
+            ...(isElectronDesktopRuntime()
+              ? {
+                  [CLIENT_CAPS.desktopBrowserAutomation]: true,
+                  [CLIENT_CAPS.desktopBrowserInteractionAutomation]: true,
+                }
+              : {}),
+            ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
         }),
@@ -5207,6 +5225,10 @@ export class DaemonClient {
 
     return { promise, cancel };
   }
+}
+
+function isElectronDesktopRuntime(): boolean {
+  return typeof navigator !== "undefined" && /\bElectron\//.test(navigator.userAgent);
 }
 
 function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionConfig {

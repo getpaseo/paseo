@@ -25,6 +25,7 @@ import {
 } from "@/desktop/host";
 import { isDev } from "@/constants/platform";
 import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/stores/browser-store";
+import { parkBrowserWebview, takeParkedBrowserWebview } from "./browser-webview-parking.electron";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -404,16 +405,20 @@ export function BrowserPane({
       initialUrlRef.current,
       browserErrorLabelsRef.current,
     );
-    const webview = document.createElement("webview") as ElectronWebview;
+    const parkedWebview = takeParkedBrowserWebview(browserId) as ElectronWebview | null;
+    const webview = parkedWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
-    webview.setAttribute("partition", `persist:paseo-browser-${browserId}`);
-    webview.setAttribute("allowpopups", "true");
-    webview.setAttribute("spellcheck", "false");
-    webview.setAttribute("autosize", "on");
-    webview.setAttribute(
-      "src",
-      initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
-    );
+    void getDesktopHost()?.browser?.registerWorkspaceBrowser?.({ browserId, workspaceId });
+    if (!parkedWebview) {
+      webview.setAttribute("partition", `persist:paseo-browser-${browserId}`);
+      webview.setAttribute("allowpopups", "true");
+      webview.setAttribute("spellcheck", "false");
+      webview.setAttribute("autosize", "on");
+      webview.setAttribute(
+        "src",
+        initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+      );
+    }
     webview.style.display = "flex";
     webview.style.flex = "1";
     webview.style.width = "100%";
@@ -528,7 +533,14 @@ export function BrowserPane({
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
       if (host.contains(webview)) {
-        host.removeChild(webview);
+        const browserStillExists = Boolean(
+          useBrowserStore.getState().browsersById[browserIdRef.current],
+        );
+        if (browserStillExists) {
+          parkBrowserWebview(browserIdRef.current, webview);
+        } else {
+          host.removeChild(webview);
+        }
       }
       if (webviewRef.current === webview) {
         webviewRef.current = null;

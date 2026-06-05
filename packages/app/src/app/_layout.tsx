@@ -313,6 +313,9 @@ async function shouldStartBuiltInDaemon(): Promise<boolean> {
   if (!shouldUseDesktopDaemon()) {
     return false;
   }
+  if (hasConfiguredLocalDaemonOverride()) {
+    return false;
+  }
   const settings = await loadDesktopSettings();
   return settings.daemon.manageBuiltInDaemon;
 }

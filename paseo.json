@@ -25,6 +25,9 @@
     "ios-simulator": {
       "type": "service",
       "command": "cross-env PASEO_DEV_MANAGED_HOME=1 PASEO_DEV_ROOT=\"$PWD\" PASEO_HOME=\"$PWD/.dev/paseo-home\" PASEO_LISTEN=0.0.0.0:${PASEO_SERVICE_DAEMON_PORT} PASEO_DEV_DAEMON_ENDPOINT=localhost:${PASEO_SERVICE_DAEMON_PORT} ./scripts/paseo-ios-simulator-service.sh"
+    },
+    "typecheck": {
+      "command": "npm run typecheck"
     }
   }
 }

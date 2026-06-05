@@ -578,6 +578,43 @@ function createPaseoWorktreeForMcpTest(options: {
   };
 }
 
+describe("browser MCP tools", () => {
+  const logger = createTestLogger();
+
+  it("wires browser tools through the browser tools broker", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD });
+    const execute = vi.fn().mockResolvedValue({
+      requestId: "req-browser-tabs",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsBroker: { execute } as never,
+      callerAgentId: "agent-1",
+      logger,
+    });
+    const tool = registeredTool(server, "browser_list_tabs");
+
+    const response = await tool.handler({});
+
+    expect(execute).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      cwd: REPO_CWD,
+      command: { command: "list_tabs", args: {} },
+    });
+    expect(response.content).toEqual([{ type: "text", text: "No Paseo browser tabs are open." }]);
+    expect(response.structuredContent).toEqual({
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+      context: { agentId: "agent-1", cwd: REPO_CWD },
+    });
+  });
+});
+
 describe("terminal MCP tools", () => {
   const logger = createTestLogger();
 
