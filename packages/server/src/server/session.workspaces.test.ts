@@ -4356,6 +4356,62 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
   }
 });
 
+test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents are archived", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-archive-status-entered",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archive-status-entered",
+    projectId: project.projectId,
+    cwd: "/tmp/repo/archive-status-entered",
+    kind: "worktree",
+    displayName: "feature",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const doneEnteredAt = "2026-05-12T09:30:00.000Z";
+  const archivedAt = "2026-05-12T09:45:00.000Z";
+
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: "agent-done",
+      cwd: workspace.cwd,
+      status: "idle",
+      updatedAt: doneEnteredAt,
+    }),
+  ];
+
+  const first = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
+  expect(first.get(workspace.workspaceId)?.status).toBe("done");
+  expect(first.get(workspace.workspaceId)?.statusEnteredAt).toBe(doneEnteredAt);
+
+  session.listAgentPayloads = async () => [
+    {
+      ...makeAgent({
+        id: "agent-done",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: doneEnteredAt,
+      }),
+      archivedAt,
+    },
+  ];
+
+  const second = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
+  expect(second.get(workspace.workspaceId)).toMatchObject({
+    status: "done",
+    statusEnteredAt: doneEnteredAt,
+  });
+});
+
 test("buildWorkspaceDescriptorMap stamps workspace archiving state", async () => {
   const session = createSessionForWorkspaceTests();
   const archivingAt = "2026-04-30T20:45:00.000Z";

@@ -1,7 +1,17 @@
 import { expect, type Page } from "@playwright/test";
-import { TEST_HOST_LABEL } from "./daemon-registry";
+import { buildCreateAgentPreferences, buildSeededHost, TEST_HOST_LABEL } from "./daemon-registry";
 import { escapeRegex } from "./regex";
 import { getServerId } from "./server-id";
+
+const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
+const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
+const REGISTRY_KEY = "@paseo:daemon-registry";
+
+interface SavedSettingsHostInput {
+  serverId: string;
+  label: string;
+  endpoint: string;
+}
 
 const SECTION_LABELS = {
   general: "General",
@@ -82,6 +92,60 @@ export async function openCompactSettings(page: Page): Promise<void> {
   await settingsButton.click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+}
+
+export async function seedSavedSettingsHosts(
+  page: Page,
+  hosts: SavedSettingsHostInput[],
+): Promise<void> {
+  await page.goto("/");
+  const nowIso = new Date().toISOString();
+  const registry = hosts.map((host) =>
+    buildSeededHost({
+      serverId: host.serverId,
+      label: host.label,
+      endpoint: host.endpoint,
+      nowIso,
+    }),
+  );
+  const firstHost = registry[0];
+  if (!firstHost) {
+    throw new Error("Expected at least one settings host fixture.");
+  }
+  const preferences = buildCreateAgentPreferences(firstHost.serverId);
+
+  await page.evaluate(
+    ({ keys, storedRegistry, storedPreferences }) => {
+      const nonce = localStorage.getItem(keys.seedNonce);
+      if (!nonce) {
+        throw new Error("Expected e2e seed nonce before overriding settings host registry.");
+      }
+
+      localStorage.setItem(keys.registry, JSON.stringify(storedRegistry));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(storedPreferences));
+      localStorage.setItem(keys.disableDefaultSeedOnce, nonce);
+    },
+    {
+      keys: {
+        disableDefaultSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY,
+        registry: REGISTRY_KEY,
+        seedNonce: SEED_NONCE_KEY,
+      },
+      storedRegistry: registry,
+      storedPreferences: preferences,
+    },
+  );
+}
+
+export async function selectSettingsHost(page: Page, serverId: string): Promise<void> {
+  await page.getByTestId("settings-host-picker").click();
+  await page.getByTestId(`settings-host-picker-item-${serverId}`).click();
+}
+
+export async function expectSettingsHostPickerLabel(page: Page, label: string): Promise<void> {
+  await expect(
+    page.getByTestId("settings-host-picker").getByText(label, { exact: true }),
+  ).toBeVisible();
 }
 
 export async function expectCompactSettingsList(page: Page): Promise<void> {

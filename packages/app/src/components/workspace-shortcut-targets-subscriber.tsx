@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import {
-  useHydratedWorkspaceEntries,
   useProjectNamesMap,
+  useStatusModeWorkspaceEntries,
 } from "@/hooks/use-status-mode-workspaces";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -20,7 +20,10 @@ export function WorkspaceShortcutTargetsSubscriber({
   serverId: string | null;
 }) {
   const { projects } = useSidebarWorkspacesList({ serverId, enabled });
-  const statusWorkspaces = useHydratedWorkspaceEntries(enabled ? serverId : null);
+  const statusWorkspaces = useStatusModeWorkspaceEntries({
+    serverId: enabled ? serverId : null,
+    projects,
+  });
   const projectNamesByKey = useProjectNamesMap(enabled ? serverId : null);
   const groupMode = useSidebarViewStore((state) =>
     enabled && serverId ? state.getGroupMode(serverId) : "project",

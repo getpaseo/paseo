@@ -33,7 +33,7 @@ Rules that apply to both steps:
 There are two supported ways to ship from `main`:
 
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
-2. **Beta flow**: silent release candidates. Betas don't touch the changelog, don't move the website, and don't publish npm or production mobile builds.
+2. **Beta flow**: silent release candidates. Betas don't touch the changelog, don't move the website, and publish npm only on the explicit `beta` dist-tag.
 
 ## Standard release (patch)
 
@@ -66,14 +66,15 @@ npm run release:push         # Push HEAD + tag (triggers CI workflows)
 ## Beta flow
 
 ```bash
-npm run release:beta:patch       # Bump to X.Y.Z-beta.1, push commit + tag
+npm run release:beta:patch       # Bump to X.Y.Z-beta.1, publish npm beta, push commit + tag
 # ... test desktop and APK prerelease assets from GitHub Releases ...
 npm run release:beta:next        # Optional: cut X.Y.Z-beta.2, beta.3, ...
 npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 ```
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
-- Betas publish desktop assets and APKs for testing, but they do not publish npm packages and do not trigger the production web/mobile release flows
+- Betas publish npm packages with `--tag beta`, so `npm install @getpaseo/cli@beta` opts in while plain `npm install @getpaseo/cli` stays on `latest`
+- Betas publish desktop assets and APKs for testing, but they do not trigger the production web/mobile release flows
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
@@ -303,6 +304,7 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
 - If `release:publish` partially fails, re-run it — npm skips already-published versions
+- If `release:publish:beta` partially fails, re-run it — npm skips already-published versions and keeps prereleases off `latest` because every publish uses `--tag beta`
 - The website uses GitHub's latest published release API for download links, so published beta prereleases do not replace the stable download target.
 
 ## Changelog format
@@ -423,6 +425,7 @@ The changelog covers **stable-to-stable**. Betas are not represented. When you p
 
 - [ ] Working tree is clean and the intended commit is on `main`
 - [ ] `npm run release:beta:patch` (or `:next`) completes successfully
+- [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 

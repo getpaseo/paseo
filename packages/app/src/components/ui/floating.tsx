@@ -21,9 +21,12 @@ export const FloatingSurface = forwardRef<View, FloatingSurfaceProps>(function F
 ): ReactElement {
   const inlineFrameStyle = useMemo(() => {
     const flattened = StyleSheet.flatten(frameStyle);
-    return flattened ? inlineUnistylesStyle(flattened) : undefined;
+    return flattened ? inlineUnistylesStyle(stripUnistylesMetadata(flattened)) : undefined;
   }, [frameStyle]);
-  const surfaceStyle = useMemo(() => [style, inlineFrameStyle], [inlineFrameStyle, style]);
+  const surfaceStyle = useMemo(
+    () => appendStyle(style, inlineFrameStyle),
+    [inlineFrameStyle, style],
+  );
   return <Animated.View {...props} ref={ref} style={surfaceStyle} />;
 });
 
@@ -46,7 +49,7 @@ export function FloatingScrollView({
 }: FloatingScrollViewProps): ReactElement {
   const inlineStyle = useMemo(() => {
     const flattened = StyleSheet.flatten(style);
-    return flattened ? inlineUnistylesStyle(flattened) : undefined;
+    return flattened ? inlineUnistylesStyle(stripUnistylesMetadata(flattened)) : undefined;
   }, [style]);
 
   return (
@@ -60,4 +63,27 @@ export function FloatingScrollView({
       {children}
     </ScrollView>
   );
+}
+
+function appendStyle(
+  style: StyleProp<ViewStyle>,
+  extraStyle: ViewStyle | undefined,
+): StyleProp<ViewStyle> {
+  if (!extraStyle) {
+    return style;
+  }
+  if (Array.isArray(style)) {
+    return [...style, extraStyle];
+  }
+  return [style, extraStyle];
+}
+
+function stripUnistylesMetadata(style: ViewStyle): ViewStyle {
+  const cleanStyle: Record<string, unknown> = { ...style };
+  for (const key of Object.keys(cleanStyle)) {
+    if (key.startsWith("unistyles_")) {
+      delete cleanStyle[key];
+    }
+  }
+  return cleanStyle as ViewStyle;
 }

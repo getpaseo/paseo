@@ -21,14 +21,12 @@ import {
   CircleDot,
   CircleX,
   MoreVertical,
-  SquareTerminal,
-  Globe,
   Copy,
   Archive,
   Pencil,
 } from "lucide-react-native";
 import { DiffStat } from "@/components/diff-stat";
-import { useSidebarWorkspaceEntry } from "../sidebar-workspace-list";
+import { useSidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -81,8 +79,6 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
-const ThemedGlobe = withUnistyles(Globe);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
@@ -607,6 +603,10 @@ function StatusWorkspaceRowInner({
   const hasRunningService = workspace.scripts.some(
     (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
   );
+  let scriptIconKind: "service" | "command" | null = null;
+  if (showScriptsIcon) {
+    scriptIconKind = hasRunningService ? "service" : "command";
+  }
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 
@@ -631,38 +631,28 @@ function StatusWorkspaceRowInner({
               <SidebarWorkspaceRowContent
                 workspace={workspace}
                 subtitle={projectName}
+                scriptIconKind={scriptIconKind}
                 isHovered={isHovered}
                 isLoading={isArchiving}
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
               >
-                <>
-                  {showScriptsIcon ? (
-                    <View accessibilityLabel="Scripts available">
-                      {hasRunningService ? (
-                        <ThemedGlobe size={12} uniProps={blueColorMapping} />
-                      ) : (
-                        <ThemedSquareTerminal size={12} uniProps={blueColorMapping} />
-                      )}
-                    </View>
-                  ) : null}
-                  {shouldRenderActionSlot ? (
-                    <StatusWorkspaceActionSlot
-                      workspace={workspace}
-                      showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
-                      showOverlay={showKebabInSlot}
-                      onCopyPath={onCopyPath}
-                      onCopyBranchName={onCopyBranchName}
-                      onRename={onRename}
-                      onMarkAsRead={onMarkAsRead}
-                      onArchive={onArchive}
-                      archiveLabel={archiveLabel}
-                      archiveStatus={archiveStatus}
-                      archivePendingLabel={archivePendingLabel}
-                      archiveShortcutKeys={archiveShortcutKeys}
-                    />
-                  ) : null}
-                </>
+                {shouldRenderActionSlot ? (
+                  <StatusWorkspaceActionSlot
+                    workspace={workspace}
+                    showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
+                    showOverlay={showKebabInSlot}
+                    onCopyPath={onCopyPath}
+                    onCopyBranchName={onCopyBranchName}
+                    onRename={onRename}
+                    onMarkAsRead={onMarkAsRead}
+                    onArchive={onArchive}
+                    archiveLabel={archiveLabel}
+                    archiveStatus={archiveStatus}
+                    archivePendingLabel={archivePendingLabel}
+                    archiveShortcutKeys={archiveShortcutKeys}
+                  />
+                ) : null}
               </SidebarWorkspaceRowContent>
             </Pressable>
           </View>

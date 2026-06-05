@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHostAgentDetailRoute,
+  buildHostNewWorkspaceRoute,
   buildHostRootRoute,
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
@@ -118,6 +119,19 @@ describe("workspace route parsing", () => {
     expect(buildHostWorkspaceOpenRoute("local", "164", "draft:new")).toBe(
       "/h/local/workspace/164?open=draft%3Anew",
     );
+  });
+
+  it("builds a global new workspace route without a source directory", () => {
+    expect(buildHostNewWorkspaceRoute("local")).toBe("/h/local/new");
+  });
+
+  it("builds a project shortcut new workspace route with initial project context", () => {
+    expect(
+      buildHostNewWorkspaceRoute("local", "/repo/project", {
+        displayName: "Project",
+        projectId: "project-1",
+      }),
+    ).toBe("/h/local/new?dir=%2Frepo%2Fproject&name=Project&projectId=project-1");
   });
 
   it("round-trips URL-safe IDs through encode/decode", () => {

@@ -14,7 +14,9 @@ import {
   Folder,
   FolderGit2,
   GitPullRequest,
+  Globe,
   Monitor,
+  SquareTerminal,
 } from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
@@ -42,6 +44,7 @@ const syncedLoaderColorMapping = (theme: Theme) => ({
       ? theme.colors.palette.amber[700]
       : theme.colors.palette.amber[500],
 });
+const blueColorMapping = (theme: Theme) => ({ color: theme.colors.palette.blue[500] });
 const greenColorMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
 const redColorMapping = (theme: Theme) => ({ color: theme.colors.palette.red[500] });
 const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purple[500] });
@@ -55,6 +58,10 @@ const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
+const ThemedGlobe = withUnistyles(Globe);
+const ThemedSquareTerminal = withUnistyles(SquareTerminal);
+
+type SidebarWorkspaceScriptIconKind = "service" | "command";
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -86,6 +93,7 @@ export function SidebarWorkspaceRowFrame({
 export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowContent({
   workspace,
   subtitle,
+  scriptIconKind = null,
   isHovered,
   isLoading,
   isCreating = false,
@@ -95,6 +103,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
 }: {
   workspace: SidebarWorkspaceEntry;
   subtitle?: string | null;
+  scriptIconKind?: SidebarWorkspaceScriptIconKind | null;
   isHovered: boolean;
   isLoading: boolean;
   isCreating?: boolean;
@@ -105,10 +114,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
+      scriptIconKind ? styles.workspaceBranchTextWithAccessory : styles.workspaceBranchTextFlexible,
       isHovered && styles.workspaceBranchTextHovered,
       isCreating && styles.workspaceBranchTextCreating,
     ],
-    [isHovered, isCreating],
+    [scriptIconKind, isHovered, isCreating],
   );
 
   return (
@@ -123,6 +133,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           <Text style={workspaceBranchTextStyle} numberOfLines={1}>
             {workspace.name}
           </Text>
+          {scriptIconKind ? <WorkspaceScriptIcon kind={scriptIconKind} /> : null}
         </View>
         <View style={styles.workspaceRowRight}>{children}</View>
       </View>
@@ -146,6 +157,22 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   );
 });
 
+function WorkspaceScriptIcon({ kind }: { kind: SidebarWorkspaceScriptIconKind }) {
+  return (
+    <View
+      style={styles.workspaceTitleAccessory}
+      accessibilityLabel="Scripts available"
+      testID={kind === "service" ? "workspace-globe-icon" : "workspace-terminal-icon"}
+    >
+      {kind === "service" ? (
+        <ThemedGlobe size={12} uniProps={blueColorMapping} />
+      ) : (
+        <ThemedSquareTerminal size={12} uniProps={blueColorMapping} />
+      )}
+    </View>
+  );
+}
+
 function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
@@ -159,7 +186,7 @@ function WorkspaceStatusIndicator({
 
   if (loading) {
     return (
-      <View style={styles.workspaceStatusDot}>
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
         <ThemedActivityIndicator size={8} uniProps={foregroundMutedColorMapping} />
       </View>
     );
@@ -167,7 +194,7 @@ function WorkspaceStatusIndicator({
 
   if (shouldShowSyncedLoader) {
     return (
-      <View style={styles.workspaceStatusDot}>
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
         <ThemedSyncedLoader size={11} uniProps={syncedLoaderColorMapping} />
       </View>
     );
@@ -454,7 +481,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceStatusDot: {
     position: "relative",
     width: WORKSPACE_STATUS_DOT_WIDTH,
-    height: 16,
+    height: 20,
     borderRadius: theme.borderRadius.full,
     flexShrink: 0,
     alignItems: "center",
@@ -471,8 +498,19 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     lineHeight: 20,
     opacity: 0.76,
-    flex: 1,
     minWidth: 0,
+  },
+  workspaceBranchTextFlexible: {
+    flex: 1,
+  },
+  workspaceBranchTextWithAccessory: {
+    flexShrink: 1,
+  },
+  workspaceTitleAccessory: {
+    height: 20,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
   workspaceBranchTextCreating: {
     opacity: 0.92,
@@ -490,6 +528,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    marginTop: theme.spacing[1],
     paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
   },
   statusDotNeedsInput: {

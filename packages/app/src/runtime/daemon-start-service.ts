@@ -4,13 +4,41 @@ import type { HostRuntimeStore } from "@/runtime/host-runtime";
 
 export type DaemonStartResult = { ok: true } | { ok: false; error: string };
 
+type DaemonConnectionStore = Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+
 export interface DaemonStartServiceDeps {
-  store: Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+  store: DaemonConnectionStore;
   startDesktopDaemon?: () => Promise<DesktopDaemonStatus>;
 }
 
+export async function upsertDesktopDaemonConnection(
+  store: DaemonConnectionStore,
+  daemon: DesktopDaemonStatus,
+): Promise<DaemonStartResult> {
+  const listenAddress = daemon.listen?.trim() ?? "";
+  const serverId = daemon.serverId.trim();
+  if (!listenAddress) {
+    return { ok: false, error: "Desktop daemon did not return a listen address." };
+  }
+  if (!serverId) {
+    return { ok: false, error: "Desktop daemon did not return a server id." };
+  }
+  if (!connectionFromListen(listenAddress)) {
+    return {
+      ok: false,
+      error: `Desktop daemon returned an unsupported listen address: ${listenAddress}`,
+    };
+  }
+  await store.upsertConnectionFromListen({
+    listenAddress,
+    serverId,
+    hostname: daemon.hostname,
+  });
+  return { ok: true };
+}
+
 export class DaemonStartService {
-  private readonly store: Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+  private readonly store: DaemonConnectionStore;
   private readonly invokeStartDesktopDaemon: () => Promise<DesktopDaemonStatus>;
   private readonly listeners = new Set<() => void>();
   private lastError: string | null = null;
@@ -25,23 +53,8 @@ export class DaemonStartService {
     this.beginRequest();
     try {
       const daemon = await this.invokeStartDesktopDaemon();
-      const listenAddress = daemon.listen?.trim() ?? "";
-      const serverId = daemon.serverId.trim();
-      if (!listenAddress) {
-        return this.fail("Desktop daemon did not return a listen address.");
-      }
-      if (!serverId) {
-        return this.fail("Desktop daemon did not return a server id.");
-      }
-      if (!connectionFromListen(listenAddress)) {
-        return this.fail(`Desktop daemon returned an unsupported listen address: ${listenAddress}`);
-      }
-      await this.store.upsertConnectionFromListen({
-        listenAddress,
-        serverId,
-        hostname: daemon.hostname,
-      });
-      return { ok: true };
+      const result = await upsertDesktopDaemonConnection(this.store, daemon);
+      return result.ok ? result : this.fail(result.error);
     } catch (error) {
       return this.fail(error instanceof Error ? error.message : String(error));
     } finally {

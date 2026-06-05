@@ -11,7 +11,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
@@ -48,9 +48,7 @@ import {
   ExternalLink,
   FolderPlus,
   GitPullRequest,
-  Globe,
   Settings,
-  SquareTerminal,
   MoreVertical,
   Pencil,
   Plus,
@@ -59,16 +57,16 @@ import {
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
-import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { projectIconQueryKey, projectIconToDataUri } from "@/hooks/use-project-icon-query";
+import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import {
   buildHostNewWorkspaceRoute,
   buildProjectSettingsRoute,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import {
-  createSidebarWorkspaceEntry,
+  useSidebarWorkspaceEntry,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
@@ -107,8 +105,8 @@ import {
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import {
-  useHydratedWorkspaceEntries,
   useProjectNamesMap,
+  useStatusModeWorkspaceEntries,
 } from "@/hooks/use-status-mode-workspaces";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -119,8 +117,6 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
@@ -150,8 +146,6 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedFolderPlus = withUnistyles(FolderPlus);
-const ThemedGlobe = withUnistyles(Globe);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
@@ -165,7 +159,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 const redColorMapping = (theme: Theme) => ({ color: theme.colors.palette.red[500] });
 const amberColorMapping = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
-const blueColorMapping = (theme: Theme) => ({ color: theme.colors.palette.blue[500] });
 const greenColorMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
 const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purple[500] });
 const syncedLoaderColorMapping = (theme: Theme) => ({
@@ -184,17 +177,6 @@ function getPrIconUniMapping(state: PrHint["state"]) {
     case "closed":
       return redColorMapping;
   }
-}
-
-function useStableProjectIconData(
-  data: (string | null)[],
-  signature: string,
-): readonly (string | null)[] {
-  const stableRef = useRef<{ signature: string; data: (string | null)[] } | null>(null);
-  if (stableRef.current?.signature !== signature) {
-    stableRef.current = { signature, data };
-  }
-  return stableRef.current.data;
 }
 
 function isWorkspaceSelected(input: {
@@ -223,6 +205,10 @@ function isProjectSelectedByRoute(input: {
       (workspace) => workspace.workspaceId === input.selection?.workspaceId,
     )
   );
+}
+
+function activeWorkspaceSelectionKey(selection: ActiveWorkspaceSelection | null): string {
+  return selection ? `${selection.serverId}:${selection.workspaceId}` : "";
 }
 
 function selectionForSelectedWorkspace(
@@ -303,19 +289,6 @@ function getWorkspaceArchiveStatus(
   if (isWorktree) return archiveStatus;
   if (isArchivingWorkspace) return "pending";
   return "idle";
-}
-
-export function useSidebarWorkspaceEntry(
-  serverId: string | null,
-  workspaceId: string | null,
-): SidebarWorkspaceEntry | null {
-  const projectWorkspaceEntry = useCallback(
-    (workspace: WorkspaceDescriptor): SidebarWorkspaceEntry =>
-      createSidebarWorkspaceEntry({ serverId: serverId ?? "", workspace }),
-    [serverId],
-  );
-
-  return useWorkspaceFields(serverId, workspaceId, projectWorkspaceEntry);
 }
 
 export function PrBadge({ hint }: { hint: PrHint }) {
@@ -622,8 +595,6 @@ function WorkspaceRowRightGroup({
   workspace,
   isHovered,
   isTouchPlatform,
-  showScriptsIcon,
-  hasRunningService,
   isCreating,
   showShortcutBadge,
   shortcutNumber,
@@ -640,8 +611,6 @@ function WorkspaceRowRightGroup({
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
   isTouchPlatform: boolean;
-  showScriptsIcon: boolean;
-  hasRunningService: boolean;
   isCreating: boolean;
   showShortcutBadge: boolean;
   shortcutNumber: number | null;
@@ -661,15 +630,6 @@ function WorkspaceRowRightGroup({
   const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
   return (
     <>
-      {showScriptsIcon ? (
-        <View testID="workspace-globe-icon" accessibilityLabel="Scripts available">
-          {hasRunningService ? (
-            <ThemedGlobe size={12} uniProps={blueColorMapping} />
-          ) : (
-            <ThemedSquareTerminal size={12} uniProps={blueColorMapping} />
-          )}
-        </View>
-      ) : null}
       {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
       {shouldRenderActionSlot ? (
         <SidebarWorkspaceTrailingActionSlot>
@@ -1211,17 +1171,14 @@ function ProjectHeaderRow({
     if (!serverId) {
       return;
     }
+    onWorkspacePress?.();
     router.navigate(
       buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
         displayName,
         projectId: project.projectKey,
       }) as Href,
     );
-    onWorkspacePress?.();
   }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
-  const _mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
-  const _toast = useToast();
-
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -1393,6 +1350,10 @@ function WorkspaceRowInner({
         const hasRunningService = workspace.scripts.some(
           (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
         );
+        let scriptIconKind: "service" | "command" | null = null;
+        if (showScriptsIcon) {
+          scriptIconKind = hasRunningService ? "service" : "command";
+        }
         const workspaceRowStyle = getProjectWorkspaceRowStyle({
           isDragging,
           selected,
@@ -1420,6 +1381,7 @@ function WorkspaceRowInner({
             >
               <SidebarWorkspaceRowContent
                 workspace={workspace}
+                scriptIconKind={scriptIconKind}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
                 isCreating={isCreating}
@@ -1430,8 +1392,6 @@ function WorkspaceRowInner({
                   workspace={workspace}
                   isHovered={isHovered}
                   isTouchPlatform={isTouchPlatform}
-                  showScriptsIcon={showScriptsIcon}
-                  hasRunningService={hasRunningService}
                   isCreating={isCreating}
                   showShortcutBadge={showShortcutBadge}
                   shortcutNumber={shortcutNumber}
@@ -2314,6 +2274,7 @@ function ProjectBlock({
               keyExtractor={workspaceKeyExtractor}
               renderItem={renderWorkspace}
               onDragEnd={handleWorkspaceDragEnd}
+              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
               scrollEnabled={false}
               useDragHandle
               nestable={useNestable}
@@ -2330,18 +2291,6 @@ function ProjectBlock({
 type ProjectBlockProps = Parameters<typeof ProjectBlock>[0];
 
 function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlockProps): boolean {
-  const previousActive = isProjectSelectedByRoute({
-    selection: previous.activeWorkspaceSelection,
-    project: previous.project,
-    serverId: previous.serverId,
-    enabled: previous.selectionEnabled,
-  });
-  const nextActive = isProjectSelectedByRoute({
-    selection: next.activeWorkspaceSelection,
-    project: next.project,
-    serverId: next.serverId,
-    enabled: next.selectionEnabled,
-  });
   return (
     previous.project === next.project &&
     previous.collapsed === next.collapsed &&
@@ -2361,7 +2310,35 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.dragHandleProps === next.dragHandleProps &&
     previous.useNestable === next.useNestable &&
     previous.creatingWorkspaceIds === next.creatingWorkspaceIds &&
-    previousActive === nextActive
+    areProjectBlockSelectionsEqual(previous, next)
+  );
+}
+
+function areProjectBlockSelectionsEqual(
+  previous: ProjectBlockProps,
+  next: ProjectBlockProps,
+): boolean {
+  const previousActive = isProjectSelectedByRoute({
+    selection: previous.activeWorkspaceSelection,
+    project: previous.project,
+    serverId: previous.serverId,
+    enabled: previous.selectionEnabled,
+  });
+  const nextActive = isProjectSelectedByRoute({
+    selection: next.activeWorkspaceSelection,
+    project: next.project,
+    serverId: next.serverId,
+    enabled: next.selectionEnabled,
+  });
+  if (previousActive !== nextActive) {
+    return false;
+  }
+  if (!previousActive) {
+    return true;
+  }
+  return (
+    activeWorkspaceSelectionKey(previous.activeWorkspaceSelection) ===
+    activeWorkspaceSelectionKey(next.activeWorkspaceSelection)
   );
 }
 
@@ -2387,6 +2364,7 @@ export function SidebarWorkspaceList({
     return (
       <SidebarStatusModeWrapper
         serverId={serverId}
+        projects={projects}
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         onWorkspacePress={onWorkspacePress}
       />
@@ -2411,14 +2389,16 @@ export function SidebarWorkspaceList({
 
 function SidebarStatusModeWrapper({
   serverId,
+  projects,
   shortcutIndexByWorkspaceKey: _projectShortcutIndex,
   onWorkspacePress,
 }: {
   serverId: string | null;
+  projects: SidebarProjectEntry[];
   shortcutIndexByWorkspaceKey: Map<string, number>;
   onWorkspacePress?: () => void;
 }) {
-  const hydratedWorkspaces = useHydratedWorkspaceEntries(serverId);
+  const hydratedWorkspaces = useStatusModeWorkspaceEntries({ serverId, projects });
   const projectNamesByKey = useProjectNamesMap(serverId);
   const showShortcutBadges = useShowShortcutBadges();
 
@@ -2465,75 +2445,21 @@ function ProjectModeList({
   );
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
-
-  const projectIconRequests = useMemo(() => {
-    if (!serverId) {
-      return [];
-    }
-    const unique = new Map<string, { serverId: string; cwd: string }>();
-    for (const project of projects) {
-      const cwd = project.iconWorkingDir.trim();
-      if (!cwd) {
-        continue;
-      }
-      unique.set(`${serverId}:${cwd}`, { serverId, cwd });
-    }
-    return Array.from(unique.values());
-  }, [projects, serverId]);
-
-  const projectIconQueries = useQueries({
-    queries: projectIconRequests.map((request) => ({
-      queryKey: projectIconQueryKey(request.serverId, request.cwd),
-      queryFn: async () => {
-        const client = getHostRuntimeStore().getClient(request.serverId);
-        if (!client) {
-          return null;
-        }
-        const result = await client.requestProjectIcon(request.cwd);
-        return result.icon;
-      },
-      select: projectIconToDataUri,
-      enabled: Boolean(
-        getHostRuntimeStore().getClient(request.serverId) &&
-        isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)) &&
-        request.cwd,
-      ),
-      staleTime: Infinity,
-      gcTime: 1000 * 60 * 60,
-      refetchOnMount: false,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-    })),
-  });
-
-  const projectIconSignature = projectIconQueries.map((query) => query.data ?? "").join("\u0000");
-  const projectIconData = useStableProjectIconData(
-    projectIconQueries.map((query) => query.data ?? null),
-    projectIconSignature,
+  const nativeScrollGestureProps = useMemo(
+    () =>
+      parentGestureRef
+        ? ({
+            // NestableScrollContainer forwards props to RNGH ScrollView. Keep
+            // vertical scroll and sidebar close pan simultaneous: vertical
+            // intent scrolls immediately, clear horizontal intent can still
+            // activate close from inside the list.
+            simultaneousHandlers: parentGestureRef,
+          } as object)
+        : undefined,
+    [parentGestureRef],
   );
 
-  const projectIconByProjectKey = useMemo(() => {
-    const iconByServerAndCwd = new Map<string, string | null>();
-    for (let index = 0; index < projectIconRequests.length; index += 1) {
-      const request = projectIconRequests[index];
-      if (!request) {
-        continue;
-      }
-      iconByServerAndCwd.set(`${request.serverId}:${request.cwd}`, projectIconData[index] ?? null);
-    }
-
-    const byProject = new Map<string, string | null>();
-    for (const project of projects) {
-      const cwd = project.iconWorkingDir.trim();
-      if (!cwd || !serverId) {
-        byProject.set(project.projectKey, null);
-        continue;
-      }
-      byProject.set(project.projectKey, iconByServerAndCwd.get(`${serverId}:${cwd}`) ?? null);
-    }
-
-    return byProject;
-  }, [projectIconData, projectIconRequests, projects, serverId]);
+  const projectIconByProjectKey = useProjectIconDataByProjectKey({ serverId, projects });
 
   useEffect(() => {
     const timeouts = creatingWorkspaceTimeoutsRef.current;
@@ -2724,6 +2650,7 @@ function ProjectModeList({
           keyExtractor={projectKeyExtractor}
           renderItem={renderProject}
           onDragEnd={handleProjectDragEnd}
+          extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
           scrollEnabled={false}
           useDragHandle
           nestable={platformIsNative}
@@ -2739,6 +2666,7 @@ function ProjectModeList({
     <View style={styles.container}>
       {platformIsNative ? (
         <NestableScrollContainer
+          {...nativeScrollGestureProps}
           style={styles.list}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}

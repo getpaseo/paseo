@@ -34,6 +34,7 @@ import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
+import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -395,7 +396,11 @@ function createFilePreviewMarkdownRules(): RenderRules {
       _parent: ASTNode[],
       styles: MarkdownStyles,
     ) => (
-      <MarkdownParagraphView key={node.key} paragraphStyle={styles.paragraph}>
+      <MarkdownParagraphView
+        key={node.key}
+        paragraphStyle={styles.paragraph}
+        containsImage={markdownNodeContainsType(node, "image")}
+      >
         {children}
       </MarkdownParagraphView>
     ),

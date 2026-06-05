@@ -87,25 +87,35 @@ function useRawWindowControlsPadding(): RawWindowControlsPadding {
     };
   }, []);
 
-  return useMemo((): RawWindowControlsPadding => {
-    if (!getIsElectronRuntime() || isFullscreen) {
-      return { left: 0, right: 0, top: 0 };
-    }
+  return resolveRawWindowControlsPadding({
+    isElectron: getIsElectronRuntime(),
+    isMac: getIsElectronRuntimeMac(),
+    isFullscreen,
+  });
+}
 
-    if (getIsElectronRuntimeMac()) {
-      return {
-        left: DESKTOP_TRAFFIC_LIGHT_WIDTH,
-        right: 0,
-        top: DESKTOP_TRAFFIC_LIGHT_HEIGHT,
-      };
-    }
+export function resolveRawWindowControlsPadding(input: {
+  isElectron: boolean;
+  isMac: boolean;
+  isFullscreen: boolean;
+}): RawWindowControlsPadding {
+  if (!input.isElectron || input.isFullscreen) {
+    return { left: 0, right: 0, top: 0 };
+  }
 
+  if (input.isMac) {
     return {
-      left: 0,
-      right: DESKTOP_WINDOW_CONTROLS_WIDTH,
-      top: DESKTOP_WINDOW_CONTROLS_HEIGHT,
+      left: DESKTOP_TRAFFIC_LIGHT_WIDTH,
+      right: 0,
+      top: DESKTOP_TRAFFIC_LIGHT_HEIGHT,
     };
-  }, [isFullscreen]);
+  }
+
+  return {
+    left: 0,
+    right: DESKTOP_WINDOW_CONTROLS_WIDTH,
+    top: DESKTOP_WINDOW_CONTROLS_HEIGHT,
+  };
 }
 
 export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
@@ -163,8 +173,8 @@ export function resolveWindowControlsPadding(input: {
 
   if (input.role === "tabRow") {
     return {
-      left: input.sidebarClosed && input.focusModeEnabled ? input.rawPadding.left : 0,
-      right: input.focusModeEnabled && !input.explorerOpen ? input.rawPadding.right : 0,
+      left: input.focusModeEnabled ? input.rawPadding.left : 0,
+      right: input.focusModeEnabled ? input.rawPadding.right : 0,
       top: 0,
     };
   }

@@ -16,6 +16,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -359,6 +360,69 @@ interface ProviderModalBodyProps {
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
 }
 
+interface ProviderSheetFooterInput {
+  fetchedAtLabel: string | null;
+  isCompact: boolean;
+  modelsRefreshing: boolean;
+  onOpenAddSheet: () => void;
+  onOpenDiagSheet: () => void;
+  onRefreshModels: () => void;
+}
+
+function renderProviderSheetFooter({
+  fetchedAtLabel,
+  isCompact,
+  modelsRefreshing,
+  onOpenAddSheet,
+  onOpenDiagSheet,
+  onRefreshModels,
+}: ProviderSheetFooterInput) {
+  const contentStyle = isCompact ? sheetStyles.compactFooterContent : sheetStyles.footerContent;
+  const actionsStyle = isCompact ? sheetStyles.compactFooterActions : sheetStyles.footerActions;
+  const buttonStyle = isCompact ? sheetStyles.compactFooterButton : null;
+  const metaStyle = isCompact ? COMPACT_FOOTER_META_STYLE : sheetStyles.footerMeta;
+
+  return (
+    <View style={contentStyle}>
+      {fetchedAtLabel || !isCompact ? (
+        <Text style={metaStyle} numberOfLines={1}>
+          {fetchedAtLabel ? `Updated ${fetchedAtLabel}` : ""}
+        </Text>
+      ) : null}
+      <View style={actionsStyle}>
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={Plus}
+          onPress={onOpenAddSheet}
+          style={buttonStyle}
+        >
+          Add model
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={FileText}
+          onPress={onOpenDiagSheet}
+          style={buttonStyle}
+        >
+          Diagnostic
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          leftIcon={modelsRefreshing ? undefined : RotateCw}
+          onPress={onRefreshModels}
+          disabled={modelsRefreshing}
+          style={buttonStyle}
+        >
+          {modelsRefreshing ? "Refreshing…" : "Refresh"}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
 function ProviderModalBody(props: ProviderModalBodyProps) {
   const {
     discoveredCount,
@@ -446,6 +510,7 @@ export function ProviderDiagnosticSheet({
   serverId,
 }: ProviderDiagnosticSheetProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [query, setQuery] = useState("");
@@ -545,38 +610,20 @@ export function ProviderDiagnosticSheet({
     [providerLabel],
   );
 
-  const footer = (
-    <>
-      <Text style={sheetStyles.footerMeta} numberOfLines={1}>
-        {fetchedAtLabel ? `Updated ${fetchedAtLabel}` : ""}
-      </Text>
-      <View style={sheetStyles.footerActions}>
-        <Button variant="secondary" size="sm" leftIcon={Plus} onPress={handleOpenAddSheet}>
-          Add model
-        </Button>
-        <Button variant="secondary" size="sm" leftIcon={FileText} onPress={handleOpenDiagSheet}>
-          Diagnostic
-        </Button>
-        <Button
-          variant="default"
-          size="sm"
-          leftIcon={modelsRefreshing ? undefined : RotateCw}
-          onPress={handleRefreshModels}
-          disabled={modelsRefreshing}
-        >
-          {modelsRefreshing ? "Refreshing…" : "Refresh"}
-        </Button>
-      </View>
-    </>
-  );
-
   return (
     <>
       <AdaptiveModalSheet
         header={sheetHeader}
         visible={visible}
         onClose={onClose}
-        footer={footer}
+        footer={renderProviderSheetFooter({
+          fetchedAtLabel,
+          isCompact,
+          modelsRefreshing,
+          onOpenAddSheet: handleOpenAddSheet,
+          onOpenDiagSheet: handleOpenDiagSheet,
+          onRefreshModels: handleRefreshModels,
+        })}
         snapPoints={MAIN_SNAP_POINTS}
       >
         <ProviderModalBody
@@ -692,15 +739,35 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[3],
   },
+  footerContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
+  compactFooterContent: {
+    flex: 1,
+    gap: theme.spacing[2],
+  },
   footerMeta: {
     flex: 1,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
+  compactFooterMeta: {
+    flex: 0,
+  },
   footerActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  compactFooterActions: {
+    gap: theme.spacing[2],
+  },
+  compactFooterButton: {
+    alignSelf: "stretch",
   },
   formGroup: {
     gap: theme.spacing[3],
@@ -741,6 +808,7 @@ const sheetStyles = StyleSheet.create((theme) => ({
 }));
 
 const FORM_INPUT_STYLE = [sheetStyles.formInput, isWeb && { outlineStyle: "none" }];
+const COMPACT_FOOTER_META_STYLE = [sheetStyles.footerMeta, sheetStyles.compactFooterMeta];
 
 const MAIN_SNAP_POINTS = ["65%", "92%"];
 const ADD_SNAP_POINTS = ["40%"];

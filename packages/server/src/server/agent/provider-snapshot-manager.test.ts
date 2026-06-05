@@ -12,6 +12,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -445,6 +446,62 @@ describe("ProviderSnapshotManager public surface", () => {
           availableModes: modes,
         },
       ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("treats an OpenCode parent with auto accept as unattended when resolving an explicit child mode", async () => {
+    const openCode = new OpenCodeAgentClient(createTestLogger());
+    const modes: AgentMode[] = [
+      { id: "build", label: "Build" },
+      { id: "base", label: "Base" },
+      { id: "orchestrator", label: "Orchestrator" },
+    ];
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          async isAvailable() {
+            return true;
+          },
+          async listModes() {
+            return modes;
+          },
+          resolveCreateConfig: openCode.resolveCreateConfig.bind(openCode),
+          isCreateConfigUnattended: openCode.isCreateConfigUnattended.bind(openCode),
+        }),
+      },
+    });
+    try {
+      const parent = {
+        id: "parent-agent",
+        provider: "opencode",
+        currentModeId: "orchestrator",
+        availableModes: modes,
+        config: {
+          provider: "opencode",
+          cwd: "/tmp/project",
+          featureValues: { auto_accept: true },
+        },
+      } as ManagedAgent;
+
+      const resolved = await manager.resolveCreateConfig({
+        cwd: "/tmp/project",
+        provider: "opencode",
+        requestedMode: "base",
+        featureValues: undefined,
+        parent,
+        unattended: false,
+      });
+
+      expect(resolved).toEqual({ modeId: "base", featureValues: { auto_accept: true } });
     } finally {
       manager.destroy();
     }

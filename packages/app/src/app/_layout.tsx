@@ -40,6 +40,8 @@ import {
 } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
 import {
+  MOBILE_VISUAL_PANEL_AGENT,
+  MOBILE_VISUAL_PANEL_AGENT_LIST,
   SidebarAnimationProvider,
   useSidebarAnimation,
 } from "@/contexts/sidebar-animation-context";
@@ -493,7 +495,6 @@ function MobileGestureWrapper({
   children: ReactNode;
   chromeEnabled: boolean;
 }) {
-  const mobileView = usePanelStore((state) => state.mobileView);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const horizontalScroll = useHorizontalScrollOptional();
   const {
@@ -503,12 +504,13 @@ function MobileGestureWrapper({
     animateToOpen,
     animateToClose,
     isGesturing,
+    mobileVisualPanel,
     gestureAnimatingRef,
     openGestureRef,
   } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
-  const openGestureEnabled = chromeEnabled && mobileView === "agent";
+  const openGestureEnabled = chromeEnabled;
 
   const handleGestureOpen = useCallback(() => {
     gestureAnimatingRef.current = true;
@@ -537,6 +539,11 @@ function MobileGestureWrapper({
           const deltaY = touch.absoluteY - touchStartY.value;
           const absDeltaX = Math.abs(deltaX);
           const absDeltaY = Math.abs(deltaY);
+
+          if (mobileVisualPanel.value !== MOBILE_VISUAL_PANEL_AGENT) {
+            stateManager.fail();
+            return;
+          }
 
           if (horizontalScroll?.isAnyScrolledRight.value) {
             stateManager.fail();
@@ -579,9 +586,11 @@ function MobileGestureWrapper({
           isGesturing.value = false;
           const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
           if (shouldOpen) {
+            mobileVisualPanel.value = MOBILE_VISUAL_PANEL_AGENT_LIST;
             animateToOpen();
             runOnJS(handleGestureOpen)();
           } else {
+            mobileVisualPanel.value = MOBILE_VISUAL_PANEL_AGENT;
             animateToClose();
           }
         })
@@ -593,6 +602,7 @@ function MobileGestureWrapper({
       windowWidth,
       translateX,
       backdropOpacity,
+      mobileVisualPanel,
       animateToOpen,
       animateToClose,
       handleGestureOpen,

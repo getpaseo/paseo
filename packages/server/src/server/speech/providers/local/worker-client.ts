@@ -248,7 +248,7 @@ export class LocalSpeechWorkerClient {
         timeout,
       });
 
-      const sent = worker.send(message, (error) => {
+      worker.send(message, (error) => {
         if (!error) {
           return;
         }
@@ -262,16 +262,6 @@ export class LocalSpeechWorkerClient {
         this.scheduleIdleShutdownIfReady();
         pending.reject(error);
       });
-      if (!sent) {
-        const pending = this.pendingRequests.get(requestId);
-        if (pending) {
-          clearTimeout(pending.timeout);
-          this.pendingRequests.delete(requestId);
-          this.inFlightRequests = Math.max(0, this.inFlightRequests - 1);
-          this.scheduleIdleShutdownIfReady();
-          pending.reject(new Error("Local speech worker IPC channel is not writable"));
-        }
-      }
     });
   }
 

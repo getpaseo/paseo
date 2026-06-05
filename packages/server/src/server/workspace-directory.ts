@@ -30,7 +30,7 @@ const FETCH_WORKSPACES_SORT_KEYS = [
  * mask to a lower-priority bucket, the new entry time is the unmask time
  * (i.e., the moment the higher-priority bucket cleared), not when the
  * underlying agent originally entered the lower-priority bucket. Cleared when
- * the workspace becomes `done` with no contributing agents.
+ * the workspace has never had contributing agents.
  */
 interface WorkspaceBucketHistoryEntry {
   bucket: WorkspaceStateBucket;
@@ -279,7 +279,10 @@ export class WorkspaceDirectory {
   //   - priority unmasking: when the winning bucket transitions (e.g. a
   //     higher-priority bucket cleared), the new entry time is "now";
   //   - same-bucket emits reuse the previous entered-at;
-  //   - empty workspaces (no contributing agents) get `statusEnteredAt: null`.
+  //   - empty workspaces that never had contributing agents get
+  //     `statusEnteredAt: null`.
+  //   - when archived agents leave a previously active workspace empty, keep
+  //     the previous done timestamp or stamp the transition to done now.
   private resolveStatusEnteredAt(params: {
     workspaceId: string;
     winningBucket: WorkspaceStateBucket;
@@ -294,16 +297,15 @@ export class WorkspaceDirectory {
     const { winningBucket, contributingAgents, previous, nowIso } = params;
 
     if (contributingAgents.length === 0) {
-      if (previous && previous.bucket !== "done") {
-        return { statusEnteredAt: null, recordDelete: true };
+      if (!previous) {
+        return { statusEnteredAt: null };
       }
-      if (previous) {
-        return {
-          statusEnteredAt: null,
-          recordUpdate: { bucket: "done", enteredAt: previous.enteredAt },
-        };
-      }
-      return { statusEnteredAt: null };
+
+      const enteredAt = previous.bucket === "done" ? previous.enteredAt : nowIso;
+      return {
+        statusEnteredAt: enteredAt,
+        recordUpdate: { bucket: "done", enteredAt },
+      };
     }
 
     if (!previous) {

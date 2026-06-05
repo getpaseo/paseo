@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 
 interface UseMountedTabSetInput {
   activeTabId: string | null;
@@ -10,23 +10,36 @@ interface UseMountedTabSetResult {
   mountedTabIds: Set<string>;
 }
 
-function createInitialMountedTabIds(input: UseMountedTabSetInput): Set<string> {
-  if (!input.activeTabId || !input.allTabIds.includes(input.activeTabId)) {
-    return new Set<string>();
-  }
-  return new Set<string>([input.activeTabId]);
+interface DeriveMountedTabLruInput {
+  activeTabId: string | null;
+  availableTabIds: Set<string>;
+  cap: number;
+  previousLru: string[];
 }
 
-function setsEqual(left: Set<string>, right: Set<string>): boolean {
-  if (left.size !== right.size) {
-    return false;
+function createInitialMountedTabLru(input: UseMountedTabSetInput): string[] {
+  if (!input.activeTabId || !input.allTabIds.includes(input.activeTabId)) {
+    return [];
   }
-  for (const value of left) {
-    if (!right.has(value)) {
-      return false;
+  return [input.activeTabId];
+}
+
+function deriveMountedTabLru(input: DeriveMountedTabLruInput): string[] {
+  const { activeTabId, availableTabIds, cap, previousLru } = input;
+  const maxSize = Math.max(1, cap);
+
+  const next: string[] = [];
+  if (activeTabId && availableTabIds.has(activeTabId)) {
+    next.push(activeTabId);
+  }
+
+  for (const tabId of previousLru) {
+    if (next.length >= maxSize) break;
+    if (tabId !== activeTabId && availableTabIds.has(tabId)) {
+      next.push(tabId);
     }
   }
-  return true;
+  return next;
 }
 
 export function useMountedTabSet(input: UseMountedTabSetInput): UseMountedTabSetResult {
@@ -36,30 +49,22 @@ export function useMountedTabSet(input: UseMountedTabSetInput): UseMountedTabSet
     void allTabIdsKey;
     return new Set(allTabIds);
   }, [allTabIds, allTabIdsKey]);
-  const [mountedTabIds, setMountedTabIds] = useState(() => createInitialMountedTabIds(input));
-  const lruRef = useRef(activeTabId && allTabIds.includes(activeTabId) ? [activeTabId] : []);
+  const committedLruRef = useRef(createInitialMountedTabLru(input));
+  const mountedTabLru = useMemo(
+    () =>
+      deriveMountedTabLru({
+        activeTabId,
+        availableTabIds,
+        cap,
+        previousLru: committedLruRef.current,
+      }),
+    [activeTabId, availableTabIds, cap],
+  );
+  const mountedTabIds = useMemo(() => new Set<string>(mountedTabLru), [mountedTabLru]);
 
   useLayoutEffect(() => {
-    const nextLru = lruRef.current.filter((tabId) => availableTabIds.has(tabId));
-    if (activeTabId && availableTabIds.has(activeTabId)) {
-      const existingIndex = nextLru.indexOf(activeTabId);
-      if (existingIndex >= 0) {
-        nextLru.splice(existingIndex, 1);
-      }
-      nextLru.unshift(activeTabId);
-    }
-    if (nextLru.length > cap) {
-      nextLru.length = cap;
-    }
-
-    lruRef.current = nextLru;
-    setMountedTabIds((previousMountedTabIds) => {
-      const nextMountedTabIds = new Set(nextLru);
-      return setsEqual(previousMountedTabIds, nextMountedTabIds)
-        ? previousMountedTabIds
-        : nextMountedTabIds;
-    });
-  }, [activeTabId, availableTabIds, cap]);
+    committedLruRef.current = mountedTabLru;
+  }, [mountedTabLru]);
 
   return { mountedTabIds };
 }

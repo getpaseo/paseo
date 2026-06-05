@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { claudeProjectDir } from "./project-dir.js";
+import { claudeProjectDir, claudeProjectDirSync } from "./project-dir.js";
 
 // Parity oracle: the Claude SDK's getSessionInfo({ dir }) canonicalizes the
 // given dir with the SDK's own encoder and looks for `<sessionId>.jsonl` under
@@ -101,6 +101,12 @@ describe("claudeProjectDir parity with Claude Agent SDK", () => {
       expect(info?.sessionId).toBe(sessionId);
     });
   }
+
+  test("sync helper uses the same directory as the SDK-parity helper", async () => {
+    const cwd = await ensureDir(join(workspaceRoot, "sync path with spaces"));
+
+    await expect(claudeProjectDir(cwd)).resolves.toBe(claudeProjectDirSync(cwd));
+  });
 });
 
 async function ensureDir(path: string): Promise<string> {

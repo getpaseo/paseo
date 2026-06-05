@@ -124,7 +124,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       return {
         serverId: cfg.serverId,
         status: daemonRunning ? "running" : "stopped",
-        listen: null,
+        listen: "127.0.0.1:6767",
         hostname: null,
         pid: currentPid,
         home: "",

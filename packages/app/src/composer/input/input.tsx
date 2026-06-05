@@ -143,7 +143,7 @@ const DEFAULT_MAX_INPUT_HEIGHT = 160;
 const MAX_INPUT_VIEWPORT_RATIO = 0.5;
 const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
 const ATTACHMENT_SHEET_HEADER: SheetHeader = { title: "Add attachment" };
-const ATTACHMENT_SHEET_SNAP_POINTS = ["28%", "45%"];
+const ATTACHMENT_SHEET_SNAP_POINTS = ["34%", "45%"];
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {

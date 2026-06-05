@@ -226,6 +226,50 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(openCodeClient.calls.providerList).toEqual([{ directory: cwd }]);
   }, 60_000);
 
+  test("limits concurrent OpenCode metadata requests across clients", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    let activeProviderListCalls = 0;
+    let maxActiveProviderListCalls = 0;
+    const response = {
+      data: {
+        connected: ["opencode"],
+        all: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            source: "api",
+            models: {
+              "big-pickle": {
+                name: "Big Pickle",
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    for (let index = 0; index < 12; index += 1) {
+      const openCodeClient = new TestOpenCodeClient();
+      openCodeClient.providerListImplementation = async () => {
+        activeProviderListCalls += 1;
+        maxActiveProviderListCalls = Math.max(maxActiveProviderListCalls, activeProviderListCalls);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeProviderListCalls -= 1;
+        return response;
+      };
+      runtime.enqueueClient(openCodeClient);
+    }
+
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        client.listModels({ cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`), force: false }),
+      ),
+    );
+
+    expect(maxActiveProviderListCalls).toBeLessThanOrEqual(4);
+  });
+
   test("available modes include build and plan", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeRuntime();

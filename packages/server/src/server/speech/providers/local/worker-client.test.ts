@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import { once } from "node:events";
+import { fork, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 
@@ -51,6 +53,50 @@ class FakeLocalSpeechWorker extends EventEmitter {
 
   emitWorkerMessage(message: LocalSpeechWorkerToParentMessage): void {
     this.emit("message", message);
+  }
+}
+
+class PausedIpcWorker {
+  private readonly child: ChildProcess;
+
+  constructor() {
+    this.child = fork(
+      fileURLToPath(new URL("./test-fixtures/paused-ipc-worker.cjs", import.meta.url)),
+      [],
+      { serialization: "advanced", stdio: ["ignore", "ignore", "ignore", "ipc"] },
+    );
+  }
+
+  get connected(): boolean {
+    return this.child.connected;
+  }
+
+  get killed(): boolean {
+    return this.child.killed;
+  }
+
+  send(message: LocalSpeechWorkerRequest, callback: (error: Error | null) => void): boolean {
+    return this.child.send(message, (error) => callback(error ?? null));
+  }
+
+  disconnect(): void {
+    this.child.disconnect();
+  }
+
+  kill(): boolean {
+    return this.child.kill();
+  }
+
+  on(event: "message", listener: (message: LocalSpeechWorkerToParentMessage) => void): this;
+  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(
+    event: "message" | "exit",
+    listener:
+      | ((message: LocalSpeechWorkerToParentMessage) => void)
+      | ((code: number | null, signal: NodeJS.Signals | null) => void),
+  ): this {
+    this.child.on(event, listener as (...args: unknown[]) => void);
+    return this;
   }
 }
 
@@ -166,6 +212,49 @@ describe("LocalSpeechWorkerClient", () => {
     await expect(transcriptPromise).resolves.toEqual([
       { segmentId: "seg-1", transcript: "hello", isFinal: true },
     ]);
+  });
+
+  it("does not surface real IPC backpressure when replaying native-sized dictation frames", async () => {
+    const workers: PausedIpcWorker[] = [];
+    const client = new LocalSpeechWorkerClient({
+      config: {
+        modelsDir: "/tmp/models",
+        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceTtsModel: "kokoro-en-v0_19",
+      },
+      requestTimeoutMs: 30_000,
+      idleTtlMs: 30_000,
+      forkWorker: () => {
+        const worker = new PausedIpcWorker();
+        workers.push(worker);
+        return worker;
+      },
+    });
+    const provider = new WorkerBackedSpeechToTextProvider(client, "dictationStt");
+    const session = provider.createSession({ logger: pino({ level: "silent" }) });
+    let observedError: Error | null = null;
+    (session as EventEmitter).on("error", (error: Error) => {
+      observedError = error;
+    });
+
+    try {
+      await session.connect();
+      const nativeFrame = Buffer.alloc(1024, 1);
+
+      for (let seq = 0; seq < 480; seq += 1) {
+        session.appendPcm16(nativeFrame);
+      }
+      session.commit();
+      await waitForMicrotasks();
+
+      expect(observedError?.message).not.toBe("Local speech worker IPC channel is not writable");
+    } finally {
+      client.shutdown();
+      for (const worker of workers) {
+        worker.kill();
+      }
+    }
   });
 
   it("forwards VAD session events through the shared worker", async () => {
