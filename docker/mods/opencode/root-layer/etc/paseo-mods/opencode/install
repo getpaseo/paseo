@@ -2,6 +2,26 @@
 # Install OpenCode so Paseo exposes the `opencode` provider.
 set -euo pipefail
 
+PASEO_HOME="${PASEO_HOME:-/home/paseo}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$PASEO_HOME/.config}"
+XDG_DATA_HOME="${XDG_DATA_HOME:-$PASEO_HOME/.local/share}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-$PASEO_HOME/.cache}"
+
+ensure_opencode_dir() {
+  local dir="$1"
+  mkdir -p "$dir"
+  chown paseo:paseo "$dir" || true
+  chmod 700 "$dir" || true
+}
+
+ensure_opencode_dir "$XDG_CONFIG_HOME/opencode"
+ensure_opencode_dir "$XDG_DATA_HOME/opencode"
+ensure_opencode_dir "$XDG_DATA_HOME/opencode/log"
+ensure_opencode_dir "$XDG_DATA_HOME/opencode/project"
+ensure_opencode_dir "$XDG_DATA_HOME/opencode/bin"
+ensure_opencode_dir "$XDG_CACHE_HOME/opencode"
+ensure_opencode_dir "$XDG_CACHE_HOME/opencode/bin"
+
 if command -v opencode >/dev/null 2>&1; then
   echo "[mod:opencode] opencode already on PATH — skipping install."
   exit 0

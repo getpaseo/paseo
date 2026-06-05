@@ -267,6 +267,11 @@ Ubuntu 22.04 arm64.
   stop the daemon. On Alpine, native agents (Codex) will not install.
 - **Can't connect / 403** — set `PASEO_HOSTNAMES` if reaching the daemon by a DNS
   name; IPs and `localhost` are allowed by default.
+- **OpenCode says `unable to open database file` on first run** — check that
+  the OpenCode mod ran and that `/home/paseo/.local/share/opencode` and its
+  `log` directory are owned by the container's `paseo` user. If `/home/paseo` is
+  bind-mounted, set `PUID`/`PGID` to match the host owner of that mounted
+  folder.
 - **Permission errors on your repo** — set `PUID`/`PGID` to match the host owner
   of the bind mount.
 - **Daemon logs** — `docker exec paseo tail -f /home/paseo/daemon.log`.
