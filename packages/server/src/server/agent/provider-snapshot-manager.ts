@@ -29,6 +29,25 @@ import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
+const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
+
+// Provider refresh probes can be slow on cold starts (e.g. Copilot's first
+// `copilot --acp` invocation, OpenCode workspace probes with many MCP servers).
+// Allow operators to bump the ceiling via env var without rebuilding.
+function resolveRefreshTimeoutMs(option: number | undefined): number {
+  if (typeof option === "number" && Number.isFinite(option) && option > 0) {
+    return option;
+  }
+  const fromEnv = process.env[REFRESH_TIMEOUT_ENV_VAR];
+  if (fromEnv) {
+    // Number() handles scientific notation (e.g. "6e4") which parseInt would silently truncate.
+    const parsed = Number(fromEnv);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_REFRESH_TIMEOUT_MS;
+}
 
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
@@ -124,7 +143,7 @@ export class ProviderSnapshotManager {
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
     this.baseProviderOverrides = options.providerOverrides;
-    this.refreshTimeoutMs = options.refreshTimeoutMs ?? DEFAULT_REFRESH_TIMEOUT_MS;
+    this.refreshTimeoutMs = resolveRefreshTimeoutMs(options.refreshTimeoutMs);
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
   }

@@ -93,6 +93,37 @@ describe("searchHomeDirectories", () => {
     expect(exactIndex).toBeLessThan(prefixIndex);
   });
 
+  it("does not let Python virtual environments crowd out top-level project matches", async () => {
+    const projectPath = path.join(homeDir, "django-po-merge");
+    mkdirSync(projectPath, { recursive: true });
+    const dependencyPaths = ["venv", "env", "virtualenv"].map((environmentDirectoryName) =>
+      path.join(
+        homeDir,
+        `${environmentDirectoryName}-project`,
+        environmentDirectoryName,
+        "Lib",
+        "site-packages",
+        "django",
+      ),
+    );
+    for (const dependencyPath of dependencyPaths) {
+      mkdirSync(dependencyPath, { recursive: true });
+    }
+
+    const results = await searchHomeDirectories({
+      homeDir,
+      query: "~/django",
+      limit: 30,
+    });
+
+    const resolvedResults = results.map((result) => realpathSync.native(result));
+    const projectIndex = resolvedResults.indexOf(realpathSync.native(projectPath));
+    expect(projectIndex).toBeGreaterThanOrEqual(0);
+    for (const dependencyPath of dependencyPaths) {
+      expect(resolvedResults).not.toContain(realpathSync.native(dependencyPath));
+    }
+  });
+
   it("prioritizes partial matches that appear earlier in the path", async () => {
     const earlierPath = path.join(homeDir, "farofoo");
     const laterPath = path.join(homeDir, "x", "y", "farofoo");

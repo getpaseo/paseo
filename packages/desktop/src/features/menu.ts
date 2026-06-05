@@ -6,6 +6,10 @@ interface ShowContextMenuInput {
   hasSelection?: boolean;
 }
 
+interface ApplicationMenuOptions {
+  onNewWindow: () => void;
+}
+
 function withBrowserWindow(
   callback: (win: BrowserWindow) => void,
 ): (_item: Electron.MenuItem, baseWin: Electron.BaseWindow | undefined) => void {
@@ -41,10 +45,12 @@ function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCac
   win.webContents.reload();
 }
 
-export function setupApplicationMenu(): void {
+function buildApplicationMenuTemplate(
+  options: ApplicationMenuOptions,
+): Electron.MenuItemConstructorOptions[] {
   const isMac = process.platform === "darwin";
 
-  const template: Electron.MenuItemConstructorOptions[] = [
+  return [
     ...(isMac
       ? [
           {
@@ -63,6 +69,18 @@ export function setupApplicationMenu(): void {
           },
         ]
       : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Window",
+          accelerator: "CmdOrCtrl+Shift+N",
+          click: () => {
+            options.onNewWindow();
+          },
+        },
+      ],
+    },
     {
       label: "Edit",
       submenu: [
@@ -130,8 +148,10 @@ export function setupApplicationMenu(): void {
       ],
     },
   ];
+}
 
-  const menu = Menu.buildFromTemplate(template);
+export function setupApplicationMenu(options: ApplicationMenuOptions): void {
+  const menu = Menu.buildFromTemplate(buildApplicationMenuTemplate(options));
   Menu.setApplicationMenu(menu);
 
   ipcMain.handle("paseo:menu:showContextMenu", (event, input?: ShowContextMenuInput) => {

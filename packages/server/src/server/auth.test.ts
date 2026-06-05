@@ -7,6 +7,7 @@ import {
   hashDaemonPassword,
   isBearerTokenValidAsync,
   isBearerTokenValid,
+  shouldBypassBearerAuth,
 } from "./auth.js";
 
 const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
@@ -51,5 +52,17 @@ describe("daemon bearer validator", () => {
     expect(protocol).toBe("paseo.bearer.secret.with.dots");
     expect(extractWsBearerToken(protocol)).toBe("secret.with.dots");
     expect(extractWsBearerToken("paseo.other.secret")).toBeNull();
+  });
+
+  test("bypasses bearer auth for preflight, liveness, and capability-token routes", () => {
+    // Preflight is always bypassed regardless of path.
+    expect(shouldBypassBearerAuth("OPTIONS", "/api/status")).toBe(true);
+    // Unauthenticated liveness probe.
+    expect(shouldBypassBearerAuth("GET", "/api/health")).toBe(true);
+    // Guarded by its own single-use download token, not the daemon password.
+    expect(shouldBypassBearerAuth("GET", "/api/files/download")).toBe(true);
+    // Everything else stays behind the daemon password.
+    expect(shouldBypassBearerAuth("GET", "/api/status")).toBe(false);
+    expect(shouldBypassBearerAuth("POST", "/api/files/upload")).toBe(false);
   });
 });
