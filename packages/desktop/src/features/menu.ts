@@ -6,11 +6,21 @@ interface ShowContextMenuInput {
   hasSelection?: boolean;
 }
 
+interface ApplicationMenuOptions {
+  onNewWindow: () => void;
+}
+
 function withBrowserWindow(
-  callback: (win: BrowserWindow) => void,
-): (_item: Electron.MenuItem, baseWin: Electron.BaseWindow | undefined) => void {
+  callback: (win: BrowserWindow) => void
+): (
+  _item: Electron.MenuItem,
+  baseWin: Electron.BaseWindow | undefined
+) => void {
   return (_item, baseWin) => {
-    const win = baseWin instanceof BrowserWindow ? baseWin : BrowserWindow.getFocusedWindow();
+    const win =
+      baseWin instanceof BrowserWindow
+        ? baseWin
+        : BrowserWindow.getFocusedWindow();
     if (win) callback(win);
   };
 }
@@ -19,7 +29,10 @@ function getReloadTargetBrowserWebContents(): Electron.WebContents | null {
   return getWorkspaceActivePaseoBrowserWebContents();
 }
 
-function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCache?: boolean }) {
+function reloadFocusedContentsOrWindow(
+  win: BrowserWindow,
+  options?: { ignoreCache?: boolean }
+) {
   const browserContents = getReloadTargetBrowserWebContents();
   if (browserContents) {
     if (options?.ignoreCache) {
@@ -41,10 +54,12 @@ function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCac
   win.webContents.reload();
 }
 
-export function setupApplicationMenu(): void {
+function buildApplicationMenuTemplate(
+  options: ApplicationMenuOptions
+): Electron.MenuItemConstructorOptions[] {
   const isMac = process.platform === "darwin";
 
-  const template: Electron.MenuItemConstructorOptions[] = [
+  return [
     ...(isMac
       ? [
           {
@@ -63,6 +78,18 @@ export function setupApplicationMenu(): void {
           },
         ]
       : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Window",
+          accelerator: "CmdOrCtrl+N",
+          click: () => {
+            options.onNewWindow();
+          },
+        },
+      ],
+    },
     {
       label: "Edit",
       submenu: [
@@ -130,39 +157,44 @@ export function setupApplicationMenu(): void {
       ],
     },
   ];
+}
 
-  const menu = Menu.buildFromTemplate(template);
+export function setupApplicationMenu(options: ApplicationMenuOptions): void {
+  const menu = Menu.buildFromTemplate(buildApplicationMenuTemplate(options));
   Menu.setApplicationMenu(menu);
 
-  ipcMain.handle("paseo:menu:showContextMenu", (event, input?: ShowContextMenuInput) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) {
-      return;
+  ipcMain.handle(
+    "paseo:menu:showContextMenu",
+    (event, input?: ShowContextMenuInput) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) {
+        return;
+      }
+
+      if (input?.kind !== "terminal") {
+        return;
+      }
+
+      const contextMenu = Menu.buildFromTemplate([
+        {
+          label: "Copy",
+          role: "copy",
+          enabled: input.hasSelection === true,
+        },
+        {
+          label: "Paste",
+          role: "paste",
+        },
+        {
+          type: "separator",
+        },
+        {
+          label: "Select All",
+          role: "selectAll",
+        },
+      ]);
+
+      contextMenu.popup({ window: win });
     }
-
-    if (input?.kind !== "terminal") {
-      return;
-    }
-
-    const contextMenu = Menu.buildFromTemplate([
-      {
-        label: "Copy",
-        role: "copy",
-        enabled: input.hasSelection === true,
-      },
-      {
-        label: "Paste",
-        role: "paste",
-      },
-      {
-        type: "separator",
-      },
-      {
-        label: "Select All",
-        role: "selectAll",
-      },
-    ]);
-
-    contextMenu.popup({ window: win });
-  });
+  );
 }
