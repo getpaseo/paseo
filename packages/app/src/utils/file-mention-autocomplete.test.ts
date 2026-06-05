@@ -46,7 +46,16 @@ describe("findActiveFileMention", () => {
   });
 
   it("returns null for email addresses (word char before @)", () => {
-    const text = "thedavidweng <95214375+thedavidweng@users.noreply.github.com>";
+    const text = "send to alice@example.com please";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null for email addresses (+ before @)", () => {
+    const text = "send to noreply+tag@example.com please";
     const mention = findActiveFileMention({
       text,
       cursorIndex: text.length,
