@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+
 import type {
   BrowserAutomationCommand,
   BrowserAutomationConsoleLogEntry,
@@ -1144,9 +1146,22 @@ async function executeUpload(
   if (typeof queried.nodeId !== "number" || queried.nodeId <= 0) {
     return staleRefFailure(requestId, input.ref);
   }
+  const workspaceRoot = resolveUploadWorkspaceRoot({ workspaceId, target, registry });
+  if (!workspaceRoot) {
+    return fail(requestId, "browser_unsupported", "browser_upload requires a workspace target");
+  }
+  const filePaths = resolveWorkspaceFilePaths(input.filePaths, workspaceRoot);
+  if (!filePaths) {
+    return fail(
+      requestId,
+      "browser_unsupported",
+      "browser_upload only accepts files inside the agent workspace.",
+    );
+  }
+
   await target.contents.sendDebugCommand("DOM.setFileInputFiles", {
     nodeId: queried.nodeId,
-    files: input.filePaths,
+    files: filePaths,
   });
   return {
     requestId,
@@ -1155,9 +1170,34 @@ async function executeUpload(
       command: "upload",
       browserId: target.browserId,
       ref: input.ref,
-      filePaths: input.filePaths,
+      filePaths,
     },
   };
+}
+
+function resolveUploadWorkspaceRoot(params: {
+  workspaceId: string | undefined;
+  target: ResolvedTabTarget;
+  registry: BrowserRegistry;
+}): string | null {
+  const workspaceRoot =
+    params.workspaceId ?? params.registry.getBrowserWorkspaceId(params.target.browserId);
+  return workspaceRoot ? resolvePath(workspaceRoot) : null;
+}
+
+function resolveWorkspaceFilePaths(filePaths: string[], workspaceRoot: string): string[] | null {
+  const resolvedPaths = filePaths.map((filePath) =>
+    isAbsolute(filePath) ? resolvePath(filePath) : resolvePath(workspaceRoot, filePath),
+  );
+  if (resolvedPaths.some((filePath) => !isPathInsideDirectory(filePath, workspaceRoot))) {
+    return null;
+  }
+  return resolvedPaths;
+}
+
+function isPathInsideDirectory(filePath: string, directory: string): boolean {
+  const relativePath = relative(directory, filePath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function delay(ms: number): Promise<void> {

@@ -63,8 +63,7 @@ function downloadWithContents(
 ): Promise<{ filePath: string; totalBytes?: number; state: string }> {
   const downloadDir = join(tmpdir(), "paseo-browser-downloads");
   mkdirSync(downloadDir, { recursive: true });
-  const requestedName = input.fileName ?? (basename(new URL(input.url).pathname) || "download");
-  const filePath = join(downloadDir, requestedName);
+  const filePath = join(downloadDir, sanitizeDownloadFileName(input));
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       contents.session.off("will-download", onDownload);
@@ -84,6 +83,11 @@ function downloadWithContents(
     contents.session.on("will-download", onDownload);
     contents.downloadURL(input.url);
   });
+}
+
+export function sanitizeDownloadFileName(input: { url: string; fileName?: string }): string {
+  const requestedName = input.fileName ?? basename(new URL(input.url).pathname);
+  return basename(requestedName) || "download";
 }
 
 function normalizeCookie(cookie: Electron.Cookie): BrowserAutomationCookieEntry {

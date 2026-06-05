@@ -475,9 +475,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     "browser_upload",
     {
       title: "Upload files in browser",
-      description: "Set files on a file input ref from the latest browser_snapshot.",
+      description:
+        "Set workspace files on a file input ref from the latest browser_snapshot. Paths must resolve inside the agent workspace.",
       inputSchema: {
-        ref: z.string().min(1),
+        ref: BrowserRefInputSchema,
         filePaths: z.array(z.string().min(1)).min(1),
         browserId: z.string().min(1).optional(),
       },

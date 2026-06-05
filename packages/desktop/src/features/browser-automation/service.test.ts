@@ -1365,8 +1365,9 @@ describe("executeAutomationCommand", () => {
       });
     });
 
-    it("sets files on a file input ref through CDP", async () => {
+    it("sets workspace files on a file input ref through CDP", async () => {
       const debugCommands: Array<{ command: string; params?: Record<string, unknown> }> = [];
+      const workspaceRoot = "/tmp/paseo-workspace-a";
       const tab = fakeTab({
         id: 25,
         executeJavaScript: async () =>
@@ -1392,17 +1393,17 @@ describe("executeAutomationCommand", () => {
       });
       const registry = createRegistry({
         getWorkspaceActiveTabContents: (workspaceId) =>
-          workspaceId === "workspace-a" ? tab : null,
-        getWorkspaceActiveBrowserId: (workspaceId) => (workspaceId === "workspace-a" ? "a" : null),
-        getBrowserWorkspaceId: (id) => (id === "a" ? "workspace-a" : null),
+          workspaceId === workspaceRoot ? tab : null,
+        getWorkspaceActiveBrowserId: (workspaceId) => (workspaceId === workspaceRoot ? "a" : null),
+        getBrowserWorkspaceId: (id) => (id === "a" ? workspaceRoot : null),
       });
       const snapshotEngine = new BrowserSnapshotEngine();
       const snapshot = await executeAutomationCommand(
         {
           type: "browser.automation.execute.request",
           requestId: "r-snapshot-upload",
-          workspaceId: "workspace-a",
-          command: { command: "snapshot", args: { workspaceId: "workspace-a" } },
+          workspaceId: workspaceRoot,
+          command: { command: "snapshot", args: { workspaceId: workspaceRoot } },
         },
         registry,
         { snapshotEngine },
@@ -1419,10 +1420,10 @@ describe("executeAutomationCommand", () => {
         {
           type: "browser.automation.execute.request",
           requestId: "r-upload",
-          workspaceId: "workspace-a",
+          workspaceId: workspaceRoot,
           command: {
             command: "upload",
-            args: { workspaceId: "workspace-a", ref, filePaths: ["/tmp/upload.txt"] },
+            args: { workspaceId: workspaceRoot, ref, filePaths: ["uploads/file.txt"] },
           },
         },
         registry,
@@ -1431,12 +1432,96 @@ describe("executeAutomationCommand", () => {
 
       expect(debugCommands.at(-1)).toEqual({
         command: "DOM.setFileInputFiles",
-        params: { nodeId: 2, files: ["/tmp/upload.txt"] },
+        params: { nodeId: 2, files: [`${workspaceRoot}/uploads/file.txt`] },
       });
       expect(result).toEqual({
         requestId: "r-upload",
         ok: true,
-        result: { command: "upload", browserId: "a", ref, filePaths: ["/tmp/upload.txt"] },
+        result: {
+          command: "upload",
+          browserId: "a",
+          ref,
+          filePaths: [`${workspaceRoot}/uploads/file.txt`],
+        },
+      });
+    });
+
+    it("rejects upload paths outside the workspace", async () => {
+      const workspaceRoot = "/tmp/paseo-workspace-a";
+      const debugCommands: Array<{ command: string; params?: Record<string, unknown> }> = [];
+      const tab = fakeTab({
+        id: 26,
+        executeJavaScript: async () =>
+          JSON.stringify([
+            {
+              role: "textbox",
+              tagName: "input",
+              text: "",
+              selector: "#file",
+              attributes: { id: "file", type: "file" },
+            },
+          ]),
+        sendDebugCommand: async (command, params) => {
+          debugCommands.push({ command, params });
+          if (command === "DOM.getDocument") {
+            return { root: { nodeId: 1 } };
+          }
+          if (command === "DOM.querySelector") {
+            return { nodeId: 2 };
+          }
+          return {};
+        },
+      });
+      const registry = createRegistry({
+        getWorkspaceActiveTabContents: (workspaceId) =>
+          workspaceId === workspaceRoot ? tab : null,
+        getWorkspaceActiveBrowserId: (workspaceId) => (workspaceId === workspaceRoot ? "a" : null),
+        getBrowserWorkspaceId: (id) => (id === "a" ? workspaceRoot : null),
+      });
+      const snapshotEngine = new BrowserSnapshotEngine();
+      const snapshot = await executeAutomationCommand(
+        {
+          type: "browser.automation.execute.request",
+          requestId: "r-snapshot-upload-outside",
+          workspaceId: workspaceRoot,
+          command: { command: "snapshot", args: { workspaceId: workspaceRoot } },
+        },
+        registry,
+        { snapshotEngine },
+      );
+      if (!snapshot.ok || snapshot.result.command !== "snapshot") {
+        throw new Error("snapshot failed");
+      }
+      const ref = snapshot.result.elements[0]?.ref;
+      if (!ref) {
+        throw new Error("missing upload ref");
+      }
+
+      const result = await executeAutomationCommand(
+        {
+          type: "browser.automation.execute.request",
+          requestId: "r-upload-outside",
+          workspaceId: workspaceRoot,
+          command: {
+            command: "upload",
+            args: { workspaceId: workspaceRoot, ref, filePaths: ["../secret.txt"] },
+          },
+        },
+        registry,
+        { snapshotEngine },
+      );
+
+      expect(debugCommands).not.toContainEqual(
+        expect.objectContaining({ command: "DOM.setFileInputFiles" }),
+      );
+      expect(result).toEqual({
+        requestId: "r-upload-outside",
+        ok: false,
+        error: {
+          code: "browser_unsupported",
+          message: "browser_upload only accepts files inside the agent workspace.",
+          retryable: false,
+        },
       });
     });
   });
