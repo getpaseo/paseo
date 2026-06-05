@@ -604,13 +604,14 @@ describe("browser MCP tools", () => {
     expect(execute).toHaveBeenCalledWith({
       agentId: "agent-1",
       cwd: REPO_CWD,
-      command: { command: "list_tabs", args: {} },
+      workspaceId: REPO_CWD,
+      command: { command: "list_tabs", args: { workspaceId: REPO_CWD } },
     });
     expect(response.content).toEqual([{ type: "text", text: "No Paseo browser tabs are open." }]);
     expect(response.structuredContent).toEqual({
       ok: true,
       result: { command: "list_tabs", tabs: [] },
-      context: { agentId: "agent-1", cwd: REPO_CWD },
+      context: { agentId: "agent-1", cwd: REPO_CWD, workspaceId: REPO_CWD },
     });
   });
 });
