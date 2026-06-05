@@ -509,6 +509,24 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect((caughtError as InvalidGitBranchNameError).branchName).toBe("bad..name");
     });
 
+    it("throws a typed error when checking out a ref that is valid but not a branch name", async () => {
+      let caughtError: unknown;
+      try {
+        await createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "invalid-option-like-branch",
+          source: { kind: "checkout-branch", branchName: "-bad" },
+          runSetup: true,
+          paseoHome,
+        });
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(InvalidGitBranchNameError);
+      expect((caughtError as InvalidGitBranchNameError).branchName).toBe("-bad");
+    });
+
     it("handles branch name collision by adding suffix", async () => {
       const projectHash = await deriveWorktreeProjectHash(repoDir);
       // Create a branch named "hello" first

@@ -1361,12 +1361,12 @@ function validateWorktreeBranchName(branchName: string): void {
 }
 
 async function validateExistingWorktreeBranchName(cwd: string, branchName: string): Promise<void> {
-  try {
-    await runGitCommand(["check-ref-format", `refs/heads/${branchName}`], {
-      cwd,
-      timeout: 30_000,
-    });
-  } catch {
+  const result = await runGitCommand(["check-ref-format", "--branch", branchName], {
+    cwd,
+    timeout: 30_000,
+    acceptExitCodes: [0, 1, 128],
+  });
+  if (result.exitCode !== 0) {
     throw new InvalidGitBranchNameError(branchName);
   }
 }
