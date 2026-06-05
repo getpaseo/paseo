@@ -40,7 +40,8 @@ function resolveRefreshTimeoutMs(option: number | undefined): number {
   }
   const fromEnv = process.env[REFRESH_TIMEOUT_ENV_VAR];
   if (fromEnv) {
-    const parsed = Number.parseInt(fromEnv, 10);
+    // Number() handles scientific notation (e.g. "6e4") which parseInt would silently truncate.
+    const parsed = Number(fromEnv);
     if (Number.isFinite(parsed) && parsed > 0) {
       return parsed;
     }

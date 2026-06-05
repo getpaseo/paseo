@@ -185,8 +185,7 @@ describe("ProviderSnapshotManager public surface", () => {
   });
 
   test("PASEO_PROVIDER_REFRESH_TIMEOUT_MS env var is honored when no option is given", async () => {
-    const previous = process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS;
-    process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS = "1";
+    vi.stubEnv("PASEO_PROVIDER_REFRESH_TIMEOUT_MS", "1");
     const isAvailable = vi.fn(() => new Promise<boolean>(() => {}));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -208,17 +207,12 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(entry.error).toMatch(/after 1ms/);
     } finally {
       manager.destroy();
-      if (previous === undefined) {
-        delete process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS;
-      } else {
-        process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS = previous;
-      }
+      vi.unstubAllEnvs();
     }
   });
 
   test("PASEO_PROVIDER_REFRESH_TIMEOUT_MS env var is ignored when option is provided", async () => {
-    const previous = process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS;
-    process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS = "1";
+    vi.stubEnv("PASEO_PROVIDER_REFRESH_TIMEOUT_MS", "1");
     const isAvailable = vi.fn(() => new Promise<boolean>(() => {}));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -242,11 +236,7 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(entry.error).toMatch(/after 5ms/);
     } finally {
       manager.destroy();
-      if (previous === undefined) {
-        delete process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS;
-      } else {
-        process.env.PASEO_PROVIDER_REFRESH_TIMEOUT_MS = previous;
-      }
+      vi.unstubAllEnvs();
     }
   });
 
