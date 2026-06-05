@@ -1474,14 +1474,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     );
   }
 
-  // Mobile detail: full-screen content with a back header. Project and host
-  // detail views use an app-level back (out of settings, to the workspace).
-  // Host views use the same handler so that navigating between hosts in
-  // settings and then pressing back always returns to the original workspace,
-  // not to the previous host's settings page.  Section views step back to the
-  // settings root since they're always reachable from there.
-  const detailBackHandler =
-    view.kind === "project" || view.kind === "host" ? handleBackToWorkspace : handleBackToRoot;
+  // Mobile detail: full-screen content with a back header. Project detail uses
+  // an app-level back (out of settings, to the workspace) since the in-body
+  // "Back to projects" ghost button handles list-level back; other detail views
+  // step back to the settings root.
+  const detailBackHandler = view.kind === "project" ? handleBackToWorkspace : handleBackToRoot;
   if (isCompactLayout) {
     return (
       <View style={styles.container}>
