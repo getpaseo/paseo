@@ -70,6 +70,7 @@ import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
+import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
@@ -1825,7 +1826,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
       ) => (
-        <MarkdownParagraphView key={node.key} paragraphStyle={styles.paragraph}>
+        <MarkdownParagraphView
+          key={node.key}
+          paragraphStyle={styles.paragraph}
+          containsImage={markdownNodeContainsType(node, "image")}
+        >
           {children}
         </MarkdownParagraphView>
       ),

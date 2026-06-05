@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import type { StyleProp, TextProps, TextStyle, ViewStyle } from "react-native";
+import { View, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
 import { UITextView } from "react-native-uitextview";
 
 interface MarkdownTextSpanProps {
@@ -41,6 +41,7 @@ export function MarkdownTextSpan({
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
+  containsImage?: boolean;
   children: ReactNode;
 }
 
@@ -52,13 +53,23 @@ const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
 // ViewStyle is structurally compatible with the layout props paragraphs use
 // (margin, padding, alignment); the cast lets the existing paragraphStyle
 // flow through unchanged.
-export function MarkdownParagraphView({ paragraphStyle, children }: MarkdownParagraphViewProps) {
-  const style = useMemo(
+export function MarkdownParagraphView({
+  paragraphStyle,
+  containsImage = false,
+  children,
+}: MarkdownParagraphViewProps) {
+  const textStyle = useMemo(
     () => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET] as StyleProp<TextStyle>,
     [paragraphStyle],
   );
+  const viewStyle = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
+
+  if (containsImage) {
+    return <View style={viewStyle}>{children}</View>;
+  }
+
   return (
-    <UITextView uiTextView selectable style={style}>
+    <UITextView uiTextView selectable style={textStyle}>
       {children}
     </UITextView>
   );
