@@ -62,10 +62,10 @@ RUN PASEO_VERSION="${PASEO_VERSION}" /tmp/install-paseo.sh && rm -f /tmp/install
 RUN set -eux; \
     if [ -f /etc/alpine-release ]; then \
       addgroup -g 911 paseo; \
-      adduser -D -H -h /home/paseo -u 911 -G paseo -s /sbin/nologin paseo; \
+      adduser -D -H -h /home/paseo -u 911 -G paseo -s /bin/bash paseo; \
     else \
       groupadd -g 911 paseo; \
-      useradd -u 911 -g paseo -d /home/paseo -M -s /usr/sbin/nologin paseo; \
+      useradd -u 911 -g paseo -d /home/paseo -M -s /bin/bash paseo; \
     fi
 
 # s6 service definitions, the docker-mods loader and the daemon launcher.

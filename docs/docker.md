@@ -159,6 +159,10 @@ docker exec -it --user paseo paseo claude
 docker exec -it --user paseo paseo codex
 ```
 
+The image gives the unprivileged `paseo` user a real login shell. From a root
+shell inside the container, `su -l paseo` drops into the same persistent home
+used by the daemon, including custom `PASEO_HOME` paths.
+
 This first-run login step is not needed for providers configured entirely with
 API key environment variables passed to the container, such as
 `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; those env vars are inherited by the

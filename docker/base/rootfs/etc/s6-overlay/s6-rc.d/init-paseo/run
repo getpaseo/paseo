@@ -29,6 +29,7 @@ esac
 DEFAULT_PASEO_HOME="/home/paseo"
 PASEO_HOME="${PASEO_HOME:-$DEFAULT_PASEO_HOME}"
 mkdir -p "$PASEO_HOME"
+usermod -d "$PASEO_HOME" paseo || true
 
 home_scoped_dir() {
   local name="$1"
