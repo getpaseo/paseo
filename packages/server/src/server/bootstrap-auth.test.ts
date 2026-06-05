@@ -65,18 +65,39 @@ describe("daemon bearer auth", () => {
       auth: { password: CORRECT_PASSWORD_HASH },
     });
     try {
-      const missing = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`);
+      const missing = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
       expect(missing.status).toBe(401);
 
-      const wrong = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`, {
+      const wrong = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`, {
         headers: { Authorization: "Bearer wrong-password" },
       });
       expect(wrong.status).toBe(401);
 
-      const correct = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`, {
+      const correct = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`, {
         headers: { Authorization: "Bearer correct-password" },
       });
-      expect(correct.status).toBe(400);
+      expect(correct.status).toBe(200);
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("allows file downloads with only a capability token when password is configured", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: { password: CORRECT_PASSWORD_HASH },
+    });
+    try {
+      // No bearer at all: the route is reachable, but the download token store
+      // rejects the request because no token was supplied (400, not 401).
+      const missingToken = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`);
+      expect(missingToken.status).toBe(400);
+
+      // An invalid token is rejected by the token store (403, not 401) — proving
+      // the token, not the daemon password, is what guards this route.
+      const invalidToken = await fetch(
+        `http://127.0.0.1:${daemonHandle.port}/api/files/download?token=invalid-token`,
+      );
+      expect(invalidToken.status).toBe(403);
     } finally {
       await daemonHandle.close();
     }

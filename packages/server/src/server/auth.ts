@@ -118,9 +118,25 @@ export function createRequireBearerMiddleware(
   };
 }
 
+// Routes that authenticate via their own capability and therefore must not be
+// gated a second time behind the daemon password.
+const BEARER_AUTH_BYPASS_PATHS = new Set([
+  // Unauthenticated liveness probe.
+  "/api/health",
+  // Guarded by a single-use download token (crypto-random UUID, 60s TTL,
+  // consumed on first use) that is only ever issued over the
+  // already-authenticated WebSocket. The token IS the capability for this
+  // route. Requiring the daemon password on top of it breaks browser and
+  // Electron downloads: those trigger the download via an anchor navigation,
+  // which cannot attach an `Authorization` header. The download endpoint still
+  // rejects requests without a valid token (400/403), so dropping the bearer
+  // here does not make the route unauthenticated.
+  "/api/files/download",
+]);
+
 export function shouldBypassBearerAuth(method: string, path: string): boolean {
   if (method === "OPTIONS") {
     return true;
   }
-  return path === "/api/health";
+  return BEARER_AUTH_BYPASS_PATHS.has(path);
 }
