@@ -1367,6 +1367,47 @@ describe("executeAutomationCommand", () => {
       });
     });
 
+    it("rejects downloads for non-http URLs", async () => {
+      const downloadedUrls: string[] = [];
+      const tab = fakeTab({
+        id: 27,
+        downloadURL: async (input) => {
+          downloadedUrls.push(input.url);
+          return { filePath: "/tmp/download", state: "completed" };
+        },
+      });
+      const registry = createRegistry({
+        getWorkspaceActiveTabContents: (workspaceId) =>
+          workspaceId === "workspace-a" ? tab : null,
+        getWorkspaceActiveBrowserId: (workspaceId) => (workspaceId === "workspace-a" ? "a" : null),
+        getBrowserWorkspaceId: (id) => (id === "a" ? "workspace-a" : null),
+      });
+
+      const result = await executeAutomationCommand(
+        {
+          type: "browser.automation.execute.request",
+          requestId: "r-download-file",
+          workspaceId: "workspace-a",
+          command: {
+            command: "download",
+            args: { workspaceId: "workspace-a", url: "file:///tmp/secret.txt" },
+          },
+        },
+        registry,
+      );
+
+      expect(downloadedUrls).toEqual([]);
+      expect(result).toEqual({
+        requestId: "r-download-file",
+        ok: false,
+        error: {
+          code: "browser_denied",
+          message: "Browser download only supports http and https URLs.",
+          retryable: false,
+        },
+      });
+    });
+
     it("sets workspace files on a file input ref through CDP", async () => {
       const debugCommands: Array<{ command: string; params?: Record<string, unknown> }> = [];
       const workspaceRoot = "/tmp/paseo-workspace-a";
@@ -1564,6 +1605,49 @@ describe("executeAutomationCommand", () => {
         result: { command: "navigate", browserId: "a", url: "https://example.com/next" },
       });
       expect(navigatedUrls).toEqual(["https://example.com/next"]);
+    });
+
+    it("rejects navigation to local files and script URLs", async () => {
+      const navigatedUrls: string[] = [];
+      const tab = fakeTab({
+        id: 13,
+        loadURL: async (url) => {
+          navigatedUrls.push(url);
+        },
+      });
+      const registry = createRegistry({
+        getWorkspaceActiveTabContents: (workspaceId) =>
+          workspaceId === "workspace-a" ? tab : null,
+        getWorkspaceActiveBrowserId: (workspaceId) => (workspaceId === "workspace-a" ? "a" : null),
+        getBrowserWorkspaceId: (id) => (id === "a" ? "workspace-a" : null),
+      });
+
+      for (const [requestId, url] of [
+        ["r-navigate-file", "file:///tmp/secret.txt"],
+        ["r-navigate-js", "javascript:alert(1)"],
+      ] as const) {
+        await expect(
+          executeAutomationCommand(
+            {
+              type: "browser.automation.execute.request",
+              requestId,
+              workspaceId: "workspace-a",
+              command: { command: "navigate", args: { workspaceId: "workspace-a", url } },
+            },
+            registry,
+          ),
+        ).resolves.toEqual({
+          requestId,
+          ok: false,
+          error: {
+            code: "browser_denied",
+            message: "Browser navigation only supports http and https URLs.",
+            retryable: false,
+          },
+        });
+      }
+
+      expect(navigatedUrls).toEqual([]);
     });
 
     it("dispatches back, forward, and reload to the active browser", async () => {

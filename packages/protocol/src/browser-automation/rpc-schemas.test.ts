@@ -6,6 +6,21 @@ import {
 } from "./rpc-schemas.js";
 
 describe("browser automation execute RPC schemas", () => {
+  test("rejects navigate and download commands for non-http URLs", () => {
+    for (const command of ["navigate", "download"] as const) {
+      expect(() =>
+        BrowserAutomationExecuteRequestSchema.parse({
+          type: "browser.automation.execute.request",
+          requestId: `req-${command}`,
+          command: {
+            command,
+            args: { url: "file:///tmp/secret.txt" },
+          },
+        }),
+      ).toThrow();
+    }
+  });
+
   test("parses list tabs requests with top-level correlation and typed command args", () => {
     const parsed = BrowserAutomationExecuteRequestSchema.parse({
       type: "browser.automation.execute.request",

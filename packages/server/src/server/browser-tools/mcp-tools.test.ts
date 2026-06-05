@@ -264,6 +264,7 @@ describe("registerBrowserTools", () => {
       agentId: "agent-1",
       cwd: "/repo",
       workspaceId: "/repo",
+      timeoutMs: 2000,
       command: {
         command: "wait",
         args: { workspaceId: "/repo", text: "Ready", timeoutMs: 1000 },

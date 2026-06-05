@@ -57,6 +57,7 @@ type FailurePayload = Extract<AutomationCommandPayload, { ok: false }>;
 const defaultSnapshotEngine = new BrowserSnapshotEngine();
 const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
 const WAIT_POLL_INTERVAL_MS = 25;
+const ALLOWED_PAGE_URL_PROTOCOLS = new Set(["http:", "https:"]);
 
 function fail(
   requestId: string,
@@ -945,6 +946,13 @@ async function executeNavigate(
   if ("ok" in target) {
     return target;
   }
+  if (!isAllowedPageUrl(url)) {
+    return fail(
+      requestId,
+      "browser_denied",
+      "Browser navigation only supports http and https URLs.",
+    );
+  }
   await target.contents.loadURL(url);
   return { requestId, ok: true, result: { command: "navigate", browserId: target.browserId, url } };
 }
@@ -1090,6 +1098,9 @@ async function executeDownload(
   if ("ok" in target) {
     return target;
   }
+  if (!isAllowedPageUrl(input.url)) {
+    return fail(requestId, "browser_denied", "Browser download only supports http and https URLs.");
+  }
   if (!target.contents.downloadURL) {
     return fail(requestId, "browser_unsupported", "browser_download requires download support");
   }
@@ -1106,6 +1117,14 @@ async function executeDownload(
       state: download.state,
     },
   };
+}
+
+function isAllowedPageUrl(value: string): boolean {
+  try {
+    return ALLOWED_PAGE_URL_PROTOCOLS.has(new URL(value).protocol);
+  } catch {
+    return false;
+  }
 }
 
 async function executeUpload(

@@ -19,6 +19,13 @@ const BrowserAutomationTabTargetSchema = z.object({
 });
 
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
+const BrowserAutomationHttpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  }, "URL must use http or https");
 
 export const BrowserAutomationListTabsCommandSchema = z.object({
   command: z.literal("list_tabs"),
@@ -82,7 +89,7 @@ export const BrowserAutomationKeypressCommandSchema = z.object({
 export const BrowserAutomationNavigateCommandSchema = z.object({
   command: z.literal("navigate"),
   args: BrowserAutomationTabTargetSchema.extend({
-    url: z.string().min(1),
+    url: BrowserAutomationHttpUrlSchema,
   }),
 });
 
@@ -122,7 +129,7 @@ export const BrowserAutomationPdfCommandSchema = z.object({
 export const BrowserAutomationDownloadCommandSchema = z.object({
   command: z.literal("download"),
   args: BrowserAutomationTabTargetSchema.extend({
-    url: z.string().min(1),
+    url: BrowserAutomationHttpUrlSchema,
     fileName: z.string().min(1).optional(),
   }),
 });

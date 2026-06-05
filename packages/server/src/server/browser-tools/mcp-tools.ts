@@ -210,6 +210,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         cwd: context.cwd,
         ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
         ...(browserId ? { browserId } : {}),
+        ...(timeoutMs ? { timeoutMs: timeoutMs + 1_000 } : {}),
         command: {
           command: "wait",
           args: {
