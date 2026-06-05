@@ -736,15 +736,13 @@ async function bootstrap(): Promise<void> {
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).
-  ipcMain.handle("paseo:window:openNew", (_event, options?: unknown) => {
+  ipcMain.handle("paseo:window:openNew", async (_event, options?: unknown) => {
     const pendingPath =
       options && typeof options === "object" && "pendingOpenProjectPath" in options
         ? (options as { pendingOpenProjectPath?: unknown }).pendingOpenProjectPath
         : null;
-    void createWindow({
+    await createWindow({
       pendingOpenProjectPath: typeof pendingPath === "string" ? pendingPath : null,
-    }).catch((error) => {
-      log.error("[window] failed to create window from renderer", error);
     });
   });
 
