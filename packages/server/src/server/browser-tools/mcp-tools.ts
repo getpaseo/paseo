@@ -44,7 +44,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "List browser tabs",
       description:
-        "List open Paseo desktop browser tabs for this agent's workspace context. Browser tools must be enabled on the host and require a connected desktop app.",
+        "List open Paseo desktop browser tabs for this agent's workspace context. Use the returned browserId values exactly; do not use 'default'. If a tool omits browserId, it targets the active workspace tab.",
       inputSchema: {},
       outputSchema: BrowserToolOutputSchema,
     },
@@ -64,11 +64,40 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
   );
 
   options.registerTool(
+    "browser_new_tab",
+    {
+      title: "Create browser tab",
+      description:
+        "Create and focus a new Paseo desktop browser tab in this agent's workspace. Optionally pass an http(s) URL to open immediately. Returns the new browserId; use that exact ID for later calls or omit browserId to use the active tab.",
+      inputSchema: {
+        url: z.string().url().optional(),
+      },
+      outputSchema: BrowserToolOutputSchema,
+    },
+    async ({ url }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+        command: {
+          command: "new_tab",
+          args: {
+            ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+            ...(url ? { url } : {}),
+          },
+        },
+      });
+      return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
     "browser_page_info",
     {
       title: "Get browser page info",
       description:
-        "Get the current page info for a Paseo desktop browser tab. Defaults to the active browser tab in this agent's workspace context; pass browserId to target a specific tab.",
+        "Get page info for a Paseo desktop browser tab. Omit browserId to use the active workspace tab. If you pass browserId, use a real ID returned by browser_list_tabs or browser_new_tab; never pass 'default'.",
       inputSchema: {
         browserId: z.string().min(1).optional(),
       },
@@ -759,6 +788,38 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       return browserToolResult({ payload, context: { ...context, browserId } });
     },
   );
+
+  options.registerTool(
+    "browser_set_background",
+    {
+      title: "Set browser background",
+      description:
+        "Set the current page background color in the active Paseo desktop browser tab. Omit browserId to use the active workspace tab; pass a returned browserId only when targeting a specific tab.",
+      inputSchema: {
+        color: z.string().min(1),
+        browserId: z.string().min(1).optional(),
+      },
+      outputSchema: BrowserToolOutputSchema,
+    },
+    async ({ color, browserId }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+        ...(browserId ? { browserId } : {}),
+        command: {
+          command: "set_background",
+          args: {
+            ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+            ...(browserId ? { browserId } : {}),
+            color,
+          },
+        },
+      });
+      return browserToolResult({ payload, context: { ...context, browserId } });
+    },
+  );
 }
 
 function resolveBrowserToolContext(options: RegisterBrowserToolsOptions): {
@@ -846,9 +907,20 @@ function summarizeBrowserSuccess(
   if (payload.result.command === "list_tabs") {
     const count = payload.result.tabs.length;
     if (count === 0) {
-      return "No Paseo browser tabs are open.";
+      return "No Paseo browser tabs are open. Call browser_new_tab to create one, then use the returned browserId or omit browserId for the active tab.";
     }
-    return `Found ${count} Paseo browser tab${count === 1 ? "" : "s"}.`;
+    const tabLines = payload.result.tabs.map((tab) => {
+      const active = tab.isActive ? " active" : "";
+      return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
+    });
+    return [
+      `Found ${count} Paseo browser tab${count === 1 ? "" : "s"}. Use these browserId values exactly; do not use 'default'. You may omit browserId to use the active tab.`,
+      ...tabLines,
+    ].join("\n");
+  }
+
+  if (payload.result.command === "new_tab") {
+    return `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}. Use this browserId exactly, or omit browserId to use this active tab.`;
   }
 
   if (payload.result.command === "snapshot") {
@@ -861,7 +933,7 @@ function summarizeBrowserSuccess(
   }
 
   if (payload.result.command === "page_info") {
-    return `Current page: ${payload.result.tab.title || "Untitled"} — ${payload.result.tab.url}`;
+    return `Current page browserId=${payload.result.tab.browserId}: ${payload.result.tab.title || "Untitled"} — ${payload.result.tab.url}`;
   }
 
   return `Browser ${payload.result.command} complete.`;
@@ -991,6 +1063,10 @@ function summarizeBrowserControlSuccess(
     return `Dragged browser element ${result.sourceRef} to ${result.targetRef}.`;
   }
 
+  if (result.command === "set_background") {
+    return `Set browser page background to ${result.color}.`;
+  }
+
   return null;
 }
 
@@ -1003,7 +1079,7 @@ function summarizeBrowserError(
     case "browser_no_desktop":
       return "No desktop browser automation client is connected. Open the Paseo desktop app and try again.";
     case "browser_no_tab":
-      return "No active browser tab is available. Open or focus a Paseo browser tab first.";
+      return "No active browser tab is available. Call browser_new_tab to create one, then omit browserId for the active tab or use the returned browserId.";
     case "browser_timeout":
       return "The browser did not respond before the timeout. Try again or check the desktop app.";
     case "browser_unsupported":

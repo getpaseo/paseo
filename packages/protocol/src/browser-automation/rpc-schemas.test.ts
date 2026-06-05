@@ -43,6 +43,48 @@ describe("browser automation execute RPC schemas", () => {
     });
   });
 
+  test("parses new tab requests and responses", () => {
+    expect(
+      BrowserAutomationExecuteRequestSchema.parse({
+        type: "browser.automation.execute.request",
+        requestId: "req-new-tab",
+        workspaceId: "workspace-1",
+        command: {
+          command: "new_tab",
+          args: { workspaceId: "workspace-1", url: "https://example.com" },
+        },
+      }).command,
+    ).toEqual({
+      command: "new_tab",
+      args: { workspaceId: "workspace-1", url: "https://example.com" },
+    });
+
+    expect(
+      BrowserAutomationExecuteResponseSchema.parse({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: "req-new-tab",
+          ok: true,
+          result: {
+            command: "new_tab",
+            browserId: "browser-1",
+            workspaceId: "workspace-1",
+            url: "https://example.com",
+          },
+        },
+      }).payload,
+    ).toEqual({
+      requestId: "req-new-tab",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: "browser-1",
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      },
+    });
+  });
+
   test("parses page info responses with result data under payload", () => {
     const parsed = BrowserAutomationExecuteResponseSchema.parse({
       type: "browser.automation.execute.response",
@@ -220,6 +262,37 @@ describe("browser automation execute RPC schemas", () => {
       requestId: "req-wait",
       ok: true,
       result: { command: "wait", browserId: "browser-1", matched: "text" },
+    });
+  });
+
+  test("parses set background commands and responses", () => {
+    expect(
+      BrowserAutomationExecuteRequestSchema.parse({
+        type: "browser.automation.execute.request",
+        requestId: "req-bg",
+        command: {
+          command: "set_background",
+          args: { workspaceId: "workspace-1", color: "red" },
+        },
+      }).command,
+    ).toEqual({
+      command: "set_background",
+      args: { workspaceId: "workspace-1", color: "red" },
+    });
+
+    expect(
+      BrowserAutomationExecuteResponseSchema.parse({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: "req-bg",
+          ok: true,
+          result: { command: "set_background", browserId: "browser-1", color: "red" },
+        },
+      }).payload,
+    ).toEqual({
+      requestId: "req-bg",
+      ok: true,
+      result: { command: "set_background", browserId: "browser-1", color: "red" },
     });
   });
 

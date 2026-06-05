@@ -71,7 +71,12 @@ describe("registerBrowserTools", () => {
       workspaceId: "/repo",
       command: { command: "list_tabs", args: { workspaceId: "/repo" } },
     });
-    expect(response.content).toEqual([{ type: "text", text: "Found 1 Paseo browser tab." }]);
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: "Found 1 Paseo browser tab. Use these browserId values exactly; do not use 'default'. You may omit browserId to use the active tab.\n- browserId=browser-1 active title=\"Example\" url=https://example.com",
+      },
+    ]);
     expect(response.structuredContent).toEqual({
       ok: true,
       result: {
@@ -88,6 +93,39 @@ describe("registerBrowserTools", () => {
       },
       context: { agentId: "agent-1", cwd: "/repo", workspaceId: "/repo" },
     });
+  });
+
+  it("registers browser_new_tab and returns the created tab handle", async () => {
+    const harness = createHarness({
+      brokerResponse: {
+        requestId: "req-new-tab",
+        ok: true,
+        result: {
+          command: "new_tab",
+          browserId: "browser-new",
+          workspaceId: "/repo",
+          url: "https://example.com",
+        },
+      },
+    });
+
+    const response = await tool(harness, "browser_new_tab").handler({ url: "https://example.com" });
+
+    expect(harness.execute).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      cwd: "/repo",
+      workspaceId: "/repo",
+      command: {
+        command: "new_tab",
+        args: { workspaceId: "/repo", url: "https://example.com" },
+      },
+    });
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: "Created browser tab browserId=browser-new url=https://example.com. Use this browserId exactly, or omit browserId to use this active tab.",
+      },
+    ]);
   });
 
   it("routes browser_page_info through the broker with explicit browserId", async () => {
@@ -121,7 +159,7 @@ describe("registerBrowserTools", () => {
       },
     });
     expect(response.content).toEqual([
-      { type: "text", text: "Current page: Docs — https://example.com/docs" },
+      { type: "text", text: "Current page browserId=browser-2: Docs — https://example.com/docs" },
     ]);
     expect(response.structuredContent).toEqual({
       ok: true,
@@ -194,6 +232,28 @@ describe("registerBrowserTools", () => {
       },
       context: { agentId: "agent-1", cwd: "/repo", workspaceId: "/repo" },
     });
+  });
+
+  it("routes browser_set_background through the broker", async () => {
+    const harness = createHarness({
+      brokerResponse: {
+        requestId: "req-bg",
+        ok: true,
+        result: { command: "set_background", browserId: "browser-1", color: "red" },
+      },
+    });
+
+    const response = await tool(harness, "browser_set_background").handler({ color: "red" });
+
+    expect(harness.execute).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      cwd: "/repo",
+      workspaceId: "/repo",
+      command: { command: "set_background", args: { workspaceId: "/repo", color: "red" } },
+    });
+    expect(response.content).toEqual([
+      { type: "text", text: "Set browser page background to red." },
+    ]);
   });
 
   it("routes browser_click through the broker with a snapshot ref", async () => {

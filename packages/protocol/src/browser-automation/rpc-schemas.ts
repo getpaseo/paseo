@@ -36,6 +36,16 @@ export const BrowserAutomationListTabsCommandSchema = z.object({
     .default({}),
 });
 
+export const BrowserAutomationNewTabCommandSchema = z.object({
+  command: z.literal("new_tab"),
+  args: z
+    .object({
+      workspaceId: z.string().min(1).optional(),
+      url: BrowserAutomationHttpUrlSchema.optional(),
+    })
+    .default({}),
+});
+
 export const BrowserAutomationPageInfoCommandSchema = z.object({
   command: z.literal("page_info"),
   args: BrowserAutomationTabTargetSchema.default({}),
@@ -219,8 +229,16 @@ export const BrowserAutomationEnvironmentCommandSchema = z.object({
   }).default({}),
 });
 
+export const BrowserAutomationSetBackgroundCommandSchema = z.object({
+  command: z.literal("set_background"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    color: z.string().min(1),
+  }),
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
+  BrowserAutomationNewTabCommandSchema,
   BrowserAutomationPageInfoCommandSchema,
   BrowserAutomationSnapshotCommandSchema,
   BrowserAutomationClickCommandSchema,
@@ -246,6 +264,7 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationLogsCommandSchema,
   BrowserAutomationStorageCommandSchema,
   BrowserAutomationEnvironmentCommandSchema,
+  BrowserAutomationSetBackgroundCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
@@ -262,6 +281,13 @@ export const BrowserAutomationTabInfoSchema = z.object({
 export const BrowserAutomationListTabsResultSchema = z.object({
   command: z.literal("list_tabs"),
   tabs: z.array(BrowserAutomationTabInfoSchema),
+});
+
+export const BrowserAutomationNewTabResultSchema = z.object({
+  command: z.literal("new_tab"),
+  browserId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  url: z.string().min(1),
 });
 
 export const BrowserAutomationPageInfoResultSchema = z.object({
@@ -487,8 +513,15 @@ export const BrowserAutomationEnvironmentResultSchema = z.object({
   geolocation: BrowserAutomationGeolocationResultSchema.optional(),
 });
 
+export const BrowserAutomationSetBackgroundResultSchema = z.object({
+  command: z.literal("set_background"),
+  browserId: z.string().min(1),
+  color: z.string().min(1),
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
+  BrowserAutomationNewTabResultSchema,
   BrowserAutomationPageInfoResultSchema,
   BrowserAutomationSnapshotResultSchema,
   BrowserAutomationClickResultSchema,
@@ -514,6 +547,7 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationLogsResultSchema,
   BrowserAutomationStorageResultSchema,
   BrowserAutomationEnvironmentResultSchema,
+  BrowserAutomationSetBackgroundResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({

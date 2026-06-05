@@ -402,6 +402,19 @@ const commandHandlers: Partial<Record<BrowserAutomationCommand["command"], Comma
       registry,
     );
   },
+  set_background: ({ request, command, requestId, workspaceId, registry }) => {
+    const setBackgroundCommand = command as Extract<
+      BrowserAutomationCommand,
+      { command: "set_background" }
+    >;
+    return executeSetBackground(
+      requestId,
+      workspaceId,
+      setBackgroundCommand.args.browserId ?? request.browserId,
+      setBackgroundCommand.args.color,
+      registry,
+    );
+  },
 };
 
 interface ResolvedTabTarget {
@@ -835,6 +848,10 @@ async function executeWait(
     return target;
   }
 
+  if (!condition.text && !condition.url) {
+    return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
+  }
+
   const timeoutMs = condition.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   do {
@@ -875,6 +892,39 @@ async function executeWait(
     );
   }
   return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
+}
+
+async function executeSetBackground(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string | undefined,
+  color: string,
+  registry: BrowserRegistry,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+
+  await target.contents.executeJavaScript(buildSetBackgroundScript(color));
+  return {
+    requestId,
+    ok: true,
+    result: { command: "set_background", browserId: target.browserId, color },
+  };
+}
+
+function buildSetBackgroundScript(color: string): string {
+  return String.raw`(() => {
+    const color = ${JSON.stringify(color)};
+    document.documentElement.style.background = color;
+    if (document.body) {
+      document.body.style.background = color;
+      document.body.style.backgroundColor = color;
+      document.body.style.minHeight = '100vh';
+    }
+    return true;
+  })()`;
 }
 
 async function executeType(

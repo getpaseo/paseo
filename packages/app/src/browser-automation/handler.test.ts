@@ -2,6 +2,25 @@ import { describe, expect, test, vi } from "vitest";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
+import { useBrowserStore } from "@/stores/browser-store";
+import {
+  buildWorkspaceTabPersistenceKey,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
+
+vi.mock("expo-router", () => ({
+  router: {
+    navigate: vi.fn(),
+  },
+}));
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(async () => undefined),
+    removeItem: vi.fn(async () => undefined),
+  },
+}));
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -50,7 +69,63 @@ function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function currentBrowserTabs() {
+  return Object.values(useBrowserStore.getState().browsersById).map((browser) => ({
+    browserId: browser.browserId,
+    workspaceId: "/repo",
+    url: browser.url,
+    title: browser.title,
+    isActive: true,
+    isLoading: false,
+  }));
+}
+
 describe("mountBrowserAutomationHandler", () => {
+  test("creates and focuses a workspace browser tab for browser_new_tab", async () => {
+    useBrowserStore.setState({ browsersById: {} });
+    useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
+    const client = new FakeDaemonClient();
+    const navigateToWorkspace = vi.fn();
+    const executeAutomationCommand = vi.fn(async () => ({
+      requestId: "req-new:list_tabs",
+      ok: true as const,
+      result: {
+        command: "list_tabs" as const,
+        tabs: currentBrowserTabs(),
+      },
+    }));
+    mountBrowserAutomationHandler({
+      client,
+      serverId: "server-1",
+      getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
+      navigateToWorkspace,
+    });
+
+    client.receive({
+      type: "browser.automation.execute.request",
+      requestId: "req-new",
+      workspaceId: "/repo",
+      command: { command: "new_tab", args: { workspaceId: "/repo", url: "https://example.com" } },
+    });
+    await flushPromises();
+
+    const payload = client.sentResponses[0]?.payload;
+    expect(payload?.ok).toBe(true);
+    if (!payload?.ok) throw new Error("expected success");
+    expect(payload.result.command).toBe("new_tab");
+    if (payload.result.command !== "new_tab") throw new Error("expected new_tab result");
+    expect(payload.result.url).toBe("https://example.com");
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: "server-1",
+      workspaceId: "/repo",
+    });
+    if (!workspaceKey) throw new Error("expected workspace key");
+    expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).toContainEqual(
+      expect.objectContaining({ target: { kind: "browser", browserId: payload.result.browserId } }),
+    );
+    expect(navigateToWorkspace).toHaveBeenCalledWith("server-1", "/repo");
+  });
+
   test("sends a success response from the desktop bridge", async () => {
     const client = new FakeDaemonClient();
     const executeAutomationCommand = vi.fn(async () => ({

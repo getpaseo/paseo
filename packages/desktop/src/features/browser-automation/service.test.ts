@@ -447,6 +447,43 @@ describe("executeAutomationCommand", () => {
     });
   });
 
+  describe("set_background", () => {
+    it("sets the active tab page background color", async () => {
+      const scripts: string[] = [];
+      const tab = fakeTab({
+        id: 99,
+        executeJavaScript: async (script) => {
+          scripts.push(script);
+          return true;
+        },
+      });
+      const registry = createRegistry({
+        getWorkspaceActiveTabContents: () => tab,
+        getWorkspaceActiveBrowserId: () => "browser-1",
+      });
+
+      const result = await executeAutomationCommand(
+        {
+          type: "browser.automation.execute.request",
+          requestId: "r-bg",
+          workspaceId: "workspace-a",
+          command: {
+            command: "set_background",
+            args: { workspaceId: "workspace-a", color: "red" },
+          },
+        },
+        registry,
+      );
+
+      expect(result).toEqual({
+        requestId: "r-bg",
+        ok: true,
+        result: { command: "set_background", browserId: "browser-1", color: "red" },
+      });
+      expect(hasScriptWith(scripts, "document.body.style.background", "red")).toBe(true);
+    });
+  });
+
   describe("snapshot", () => {
     it("returns snapshot refs for the active workspace browser", async () => {
       const tab = fakeTab({
