@@ -1723,6 +1723,6 @@ describe("toClaudeSdkMcpConfig", () => {
       args: ["markitdown-mcp"],
     });
     expect(result.type).toBe("stdio");
-    expect("alwaysLoad" in result ? result.alwaysLoad : "missing").toBeUndefined();
+    expect(result.alwaysLoad).toBeUndefined();
   });
 });
