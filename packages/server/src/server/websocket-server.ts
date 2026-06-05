@@ -71,7 +71,7 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { BrowserToolsBroker } from "./browser-tools/index.js";
+import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -339,6 +339,7 @@ interface SessionConnection {
 }
 
 interface BrowserToolsRegistration {
+  supportsInteractionAutomation: boolean;
   unregister: () => void;
 }
 
@@ -1425,20 +1426,26 @@ export class VoiceAssistantWebSocketServer {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
-    if (this.browserToolsRegistrations.has(connection.clientId)) {
+    const supportsInteractionAutomation = hasDesktopBrowserInteractionAutomationCapability(
+      connection.clientCapabilities,
+    );
+    const existing = this.browserToolsRegistrations.get(connection.clientId);
+    if (existing?.supportsInteractionAutomation === supportsInteractionAutomation) {
       return;
     }
+    existing?.unregister();
 
     const unregister = this.browserToolsBroker.registerClient({
       id: connection.clientId,
-      supportsInteractionAutomation: hasDesktopBrowserInteractionAutomationCapability(
-        connection.clientCapabilities,
-      ),
+      supportsInteractionAutomation,
       sendBrowserAutomationRequest: (request) => {
         this.sendToConnection(connection, wrapSessionMessage(request));
       },
     });
-    this.browserToolsRegistrations.set(connection.clientId, { unregister });
+    this.browserToolsRegistrations.set(connection.clientId, {
+      supportsInteractionAutomation,
+      unregister,
+    });
   }
 
   private unregisterBrowserToolsClient(clientId: string): void {

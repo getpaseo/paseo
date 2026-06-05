@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { BrowserToolsBroker, BrowserToolsResponsePayload } from "./index.js";
+import type { BrowserToolsBroker } from "./broker.js";
+import type { BrowserToolsResponsePayload } from "./errors.js";
 import { registerBrowserTools } from "./mcp-tools.js";
 
 interface RegisteredTool {

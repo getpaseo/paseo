@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
-import { BrowserToolsBroker, StaticBrowserToolsPolicy } from "./browser-tools/index.js";
+import { BrowserToolsBroker } from "./browser-tools/broker.js";
+import { StaticBrowserToolsPolicy } from "./browser-tools/policy.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
@@ -25,11 +26,19 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 
 interface BrowserToolsDaemonHarness {
   broker: BrowserToolsBroker;
-  connectDesktopBrowserClient(): Promise<DesktopBrowserClientHandle>;
+  connectDesktopBrowserClient(
+    options?: ConnectDesktopBrowserClientOptions,
+  ): Promise<DesktopBrowserClientHandle>;
   stop(): Promise<void>;
 }
 
+interface ConnectDesktopBrowserClientOptions {
+  clientId?: string;
+  capabilities?: Partial<Record<string, boolean>>;
+}
+
 interface DesktopBrowserClientHandle {
+  clientId: string;
   nextBrowserRequest(): Promise<BrowserAutomationExecuteRequest>;
   respondToBrowserRequest(response: BrowserAutomationExecuteResponse): void;
   disconnect(): Promise<void>;
@@ -106,6 +115,48 @@ describe("WebSocketServer browser tools wiring", () => {
       error: { code: "browser_no_desktop" },
     });
   });
+
+  it("updates interaction support when a desktop browser client resumes with new capabilities", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const clientId = "desktop-client-1";
+    await harness.connectDesktopBrowserClient({
+      clientId,
+      capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+    });
+
+    await expect(
+      harness.broker.execute({ command: { command: "click", args: { ref: "@e1" } } }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_desktop" },
+    });
+
+    const resumedDesktop = await harness.connectDesktopBrowserClient({
+      clientId,
+      capabilities: {
+        [CLIENT_CAPS.desktopBrowserAutomation]: true,
+        [CLIENT_CAPS.desktopBrowserInteractionAutomation]: true,
+      },
+    });
+
+    const resultPromise = harness.broker.execute({
+      command: { command: "click", args: { ref: "@e1" } },
+    });
+    const request = await resumedDesktop.nextBrowserRequest();
+    resumedDesktop.respondToBrowserRequest({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        result: { command: "click", browserId: "browser-1", ref: "@e1" },
+      },
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "click", browserId: "browser-1", ref: "@e1" },
+    });
+  });
 });
 
 async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarness> {
@@ -119,13 +170,15 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
   const harness: BrowserToolsDaemonHarness = {
     broker,
-    async connectDesktopBrowserClient() {
+    async connectDesktopBrowserClient(options = {}) {
+      const clientId = options.clientId;
       const client = new DaemonClient({
         url,
+        ...(clientId ? { clientId } : {}),
         clientType: "browser",
         connectTimeoutMs: 500,
         reconnect: { enabled: false },
-        capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+        capabilities: options.capabilities ?? { [CLIENT_CAPS.desktopBrowserAutomation]: true },
       });
       clients.add(client);
 
@@ -137,6 +190,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
       await client.connect();
 
       return {
+        clientId: clientId ?? "",
         nextBrowserRequest: () => requests.next(),
         respondToBrowserRequest: (response) =>
           client.sendBrowserAutomationExecuteResponse(response),

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { BrowserToolsBroker, BrowserToolsResponsePayload } from "./index.js";
+import type { BrowserToolsBroker } from "./broker.js";
+import type { BrowserToolsResponsePayload } from "./errors.js";
 
 interface CallerAgentContext {
   id: string;
