@@ -1,3 +1,5 @@
+import { resolve as resolvePath } from "node:path";
+
 import { describe, expect, it } from "vitest";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import type { TabContents, BrowserRegistry } from "./service.js";
@@ -1415,6 +1417,7 @@ describe("executeAutomationCommand", () => {
       if (!ref) {
         throw new Error("missing upload ref");
       }
+      const uploadPath = resolvePath(workspaceRoot, "uploads/file.txt");
 
       const result = await executeAutomationCommand(
         {
@@ -1432,7 +1435,7 @@ describe("executeAutomationCommand", () => {
 
       expect(debugCommands.at(-1)).toEqual({
         command: "DOM.setFileInputFiles",
-        params: { nodeId: 2, files: [`${workspaceRoot}/uploads/file.txt`] },
+        params: { nodeId: 2, files: [uploadPath] },
       });
       expect(result).toEqual({
         requestId: "r-upload",
@@ -1441,7 +1444,7 @@ describe("executeAutomationCommand", () => {
           command: "upload",
           browserId: "a",
           ref,
-          filePaths: [`${workspaceRoot}/uploads/file.txt`],
+          filePaths: [uploadPath],
         },
       });
     });
