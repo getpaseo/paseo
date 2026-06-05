@@ -648,6 +648,22 @@ function useAnyOnlineHostServerId(serverIds: string[]): string | null {
   );
 }
 
+function useLocalDaemonIfOnline(localServerId: string | null): string | null {
+  const runtime = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      if (!localServerId) return () => {};
+      return runtime.subscribe(localServerId, onStoreChange);
+    },
+    () => {
+      if (!localServerId) return null;
+      const snapshot = runtime.getSnapshot(localServerId);
+      return isHostRuntimeConnected(snapshot) ? localServerId : null;
+    },
+    () => null,
+  );
+}
+
 /**
  * Local daemon first, then remaining hosts in their existing order. Lets the
  * picker and the active-host resolver agree on a stable "first" host.
@@ -1114,6 +1130,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   );
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
+  const localDaemonIfOnline = useLocalDaemonIfOnline(localServerId);
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const anyOnlineServerId = useAnyOnlineHostServerId(hostServerIds);
@@ -1315,17 +1332,17 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     if (navigateToLastWorkspace()) {
       return;
     }
-    // Prefer the local daemon host — it's the most likely origin when the user
-    // entered settings from a workspace.  `anyOnlineServerId` can point to a
-    // different host if the user navigated to another host's settings page
-    // before closing, which would drop them on the wrong host.
-    const fallbackServerId = localServerId ?? anyOnlineServerId;
+    // Prefer the local daemon host when it's online — it's the most likely
+    // origin when the user entered settings from a workspace.  Fall back to
+    // anyOnlineServerId only when the local daemon is unreachable, so we
+    // never strand the user on an offline host.
+    const fallbackServerId = localDaemonIfOnline ?? anyOnlineServerId;
     if (fallbackServerId) {
       router.replace(buildHostOpenProjectRoute(fallbackServerId));
       return;
     }
     router.replace("/");
-  }, [localServerId, anyOnlineServerId, router]);
+  }, [localDaemonIfOnline, anyOnlineServerId, router]);
 
   const detailHeader = ((): {
     title: string;
