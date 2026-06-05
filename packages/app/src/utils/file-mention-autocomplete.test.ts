@@ -44,6 +44,24 @@ describe("findActiveFileMention", () => {
     });
     expect(mention).toBeNull();
   });
+
+  it("returns null for email addresses (word char before @)", () => {
+    const text = "thedavidweng <95214375+thedavidweng@users.noreply.github.com>";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("returns null when query contains angle brackets", () => {
+    const text = "check @foo<bar> end";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.indexOf(" end"),
+    });
+    expect(mention).toBeNull();
+  });
 });
 
 describe("applyFileMentionReplacement", () => {
