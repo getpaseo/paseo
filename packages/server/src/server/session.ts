@@ -31,10 +31,10 @@ import {
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import {
+  type BinaryFrame,
   encodeFileTransferFrame,
   FileTransferOpcode,
   type FileTransferFrame,
-  type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { FileUploadStore } from "./file-upload/index.js";
 import { CursorError } from "./pagination/cursor.js";
@@ -649,16 +649,6 @@ interface VoiceFeatureUnavailableResponseMetadata {
   reasonCode?: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
   retryable?: boolean;
   missingModelIds?: LocalSpeechModelId[];
-}
-
-function isFileTransferFrame(
-  frame: TerminalStreamFrame | FileTransferFrame,
-): frame is FileTransferFrame {
-  return (
-    frame.opcode === FileTransferOpcode.FileBegin ||
-    frame.opcode === FileTransferOpcode.FileChunk ||
-    frame.opcode === FileTransferOpcode.FileEnd
-  );
 }
 
 class VoiceFeatureUnavailableError extends Error {
@@ -2124,7 +2114,8 @@ export class Session {
       case "file_download_token_request":
         return this.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
-        return this.handleFileUploadRequest(msg);
+        this.handleFileUploadRequest(msg);
+        return undefined;
       default:
         return undefined;
     }
@@ -2229,12 +2220,12 @@ export class Session {
     this.peakInflightRequests = this.inflightRequests;
   }
 
-  public handleBinaryFrame(frame: TerminalStreamFrame | FileTransferFrame): void {
-    if (isFileTransferFrame(frame)) {
-      this.handleFileTransferFrame(frame);
+  public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
+    if (binaryFrame.kind === "file_transfer") {
+      await this.handleFileTransferFrame(binaryFrame.frame);
       return;
     }
-    this.terminalController.handleBinaryFrame(frame);
+    this.terminalController.handleBinaryFrame(binaryFrame.frame);
   }
 
   private async handleRestartServerRequest(requestId: string, reason?: string): Promise<void> {
@@ -5844,12 +5835,12 @@ export class Session {
     }
   }
 
-  private async handleFileUploadRequest(request: FileUploadRequest): Promise<void> {
+  private handleFileUploadRequest(request: FileUploadRequest): void {
     this.fileUploads.beginUpload(request);
   }
 
-  private handleFileTransferFrame(frame: FileTransferFrame): void {
-    const response = this.fileUploads.receiveFrame(frame);
+  private async handleFileTransferFrame(frame: FileTransferFrame): Promise<void> {
+    const response = await this.fileUploads.receiveFrame(frame);
     if (response) {
       this.emit(response);
     }

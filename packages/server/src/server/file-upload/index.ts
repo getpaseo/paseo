@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { FileTransferOpcode, type FileTransferFrame } from "@getpaseo/protocol/binary-frames/index";
@@ -7,6 +7,7 @@ import type { FileUploadRequest, FileUploadResponse } from "../messages.js";
 
 interface FileUploadStoreOptions {
   paseoHome: string;
+  staleUploadTimeoutMs?: number;
 }
 
 interface PendingUpload {
@@ -18,14 +19,21 @@ interface PendingUpload {
   path: string;
   receivedBytes: number;
   started: boolean;
+  staleTimeout: ReturnType<typeof setTimeout>;
+  queue: Promise<void>;
 }
 
 export class FileUploadStore {
+  private static readonly defaultStaleUploadTimeoutMs = 10 * 60 * 1000;
+
   private readonly paseoHome: string;
+  private readonly staleUploadTimeoutMs: number;
   private readonly pending = new Map<string, PendingUpload>();
 
   constructor(options: FileUploadStoreOptions) {
     this.paseoHome = options.paseoHome;
+    this.staleUploadTimeoutMs =
+      options.staleUploadTimeoutMs ?? FileUploadStore.defaultStaleUploadTimeoutMs;
   }
 
   beginUpload(request: FileUploadRequest): void {
@@ -41,54 +49,105 @@ export class FileUploadStore {
       path: join(uploadDir, fileName),
       receivedBytes: 0,
       started: false,
+      staleTimeout: this.createStaleUploadTimeout(request.requestId),
+      queue: Promise.resolve(),
     });
   }
 
-  receiveFrame(frame: FileTransferFrame): FileUploadResponse | null {
+  async receiveFrame(frame: FileTransferFrame): Promise<FileUploadResponse | null> {
     const upload = this.pending.get(frame.requestId);
     if (!upload) {
       return null;
     }
 
+    const operation = upload.queue.then(() => this.applyFrame(upload, frame));
+    upload.queue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  private async applyFrame(
+    upload: PendingUpload,
+    frame: FileTransferFrame,
+  ): Promise<FileUploadResponse | null> {
+    if (this.pending.get(upload.requestId) !== upload) {
+      return null;
+    }
+
     try {
       if (frame.opcode === FileTransferOpcode.FileBegin) {
-        this.startWriting(upload);
+        await this.startWriting(upload);
         return null;
       }
       if (frame.opcode === FileTransferOpcode.FileChunk) {
-        this.writeChunk(upload, frame.payload);
+        await this.writeChunk(upload, frame.payload);
         return null;
       }
-      return this.completeUpload(upload);
+      return await this.completeUpload(upload);
     } catch (error) {
-      this.pending.delete(frame.requestId);
+      await this.removeFailedUpload(upload);
       return buildUploadResponse(upload, getErrorMessage(error));
     }
   }
 
-  private startWriting(upload: PendingUpload): void {
-    mkdirSync(join(this.paseoHome, "uploads", upload.id), { recursive: true });
-    writeFileSync(upload.path, new Uint8Array());
+  private async startWriting(upload: PendingUpload): Promise<void> {
+    await mkdir(join(this.paseoHome, "uploads", upload.id), { recursive: true });
+    await writeFile(upload.path, new Uint8Array());
     upload.started = true;
   }
 
-  private writeChunk(upload: PendingUpload, bytes: Uint8Array): void {
+  private async writeChunk(upload: PendingUpload, bytes: Uint8Array): Promise<void> {
     if (!upload.started) {
       throw new Error("Upload chunks arrived before file begin.");
     }
-    appendFileSync(upload.path, bytes);
+    const nextReceivedBytes = upload.receivedBytes + bytes.byteLength;
+    if (nextReceivedBytes > upload.size) {
+      throw new Error(
+        `Upload exceeded declared size: expected ${upload.size}, received ${nextReceivedBytes}.`,
+      );
+    }
+    await appendFile(upload.path, bytes);
     upload.receivedBytes += bytes.byteLength;
   }
 
-  private completeUpload(upload: PendingUpload): FileUploadResponse {
-    this.pending.delete(upload.requestId);
+  private async completeUpload(upload: PendingUpload): Promise<FileUploadResponse> {
+    this.clearPendingUpload(upload);
     if (upload.receivedBytes !== upload.size) {
+      await this.removeUploadedFile(upload);
       return buildUploadResponse(
         upload,
         `Upload size mismatch: expected ${upload.size}, received ${upload.receivedBytes}.`,
       );
     }
     return buildUploadResponse(upload, null);
+  }
+
+  private createStaleUploadTimeout(requestId: string): ReturnType<typeof setTimeout> {
+    const timeout = setTimeout(() => {
+      const upload = this.pending.get(requestId);
+      if (!upload) {
+        return;
+      }
+      void this.removeFailedUpload(upload);
+    }, this.staleUploadTimeoutMs);
+    timeout.unref?.();
+    return timeout;
+  }
+
+  private clearPendingUpload(upload: PendingUpload): void {
+    clearTimeout(upload.staleTimeout);
+    this.pending.delete(upload.requestId);
+  }
+
+  private async removeFailedUpload(upload: PendingUpload): Promise<void> {
+    this.clearPendingUpload(upload);
+    await this.removeUploadedFile(upload);
+  }
+
+  private async removeUploadedFile(upload: PendingUpload): Promise<void> {
+    await rm(upload.path, { force: true }).catch(() => undefined);
   }
 }
 

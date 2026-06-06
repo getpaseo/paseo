@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -20,7 +20,7 @@ describe("file uploads", () => {
     }
   });
 
-  it("stores chunked upload bytes and returns an uploaded-file attachment", () => {
+  it("stores chunked upload bytes and returns an uploaded-file attachment", async () => {
     const paseoHome = makePaseoHome();
     const uploads = new FileUploadStore({ paseoHome });
 
@@ -32,12 +32,12 @@ describe("file uploads", () => {
       modifiedAt: "2026-05-02T00:00:00.000Z",
       requestId: "req-upload",
     });
-    expect(uploads.receiveFrame(uploadBegins("req-upload"))).toBeNull();
-    expect(uploads.receiveFrame(uploadChunk("req-upload", "hello"))).toBeNull();
-    expect(uploads.receiveFrame(uploadChunk("req-upload", " world"))).toBeNull();
+    await expect(uploads.receiveFrame(uploadBegins("req-upload"))).resolves.toBeNull();
+    await expect(uploads.receiveFrame(uploadChunk("req-upload", "hello"))).resolves.toBeNull();
+    await expect(uploads.receiveFrame(uploadChunk("req-upload", " world"))).resolves.toBeNull();
 
     const path = join(paseoHome, "uploads", "upload_req-upload", "notes.txt");
-    expect(uploads.receiveFrame(uploadEnds("req-upload"))).toEqual({
+    await expect(uploads.receiveFrame(uploadEnds("req-upload"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-upload",
@@ -53,6 +53,59 @@ describe("file uploads", () => {
       },
     });
     expect(readFileSync(path, "utf8")).toBe("hello world");
+  });
+
+  it("rejects chunks beyond the declared size and removes the partial file", async () => {
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome });
+
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 5,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-overflow",
+    });
+    await expect(uploads.receiveFrame(uploadBegins("req-overflow"))).resolves.toBeNull();
+
+    const path = join(paseoHome, "uploads", "upload_req-overflow", "notes.txt");
+    await expect(uploads.receiveFrame(uploadChunk("req-overflow", "hello!"))).resolves.toEqual({
+      type: "file.upload.response",
+      payload: {
+        requestId: "req-overflow",
+        file: null,
+        error: "Upload exceeded declared size: expected 5, received 6.",
+      },
+    });
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("preserves chunk order when frames arrive before earlier disk writes finish", async () => {
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome });
+
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-queued",
+    });
+
+    const results = await Promise.all([
+      uploads.receiveFrame(uploadBegins("req-queued")),
+      uploads.receiveFrame(uploadChunk("req-queued", "hello")),
+      uploads.receiveFrame(uploadChunk("req-queued", " world")),
+      uploads.receiveFrame(uploadEnds("req-queued")),
+    ]);
+
+    expect(results.slice(0, 3)).toEqual([null, null, null]);
+    expect(results[3]?.payload.error).toBeNull();
+    expect(readFileSync(join(paseoHome, "uploads", "upload_req-queued", "notes.txt"), "utf8")).toBe(
+      "hello world",
+    );
   });
 });
 
