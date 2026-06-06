@@ -233,15 +233,15 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archivePaseoWorktree).not.toHaveBeenCalled();
   });
 
-  test("does nothing when the upstream status is unknown", async () => {
+  test("archives when the PR is merged and the upstream branch was deleted", async () => {
     const harness = createHarness({
-      getSnapshot: async () => createSnapshot({ git: { aheadOfOrigin: null } }),
+      getSnapshot: async () =>
+        createSnapshot({ git: { aheadOfOrigin: null, behindOfOrigin: null } }),
     });
 
     await runArchiveIfSafe(harness);
 
-    expect(harness.deps.isPaseoOwnedWorktreeCwd).not.toHaveBeenCalled();
-    expect(harness.deps.archivePaseoWorktree).not.toHaveBeenCalled();
+    expect(harness.deps.archivePaseoWorktree).toHaveBeenCalledTimes(1);
   });
 
   test("does nothing when the cwd is not a Paseo-owned worktree", async () => {
