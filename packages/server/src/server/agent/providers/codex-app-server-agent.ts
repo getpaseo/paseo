@@ -103,6 +103,14 @@ const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
+// Codex treats most app-server client names as the model-request originator.
+// This reserved Codex name is non-originating, so requests keep Codex's default
+// CLI identity instead of showing up as Paseo in provider usage logs.
+const CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO = {
+  name: "codex_app_server_daemon",
+  title: "Codex App Server Daemon",
+  version: "0.0.0",
+} as const;
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
 const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
   "commandExecution",
@@ -2818,11 +2826,7 @@ function buildCodexAppServerInitializeParams(): {
   capabilities: { experimentalApi: true };
 } {
   return {
-    clientInfo: {
-      name: "paseo",
-      title: "Paseo",
-      version: "0.0.0",
-    },
+    clientInfo: CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO,
     capabilities: {
       experimentalApi: true,
     },
