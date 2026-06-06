@@ -90,9 +90,9 @@ class PausedIpcWorker {
   }
 
   on(event: "message", listener: (message: LocalSpeechWorkerToParentMessage) => void): this;
-  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   on(
-    event: "message" | "exit",
+    event: "message" | "close",
     listener:
       | ((message: LocalSpeechWorkerToParentMessage) => void)
       | ((code: number | null, signal: NodeJS.Signals | null) => void),
@@ -295,8 +295,9 @@ describe("LocalSpeechWorkerClient", () => {
     const session = provider.createSession({ logger: pino({ level: "silent" }) });
 
     const connect = session.connect();
-    workers[0].stderr.emit("data", "dyld: Library not loaded: libsherpa-onnx-c-api.dylib");
     workers[0].emit("exit", null, "SIGABRT");
+    workers[0].stderr.emit("data", "dyld: Library not loaded: libsherpa-onnx-c-api.dylib");
+    workers[0].emit("close", null, "SIGABRT");
 
     await expect(connect).rejects.toThrow(
       "Local speech worker exited (signal SIGABRT) while handling session.create (dictationStt). Last stderr: dyld: Library not loaded: libsherpa-onnx-c-api.dylib",

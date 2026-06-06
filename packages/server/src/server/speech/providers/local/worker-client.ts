@@ -46,7 +46,7 @@ interface LocalSpeechWorkerProcess {
   disconnect(): void;
   kill(): boolean;
   on(event: "message", listener: (message: LocalSpeechWorkerToParentMessage) => void): this;
-  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
 }
 
 interface PendingRequest {
@@ -369,7 +369,7 @@ export class LocalSpeechWorkerClient {
     );
     worker.stderr?.on("data", (chunk: Buffer | string) => this.handleWorkerStderr(chunk));
     worker.on("message", (message) => this.handleWorkerMessage(message));
-    worker.on("exit", (code, signal) => this.handleWorkerExit(code, signal));
+    worker.on("close", (code, signal) => this.handleWorkerExit(code, signal));
     return worker;
   }
 
