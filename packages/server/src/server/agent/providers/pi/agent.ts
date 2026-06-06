@@ -92,6 +92,11 @@ const PI_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
     description: "Manually compact the session context",
     argumentHint: "[instructions]",
   },
+  {
+    name: "autocompact",
+    description: "Toggle automatic context compaction",
+    argumentHint: "[on|off|toggle]",
+  },
 ];
 
 const PI_CAPABILITIES: AgentCapabilityFlags = {
@@ -258,6 +263,17 @@ function normalizePiThinkingOption(value: string | null | undefined): PiThinking
     return null;
   }
   return isPiThinkingLevel(value) ? value : null;
+}
+
+function parseAutoCompactMode(value: string | undefined): boolean | null {
+  const mode = (value ?? "toggle").trim().toLowerCase();
+  if (mode === "on" || mode === "true" || mode === "enable" || mode === "enabled") {
+    return true;
+  }
+  if (mode === "off" || mode === "false" || mode === "disable" || mode === "disabled") {
+    return false;
+  }
+  return null;
 }
 
 function mapThinkingOption(option: (typeof PI_THINKING_OPTIONS)[number]) {
@@ -1161,14 +1177,25 @@ export class PiRpcAgentSession implements AgentSession {
       return null;
     }
     const parsed = this.parseSlashCommandInput(prompt);
-    if (!parsed || parsed.commandName !== "compact") {
+    if (!parsed) {
       return null;
     }
-    return {
-      run: async ({ emit }) => {
-        await this.executeCompactCommand(parsed.args, emit);
-      },
-    };
+    const commandName = parsed.commandName.toLowerCase();
+    if (commandName === "compact") {
+      return {
+        run: async ({ emit }) => {
+          await this.executeCompactCommand(parsed.args, emit);
+        },
+      };
+    }
+    if (commandName === "autocompact") {
+      return {
+        run: async ({ emit }) => {
+          await this.executeAutoCompactCommand(parsed.args, emit);
+        },
+      };
+    }
+    return null;
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -1251,6 +1278,44 @@ export class PiRpcAgentSession implements AgentSession {
         this.outOfBandCompactionEmit = null;
       }
     }
+  }
+
+  private async executeAutoCompactCommand(
+    mode: string | undefined,
+    emit: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
+    let enabled = parseAutoCompactMode(mode);
+    if (enabled === null) {
+      const state = await this.runtimeSession.getState();
+      enabled = !state.autoCompactionEnabled;
+    }
+
+    try {
+      await this.runtimeSession.setAutoCompaction(enabled);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        item: {
+          type: "assistant_message",
+          text: `[Error] Failed to set auto-compaction: ${message}`,
+        },
+      });
+      return;
+    }
+    this.state = {
+      ...this.state,
+      autoCompactionEnabled: enabled,
+    };
+    emit({
+      type: "timeline",
+      provider: PI_PROVIDER,
+      item: {
+        type: "assistant_message",
+        text: `Auto-compaction ${enabled ? "enabled" : "disabled"}.`,
+      },
+    });
   }
 
   private async requestEntryCapture(reason: string): Promise<void> {
@@ -1529,6 +1594,7 @@ export class PiRpcAgentSession implements AgentSession {
           item: {
             type: "compaction",
             status: "completed",
+            trigger: event.reason === "manual" ? "manual" : "auto",
           },
         });
         return;

@@ -52,6 +52,7 @@ export class FakePi implements PiRuntime {
 export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
+  readonly setAutoCompactionRequests: boolean[] = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
   readonly setThinkingLevelRequests: string[] = [];
   readonly treeNavigationRequests: string[] = [];
@@ -80,6 +81,7 @@ export class FakePiSession implements PiRuntimeSession {
       thinkingLevel: "medium",
       isStreaming: false,
       isCompacting: false,
+      autoCompactionEnabled: true,
       sessionFile: launch.session ?? "/tmp/pi-session",
       sessionId: "pi-session-1",
       messageCount: 0,
@@ -107,6 +109,14 @@ export class FakePiSession implements PiRuntimeSession {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
     this.emit({ type: "compaction_start", reason: "manual" });
     this.emit({ type: "compaction_end", reason: "manual" });
+  }
+
+  async setAutoCompaction(enabled: boolean): Promise<void> {
+    this.setAutoCompactionRequests.push(enabled);
+    this.state = {
+      ...this.state,
+      autoCompactionEnabled: enabled,
+    };
   }
 
   async abort(): Promise<void> {

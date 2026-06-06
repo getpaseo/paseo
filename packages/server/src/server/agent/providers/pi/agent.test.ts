@@ -698,6 +698,11 @@ describe("PiRpcAgentClient", () => {
         description: "Manually compact the session context",
         argumentHint: "[instructions]",
       },
+      {
+        name: "autocompact",
+        description: "Toggle automatic context compaction",
+        argumentHint: "[on|off|toggle]",
+      },
       { name: "review", description: "Review changes", argumentHint: "" },
       { name: "fix-tests", description: "Fix tests", argumentHint: "" },
       { name: "skill:docs", description: "Read docs", argumentHint: "" },
@@ -714,6 +719,11 @@ describe("PiRpcAgentClient", () => {
       name: "compact",
       description: "Manually compact the session context",
       argumentHint: "[instructions]",
+    });
+    await expect(session.listCommands()).resolves.toContainEqual({
+      name: "autocompact",
+      description: "Toggle automatic context compaction",
+      argumentHint: "[on|off|toggle]",
     });
   });
 
@@ -737,9 +747,47 @@ describe("PiRpcAgentClient", () => {
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "compaction", status: "completed" },
+        item: { type: "compaction", status: "completed", trigger: "manual" },
       },
     ]);
+  });
+
+  test("executes Pi autocompact through RPC instead of prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact off");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([false]);
+    expect(fakeSession.prompts).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "Auto-compaction disabled." },
+      },
+    ]);
+  });
+
+  test("toggles Pi autocompact through current RPC state", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.state.autoCompactionEnabled = false;
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([true]);
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "pi",
+      item: { type: "assistant_message", text: "Auto-compaction enabled." },
+    });
   });
 
   test("rewinds conversation through the Pi tree navigation bridge", async () => {
