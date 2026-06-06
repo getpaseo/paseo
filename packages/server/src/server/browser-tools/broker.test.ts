@@ -27,6 +27,14 @@ class FakeDesktopClient implements BrowserToolsDesktopClient {
   }
 }
 
+class FailingDesktopClient implements BrowserToolsDesktopClient {
+  public readonly id = "desktop-1";
+
+  public sendBrowserAutomationRequest(): void {
+    throw new Error("websocket send failed");
+  }
+}
+
 function createBroker(options: { enabled: boolean; timeoutMs?: number }): BrowserToolsBroker {
   return new BrowserToolsBroker({
     policy: new StaticBrowserToolsPolicy(options.enabled),
@@ -240,6 +248,22 @@ describe("BrowserToolsBroker", () => {
         code: "browser_no_desktop",
         message: "The desktop browser automation client disconnected before responding.",
         retryable: true,
+      },
+    });
+    expect(broker.getPendingRequestCount()).toBe(0);
+  });
+
+  test("desktop send failure resolves structured failure and clears pending request", async () => {
+    const broker = createBroker({ enabled: true });
+    broker.registerClient(new FailingDesktopClient());
+
+    await expect(broker.execute({ command: pageInfoCommand() })).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        message: "Browser automation request failed to send: websocket send failed",
+        retryable: false,
       },
     });
     expect(broker.getPendingRequestCount()).toBe(0);

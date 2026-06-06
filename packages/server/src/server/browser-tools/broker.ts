@@ -183,7 +183,7 @@ export class BrowserToolsBroker {
   }): Promise<BrowserToolsResponsePayload> {
     const { client, request, timeoutMs } = params;
 
-    return new Promise<BrowserToolsResponsePayload>((resolve, reject) => {
+    return new Promise<BrowserToolsResponsePayload>((resolve) => {
       const timeout = setTimeout(() => {
         if (!this.pending.delete(request.requestId)) {
           return;
@@ -204,15 +204,47 @@ export class BrowserToolsBroker {
         resolve,
       });
 
-      Promise.resolve(client.sendBrowserAutomationRequest(request)).catch((error: unknown) => {
-        if (!this.pending.delete(request.requestId)) {
-          return;
-        }
-        clearTimeout(timeout);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
+      try {
+        Promise.resolve(client.sendBrowserAutomationRequest(request)).catch((error: unknown) => {
+          resolveSendFailure({
+            requestId: request.requestId,
+            pending: this.pending,
+            timeout,
+            resolve,
+            error,
+          });
+        });
+      } catch (error) {
+        resolveSendFailure({
+          requestId: request.requestId,
+          pending: this.pending,
+          timeout,
+          resolve,
+          error,
+        });
+      }
     });
   }
+}
+
+function resolveSendFailure(params: {
+  requestId: string;
+  pending: Map<string, PendingBrowserToolsRequest>;
+  timeout: ReturnType<typeof setTimeout>;
+  resolve: (payload: BrowserToolsResponsePayload) => void;
+  error: unknown;
+}): void {
+  if (!params.pending.delete(params.requestId)) {
+    return;
+  }
+  clearTimeout(params.timeout);
+  params.resolve(
+    browserToolsFailure({
+      requestId: params.requestId,
+      code: "browser_unknown_error",
+      message: formatBrowserAutomationSendError(params.error),
+    }),
+  );
 }
 
 function formatBrowserAutomationValidationError(message: string | undefined): string {
@@ -227,6 +259,13 @@ function formatBrowserAutomationResponseValidationError(message: string | undefi
     return "Browser automation response is invalid.";
   }
   return `Browser automation response is invalid: ${message}.`;
+}
+
+function formatBrowserAutomationSendError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return `Browser automation request failed to send: ${error.message}`;
+  }
+  return `Browser automation request failed to send: ${String(error)}`;
 }
 
 function getBrowserAutomationResponseRequestId(response: unknown): string | null {
