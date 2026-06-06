@@ -1,6 +1,7 @@
 import type { KeyboardShortcutPayload, MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import { buildSettingsRoute, parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
+import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
+import { isSettingsPathname } from "@/stores/settings-entry-context";
 import {
   getRelativeSidebarShortcutTarget,
   type SidebarShortcutWorkspaceTarget,
@@ -31,6 +32,8 @@ export type ShortcutAction =
   | { kind: "dispatch"; action: KeyboardActionDefinition }
   | { kind: "navigate-workspace"; serverId: string; workspaceId: string }
   | { kind: "navigate-last-workspace" }
+  | { kind: "navigate-settings-entry" }
+  | { kind: "navigate-settings-return" }
   | { kind: "router-replace"; route: string }
   | { kind: "router-back" }
   | { kind: "router-push"; route: string }
@@ -159,11 +162,11 @@ function routeMessageInputAction(payload: KeyboardShortcutPayload): ShortcutActi
 }
 
 function routeSettingsToggle(ctx: ShortcutRoutingContext): ShortcutAction {
-  if (!ctx.pathname.startsWith("/settings")) {
-    return { kind: "router-push", route: buildSettingsRoute() };
+  if (!isSettingsPathname(ctx.pathname)) {
+    return { kind: "navigate-settings-entry" };
   }
   if (!ctx.isMobile) {
-    return { kind: "navigate-last-workspace" };
+    return { kind: "navigate-settings-return" };
   }
   return { kind: "router-back" };
 }

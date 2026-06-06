@@ -4,6 +4,7 @@ import { createIdleAgent, openWorkspaceWithAgents } from "./helpers/archive-tab"
 import { waitForTabBar, expectAgentTabActive } from "./helpers/launcher";
 import { seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
+import { openGeneralSettingsSection } from "./helpers/settings";
 
 async function pressSettingsToggleShortcut(page: import("@playwright/test").Page) {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
@@ -66,7 +67,8 @@ test.describe("Settings toggle tab regression", () => {
       await expectAgentTabActive(page, secondAgent.id);
 
       await pressSettingsToggleShortcut(page);
-      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expect(page).toHaveURL(/\/settings(?:\/|$)/);
+      await openGeneralSettingsSection(page);
 
       await page.getByRole("button", { name: "Queue", exact: true }).click();
       await expectSendBehavior(page, "queue");

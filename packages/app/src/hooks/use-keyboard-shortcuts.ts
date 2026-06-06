@@ -23,11 +23,18 @@ import { isNative } from "@/constants/platform";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
+import { useAnyOnlineHostServerId } from "@/hooks/use-any-online-host-server-id";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import {
+  consumeSettingsEntryReturnPath,
+  prepareSettingsEntryNavigation,
+} from "@/stores/settings-entry-context";
+import { useHosts } from "@/runtime/host-runtime";
+import { resolveSettingsBackDestination } from "@/screens/settings-navigation";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -55,6 +62,9 @@ export function useKeyboardShortcuts({
     timeoutId: null,
   });
   const activeServerId = useActiveServerId();
+  const hosts = useHosts();
+  const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const anyOnlineServerId = useAnyOnlineHostServerId(hostServerIds);
   const openProjectPickerAction = useOpenProjectPicker(activeServerId);
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
@@ -111,6 +121,27 @@ export function useKeyboardShortcuts({
           return true;
         case "navigate-last-workspace":
           return navigateToLastWorkspace();
+        case "navigate-settings-entry":
+          router.push(
+            prepareSettingsEntryNavigation(pathname) as Parameters<typeof router.push>[0],
+          );
+          return true;
+        case "navigate-settings-return": {
+          const returnPath = consumeSettingsEntryReturnPath();
+          if (returnPath) {
+            router.dismissTo(returnPath as Parameters<typeof router.dismissTo>[0]);
+            return true;
+          }
+          if (navigateToLastWorkspace()) {
+            return true;
+          }
+          const fallbackDestination = resolveSettingsBackDestination({
+            entryReturnPath: null,
+            anyOnlineServerId,
+          });
+          router.replace(fallbackDestination.route as Parameters<typeof router.replace>[0]);
+          return true;
+        }
         case "router-replace":
           router.replace(action.route as Parameters<typeof router.replace>[0]);
           return true;
@@ -291,6 +322,7 @@ export function useKeyboardShortcuts({
     cycleTheme,
     enabled,
     activeWorkspaceSelection,
+    anyOnlineServerId,
     isMobile,
     openProjectPickerAction,
     pathname,

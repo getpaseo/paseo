@@ -10,7 +10,11 @@ import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
-import { buildHostOpenProjectRoute, buildSettingsRoute } from "@/utils/host-routes";
+import { buildHostOpenProjectRoute } from "@/utils/host-routes";
+import {
+  buildSettingsEntryRoute,
+  prepareSettingsEntryNavigation,
+} from "@/stores/settings-entry-context";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
@@ -159,8 +163,8 @@ export function useCommandCenter() {
   }, [agents, open, query]);
 
   const settingsRoute = useMemo<Href>(() => {
-    return buildSettingsRoute();
-  }, []);
+    return buildSettingsEntryRoute(pathname) as Href;
+  }, [pathname]);
 
   const homeRoute = useMemo<Href | undefined>(() => {
     if (!routeActiveServerId) return undefined;
@@ -243,9 +247,13 @@ export function useCommandCenter() {
         return;
       }
       didNavigateRef.current = true;
+      if (action.id === "settings") {
+        router.push(prepareSettingsEntryNavigation(pathname) as Href);
+        return;
+      }
       router.push(action.route);
     },
-    [openProjectPicker, setOpen],
+    [openProjectPicker, pathname, setOpen],
   );
 
   const handleSelectItem = useCallback(

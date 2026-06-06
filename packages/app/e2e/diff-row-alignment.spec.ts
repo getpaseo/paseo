@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Page } from "@playwright/test";
-import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "../src/utils/host-routes";
+import { buildHostWorkspaceRoute } from "../src/utils/host-routes";
 import { test, expect } from "./fixtures";
 import { getServerId } from "./helpers/server-id";
 import { connectSeedClient } from "./helpers/seed-client";
@@ -393,7 +393,7 @@ async function expectExpandedMountedTabDiff(page: Page): Promise<void> {
 
 async function changeCodeFontSizeFromSettings(page: Page, codeFontSize: number): Promise<void> {
   await page.getByTestId("sidebar-settings").click();
-  await expect(page).toHaveURL(new RegExp(`${buildSettingsSectionRoute("general")}|/settings$`));
+  await expect(page).toHaveURL(/\/settings(?:\/|$)/);
   await page.getByRole("button", { name: "Appearance" }).click();
   await page.getByLabel("Code font size").fill(String(codeFontSize));
   await page.getByLabel("Code font size").press("Enter");

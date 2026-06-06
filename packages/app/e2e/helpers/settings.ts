@@ -27,8 +27,12 @@ export type SettingsSection = keyof typeof SECTION_LABELS | "projects";
 
 type HostSection = "connections" | "agents" | "workspaces" | "providers" | "host";
 
+function visibleSettingsSidebar(page: Page) {
+  return page.locator('[data-testid="settings-sidebar"]:visible').first();
+}
+
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
-  const sidebar = page.getByTestId("settings-sidebar");
+  const sidebar = visibleSettingsSidebar(page);
   await expect(sidebar).toBeVisible();
 
   if (section === "projects") {
@@ -39,6 +43,11 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
 
   await sidebar.getByRole("button", { name: SECTION_LABELS[section], exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
+}
+
+export async function openGeneralSettingsSection(page: Page): Promise<void> {
+  await openSettingsSection(page, "general");
+  await expectGeneralContent(page);
 }
 
 export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
@@ -90,8 +99,20 @@ export async function openCompactSettings(page: Page): Promise<void> {
   const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
   await expect(settingsButton).toBeVisible();
   await settingsButton.click();
+  await expect(page).toHaveURL(/\/settings(?:\/|$)/);
+
+  if (
+    !(await page
+      .locator('[data-testid="settings-sidebar"]:visible')
+      .first()
+      .isVisible()
+      .catch(() => false))
+  ) {
+    await goBackInSettings(page);
+  }
+
   await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+  await expect(visibleSettingsSidebar(page)).toBeVisible();
 }
 
 export async function seedSavedSettingsHosts(
@@ -150,14 +171,14 @@ export async function expectSettingsHostPickerLabel(page: Page, label: string): 
 
 export async function expectCompactSettingsList(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+  await expect(visibleSettingsSidebar(page)).toBeVisible();
   await expect(page.getByText("Theme", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Play test" })).toHaveCount(0);
   await expect(page.getByTestId("host-page-connections-card")).toHaveCount(0);
 }
 
 export async function expectSettingsSidebarVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+  await expect(visibleSettingsSidebar(page)).toBeVisible();
 }
 
 export async function expectSettingsSidebarHidden(page: Page): Promise<void> {
@@ -168,7 +189,7 @@ export async function expectSettingsSidebarSections(
   page: Page,
   sections: Array<Exclude<SettingsSection, "projects">>,
 ): Promise<void> {
-  const sidebar = page.getByTestId("settings-sidebar");
+  const sidebar = visibleSettingsSidebar(page);
   for (const section of sections) {
     await expect(
       sidebar.getByRole("button", { name: SECTION_LABELS[section], exact: true }),
@@ -350,7 +371,7 @@ export async function expectHostNoLocalOnlyRows(page: Page): Promise<void> {
 }
 
 export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<void> {
-  const sidebar = page.getByTestId("settings-sidebar");
+  const sidebar = visibleSettingsSidebar(page);
   await expect(sidebar).toBeVisible();
 
   // App group rows remain top-level.
@@ -374,7 +395,7 @@ export async function expectHostPageVisible(page: Page, _serverId: string): Prom
 }
 
 export async function expectLocalHostEntryFirst(page: Page, _serverId: string): Promise<void> {
-  const sidebar = page.getByTestId("settings-sidebar");
+  const sidebar = visibleSettingsSidebar(page);
   await expect(sidebar).toBeVisible({ timeout: 15_000 });
 
   // Single-host fixture: the picker is a non-interactive chip (no dropdown to

@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 import {
   Alert,
@@ -17,7 +9,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -55,12 +47,7 @@ import {
   type ServiceUrlBehavior,
   type Settings as EffectiveSettings,
 } from "@/hooks/use-settings";
-import {
-  getHostRuntimeStore,
-  isHostRuntimeConnected,
-  useHostRuntimeIsConnected,
-  useHosts,
-} from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import type { HostProfile } from "@/types/host-connection";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -103,8 +90,8 @@ import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
+import { useAnyOnlineHostServerId } from "@/hooks/use-any-online-host-server-id";
 import {
-  buildHostOpenProjectRoute,
   buildProjectsSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsSectionRoute,
@@ -112,6 +99,14 @@ import {
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
 import { navigateToLastWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  consumeSettingsEntryReturnPath,
+  peekSettingsEntryContext,
+} from "@/stores/settings-entry-context";
+import {
+  resolveCompactSettingsDetailBackDestination,
+  resolveSettingsBackDestination,
+} from "@/screens/settings-navigation";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -603,30 +598,6 @@ function DesktopAppUpdateRow() {
 // ---------------------------------------------------------------------------
 // Sidebar
 // ---------------------------------------------------------------------------
-
-function useAnyOnlineHostServerId(serverIds: string[]): string | null {
-  const runtime = getHostRuntimeStore();
-  return useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => {
-      let firstOnlineServerId: string | null = null;
-      let firstOnlineAt: string | null = null;
-      for (const serverId of serverIds) {
-        const snapshot = runtime.getSnapshot(serverId);
-        const lastOnlineAt = snapshot?.lastOnlineAt ?? null;
-        if (!isHostRuntimeConnected(snapshot) || !lastOnlineAt) {
-          continue;
-        }
-        if (!firstOnlineAt || lastOnlineAt < firstOnlineAt) {
-          firstOnlineAt = lastOnlineAt;
-          firstOnlineServerId = serverId;
-        }
-      }
-      return firstOnlineServerId;
-    },
-    () => null,
-  );
-}
 
 /**
  * Local daemon first, then remaining hosts in their existing order. Lets the
@@ -1284,7 +1255,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   }, [isCompactLayout, router]);
 
   const handleBackToRoot = useCallback(() => {
-    if (router.canGoBack()) {
+    const destination = resolveCompactSettingsDetailBackDestination({
+      hasEntryContext: peekSettingsEntryContext() !== null,
+      canGoBack: router.canGoBack(),
+    });
+    if (destination.kind === "router-back") {
       router.back();
     } else {
       router.replace("/settings");
@@ -1292,14 +1267,19 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   }, [router]);
 
   const handleBackToWorkspace = useCallback(() => {
+    const returnPath = consumeSettingsEntryReturnPath();
+    if (returnPath) {
+      router.dismissTo(returnPath as Href);
+      return;
+    }
     if (navigateToLastWorkspace()) {
       return;
     }
-    if (anyOnlineServerId) {
-      router.replace(buildHostOpenProjectRoute(anyOnlineServerId));
-      return;
-    }
-    router.replace("/");
+    const fallbackDestination = resolveSettingsBackDestination({
+      entryReturnPath: null,
+      anyOnlineServerId,
+    });
+    router.replace(fallbackDestination.route as Href);
   }, [anyOnlineServerId, router]);
 
   const detailHeader = ((): {

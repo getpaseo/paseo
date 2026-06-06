@@ -1,4 +1,4 @@
-import { router, usePathname } from "expo-router";
+import { router, usePathname, type Href } from "expo-router";
 import { FolderPlus, Home, MessagesSquare, Plus, Search, Settings, X } from "lucide-react-native";
 import {
   type Dispatch,
@@ -68,9 +68,9 @@ import {
   buildHostOpenProjectRoute,
   buildHostNewWorkspaceRoute,
   buildHostSessionsRoute,
-  buildSettingsRoute,
   mapPathnameToServer,
 } from "@/utils/host-routes";
+import { prepareSettingsEntryNavigation } from "@/stores/settings-entry-context";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
@@ -231,12 +231,12 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const handleSettingsMobile = useCallback(() => {
     showMobileAgent();
-    router.push(buildSettingsRoute());
-  }, [showMobileAgent]);
+    router.push(prepareSettingsEntryNavigation(pathname) as Href);
+  }, [pathname, showMobileAgent]);
 
   const handleSettingsDesktop = useCallback(() => {
-    router.push(buildSettingsRoute());
-  }, []);
+    router.push(prepareSettingsEntryNavigation(pathname) as Href);
+  }, [pathname]);
 
   const handleHomeMobile = useCallback(() => {
     if (!activeServerId) return;

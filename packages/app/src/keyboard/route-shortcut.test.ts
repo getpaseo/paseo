@@ -301,16 +301,16 @@ describe("routeKeyboardShortcut — message-input.action", () => {
 });
 
 describe("routeKeyboardShortcut — settings.toggle", () => {
-  it("pushes to the settings root when not currently in settings", () => {
+  it("opens settings through the entry navigation helper when not currently in settings", () => {
     expect(
       routeKeyboardShortcut(
         { action: "settings.toggle", payload: null },
         makeCtx({ pathname: "/h/srv/workspace/ws-2" }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "router-push", route: "/settings" });
+    ).toEqual<ShortcutAction>({ kind: "navigate-settings-entry" });
   });
 
-  it("navigates to the last workspace when leaving settings on desktop", () => {
+  it("returns through the settings entry context when leaving settings on desktop", () => {
     expect(
       routeKeyboardShortcut(
         { action: "settings.toggle", payload: null },
@@ -319,7 +319,7 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
           isMobile: false,
         }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
+    ).toEqual<ShortcutAction>({ kind: "navigate-settings-return" });
   });
 
   it("falls back to router.back() on mobile", () => {
