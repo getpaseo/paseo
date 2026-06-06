@@ -1,4 +1,15 @@
 import { webContents as allWebContents, type WebContents } from "electron";
+import {
+  BROWSER_NEW_TAB_REQUEST_EVENT,
+  handleBrowserWindowOpenRequest,
+  isAllowedBrowserWebviewUrl,
+} from "./window-open.js";
+
+export {
+  BROWSER_NEW_TAB_REQUEST_EVENT,
+  handleBrowserWindowOpenRequest,
+  isAllowedBrowserWebviewUrl,
+};
 
 const browserIdsByWebContentsId = new Map<number, string>();
 let workspaceActiveBrowserId: string | null = null;

@@ -111,6 +111,11 @@ export interface DesktopBrowserShortcutEvent {
   action: "focus-url";
 }
 
+export interface DesktopBrowserNewTabRequestEvent {
+  sourceBrowserId: string;
+  url: string;
+}
+
 export interface DesktopBrowserBridge {
   setWorkspaceActiveBrowser?: (browserId: string | null) => Promise<void>;
   openDevTools?: (browserId: string) => Promise<unknown>;

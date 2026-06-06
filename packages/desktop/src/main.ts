@@ -46,12 +46,15 @@ import { registerOpenerHandlers } from "./features/opener.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
+  BROWSER_NEW_TAB_REQUEST_EVENT,
   getPaseoBrowserIdForWebContents,
   getPaseoBrowserWebContents,
+  handleBrowserWindowOpenRequest,
+  isAllowedBrowserWebviewUrl,
   listRegisteredPaseoBrowserIds,
   registerPaseoBrowserWebContents,
   setWorkspaceActivePaseoBrowserId,
-} from "./features/browser-webviews.js";
+} from "./features/browser-webviews/index.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { PendingOpenProjectStore } from "./pending-open-project-store.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
@@ -72,20 +75,6 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
-
-function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
-  if (!value) {
-    return true;
-  }
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
-    );
-  } catch {
-    return false;
-  }
-}
 
 function preventUnsafeBrowserWebviewNavigation(
   event: Electron.Event,
@@ -534,13 +523,15 @@ async function createWindow(
         });
       }
     });
-    contents.setWindowOpenHandler(({ url }) => {
-      if (!isAllowedBrowserWebviewUrl(url)) {
-        return { action: "deny" };
-      }
-      contents.loadURL(url).catch(() => undefined);
-      return { action: "deny" };
-    });
+    contents.setWindowOpenHandler(({ url }) =>
+      handleBrowserWindowOpenRequest({
+        url,
+        sourceBrowserId: getPaseoBrowserIdForWebContents(contents),
+        requestNewTab: (payload) => {
+          mainWindow.webContents.send(BROWSER_NEW_TAB_REQUEST_EVENT, payload);
+        },
+      }),
+    );
     contents.on("context-menu", (_contextMenuEvent, params) => {
       showBrowserWebviewContextMenu(mainWindow, contents, params);
     });
