@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { vi } from "vitest";
+import React from "react";
 
 const globalWithTestShims = globalThis as typeof globalThis & Record<string, unknown>;
 
@@ -93,4 +94,34 @@ vi.mock("react-native-svg", () => {
 
 vi.mock("expo-linking", () => ({
   openURL: vi.fn().mockResolvedValue(undefined),
+}));
+
+const RouterPassthrough = ({ children }: { children?: React.ReactNode }) => children;
+
+vi.mock("expo-router", () => ({
+  Redirect: () => null,
+  Stack: Object.assign(RouterPassthrough, {
+    Screen: () => null,
+    Protected: RouterPassthrough,
+  }),
+  router: {
+    back: vi.fn(),
+    canGoBack: vi.fn(() => false),
+    navigate: vi.fn(),
+    push: vi.fn(),
+    replace: vi.fn(),
+    setParams: vi.fn(),
+  },
+  useGlobalSearchParams: vi.fn(() => ({})),
+  useLocalSearchParams: vi.fn(() => ({})),
+  usePathname: vi.fn(() => "/"),
+  useRootNavigationState: vi.fn(() => ({ key: "root" })),
+  useRouter: vi.fn(() => ({
+    back: vi.fn(),
+    canGoBack: vi.fn(() => false),
+    navigate: vi.fn(),
+    push: vi.fn(),
+    replace: vi.fn(),
+    setParams: vi.fn(),
+  })),
 }));
