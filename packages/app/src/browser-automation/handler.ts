@@ -93,17 +93,24 @@ async function handleBrowserAutomationRequest(params: {
   const executeAutomationCommand = getHost()?.browser?.executeAutomationCommand;
 
   if (request.command.command === "new_tab") {
-    client.sendBrowserAutomationExecuteResponse({
-      type: "browser.automation.execute.response",
-      payload: await openBrowserTabForRequest({
-        request,
-        serverId,
-        executeAutomationCommand,
-        navigateToWorkspace,
-        ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
-        ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
-      }),
-    });
+    try {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: await openBrowserTabForRequest({
+          request,
+          serverId,
+          executeAutomationCommand,
+          navigateToWorkspace,
+          ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
+          ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
+        }),
+      });
+    } catch (error) {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: normalizeThrownBridgeError(request.requestId, error),
+      });
+    }
     return;
   }
 

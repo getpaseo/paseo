@@ -209,6 +209,32 @@ describe("mountBrowserAutomationHandler", () => {
     expect(executeAutomationCommand).toHaveBeenCalledTimes(2);
   });
 
+  test("wraps browser_new_tab registration bridge errors in a response", async () => {
+    const client = new FakeDaemonClient();
+    const executeAutomationCommand = vi.fn(async () => {
+      throw new Error("IPC registration check failed");
+    });
+    mountBrowserAutomationHandler({
+      client,
+      serverId: "server-1",
+      getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
+      navigateToWorkspace: vi.fn(),
+    });
+
+    client.receive(browserNewTabRequest());
+    await flushPromises();
+
+    expect(client.sentResponses[0]?.payload).toEqual({
+      requestId: "req-new",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        message: "IPC registration check failed",
+        retryable: false,
+      },
+    });
+  });
+
   test("sends a success response from the desktop bridge", async () => {
     const client = new FakeDaemonClient();
     const executeAutomationCommand = vi.fn(async () => ({
