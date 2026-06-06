@@ -73,6 +73,31 @@ describe("BrowserToolsBroker", () => {
     });
   });
 
+  test("invalid browser requests return structured failures without contacting desktop", async () => {
+    const broker = createBroker({ enabled: true });
+    const client = new FakeDesktopClient("desktop-1");
+    broker.registerClient(client);
+
+    await expect(
+      broker.execute({
+        command: {
+          command: "new_tab",
+          args: { url: "ftp://example.com" },
+        } as unknown as BrowserAutomationCommand,
+      }),
+    ).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        message: "Browser automation request is invalid: URL must use http or https.",
+        retryable: false,
+      },
+    });
+    expect(client.receivedRequests).toEqual([]);
+    expect(broker.getPendingRequestCount()).toBe(0);
+  });
+
   test("capable fake desktop receives request and returns response", async () => {
     const broker = createBroker({ enabled: true });
     const client = new FakeDesktopClient("desktop-1");

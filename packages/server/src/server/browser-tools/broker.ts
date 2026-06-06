@@ -112,7 +112,7 @@ export class BrowserToolsBroker {
       });
     }
 
-    const request = BrowserAutomationExecuteRequestSchema.parse({
+    const request = BrowserAutomationExecuteRequestSchema.safeParse({
       type: "browser.automation.execute.request",
       requestId,
       ...(input.agentId ? { agentId: input.agentId } : {}),
@@ -122,9 +122,17 @@ export class BrowserToolsBroker {
       command: input.command,
     });
 
+    if (!request.success) {
+      return browserToolsFailure({
+        requestId,
+        code: "browser_unknown_error",
+        message: formatBrowserAutomationValidationError(request.error.issues[0]?.message),
+      });
+    }
+
     return this.sendRequest({
       client,
-      request,
+      request: request.data,
       timeoutMs: input.timeoutMs ?? this.defaultTimeoutMs,
     });
   }
@@ -187,4 +195,11 @@ export class BrowserToolsBroker {
       });
     });
   }
+}
+
+function formatBrowserAutomationValidationError(message: string | undefined): string {
+  if (!message) {
+    return "Browser automation request is invalid.";
+  }
+  return `Browser automation request is invalid: ${message}.`;
 }
