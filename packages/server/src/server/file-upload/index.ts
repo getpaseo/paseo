@@ -48,7 +48,7 @@ export class FileUploadStore {
     const attempt = existingUpload ? existingUpload.attempt + 1 : 1;
     const id = buildUploadId(request.requestId, attempt);
     const uploadDir = join(this.paseoHome, "uploads", id);
-    this.pending.set(request.requestId, {
+    const upload: PendingUpload = {
       requestId: request.requestId,
       id,
       attempt,
@@ -60,7 +60,8 @@ export class FileUploadStore {
       started: false,
       staleTimeout: this.createStaleUploadTimeout(request.requestId),
       queue: Promise.resolve(),
-    });
+    };
+    this.pending.set(request.requestId, upload);
   }
 
   async receiveFrame(frame: FileTransferFrame): Promise<FileUploadResponse | null> {
@@ -68,6 +69,7 @@ export class FileUploadStore {
     if (!upload) {
       return null;
     }
+    this.refreshStaleUploadTimeout(upload);
 
     const operation = upload.queue.then(() => this.applyFrame(upload, frame));
     upload.queue = operation.then(
@@ -135,14 +137,31 @@ export class FileUploadStore {
 
   private createStaleUploadTimeout(requestId: string): ReturnType<typeof setTimeout> {
     const timeout = setTimeout(() => {
-      const upload = this.pending.get(requestId);
-      if (!upload) {
-        return;
-      }
-      void this.removeFailedUpload(upload);
+      this.expireStaleUpload(requestId);
     }, this.staleUploadTimeoutMs);
     timeout.unref?.();
     return timeout;
+  }
+
+  private refreshStaleUploadTimeout(upload: PendingUpload): void {
+    clearTimeout(upload.staleTimeout);
+    upload.staleTimeout = this.createStaleUploadTimeout(upload.requestId);
+  }
+
+  private expireStaleUpload(requestId: string): void {
+    const upload = this.pending.get(requestId);
+    if (!upload) {
+      return;
+    }
+    this.clearPendingUpload(upload);
+    const cleanup = upload.queue.then(
+      () => this.removeUploadedFile(upload),
+      () => this.removeUploadedFile(upload),
+    );
+    upload.queue = cleanup.then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   private clearPendingUpload(upload: PendingUpload): void {

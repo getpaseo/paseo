@@ -157,6 +157,49 @@ describe("file uploads", () => {
     });
     expect(readFileSync(path, "utf8")).toBe("new");
   });
+
+  it("keeps an active upload alive beyond the initial stale timeout", async () => {
+    vi.useFakeTimers();
+
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome, staleUploadTimeoutMs: 50 });
+
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-slow-active",
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(uploads.receiveFrame(uploadBegins("req-slow-active"))).resolves.toBeNull();
+    await vi.advanceTimersByTimeAsync(30);
+    await expect(uploads.receiveFrame(uploadChunk("req-slow-active", "hello"))).resolves.toBeNull();
+    await vi.advanceTimersByTimeAsync(30);
+    await expect(
+      uploads.receiveFrame(uploadChunk("req-slow-active", " world")),
+    ).resolves.toBeNull();
+
+    const path = join(paseoHome, "uploads", "upload_req-slow-active", "notes.txt");
+    await expect(uploads.receiveFrame(uploadEnds("req-slow-active"))).resolves.toEqual({
+      type: "file.upload.response",
+      payload: {
+        requestId: "req-slow-active",
+        file: {
+          type: "uploaded_file",
+          id: "upload_req-slow-active",
+          fileName: "notes.txt",
+          mimeType: "text/plain",
+          size: 11,
+          path,
+        },
+        error: null,
+      },
+    });
+    expect(readFileSync(path, "utf8")).toBe("hello world");
+  });
 });
 
 function makePaseoHome(): string {
