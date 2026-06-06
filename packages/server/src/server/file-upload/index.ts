@@ -41,7 +41,7 @@ export class FileUploadStore {
     const existingUpload = this.pending.get(request.requestId);
     if (existingUpload) {
       this.clearPendingUpload(existingUpload);
-      void existingUpload.queue.then(() => this.removeUploadedFile(existingUpload));
+      void existingUpload.queue.then(() => this.removeUploadDirectory(existingUpload));
     }
 
     const fileName = sanitizeFileName(request.fileName);
@@ -126,7 +126,7 @@ export class FileUploadStore {
   private async completeUpload(upload: PendingUpload): Promise<FileUploadResponse> {
     this.clearPendingUpload(upload);
     if (upload.receivedBytes !== upload.size) {
-      await this.removeUploadedFile(upload);
+      await this.removeUploadDirectory(upload);
       return buildUploadResponse(
         upload,
         `Upload size mismatch: expected ${upload.size}, received ${upload.receivedBytes}.`,
@@ -155,8 +155,8 @@ export class FileUploadStore {
     }
     this.clearPendingUpload(upload);
     const cleanup = upload.queue.then(
-      () => this.removeUploadedFile(upload),
-      () => this.removeUploadedFile(upload),
+      () => this.removeUploadDirectory(upload),
+      () => this.removeUploadDirectory(upload),
     );
     upload.queue = cleanup.then(
       () => undefined,
@@ -173,11 +173,13 @@ export class FileUploadStore {
 
   private async removeFailedUpload(upload: PendingUpload): Promise<void> {
     this.clearPendingUpload(upload);
-    await this.removeUploadedFile(upload);
+    await this.removeUploadDirectory(upload);
   }
 
-  private async removeUploadedFile(upload: PendingUpload): Promise<void> {
-    await rm(upload.path, { force: true }).catch(() => undefined);
+  private async removeUploadDirectory(upload: PendingUpload): Promise<void> {
+    await rm(join(this.paseoHome, "uploads", upload.id), { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 }
 

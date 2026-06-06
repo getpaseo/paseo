@@ -70,7 +70,8 @@ describe("file uploads", () => {
     });
     await expect(uploads.receiveFrame(uploadBegins("req-overflow"))).resolves.toBeNull();
 
-    const path = join(paseoHome, "uploads", "upload_req-overflow", "notes.txt");
+    const uploadDir = join(paseoHome, "uploads", "upload_req-overflow");
+    const path = join(uploadDir, "notes.txt");
     await expect(uploads.receiveFrame(uploadChunk("req-overflow", "hello!"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
@@ -80,6 +81,7 @@ describe("file uploads", () => {
       },
     });
     expect(existsSync(path)).toBe(false);
+    expect(existsSync(uploadDir)).toBe(false);
   });
 
   it("preserves chunk order when frames arrive before earlier disk writes finish", async () => {
