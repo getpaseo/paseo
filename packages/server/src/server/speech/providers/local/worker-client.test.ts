@@ -295,25 +295,19 @@ describe("LocalSpeechWorkerClient", () => {
     const session = provider.createSession({ logger: pino({ level: "silent" }) });
 
     const connect = session.connect();
-    workers[0].stderr.emit("data", "dyld: Library not loaded: libsherpa-onnx-c-api.dylib\n");
+    workers[0].stderr.emit("data", "dyld: Library not loaded: libsherpa-onnx-c-api.dylib");
     workers[0].emit("exit", null, "SIGABRT");
 
     await expect(connect).rejects.toThrow(
-      /Local speech worker exited \(signal SIGABRT\) while handling session\.create \(dictationStt\).*libsherpa-onnx-c-api\.dylib/,
+      "Local speech worker exited (signal SIGABRT) while handling session.create (dictationStt). Last stderr: dyld: Library not loaded: libsherpa-onnx-c-api.dylib",
     );
-    expect(
-      records.some(
-        (record) =>
-          record.msg === "Local speech worker exited" &&
-          record.workerPid === 12345 &&
-          record.signal === "SIGABRT" &&
-          typeof record.stderrTail === "string" &&
-          record.stderrTail.includes("libsherpa-onnx-c-api.dylib") &&
-          Array.isArray(record.pendingRequests) &&
-          (record.pendingRequests[0] as Record<string, unknown> | undefined)?.type ===
-            "session.create",
-      ),
-    ).toBe(true);
+    const exitRecord = records.find((record) => record.msg === "Local speech worker exited");
+    expect(exitRecord).toMatchObject({
+      workerPid: 12345,
+      signal: "SIGABRT",
+      stderrTail: "dyld: Library not loaded: libsherpa-onnx-c-api.dylib",
+      pendingRequests: [expect.objectContaining({ type: "session.create", kind: "dictationStt" })],
+    });
   });
 
   it("forwards VAD session events through the shared worker", async () => {

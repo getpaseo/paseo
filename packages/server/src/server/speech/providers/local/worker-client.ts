@@ -2,7 +2,6 @@ import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
-import type { Readable as NodeReadable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type pino from "pino";
 
@@ -42,7 +41,7 @@ interface LocalSpeechWorkerProcess {
   connected: boolean;
   killed: boolean;
   pid?: number;
-  stderr?: NodeReadable | null;
+  stderr?: Readable | null;
   send(message: LocalSpeechWorkerRequest, callback: (error: Error | null) => void): boolean;
   disconnect(): void;
   kill(): boolean;
@@ -467,7 +466,7 @@ export class LocalSpeechWorkerClient {
     this.rejectAllPending(error);
     for (const [sessionId, emitter] of this.sessionEmitters) {
       if (this.activeSessionIds.has(sessionId)) {
-        this.emitErrorIfObserved(sessionId, emitter, error);
+        this.emitErrorIfObserved(sessionId, emitter, error, workerPid);
       }
     }
     this.activeSessionIds.clear();
@@ -490,8 +489,7 @@ export class LocalSpeechWorkerClient {
   }
 
   private getStderrTail(): string {
-    const tail = (this.stderrTail + this.stderrLineBuffer).trim();
-    return truncateStart(tail, STDERR_TAIL_MAX_CHARS);
+    return truncateStart(this.stderrTail.trim(), STDERR_TAIL_MAX_CHARS);
   }
 
   private rejectAllPending(error: Error): void {
@@ -514,13 +512,18 @@ export class LocalSpeechWorkerClient {
     );
   }
 
-  private emitErrorIfObserved(sessionId: string, emitter: EventEmitter, error: Error): void {
+  private emitErrorIfObserved(
+    sessionId: string,
+    emitter: EventEmitter,
+    error: Error,
+    workerPid: number | null = this.workerPid,
+  ): void {
     if (emitter.listenerCount("error") > 0) {
       emitter.emit("error", error);
       return;
     }
     this.logger.warn(
-      { err: error, workerPid: this.workerPid, sessionId },
+      { err: error, workerPid, sessionId },
       "Local speech worker session error had no listener",
     );
   }
