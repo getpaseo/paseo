@@ -338,7 +338,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("fails fast when OpenAI speech provider is configured without credentials", async () => {
+  test("starts when OpenAI speech provider is configured without credentials", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-openai-config-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
@@ -367,9 +367,11 @@ describe("paseo daemon bootstrap", () => {
     };
 
     try {
-      await expect(createPaseoDaemon(config, pino({ level: "silent" }))).rejects.toThrow(
-        "Missing OpenAI credentials",
-      );
+      const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+      expect(daemon).toBeDefined();
+      // Must also start without throwing
+      await daemon.start();
+      await daemon.stop();
     } finally {
       await rm(paseoHomeRoot, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
