@@ -105,6 +105,7 @@ import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
+  socketMessageQueues: Map<unknown, Promise<void>>;
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
@@ -125,9 +126,12 @@ function parseSentEnvelope(data: unknown): z.infer<typeof WireEnvelopeSchema> {
 }
 
 const BinaryFrameSchema = z.object({
-  opcode: z.number(),
-  slot: z.number(),
-  payload: z.instanceof(Uint8Array),
+  kind: z.literal("terminal"),
+  frame: z.object({
+    opcode: z.number(),
+    slot: z.number(),
+    payload: z.instanceof(Uint8Array),
+  }),
 });
 
 class MockSocket {
@@ -369,7 +373,7 @@ async function attachRelayAndHello(params: {
 }) {
   await params.server.attachExternalSocket(params.socket, { transport: "relay" });
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  await Promise.resolve();
+  await waitForSocketMessages(params.server, params.socket);
   expect(params.socket.sent.length).toBeGreaterThan(0);
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
@@ -389,7 +393,7 @@ async function attachDirectAndHello(params: {
     createDirectRequest(),
   );
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  await Promise.resolve();
+  await waitForSocketMessages(params.server, params.socket);
   expect(params.socket.sent.length).toBeGreaterThan(0);
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
@@ -397,6 +401,13 @@ async function attachDirectAndHello(params: {
   expect(envelope.message?.type).toBe("status");
   expect(serverInfo).not.toBeNull();
   return serverInfo!;
+}
+
+async function waitForSocketMessages(
+  server: VoiceAssistantWebSocketServer,
+  socket: MockSocket,
+): Promise<void> {
+  await asInternals<WebSocketServerInternals>(server).socketMessageQueues.get(socket);
 }
 
 describe("relay external socket reconnect behavior", () => {
@@ -453,7 +464,7 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    await Promise.resolve();
+    await waitForSocketMessages(server, socket);
 
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0];
@@ -550,7 +561,7 @@ describe("relay external socket reconnect behavior", () => {
         },
       }),
     );
-    await Promise.resolve();
+    await waitForSocketMessages(server, socket);
 
     expect(closeCode).toBe(4002);
     expect(["Invalid hello", "Session message before hello"]).toContain(closeReason);
@@ -757,10 +768,10 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    await Promise.resolve();
+    await waitForSocketMessages(server, socket);
 
     expect(session.handleBinaryFrame).toHaveBeenCalledTimes(1);
-    const frame = BinaryFrameSchema.parse(session.handleBinaryFrame.mock.calls[0]?.[0]);
+    const { frame } = BinaryFrameSchema.parse(session.handleBinaryFrame.mock.calls[0]?.[0]);
     expect(frame.opcode).toBe(TerminalStreamOpcode.Input);
     expect(frame.slot).toBe(9);
     expect(new TextDecoder().decode(frame.payload)).toBe("ls\r");
