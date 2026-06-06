@@ -5,7 +5,6 @@ import type {
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BrowserToolsBroker, type BrowserToolsDesktopClient } from "./broker.js";
-import { BrowserToolsRequestError } from "./errors.js";
 import { StaticBrowserToolsPolicy } from "./policy.js";
 
 class FakeDesktopClient implements BrowserToolsDesktopClient {
@@ -224,7 +223,7 @@ describe("BrowserToolsBroker", () => {
     expect(broker.getPendingRequestCount()).toBe(0);
   });
 
-  test("disconnect rejects and clears pending request", async () => {
+  test("disconnect resolves retryable failure and clears pending request", async () => {
     const broker = createBroker({ enabled: true });
     const client = new FakeDesktopClient("desktop-1");
     const unregister = broker.registerClient(client);
@@ -234,12 +233,15 @@ describe("BrowserToolsBroker", () => {
 
     unregister();
 
-    await expect(resultPromise).rejects.toMatchObject({
-      name: "BrowserToolsRequestError",
-      code: "browser_no_desktop",
-      message: "The desktop browser automation client disconnected before responding.",
-      retryable: true,
-    } satisfies Partial<BrowserToolsRequestError>);
+    await expect(resultPromise).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_no_desktop",
+        message: "The desktop browser automation client disconnected before responding.",
+        retryable: true,
+      },
+    });
     expect(broker.getPendingRequestCount()).toBe(0);
   });
 

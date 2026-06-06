@@ -6,11 +6,7 @@ import {
   type BrowserAutomationExecuteRequest,
   type BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import {
-  browserToolsFailure,
-  createBrowserToolsRequestError,
-  type BrowserToolsResponsePayload,
-} from "./errors.js";
+import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
 import type { BrowserToolsPolicy } from "./policy.js";
 
 export interface BrowserToolsDesktopClient {
@@ -32,7 +28,6 @@ interface PendingBrowserToolsRequest {
   clientId: string;
   timeout: ReturnType<typeof setTimeout>;
   resolve: (payload: BrowserToolsResponsePayload) => void;
-  reject: (error: Error) => void;
 }
 
 export interface BrowserToolsBrokerOptions {
@@ -73,8 +68,9 @@ export class BrowserToolsBroker {
       }
       this.pending.delete(requestId);
       clearTimeout(pending.timeout);
-      pending.reject(
-        createBrowserToolsRequestError({
+      pending.resolve(
+        browserToolsFailure({
+          requestId,
           code: "browser_no_desktop",
           message: "The desktop browser automation client disconnected before responding.",
           retryable: true,
@@ -183,7 +179,6 @@ export class BrowserToolsBroker {
         clientId: client.id,
         timeout,
         resolve,
-        reject,
       });
 
       Promise.resolve(client.sendBrowserAutomationRequest(request)).catch((error: unknown) => {
