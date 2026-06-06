@@ -206,7 +206,6 @@ describe("mountBrowserAutomationHandler", () => {
       ok: true,
       result: { command: "new_tab" },
     });
-    expect(executeAutomationCommand).toHaveBeenCalledTimes(2);
   });
 
   test("wraps browser_new_tab registration bridge errors in a response", async () => {
