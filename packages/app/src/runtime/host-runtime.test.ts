@@ -350,6 +350,18 @@ function onceHostListMatches(store: HostRuntimeStore, predicate: () => boolean):
   });
 }
 
+class BrowserClientLifecycle {
+  public active: Array<{ serverId: string; connectionId: string }> = [];
+
+  mount(input: { host: HostProfile; connection: HostConnection }): () => void {
+    const entry = { serverId: input.host.serverId, connectionId: input.connection.id };
+    this.active.push(entry);
+    return () => {
+      this.active = this.active.filter((current) => current !== entry);
+    };
+  }
+}
+
 describe("HostRuntimeController", () => {
   it("replaces the active relay client when re-pairing changes the daemon public key", async () => {
     const oldRelay: HostConnection = {
@@ -466,46 +478,37 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().connectionStatus).toBe("online");
   });
 
-  it("mounts active client handlers outside React and cleans them up on stop", async () => {
-    const host = makeHost({
-      connections: [
-        {
-          id: "direct:lan:6767",
-          type: "directTcp",
-          endpoint: "lan:6767",
-        },
-      ],
-    });
-    const fakeClient = new FakeDaemonClient();
-    const cleanup = vi.fn();
-    const mountClientHandlers = vi.fn(() => cleanup);
+  it("keeps browser client lifecycle tied to the active host runtime client", async () => {
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const fakeClient = makeConnectedProbeClient(12);
+    const lifecycle = new BrowserClientLifecycle();
     const controller = new HostRuntimeController({
       host,
       deps: {
-        createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async () => {
-          throw new Error("probe unavailable");
-        },
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile, connection }) => ({
+          client: makeConnectedProbeClient(10) as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: connection.id,
+        }),
         getClientId: async () => "cid_runtime_stable",
-        mountClientHandlers,
+        mountClientHandlers: (input) => lifecycle.mount(input),
       },
     });
 
-    await (
-      controller as unknown as {
-        switchToConnection: (input: { connectionId: string }) => Promise<void>;
-      }
-    ).switchToConnection({ connectionId: "direct:lan:6767" });
-
-    expect(mountClientHandlers).toHaveBeenCalledWith({
-      client: fakeClient,
-      host,
-      connection: host.connections[0],
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: "direct:lan:6767",
+        existingClient: fakeClient as unknown as DaemonClient,
+      },
     });
+
+    expect(lifecycle.active).toEqual([{ serverId: "srv_test", connectionId: "direct:lan:6767" }]);
 
     await controller.stop();
 
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(lifecycle.active).toEqual([]);
   });
 
   it("adopts the first successful probe on startup", async () => {

@@ -4,6 +4,7 @@ import {
   BROWSER_TOOLS_WARNING,
   createBrowserToolsPatch,
   getBrowserToolsCardState,
+  getBrowserToolsMutationViewState,
 } from "./browser-tools-config";
 
 function makeConfig(browserToolsEnabled = false): MutableDaemonConfig {
@@ -46,5 +47,23 @@ describe("browser tools opt-in config", () => {
   it("writes daemon.browserTools.enabled when toggled", () => {
     expect(createBrowserToolsPatch(true)).toEqual({ browserTools: { enabled: true } });
     expect(createBrowserToolsPatch(false)).toEqual({ browserTools: { enabled: false } });
+  });
+
+  it("shows loading and disables the toggle while browser tool settings save", () => {
+    expect(getBrowserToolsMutationViewState({ isPending: true, error: null })).toEqual({
+      isSwitchDisabled: true,
+      loadingText: "Updating browser tools…",
+      errorText: null,
+    });
+  });
+
+  it("shows the save error when browser tool settings fail", () => {
+    expect(
+      getBrowserToolsMutationViewState({ isPending: false, error: new Error("Disk full") }),
+    ).toEqual({
+      isSwitchDisabled: false,
+      loadingText: null,
+      errorText: "Disk full",
+    });
   });
 });

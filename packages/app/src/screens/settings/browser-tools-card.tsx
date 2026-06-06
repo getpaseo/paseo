@@ -5,8 +5,11 @@ import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
-import { createBrowserToolsPatch, getBrowserToolsCardState } from "./browser-tools-config";
-import { toErrorMessage } from "@/utils/error-messages";
+import {
+  createBrowserToolsPatch,
+  getBrowserToolsCardState,
+  getBrowserToolsMutationViewState,
+} from "./browser-tools-config";
 
 export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -20,6 +23,10 @@ export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
       }
       return result;
     },
+  });
+  const mutationView = getBrowserToolsMutationViewState({
+    isPending: mutation.isPending,
+    error: mutation.error,
   });
 
   const handleValueChange = useCallback(
@@ -37,21 +44,21 @@ export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{state.title}</Text>
           <Text style={settingsStyles.rowHint}>{state.warning}</Text>
-          {mutation.isPending ? (
+          {mutationView.loadingText ? (
             <Text style={settingsStyles.rowHint} testID="host-page-browser-tools-loading">
-              Updating browser tools…
+              {mutationView.loadingText}
             </Text>
           ) : null}
-          {mutation.error ? (
+          {mutationView.errorText ? (
             <Text style={settingsStyles.rowError} testID="host-page-browser-tools-error">
-              {toErrorMessage(mutation.error)}
+              {mutationView.errorText}
             </Text>
           ) : null}
         </View>
         <Switch
           value={state.isEnabled}
           onValueChange={handleValueChange}
-          disabled={mutation.isPending}
+          disabled={mutationView.isSwitchDisabled}
           accessibilityLabel="Enable browser tools"
           testID="host-page-browser-tools-switch"
         />
