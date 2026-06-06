@@ -581,6 +581,25 @@ function createPaseoWorktreeForMcpTest(options: {
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
 
+  it("omits browser tools when browser tools are disabled", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD });
+    const execute = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsBroker: { execute } as never,
+      browserToolsEnabled: false,
+      callerAgentId: "agent-1",
+      logger,
+    });
+
+    expect(lookupTool(server, "browser_list_tabs")).toBeUndefined();
+    expect(lookupTool(server, "browser_page_info")).toBeUndefined();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("wires browser tools through the browser tools broker", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD });
@@ -594,6 +613,7 @@ describe("browser MCP tools", () => {
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
       browserToolsBroker: { execute } as never,
+      browserToolsEnabled: true,
       callerAgentId: "agent-1",
       logger,
     });

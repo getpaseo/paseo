@@ -467,8 +467,9 @@ export async function createPaseoDaemon(
     },
     logger,
   );
+  const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({
-    policy: new DaemonConfigBrowserToolsPolicy(daemonConfigStore),
+    policy: browserToolsPolicy,
   });
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
