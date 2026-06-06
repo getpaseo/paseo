@@ -1,26 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { SplitNode, WorkspaceLayout } from "@/stores/workspace-layout-store";
+import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
+import { createDefaultLayout } from "@/stores/workspace-layout-store";
+import { openTabInLayoutFocused } from "@/stores/workspace-layout-actions";
 import { resolveBrowserNewTabRequest, type BrowserNewTabRequest } from ".";
 
 function createLayoutWithBrowser(browserId: string): WorkspaceLayout {
-  return {
-    focusedPaneId: "pane-main",
-    root: {
-      kind: "pane",
-      pane: {
-        id: "pane-main",
-        tabIds: ["browser-tab"],
-        tabs: [
-          {
-            tabId: "browser-tab",
-            target: { kind: "browser", browserId },
-            createdAt: 1,
-          },
-        ],
-        focusedTabId: "browser-tab",
-      },
-    } as unknown as SplitNode,
-  };
+  return openTabInLayoutFocused({
+    layout: createDefaultLayout(),
+    target: { kind: "browser", browserId },
+    now: 1,
+  }).layout;
 }
 
 describe("browser new-tab requests", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { handleBrowserWindowOpenRequest } from "./window-open";
+import { handleBrowserWindowOpenRequest } from ".";
 
 describe("browser webview window-open requests", () => {
   it("denies Electron window creation and requests a Paseo browser tab", () => {

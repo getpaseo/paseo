@@ -50,8 +50,9 @@ import {
   getPaseoBrowserIdForWebContents,
   getPaseoBrowserWebContents,
   handleBrowserWindowOpenRequest,
-  isAllowedBrowserWebviewUrl,
   listRegisteredPaseoBrowserIds,
+  readBrowserIdFromWebviewAttach,
+  registerBrowserWebviewNavigationGuards,
   registerPaseoBrowserWebContents,
   setWorkspaceActivePaseoBrowserId,
 } from "./features/browser-webviews/index.js";
@@ -76,14 +77,6 @@ const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 
-function preventUnsafeBrowserWebviewNavigation(
-  event: Electron.Event,
-  url: string | undefined,
-): void {
-  if (!isAllowedBrowserWebviewUrl(url)) {
-    event.preventDefault();
-  }
-}
 const BROWSER_SHORTCUT_EVENT = "paseo:event:browser-shortcut";
 const BROWSER_FORWARDED_KEY_EVENT = "paseo:event:browser-forwarded-key";
 
@@ -115,15 +108,6 @@ const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName(APP_NAME);
-
-function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
-  const prefix = "persist:paseo-browser-";
-  if (!partition?.startsWith(prefix)) {
-    return null;
-  }
-  const browserId = partition.slice(prefix.length).trim();
-  return browserId.length > 0 ? browserId : null;
-}
 
 const pendingBrowserWebviewIds: string[] = [];
 
@@ -459,11 +443,7 @@ async function createWindow(
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (!isAllowedBrowserWebviewUrl(params.src)) {
-      event.preventDefault();
-      return;
-    }
-    const browserId = getBrowserIdFromWebviewPartition(params.partition);
+    const browserId = readBrowserIdFromWebviewAttach(params);
     if (!browserId) {
       event.preventDefault();
       return;
@@ -535,15 +515,7 @@ async function createWindow(
     contents.on("context-menu", (_contextMenuEvent, params) => {
       showBrowserWebviewContextMenu(mainWindow, contents, params);
     });
-    contents.on("will-navigate", (event) => {
-      preventUnsafeBrowserWebviewNavigation(event, event.url);
-    });
-    contents.on("will-frame-navigate", (event) => {
-      preventUnsafeBrowserWebviewNavigation(event, event.url);
-    });
-    contents.on("will-redirect", (event) => {
-      preventUnsafeBrowserWebviewNavigation(event, event.url);
-    });
+    registerBrowserWebviewNavigationGuards(contents);
   });
 
   mainWindow.once("ready-to-show", () => {
