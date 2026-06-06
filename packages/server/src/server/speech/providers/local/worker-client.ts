@@ -189,6 +189,7 @@ export class LocalSpeechWorkerClient {
   private stderrLineBuffer = "";
   private inFlightRequests = 0;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly intentionalWorkerCloses = new WeakSet<LocalSpeechWorkerProcess>();
 
   constructor(options: LocalSpeechWorkerClientOptions) {
     this.config = options.config;
@@ -293,7 +294,9 @@ export class LocalSpeechWorkerClient {
     this.sessionEmitters.clear();
     const worker = this.worker;
     this.worker = null;
+    this.workerPid = null;
     if (worker && !worker.killed) {
+      this.intentionalWorkerCloses.add(worker);
       try {
         worker.disconnect();
       } catch {
@@ -369,7 +372,7 @@ export class LocalSpeechWorkerClient {
     );
     worker.stderr?.on("data", (chunk: Buffer | string) => this.handleWorkerStderr(chunk));
     worker.on("message", (message) => this.handleWorkerMessage(message));
-    worker.on("close", (code, signal) => this.handleWorkerExit(code, signal));
+    worker.on("close", (code, signal) => this.handleWorkerExit(worker, code, signal));
     return worker;
   }
 
@@ -433,11 +436,53 @@ export class LocalSpeechWorkerClient {
     }
   }
 
-  private handleWorkerExit(code: number | null, signal: NodeJS.Signals | null): void {
-    const workerPid = this.workerPid;
+  private handleWorkerExit(
+    worker: LocalSpeechWorkerProcess,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
+    const wasCurrentWorker = this.worker === worker;
+    const wasIntentionalClose = this.intentionalWorkerCloses.has(worker);
+    this.intentionalWorkerCloses.delete(worker);
+    const workerPid = worker.pid ?? (wasCurrentWorker ? this.workerPid : null);
     const pendingRequests = this.describePendingRequests();
     const activeSessionCount = this.activeSessionIds.size;
     const stderrTail = this.getStderrTail();
+
+    if (wasIntentionalClose) {
+      this.logger.info(
+        {
+          workerPid,
+          code,
+          signal,
+          pendingRequests,
+          activeSessionCount,
+          stderrTail: stderrTail || null,
+        },
+        "Local speech worker closed after shutdown",
+      );
+      if (wasCurrentWorker) {
+        this.worker = null;
+        this.workerPid = null;
+      }
+      return;
+    }
+
+    if (!wasCurrentWorker) {
+      this.logger.warn(
+        {
+          workerPid,
+          code,
+          signal,
+          pendingRequests,
+          activeSessionCount,
+          stderrTail: stderrTail || null,
+        },
+        "Stale local speech worker closed",
+      );
+      return;
+    }
+
     const error = new Error(
       buildWorkerExitMessage({
         code,
@@ -460,8 +505,10 @@ export class LocalSpeechWorkerClient {
       "Local speech worker exited",
     );
 
-    this.worker = null;
-    this.workerPid = null;
+    if (wasCurrentWorker) {
+      this.worker = null;
+      this.workerPid = null;
+    }
     this.clearIdleTimer();
     this.rejectAllPending(error);
     for (const [sessionId, emitter] of this.sessionEmitters) {

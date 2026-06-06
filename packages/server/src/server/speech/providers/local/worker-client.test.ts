@@ -311,6 +311,43 @@ describe("LocalSpeechWorkerClient", () => {
     });
   });
 
+  it("does not log intentional shutdowns as worker crashes", async () => {
+    const { logger, records } = createCapturingLogger();
+    const workers: FakeLocalSpeechWorker[] = [];
+    const client = new LocalSpeechWorkerClient({
+      logger,
+      config: {
+        modelsDir: "/tmp/models",
+        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceTtsModel: "kokoro-en-v0_19",
+      },
+      forkWorker: () => {
+        const worker = new FakeLocalSpeechWorker();
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    const synthesize = client.synthesizeSpeech("hello");
+    workers[0].respond(workers[0].sent[0], {
+      audio: bufferToWorkerBytes(Buffer.from([1])),
+      format: "pcm;rate=24000",
+    });
+    await synthesize;
+
+    client.shutdown();
+    workers[0].emit("close", null, "SIGTERM");
+
+    expect(records.find((record) => record.msg === "Local speech worker exited")).toBeUndefined();
+    expect(
+      records.find((record) => record.msg === "Local speech worker closed after shutdown"),
+    ).toMatchObject({
+      workerPid: 12345,
+      signal: "SIGTERM",
+    });
+  });
+
   it("forwards VAD session events through the shared worker", async () => {
     const { client, workers } = createClient();
     const provider = new WorkerBackedTurnDetectionProvider(client);
