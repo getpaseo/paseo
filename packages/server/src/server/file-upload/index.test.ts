@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   decodeFileTransferFrame,
@@ -15,6 +15,7 @@ const tempDirs: string[] = [];
 
 describe("file uploads", () => {
   afterEach(() => {
+    vi.useRealTimers();
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -106,6 +107,55 @@ describe("file uploads", () => {
     expect(readFileSync(join(paseoHome, "uploads", "upload_req-queued", "notes.txt"), "utf8")).toBe(
       "hello world",
     );
+  });
+
+  it("replaces duplicate upload starts without letting the old stale timeout evict the replacement", async () => {
+    vi.useFakeTimers();
+
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome, staleUploadTimeoutMs: 50 });
+
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "old.txt",
+      mimeType: "text/plain",
+      size: 3,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-duplicate",
+    });
+    await expect(uploads.receiveFrame(uploadBegins("req-duplicate"))).resolves.toBeNull();
+    await expect(uploads.receiveFrame(uploadChunk("req-duplicate", "old"))).resolves.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(25);
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "new.txt",
+      mimeType: "text/plain",
+      size: 3,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-duplicate",
+    });
+    await vi.advanceTimersByTimeAsync(30);
+
+    const path = join(paseoHome, "uploads", "upload_req-duplicate_2", "new.txt");
+    await expect(uploads.receiveFrame(uploadBegins("req-duplicate"))).resolves.toBeNull();
+    await expect(uploads.receiveFrame(uploadChunk("req-duplicate", "new"))).resolves.toBeNull();
+    await expect(uploads.receiveFrame(uploadEnds("req-duplicate"))).resolves.toEqual({
+      type: "file.upload.response",
+      payload: {
+        requestId: "req-duplicate",
+        file: {
+          type: "uploaded_file",
+          id: "upload_req-duplicate_2",
+          fileName: "new.txt",
+          mimeType: "text/plain",
+          size: 3,
+          path,
+        },
+        error: null,
+      },
+    });
+    expect(readFileSync(path, "utf8")).toBe("new");
   });
 });
 

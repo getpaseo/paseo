@@ -13,6 +13,7 @@ interface FileUploadStoreOptions {
 interface PendingUpload {
   requestId: string;
   id: string;
+  attempt: number;
   fileName: string;
   mimeType: string;
   size: number;
@@ -37,12 +38,20 @@ export class FileUploadStore {
   }
 
   beginUpload(request: FileUploadRequest): void {
+    const existingUpload = this.pending.get(request.requestId);
+    if (existingUpload) {
+      this.clearPendingUpload(existingUpload);
+      void existingUpload.queue.then(() => this.removeUploadedFile(existingUpload));
+    }
+
     const fileName = sanitizeFileName(request.fileName);
-    const id = `upload_${sanitizeUploadId(request.requestId)}`;
+    const attempt = existingUpload ? existingUpload.attempt + 1 : 1;
+    const id = buildUploadId(request.requestId, attempt);
     const uploadDir = join(this.paseoHome, "uploads", id);
     this.pending.set(request.requestId, {
       requestId: request.requestId,
       id,
+      attempt,
       fileName,
       mimeType: request.mimeType,
       size: request.size,
@@ -138,7 +147,9 @@ export class FileUploadStore {
 
   private clearPendingUpload(upload: PendingUpload): void {
     clearTimeout(upload.staleTimeout);
-    this.pending.delete(upload.requestId);
+    if (this.pending.get(upload.requestId) === upload) {
+      this.pending.delete(upload.requestId);
+    }
   }
 
   private async removeFailedUpload(upload: PendingUpload): Promise<void> {
@@ -173,6 +184,11 @@ function buildUploadResponse(upload: PendingUpload, error: string | null): FileU
 
 function sanitizeUploadId(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_") || "file";
+}
+
+function buildUploadId(requestId: string, attempt: number): string {
+  const baseId = `upload_${sanitizeUploadId(requestId)}`;
+  return attempt === 1 ? baseId : `${baseId}_${attempt}`;
 }
 
 function sanitizeFileName(value: string): string {
