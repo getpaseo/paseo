@@ -2,6 +2,7 @@ import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
+import type { Readable as NodeReadable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type pino from "pino";
 
@@ -28,6 +29,8 @@ import { bufferToWorkerBytes, workerBytesToBuffer } from "./worker-bytes.js";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_LOCAL_SAMPLE_RATE = 16000;
+const STDERR_TAIL_MAX_CHARS = 8000;
+const USER_ERROR_STDERR_MAX_CHARS = 1000;
 
 type LocalSpeechWorkerRequestInput = LocalSpeechWorkerRequest extends infer Request
   ? Request extends LocalSpeechWorkerRequest
@@ -38,6 +41,8 @@ type LocalSpeechWorkerRequestInput = LocalSpeechWorkerRequest extends infer Requ
 interface LocalSpeechWorkerProcess {
   connected: boolean;
   killed: boolean;
+  pid?: number;
+  stderr?: NodeReadable | null;
   send(message: LocalSpeechWorkerRequest, callback: (error: Error | null) => void): boolean;
   disconnect(): void;
   kill(): boolean;
@@ -49,10 +54,14 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  type: LocalSpeechWorkerRequest["type"];
+  summary: Record<string, unknown>;
+  startedAt: number;
 }
 
 interface LocalSpeechWorkerClientOptions {
   config: LocalSpeechWorkerConfig;
+  logger: pino.Logger;
   requestTimeoutMs?: number;
   idleTtlMs?: number;
   forkWorker?: () => LocalSpeechWorkerProcess;
@@ -90,7 +99,7 @@ function forkLocalSpeechWorker(): LocalSpeechWorkerProcess {
     env,
     execArgv: resolveWorkerExecArgv(),
     serialization: "advanced",
-    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
   }) as LocalSpeechWorkerProcess;
 }
 
@@ -100,8 +109,75 @@ function isResponse(
   return message.type === "response";
 }
 
+function truncateStart(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return value.slice(value.length - maxChars);
+}
+
+function summarizeWorkerRequest(message: LocalSpeechWorkerRequest): Record<string, unknown> {
+  switch (message.type) {
+    case "session.create":
+      return { kind: message.kind, sessionId: message.sessionId };
+    case "session.append":
+      return { sessionId: message.sessionId, audioBytes: message.audio.byteLength };
+    case "session.commit":
+    case "session.clear":
+    case "session.flush":
+    case "session.reset":
+    case "session.close":
+      return { sessionId: message.sessionId };
+    case "stt.transcribe":
+      return {
+        model: message.model,
+        audioBytes: message.audio.byteLength,
+        format: message.format,
+      };
+    case "tts.synthesize":
+      return { textLength: message.text.length };
+  }
+}
+
+function formatExitStatus(code: number | null, signal: NodeJS.Signals | null): string {
+  const parts: string[] = [];
+  if (code !== null) {
+    parts.push(`code ${code}`);
+  }
+  if (signal) {
+    parts.push(`signal ${signal}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : "unknown exit status";
+}
+
+function formatPendingRequestForMessage(request: Record<string, unknown>): string {
+  const type = typeof request.type === "string" ? request.type : "unknown request";
+  const kind = typeof request.kind === "string" ? ` (${request.kind})` : "";
+  return `${type}${kind}`;
+}
+
+function buildWorkerExitMessage(params: {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  pendingRequests: Array<Record<string, unknown>>;
+  stderrTail: string;
+}): string {
+  const pending =
+    params.pendingRequests.length > 0
+      ? ` while handling ${params.pendingRequests
+          .slice(0, 3)
+          .map(formatPendingRequestForMessage)
+          .join(", ")}`
+      : "";
+  const stderr = params.stderrTail
+    ? ` Last stderr: ${truncateStart(params.stderrTail, USER_ERROR_STDERR_MAX_CHARS)}`
+    : " Check daemon.log and macOS DiagnosticReports for Paseo Voice crash details.";
+  return `Local speech worker exited (${formatExitStatus(params.code, params.signal)})${pending}.${stderr}`;
+}
+
 export class LocalSpeechWorkerClient {
   private readonly config: LocalSpeechWorkerConfig;
+  private readonly logger: pino.Logger;
   private readonly requestTimeoutMs: number;
   private readonly idleTtlMs: number;
   private readonly forkWorker: () => LocalSpeechWorkerProcess;
@@ -109,11 +185,15 @@ export class LocalSpeechWorkerClient {
   private readonly activeSessionIds = new Set<string>();
   private readonly sessionEmitters = new Map<string, EventEmitter>();
   private worker: LocalSpeechWorkerProcess | null = null;
+  private workerPid: number | null = null;
+  private stderrTail = "";
+  private stderrLineBuffer = "";
   private inFlightRequests = 0;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: LocalSpeechWorkerClientOptions) {
     this.config = options.config;
+    this.logger = options.logger.child({ component: "local-speech-worker-client" });
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
     this.forkWorker = options.forkWorker ?? forkLocalSpeechWorker;
@@ -232,6 +312,7 @@ export class LocalSpeechWorkerClient {
     const worker = this.ensureWorker();
     const requestId = randomUUID();
     const message = { ...input, requestId } as LocalSpeechWorkerRequest;
+    const requestSummary = summarizeWorkerRequest(message);
     this.inFlightRequests++;
     this.clearIdleTimer();
 
@@ -246,6 +327,9 @@ export class LocalSpeechWorkerClient {
         resolve: (value) => resolve(value as T),
         reject,
         timeout,
+        type: message.type,
+        summary: requestSummary,
+        startedAt: Date.now(),
       });
 
       worker.send(message, (error) => {
@@ -271,9 +355,42 @@ export class LocalSpeechWorkerClient {
     }
     const worker = this.forkWorker();
     this.worker = worker;
+    this.workerPid = worker.pid ?? null;
+    this.stderrTail = "";
+    this.stderrLineBuffer = "";
+    this.logger.info(
+      {
+        workerPid: this.workerPid,
+        modelsDir: this.config.modelsDir,
+        voiceSttModel: this.config.voiceSttModel,
+        dictationSttModel: this.config.dictationSttModel,
+        voiceTtsModel: this.config.voiceTtsModel,
+      },
+      "Local speech worker spawned",
+    );
+    worker.stderr?.on("data", (chunk: Buffer | string) => this.handleWorkerStderr(chunk));
     worker.on("message", (message) => this.handleWorkerMessage(message));
-    worker.on("exit", () => this.handleWorkerExit());
+    worker.on("exit", (code, signal) => this.handleWorkerExit(code, signal));
     return worker;
+  }
+
+  private handleWorkerStderr(chunk: Buffer | string): void {
+    const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
+    this.stderrTail = truncateStart(this.stderrTail + text, STDERR_TAIL_MAX_CHARS);
+
+    this.stderrLineBuffer += text;
+    const lines = this.stderrLineBuffer.split(/\r?\n/);
+    this.stderrLineBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      this.logger.warn(
+        { workerPid: this.workerPid, stderr: trimmed },
+        "Local speech worker stderr",
+      );
+    }
   }
 
   private handleWorkerMessage(message: LocalSpeechWorkerToParentMessage): void {
@@ -317,18 +434,64 @@ export class LocalSpeechWorkerClient {
     }
   }
 
-  private handleWorkerExit(): void {
+  private handleWorkerExit(code: number | null, signal: NodeJS.Signals | null): void {
+    const workerPid = this.workerPid;
+    const pendingRequests = this.describePendingRequests();
+    const activeSessionCount = this.activeSessionIds.size;
+    const stderrTail = this.getStderrTail();
+    const error = new Error(
+      buildWorkerExitMessage({
+        code,
+        signal,
+        pendingRequests,
+        stderrTail,
+      }),
+    );
+
+    this.logger.error(
+      {
+        err: error,
+        workerPid,
+        code,
+        signal,
+        pendingRequests,
+        activeSessionCount,
+        stderrTail: stderrTail || null,
+      },
+      "Local speech worker exited",
+    );
+
     this.worker = null;
+    this.workerPid = null;
     this.clearIdleTimer();
-    this.rejectAllPending(new Error("Local speech worker exited"));
+    this.rejectAllPending(error);
     for (const [sessionId, emitter] of this.sessionEmitters) {
       if (this.activeSessionIds.has(sessionId)) {
-        emitter.emit("error", new Error("Local speech worker exited"));
+        this.emitErrorIfObserved(sessionId, emitter, error);
       }
     }
     this.activeSessionIds.clear();
     this.sessionEmitters.clear();
     this.inFlightRequests = 0;
+  }
+
+  private describePendingRequests(): Array<Record<string, unknown>> {
+    const now = Date.now();
+    return Array.from(this.pendingRequests.entries()).map(([requestId, request]) =>
+      Object.assign(
+        {
+          requestId,
+          type: request.type,
+          ageMs: Math.max(0, now - request.startedAt),
+        },
+        request.summary,
+      ),
+    );
+  }
+
+  private getStderrTail(): string {
+    const tail = (this.stderrTail + this.stderrLineBuffer).trim();
+    return truncateStart(tail, STDERR_TAIL_MAX_CHARS);
   }
 
   private rejectAllPending(error: Error): void {
@@ -344,7 +507,22 @@ export class LocalSpeechWorkerClient {
     if (!emitter) {
       return;
     }
-    emitter.emit("error", error instanceof Error ? error : new Error(String(error)));
+    this.emitErrorIfObserved(
+      sessionId,
+      emitter,
+      error instanceof Error ? error : new Error(String(error)),
+    );
+  }
+
+  private emitErrorIfObserved(sessionId: string, emitter: EventEmitter, error: Error): void {
+    if (emitter.listenerCount("error") > 0) {
+      emitter.emit("error", error);
+      return;
+    }
+    this.logger.warn(
+      { err: error, workerPid: this.workerPid, sessionId },
+      "Local speech worker session error had no listener",
+    );
   }
 
   private scheduleIdleShutdownIfReady(): void {

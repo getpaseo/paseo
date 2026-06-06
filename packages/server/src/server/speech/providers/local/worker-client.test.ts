@@ -20,6 +20,8 @@ import { bufferToWorkerBytes, workerBytesToBuffer } from "./worker-bytes.js";
 class FakeLocalSpeechWorker extends EventEmitter {
   public connected = true;
   public killed = false;
+  public pid = 12345;
+  public readonly stderr = new EventEmitter() as NodeJS.ReadableStream;
   public readonly sent: LocalSpeechWorkerRequest[] = [];
   public disconnects = 0;
   public kills = 0;
@@ -103,6 +105,7 @@ class PausedIpcWorker {
 function createClient(options?: { idleTtlMs?: number }) {
   const workers: FakeLocalSpeechWorker[] = [];
   const client = new LocalSpeechWorkerClient({
+    logger: pino({ level: "silent" }),
     config: {
       modelsDir: "/tmp/models",
       voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
@@ -118,6 +121,19 @@ function createClient(options?: { idleTtlMs?: number }) {
     },
   });
   return { client, workers };
+}
+
+function createCapturingLogger(): { logger: pino.Logger; records: Array<Record<string, unknown>> } {
+  const records: Array<Record<string, unknown>> = [];
+  const logger = pino(
+    { level: "trace" },
+    {
+      write(line: string) {
+        records.push(JSON.parse(line) as Record<string, unknown>);
+      },
+    },
+  );
+  return { logger, records };
 }
 
 async function waitForMicrotasks(): Promise<void> {
@@ -217,6 +233,7 @@ describe("LocalSpeechWorkerClient", () => {
   it("does not surface real IPC backpressure when replaying native-sized dictation frames", async () => {
     const workers: PausedIpcWorker[] = [];
     const client = new LocalSpeechWorkerClient({
+      logger: pino({ level: "silent" }),
       config: {
         modelsDir: "/tmp/models",
         voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
@@ -255,6 +272,48 @@ describe("LocalSpeechWorkerClient", () => {
         worker.kill();
       }
     }
+  });
+
+  it("logs worker exit details and includes actionable context in the surfaced error", async () => {
+    const { logger, records } = createCapturingLogger();
+    const workers: FakeLocalSpeechWorker[] = [];
+    const client = new LocalSpeechWorkerClient({
+      logger,
+      config: {
+        modelsDir: "/tmp/models",
+        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceTtsModel: "kokoro-en-v0_19",
+      },
+      forkWorker: () => {
+        const worker = new FakeLocalSpeechWorker();
+        workers.push(worker);
+        return worker;
+      },
+    });
+    const provider = new WorkerBackedSpeechToTextProvider(client, "dictationStt");
+    const session = provider.createSession({ logger: pino({ level: "silent" }) });
+
+    const connect = session.connect();
+    workers[0].stderr.emit("data", "dyld: Library not loaded: libsherpa-onnx-c-api.dylib\n");
+    workers[0].emit("exit", null, "SIGABRT");
+
+    await expect(connect).rejects.toThrow(
+      /Local speech worker exited \(signal SIGABRT\) while handling session\.create \(dictationStt\).*libsherpa-onnx-c-api\.dylib/,
+    );
+    expect(
+      records.some(
+        (record) =>
+          record.msg === "Local speech worker exited" &&
+          record.workerPid === 12345 &&
+          record.signal === "SIGABRT" &&
+          typeof record.stderrTail === "string" &&
+          record.stderrTail.includes("libsherpa-onnx-c-api.dylib") &&
+          Array.isArray(record.pendingRequests) &&
+          (record.pendingRequests[0] as Record<string, unknown> | undefined)?.type ===
+            "session.create",
+      ),
+    ).toBe(true);
   });
 
   it("forwards VAD session events through the shared worker", async () => {
