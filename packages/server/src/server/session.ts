@@ -6128,6 +6128,14 @@ export class Session {
         ? { ...request.filter, includeArchived: true }
         : request.filter;
     const scope = request.type === "fetch_agents_request" ? request.scope : undefined;
+    // The history list never renders checkout info (the client requests it with
+    // showCheckoutInfo=false and does not read the `project` payload), so resolving
+    // each agent's placement via live git is pure overhead. On slow filesystems
+    // (network mounts) a per-cwd `git status` can take seconds, and summed across
+    // many sessions it blows past the client's 10s RPC timeout, leaving the list
+    // blank. Resolve placement from cached snapshots + the workspace registry
+    // (refreshGit: false) instead — no git spawns on the history path.
+    const skipGitPlacement = request.type === "fetch_agent_history_request";
     const sort = this.agentsPager.normalizeSort(request.sort);
 
     let agents = await this.listAgentPayloads({
@@ -6154,7 +6162,10 @@ export class Session {
       if (existing) {
         return existing;
       }
-      const placementPromise = this.buildProjectPlacementForCwd(cwd);
+      const placementPromise = this.buildProjectPlacementForCwd(
+        cwd,
+        skipGitPlacement ? { refreshGit: false } : undefined,
+      );
       placementByCwd.set(cwd, placementPromise);
       return placementPromise;
     };

@@ -20,7 +20,10 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent/agent-sdk-types.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
-import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+import {
+  createNoGitWorkspaceRuntimeSnapshot,
+  createNoopWorkspaceGitService,
+} from "./test-utils/workspace-git-service-stub.js";
 import {
   asSessionLogger,
   asAgentManager,
@@ -2110,6 +2113,78 @@ test("fetch_agent_history_request pages archived historical rows separately", as
     },
   ]);
   expect(session.agentUpdatesSubscription).toBeNull();
+});
+
+test("fetch_agent_history_request resolves placement without spawning git", async () => {
+  // Regression: the history list never renders checkout info, so it must not pay
+  // the per-cwd `git status` cost. On slow filesystems that cost summed across
+  // sessions blew past the client's 10s RPC timeout and left the list blank.
+  // Here `getCheckout` (the git-spawning path) throws to assert it is never hit;
+  // placement must come from the cached snapshot + workspace registry instead.
+  const emitted: SessionOutboundMessage[] = [];
+  const repoCwd = path.resolve("/tmp/history-git-repo");
+  const getCheckout = vi.fn(async () => {
+    throw new Error("getCheckout must not be called on the history path");
+  });
+  const peekSnapshot = vi.fn(() => createNoGitWorkspaceRuntimeSnapshot(repoCwd));
+  const session = createSessionForWorkspaceTests({
+    workspaceGitService: createNoopWorkspaceGitService({ getCheckout, peekSnapshot }),
+  });
+
+  const project = createPersistedProjectRecord({
+    projectId: "proj-history-git",
+    rootPath: repoCwd,
+    kind: "git",
+    displayName: "history-git",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-history-git",
+    projectId: project.projectId,
+    cwd: repoCwd,
+    kind: "local_checkout",
+    displayName: "history-git",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.projectRegistry.get = async () => project;
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: "history-git-agent",
+      cwd: repoCwd,
+      status: "idle",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "fetch_agent_history_request",
+    requestId: "req-history-git",
+    page: { limit: 25 },
+  });
+
+  expect(getCheckout).not.toHaveBeenCalled();
+  expect(emitted).toEqual([
+    {
+      type: "fetch_agent_history_response",
+      payload: expect.objectContaining({
+        requestId: "req-history-git",
+        entries: [
+          expect.objectContaining({
+            agent: expect.objectContaining({ id: "history-git-agent" }),
+            project: expect.objectContaining({ projectKey: "proj-history-git" }),
+          }),
+        ],
+      }),
+    },
+  ]);
 });
 
 test("fetch_recent_provider_sessions_request lists importable provider sessions by handle", async () => {
