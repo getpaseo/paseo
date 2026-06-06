@@ -95,8 +95,9 @@ describe("WebSocketServer browser tools wiring", () => {
     const pendingResult = harness.broker.execute({
       command: { command: "list_tabs", args: {} },
     });
-    const pendingExpectation = expect(pendingResult).rejects.toMatchObject({
-      code: "browser_no_desktop",
+    const pendingExpectation = expect(pendingResult).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_desktop", retryable: true },
     });
     await desktop.nextBrowserRequest();
 
