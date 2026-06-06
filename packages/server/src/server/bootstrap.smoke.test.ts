@@ -368,10 +368,13 @@ describe("paseo daemon bootstrap", () => {
 
     try {
       const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
-      expect(daemon).toBeDefined();
-      // Must also start without throwing
-      await daemon.start();
-      await daemon.stop();
+      try {
+        await daemon.start();
+        expect(daemon.getListenTarget()).toBeDefined();
+        // Must also stop without throwing
+      } finally {
+        await daemon.stop();
+      }
     } finally {
       await rm(paseoHomeRoot, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });

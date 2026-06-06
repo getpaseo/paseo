@@ -192,7 +192,7 @@ export function initializeOpenAiSpeechServices(params: {
       );
     }
   } else if (needsAnyOpenAi) {
-    logger.warn("OpenAI speech providers are configured but credentials are missing");
+    // validateOpenAiCredentialRequirements already warned about missing credentials
   }
 
   return {
