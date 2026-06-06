@@ -134,15 +134,38 @@ export class BrowserToolsBroker {
   }
 
   public receiveResponse(response: BrowserAutomationExecuteResponse): boolean {
-    const parsed = BrowserAutomationExecuteResponseSchema.parse(response);
-    const pending = this.pending.get(parsed.payload.requestId);
+    const parsed = BrowserAutomationExecuteResponseSchema.safeParse(response);
+    if (!parsed.success) {
+      const requestId = getBrowserAutomationResponseRequestId(response);
+      if (!requestId) {
+        return false;
+      }
+
+      const pending = this.pending.get(requestId);
+      if (!pending) {
+        return false;
+      }
+
+      this.pending.delete(requestId);
+      clearTimeout(pending.timeout);
+      pending.resolve(
+        browserToolsFailure({
+          requestId,
+          code: "browser_unknown_error",
+          message: formatBrowserAutomationResponseValidationError(parsed.error.issues[0]?.message),
+        }),
+      );
+      return true;
+    }
+
+    const pending = this.pending.get(parsed.data.payload.requestId);
     if (!pending) {
       return false;
     }
 
-    this.pending.delete(parsed.payload.requestId);
+    this.pending.delete(parsed.data.payload.requestId);
     clearTimeout(pending.timeout);
-    pending.resolve(parsed.payload);
+    pending.resolve(parsed.data.payload);
     return true;
   }
 
@@ -197,4 +220,26 @@ function formatBrowserAutomationValidationError(message: string | undefined): st
     return "Browser automation request is invalid.";
   }
   return `Browser automation request is invalid: ${message}.`;
+}
+
+function formatBrowserAutomationResponseValidationError(message: string | undefined): string {
+  if (!message) {
+    return "Browser automation response is invalid.";
+  }
+  return `Browser automation response is invalid: ${message}.`;
+}
+
+function getBrowserAutomationResponseRequestId(response: unknown): string | null {
+  if (!isRecord(response)) {
+    return null;
+  }
+  const payload = response.payload;
+  if (!isRecord(payload) || typeof payload.requestId !== "string") {
+    return null;
+  }
+  return payload.requestId;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

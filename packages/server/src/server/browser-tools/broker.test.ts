@@ -273,4 +273,34 @@ describe("BrowserToolsBroker", () => {
     });
     expect(broker.getPendingRequestCount()).toBe(0);
   });
+
+  test("invalid browser response resolves a structured failure and clears pending state", async () => {
+    const broker = createBroker({ enabled: true });
+    const client = new FakeDesktopClient("desktop-1");
+    broker.registerClient(client);
+
+    const resultPromise = broker.execute({ command: pageInfoCommand() });
+    expect(broker.getPendingRequestCount()).toBe(1);
+
+    expect(
+      broker.receiveResponse({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: "req-1",
+          ok: true,
+          result: { command: "future_command" },
+        },
+      } as unknown as BrowserAutomationExecuteResponse),
+    ).toBe(true);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        retryable: false,
+      },
+    });
+    expect(broker.getPendingRequestCount()).toBe(0);
+  });
 });
