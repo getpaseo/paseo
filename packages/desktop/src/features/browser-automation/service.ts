@@ -1040,6 +1040,28 @@ async function executeScreenshot(
   if ("ok" in target) {
     return target;
   }
+  if (target.contents.sendDebugCommand) {
+    const screenshot = (await target.contents.sendDebugCommand("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: false,
+    })) as CdpCaptureScreenshotResult;
+    if (!screenshot.data) {
+      return fail(requestId, "browser_unsupported", "browser_screenshot returned no data");
+    }
+    const viewport = await getViewportSize(target.contents);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "screenshot",
+        browserId: target.browserId,
+        mimeType: "image/png",
+        dataBase64: screenshot.data,
+        width: viewport.width,
+        height: viewport.height,
+      },
+    };
+  }
   const image = await target.contents.capturePage();
   const size = image.getSize();
   return {
@@ -1057,6 +1079,18 @@ async function executeScreenshot(
 }
 
 interface CdpLayoutMetrics {
+  cssLayoutViewport?: {
+    clientWidth?: number;
+    clientHeight?: number;
+  };
+  layoutViewport?: {
+    clientWidth?: number;
+    clientHeight?: number;
+  };
+  cssContentSize?: {
+    width?: number;
+    height?: number;
+  };
   contentSize?: {
     width?: number;
     height?: number;
@@ -1065,6 +1099,40 @@ interface CdpLayoutMetrics {
 
 interface CdpCaptureScreenshotResult {
   data?: string;
+}
+
+async function getViewportSize(contents: TabContents): Promise<{ width: number; height: number }> {
+  const result = await contents.executeJavaScript(
+    "({ width: Math.round(window.innerWidth), height: Math.round(window.innerHeight) })",
+  );
+  if (!result || typeof result !== "object") {
+    return { width: 0, height: 0 };
+  }
+  const record = result as { width?: unknown; height?: unknown };
+  return {
+    width: typeof record.width === "number" && Number.isFinite(record.width) ? record.width : 0,
+    height: typeof record.height === "number" && Number.isFinite(record.height) ? record.height : 0,
+  };
+}
+
+async function getCdpLayoutMetrics(contents: TabContents): Promise<{
+  viewportWidth: number;
+  viewportHeight: number;
+  contentWidth: number;
+  contentHeight: number;
+}> {
+  if (!contents.sendDebugCommand) {
+    return { viewportWidth: 0, viewportHeight: 0, contentWidth: 0, contentHeight: 0 };
+  }
+  const metrics = (await contents.sendDebugCommand("Page.getLayoutMetrics")) as CdpLayoutMetrics;
+  const viewport = metrics.cssLayoutViewport ?? metrics.layoutViewport;
+  const contentSize = metrics.cssContentSize ?? metrics.contentSize;
+  return {
+    viewportWidth: Math.ceil(viewport?.clientWidth ?? 0),
+    viewportHeight: Math.ceil(viewport?.clientHeight ?? 0),
+    contentWidth: Math.ceil(contentSize?.width ?? 0),
+    contentHeight: Math.ceil(contentSize?.height ?? 0),
+  };
 }
 
 async function executeFullPageScreenshot(
@@ -1080,11 +1148,9 @@ async function executeFullPageScreenshot(
   if (!target.contents.sendDebugCommand) {
     return fail(requestId, "browser_unsupported", "browser_full_page_screenshot requires CDP");
   }
-  const metrics = (await target.contents.sendDebugCommand(
-    "Page.getLayoutMetrics",
-  )) as CdpLayoutMetrics;
-  const width = Math.ceil(metrics.contentSize?.width ?? 0);
-  const height = Math.ceil(metrics.contentSize?.height ?? 0);
+  const metrics = await getCdpLayoutMetrics(target.contents);
+  const width = metrics.contentWidth;
+  const height = metrics.contentHeight;
   const screenshot = (await target.contents.sendDebugCommand("Page.captureScreenshot", {
     format: "png",
     captureBeyondViewport: true,

@@ -1750,6 +1750,54 @@ describe("executeAutomationCommand", () => {
   });
 
   describe("screenshot", () => {
+    it("captures a viewport screenshot through CDP when available", async () => {
+      let captureParams: Record<string, unknown> | undefined;
+      const tab = fakeTab({
+        id: 13,
+        executeJavaScript: async () => ({ width: 321, height: 123 }),
+        sendDebugCommand: async (command, params) => {
+          if (command === "Page.captureScreenshot") {
+            captureParams = params;
+            return { data: "iVBORw0KGgo=" };
+          }
+          throw new Error(`Unexpected CDP command ${command}`);
+        },
+        capturePage: async () => {
+          throw new Error("capturePage should not be used when CDP is available");
+        },
+      });
+      const registry = createRegistry({
+        getWorkspaceActiveTabContents: (workspaceId) =>
+          workspaceId === "workspace-a" ? tab : null,
+        getWorkspaceActiveBrowserId: (workspaceId) => (workspaceId === "workspace-a" ? "a" : null),
+        getBrowserWorkspaceId: (id) => (id === "a" ? "workspace-a" : null),
+      });
+
+      const result = await executeAutomationCommand(
+        {
+          type: "browser.automation.execute.request",
+          requestId: "r-screenshot-cdp",
+          workspaceId: "workspace-a",
+          command: { command: "screenshot", args: { workspaceId: "workspace-a" } },
+        },
+        registry,
+      );
+
+      expect(result).toEqual({
+        requestId: "r-screenshot-cdp",
+        ok: true,
+        result: {
+          command: "screenshot",
+          browserId: "a",
+          mimeType: "image/png",
+          dataBase64: "iVBORw0KGgo=",
+          width: 321,
+          height: 123,
+        },
+      });
+      expect(captureParams).toEqual({ format: "png", fromSurface: false });
+    });
+
     it("captures a PNG screenshot from the active browser", async () => {
       const tab = fakeTab({
         id: 13,

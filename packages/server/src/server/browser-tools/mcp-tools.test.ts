@@ -459,6 +459,7 @@ describe("registerBrowserTools", () => {
     });
     expect(response.content).toEqual([
       { type: "text", text: "Captured browser screenshot (100x50)." },
+      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
     ]);
   });
 
@@ -588,6 +589,7 @@ describe("registerBrowserTools", () => {
     });
     expect(response.content).toEqual([
       { type: "text", text: "Captured full-page browser screenshot (390x1200)." },
+      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
     ]);
   });
 

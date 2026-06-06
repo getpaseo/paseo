@@ -842,7 +842,7 @@ function browserToolResult(params: {
   const { payload, context } = params;
   if (payload.ok) {
     return {
-      content: [{ type: "text", text: summarizeBrowserSuccess(payload) }],
+      content: browserToolSuccessContent(payload),
       structuredContent: {
         ok: true,
         result: payload.result,
@@ -858,6 +858,28 @@ function browserToolResult(params: {
       error: payload.error,
       context,
     },
+  };
+}
+
+function browserToolSuccessContent(
+  payload: Extract<BrowserToolsResponsePayload, { ok: true }>,
+): CallToolResult["content"] {
+  const textContent = { type: "text" as const, text: summarizeBrowserSuccess(payload) };
+  const imageContent = browserToolImageContent(payload.result);
+  return imageContent ? [textContent, imageContent] : [textContent];
+}
+
+function browserToolImageContent(
+  result: Extract<BrowserToolsResponsePayload, { ok: true }>["result"],
+): CallToolResult["content"][number] | null {
+  if (result.command !== "screenshot" && result.command !== "full_page_screenshot") {
+    return null;
+  }
+
+  return {
+    type: "image",
+    data: result.dataBase64,
+    mimeType: result.mimeType,
   };
 }
 
