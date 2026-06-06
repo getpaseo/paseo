@@ -4659,12 +4659,6 @@ export class DaemonClient {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
-            ...(isElectronDesktopRuntime()
-              ? {
-                  [CLIENT_CAPS.desktopBrowserAutomation]: true,
-                  [CLIENT_CAPS.desktopBrowserInteractionAutomation]: true,
-                }
-              : {}),
             ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -5225,10 +5219,6 @@ export class DaemonClient {
 
     return { promise, cancel };
   }
-}
-
-function isElectronDesktopRuntime(): boolean {
-  return typeof navigator !== "undefined" && /\bElectron\//.test(navigator.userAgent);
 }
 
 function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionConfig {

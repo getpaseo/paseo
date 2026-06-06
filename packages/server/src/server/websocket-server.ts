@@ -313,12 +313,6 @@ function hasDesktopBrowserAutomationCapability(
   return capabilities?.[CLIENT_CAPS.desktopBrowserAutomation] === true;
 }
 
-function hasDesktopBrowserInteractionAutomationCapability(
-  capabilities: Record<string, unknown> | null,
-): boolean {
-  return capabilities?.[CLIENT_CAPS.desktopBrowserInteractionAutomation] === true;
-}
-
 interface WebSocketLike {
   readyState: number;
   bufferedAmount?: number;
@@ -339,7 +333,6 @@ interface SessionConnection {
 }
 
 interface BrowserToolsRegistration {
-  supportsInteractionAutomation: boolean;
   unregister: () => void;
 }
 
@@ -1426,24 +1419,18 @@ export class VoiceAssistantWebSocketServer {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
-    const supportsInteractionAutomation = hasDesktopBrowserInteractionAutomationCapability(
-      connection.clientCapabilities,
-    );
     const existing = this.browserToolsRegistrations.get(connection.clientId);
-    if (existing?.supportsInteractionAutomation === supportsInteractionAutomation) {
+    if (existing) {
       return;
     }
-    existing?.unregister();
 
     const unregister = this.browserToolsBroker.registerClient({
       id: connection.clientId,
-      supportsInteractionAutomation,
       sendBrowserAutomationRequest: (request) => {
         this.sendToConnection(connection, wrapSessionMessage(request));
       },
     });
     this.browserToolsRegistrations.set(connection.clientId, {
-      supportsInteractionAutomation,
       unregister,
     });
   }

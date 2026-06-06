@@ -78,7 +78,6 @@ import {
   applyLegacyDaemonWorkspaceOwnership,
   backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
 } from "@/workspace/legacy-daemon-workspaces";
-import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -1277,11 +1276,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
     };
   }, []);
-
-  useEffect(
-    () => mountBrowserAutomationDaemonClientHandler(client, { serverId }),
-    [client, serverId],
-  );
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {

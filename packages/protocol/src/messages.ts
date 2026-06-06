@@ -4672,7 +4672,6 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
       [CLIENT_CAPS.desktopBrowserAutomation]: z.boolean().optional(),
-      [CLIENT_CAPS.desktopBrowserInteractionAutomation]: z.boolean().optional(),
     })
     .passthrough()
     .optional(),

@@ -140,7 +140,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-test("advertises desktop browser automation from Electron runtime hello", async () => {
+test("does not infer browser automation capabilities from Electron runtime", async () => {
   vi.stubGlobal("navigator", {
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Paseo/0.1.89 Chrome/146 Electron/41.2.0 Safari/537.36",
@@ -164,8 +164,31 @@ test("advertises desktop browser automation from Electron runtime hello", async 
       capabilities: z.record(z.unknown()),
     })
     .parse(JSON.parse(assertStr(mock.sent[0])));
+  expect(hello.capabilities[CLIENT_CAPS.desktopBrowserAutomation]).toBeUndefined();
+});
+
+test("advertises consumer-provided browser automation capabilities", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "browser_capability_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+    capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connectPromise;
+
+  const hello = z
+    .object({
+      type: z.literal("hello"),
+      capabilities: z.record(z.unknown()),
+    })
+    .parse(JSON.parse(assertStr(mock.sent[0])));
   expect(hello.capabilities[CLIENT_CAPS.desktopBrowserAutomation]).toBe(true);
-  expect(hello.capabilities[CLIENT_CAPS.desktopBrowserInteractionAutomation]).toBe(true);
 });
 
 const noopLogger: Logger = {

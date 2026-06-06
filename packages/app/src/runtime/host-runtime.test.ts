@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, "__DEV__", { value: false, configurable: true });
+});
 import type {
   DaemonClient,
   ConnectionState,
@@ -15,6 +19,10 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
+
+vi.mock("@/browser-automation/handler", () => ({
+  mountBrowserAutomationDaemonClientHandler: vi.fn(() => () => undefined),
+}));
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -456,6 +464,48 @@ describe("HostRuntimeController", () => {
 
     expect(seenClientIds).toEqual(["cid_runtime_stable"]);
     expect(controller.getSnapshot().connectionStatus).toBe("online");
+  });
+
+  it("mounts active client handlers outside React and cleans them up on stop", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    const cleanup = vi.fn();
+    const mountClientHandlers = vi.fn(() => cleanup);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          throw new Error("probe unavailable");
+        },
+        getClientId: async () => "cid_runtime_stable",
+        mountClientHandlers,
+      },
+    });
+
+    await (
+      controller as unknown as {
+        switchToConnection: (input: { connectionId: string }) => Promise<void>;
+      }
+    ).switchToConnection({ connectionId: "direct:lan:6767" });
+
+    expect(mountClientHandlers).toHaveBeenCalledWith({
+      client: fakeClient,
+      host,
+      connection: host.connections[0],
+    });
+
+    await controller.stop();
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
   it("adopts the first successful probe on startup", async () => {

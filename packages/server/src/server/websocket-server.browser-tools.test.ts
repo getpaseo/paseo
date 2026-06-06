@@ -116,7 +116,7 @@ describe("WebSocketServer browser tools wiring", () => {
     });
   });
 
-  it("updates interaction support when a desktop browser client resumes with new capabilities", async () => {
+  it("keeps browser automation registered when a desktop browser client resumes", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const clientId = "desktop-client-1";
     await harness.connectDesktopBrowserClient({
@@ -124,19 +124,9 @@ describe("WebSocketServer browser tools wiring", () => {
       capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
     });
 
-    await expect(
-      harness.broker.execute({ command: { command: "click", args: { ref: "@e1" } } }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { code: "browser_no_desktop" },
-    });
-
     const resumedDesktop = await harness.connectDesktopBrowserClient({
       clientId,
-      capabilities: {
-        [CLIENT_CAPS.desktopBrowserAutomation]: true,
-        [CLIENT_CAPS.desktopBrowserInteractionAutomation]: true,
-      },
+      capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
     });
 
     const resultPromise = harness.broker.execute({

@@ -10,7 +10,6 @@ import { StaticBrowserToolsPolicy } from "./policy.js";
 
 class FakeDesktopClient implements BrowserToolsDesktopClient {
   public readonly receivedRequests: BrowserAutomationExecuteRequest[] = [];
-  public supportsInteractionAutomation = false;
 
   public constructor(public readonly id: string) {}
 
@@ -132,33 +131,9 @@ describe("BrowserToolsBroker", () => {
     expect(broker.getPendingRequestCount()).toBe(0);
   });
 
-  test("old desktop capability is not selected for interaction commands", async () => {
+  test("desktop receives snapshot requests", async () => {
     const broker = createBroker({ enabled: true });
     const client = new FakeDesktopClient("desktop-1");
-    broker.registerClient(client);
-
-    await expect(
-      broker.execute({
-        command: { command: "snapshot", args: { workspaceId: "workspace-1" } },
-        workspaceId: "workspace-1",
-      }),
-    ).resolves.toEqual({
-      requestId: "req-1",
-      ok: false,
-      error: {
-        code: "browser_no_desktop",
-        message:
-          "No desktop browser interaction automation client is connected. Update the desktop app and try again.",
-        retryable: true,
-      },
-    });
-    expect(client.receivedRequests).toEqual([]);
-  });
-
-  test("interaction-capable desktop receives snapshot requests", async () => {
-    const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
-    client.supportsInteractionAutomation = true;
     broker.registerClient(client);
 
     const resultPromise = broker.execute({

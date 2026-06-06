@@ -19,12 +19,10 @@ describe("browser automation protocol integration", () => {
         protocolVersion: 1,
         capabilities: {
           [CLIENT_CAPS.desktopBrowserAutomation]: true,
-          [CLIENT_CAPS.desktopBrowserInteractionAutomation]: true,
         },
       }).capabilities,
     ).toMatchObject({
       [CLIENT_CAPS.desktopBrowserAutomation]: true,
-      [CLIENT_CAPS.desktopBrowserInteractionAutomation]: true,
     });
 
     expect(

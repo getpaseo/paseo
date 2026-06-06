@@ -15,7 +15,6 @@ import type { BrowserToolsPolicy } from "./policy.js";
 
 export interface BrowserToolsDesktopClient {
   id: string;
-  supportsInteractionAutomation?: boolean;
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
 }
 
@@ -103,14 +102,12 @@ export class BrowserToolsBroker {
       });
     }
 
-    const client = this.selectClient(input.command);
+    const client = this.selectClient();
     if (!client) {
       return browserToolsFailure({
         requestId,
         code: "browser_no_desktop",
-        message: requiresInteractionAutomation(input.command)
-          ? "No desktop browser interaction automation client is connected. Update the desktop app and try again."
-          : "No desktop browser automation client is connected.",
+        message: "No desktop browser automation client is connected.",
         retryable: true,
       });
     }
@@ -145,14 +142,9 @@ export class BrowserToolsBroker {
     return true;
   }
 
-  private selectClient(command: BrowserAutomationCommand): BrowserToolsDesktopClient | null {
+  private selectClient(): BrowserToolsDesktopClient | null {
     for (const client of this.clients.values()) {
-      if (
-        !requiresInteractionAutomation(command) ||
-        client.supportsInteractionAutomation === true
-      ) {
-        return client;
-      }
+      return client;
     }
     return null;
   }
@@ -195,8 +187,4 @@ export class BrowserToolsBroker {
       });
     });
   }
-}
-
-function requiresInteractionAutomation(command: BrowserAutomationCommand): boolean {
-  return command.command !== "list_tabs" && command.command !== "page_info";
 }
