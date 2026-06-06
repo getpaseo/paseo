@@ -223,6 +223,8 @@ interface PiSlashCommandInvocation {
   args?: string;
 }
 
+type AutoCompactMode = boolean | "toggle" | "unknown";
+
 function normalizePiModelLabel(label: string): string {
   return label.trim().replace(/[_\s]+/g, " ");
 }
@@ -265,7 +267,7 @@ function normalizePiThinkingOption(value: string | null | undefined): PiThinking
   return isPiThinkingLevel(value) ? value : null;
 }
 
-function parseAutoCompactMode(value: string | undefined): boolean | null {
+function parseAutoCompactMode(value: string | undefined): AutoCompactMode {
   const mode = (value ?? "toggle").trim().toLowerCase();
   if (mode === "on" || mode === "true" || mode === "enable" || mode === "enabled") {
     return true;
@@ -273,7 +275,10 @@ function parseAutoCompactMode(value: string | undefined): boolean | null {
   if (mode === "off" || mode === "false" || mode === "disable" || mode === "disabled") {
     return false;
   }
-  return null;
+  if (mode === "toggle") {
+    return "toggle";
+  }
+  return "unknown";
 }
 
 function mapThinkingOption(option: (typeof PI_THINKING_OPTIONS)[number]) {
@@ -952,6 +957,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingUserMessages: PendingPiUserMessage[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
+  private outOfBandCompactionStarted = false;
+  private outOfBandCompactionCompleted = false;
   private state: PiSessionState;
   private closed = false;
 
@@ -1161,10 +1168,11 @@ export class PiRpcAgentSession implements AgentSession {
       PI_HANDLED_BUILTIN_SLASH_COMMANDS.map((command) => [command.name, { ...command }]),
     );
     for (const command of commands) {
+      const knownCommand = mappedCommands.get(command.name);
       mappedCommands.set(command.name, {
         name: command.name,
         description: command.description ?? command.source,
-        argumentHint: "",
+        argumentHint: knownCommand?.argumentHint ?? "",
       });
     }
     return [...mappedCommands.values()];
@@ -1261,10 +1269,26 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi compact command is already running");
     }
     this.outOfBandCompactionEmit = emit;
+    this.outOfBandCompactionStarted = false;
+    this.outOfBandCompactionCompleted = false;
     try {
       await this.runtimeSession.compact(customInstructions);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (
+        this.outOfBandCompactionEmit === emit &&
+        this.outOfBandCompactionStarted &&
+        !this.outOfBandCompactionCompleted
+      ) {
+        this.emitCompactionTimeline({
+          turnId: undefined,
+          item: {
+            type: "compaction",
+            status: "completed",
+            trigger: "manual",
+          },
+        });
+      }
       emit({
         type: "timeline",
         provider: PI_PROVIDER,
@@ -1274,8 +1298,10 @@ export class PiRpcAgentSession implements AgentSession {
         },
       });
     } finally {
-      if (this.outOfBandCompactionEmit === emit) {
+      if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionStarted) {
         this.outOfBandCompactionEmit = null;
+        this.outOfBandCompactionStarted = false;
+        this.outOfBandCompactionCompleted = false;
       }
     }
   }
@@ -1285,7 +1311,18 @@ export class PiRpcAgentSession implements AgentSession {
     emit: (event: AgentStreamEvent) => void,
   ): Promise<void> {
     let enabled = parseAutoCompactMode(mode);
-    if (enabled === null) {
+    if (enabled === "unknown") {
+      emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        item: {
+          type: "assistant_message",
+          text: "[Error] Usage: /autocompact [on|off|toggle]",
+        },
+      });
+      return;
+    }
+    if (enabled === "toggle") {
       const state = await this.runtimeSession.getState();
       enabled = !state.autoCompactionEnabled;
     }
@@ -1611,6 +1648,14 @@ export class PiRpcAgentSession implements AgentSession {
     item: Extract<AgentStreamEvent, { type: "timeline" }>["item"];
   }): void {
     const emitOutOfBand = this.outOfBandCompactionEmit;
+    if (emitOutOfBand && input.item.type === "compaction") {
+      if (input.item.status === "loading") {
+        this.outOfBandCompactionStarted = true;
+      }
+      if (input.item.status === "completed") {
+        this.outOfBandCompactionCompleted = true;
+      }
+    }
     const event: AgentStreamEvent = {
       type: "timeline",
       provider: PI_PROVIDER,
@@ -1619,6 +1664,11 @@ export class PiRpcAgentSession implements AgentSession {
     };
     if (emitOutOfBand) {
       emitOutOfBand(event);
+      if (input.item.type === "compaction" && input.item.status === "completed") {
+        this.outOfBandCompactionEmit = null;
+        this.outOfBandCompactionStarted = false;
+        this.outOfBandCompactionCompleted = false;
+      }
       return;
     }
     this.emit(event);

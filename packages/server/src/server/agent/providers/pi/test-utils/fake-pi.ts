@@ -71,6 +71,8 @@ export class FakePiSession implements PiRuntimeSession {
     cost: 0,
   };
   commands: PiRpcSlashCommand[] = [];
+  compactError: Error | null = null;
+  emitCompactEnd = true;
   state: PiSessionState;
 
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
@@ -108,7 +110,12 @@ export class FakePiSession implements PiRuntimeSession {
   async compact(customInstructions?: string): Promise<void> {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
     this.emit({ type: "compaction_start", reason: "manual" });
-    this.emit({ type: "compaction_end", reason: "manual" });
+    if (this.emitCompactEnd) {
+      this.emit({ type: "compaction_end", reason: "manual" });
+    }
+    if (this.compactError) {
+      throw this.compactError;
+    }
   }
 
   async setAutoCompaction(enabled: boolean): Promise<void> {

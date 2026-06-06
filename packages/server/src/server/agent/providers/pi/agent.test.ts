@@ -727,6 +727,27 @@ describe("PiRpcAgentClient", () => {
     });
   });
 
+  test("preserves known argument hints when RPC get_commands returns built-in slash commands", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().commands = [
+      { name: "compact", description: "Compact from RPC", source: "extension" },
+      { name: "autocompact", description: "Auto compact from RPC", source: "extension" },
+    ];
+
+    await expect(session.listCommands()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Compact from RPC",
+        argumentHint: "[instructions]",
+      },
+      {
+        name: "autocompact",
+        description: "Auto compact from RPC",
+        argumentHint: "[on|off|toggle]",
+      },
+    ]);
+  });
+
   test("executes Pi compact through RPC instead of prompt text", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();
@@ -752,6 +773,39 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.emitCompactEnd = false;
+    fakeSession.compactError = new Error("summarizer failed");
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "completed", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Failed to compact context: summarizer failed",
+        },
+      },
+    ]);
+  });
+
   test("executes Pi autocompact through RPC instead of prompt text", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();
@@ -768,6 +822,28 @@ describe("PiRpcAgentClient", () => {
         type: "timeline",
         provider: "pi",
         item: { type: "assistant_message", text: "Auto-compaction disabled." },
+      },
+    ]);
+  });
+
+  test("rejects unknown Pi autocompact mode instead of toggling", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact banana");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Usage: /autocompact [on|off|toggle]",
+        },
       },
     ]);
   });
