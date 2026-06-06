@@ -866,6 +866,29 @@ describe("PiRpcAgentClient", () => {
     });
   });
 
+  test("rejects Pi autocompact toggle when current RPC state is unavailable", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    delete fakeSession.state.autoCompactionEnabled;
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Auto-compaction state is unavailable. Use /autocompact on or /autocompact off.",
+        },
+      },
+    ]);
+  });
+
   test("rewinds conversation through the Pi tree navigation bridge", async () => {
     const { pi, session, events } = await createSession();
     pi.latestSession().capturedUserEntries = [

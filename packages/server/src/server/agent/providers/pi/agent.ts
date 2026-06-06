@@ -1324,6 +1324,17 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (enabled === "toggle") {
       const state = await this.runtimeSession.getState();
+      if (typeof state.autoCompactionEnabled !== "boolean") {
+        emit({
+          type: "timeline",
+          provider: PI_PROVIDER,
+          item: {
+            type: "assistant_message",
+            text: "[Error] Auto-compaction state is unavailable. Use /autocompact on or /autocompact off.",
+          },
+        });
+        return;
+      }
       enabled = !state.autoCompactionEnabled;
     }
 
