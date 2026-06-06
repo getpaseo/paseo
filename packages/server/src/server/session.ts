@@ -16,6 +16,7 @@ import {
   type SessionOutboundMessage,
   type FileExplorerRequest,
   type FileDownloadTokenRequest,
+  type FileUploadRequest,
   type GitSetupOptions,
   type CheckoutRenameBranchRequest,
   type StartWorkspaceScriptRequest,
@@ -32,8 +33,10 @@ import { TerminalSessionController } from "../terminal/terminal-session-controll
 import {
   encodeFileTransferFrame,
   FileTransferOpcode,
+  type FileTransferFrame,
   type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
+import { FileUploadStore } from "./file-upload/index.js";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { TTSManager } from "./agent/tts-manager.js";
@@ -648,6 +651,16 @@ interface VoiceFeatureUnavailableResponseMetadata {
   missingModelIds?: LocalSpeechModelId[];
 }
 
+function isFileTransferFrame(
+  frame: TerminalStreamFrame | FileTransferFrame,
+): frame is FileTransferFrame {
+  return (
+    frame.opcode === FileTransferOpcode.FileBegin ||
+    frame.opcode === FileTransferOpcode.FileChunk ||
+    frame.opcode === FileTransferOpcode.FileEnd
+  );
+}
+
 class VoiceFeatureUnavailableError extends Error {
   readonly reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
   readonly retryable: boolean;
@@ -809,6 +822,7 @@ export class Session {
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
+  private readonly fileUploads: FileUploadStore;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
   private unregisterVoiceSpeakHandler?: (agentId: string) => void;
@@ -877,6 +891,7 @@ export class Session {
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
+    this.fileUploads = new FileUploadStore({ paseoHome });
     this.paseoHome = paseoHome;
     this.worktreesRoot = worktreesRoot;
     this.sessionLogger = logger.child({
@@ -2108,6 +2123,8 @@ export class Session {
         return this.handleProjectIconRequest(msg);
       case "file_download_token_request":
         return this.handleFileDownloadTokenRequest(msg);
+      case "file.upload.request":
+        return this.handleFileUploadRequest(msg);
       default:
         return undefined;
     }
@@ -2212,7 +2229,11 @@ export class Session {
     this.peakInflightRequests = this.inflightRequests;
   }
 
-  public handleBinaryFrame(frame: TerminalStreamFrame): void {
+  public handleBinaryFrame(frame: TerminalStreamFrame | FileTransferFrame): void {
+    if (isFileTransferFrame(frame)) {
+      this.handleFileTransferFrame(frame);
+      return;
+    }
     this.terminalController.handleBinaryFrame(frame);
   }
 
@@ -5820,6 +5841,17 @@ export class Session {
           requestId,
         },
       });
+    }
+  }
+
+  private async handleFileUploadRequest(request: FileUploadRequest): Promise<void> {
+    this.fileUploads.beginUpload(request);
+  }
+
+  private handleFileTransferFrame(frame: FileTransferFrame): void {
+    const response = this.fileUploads.receiveFrame(frame);
+    if (response) {
+      this.emit(response);
     }
   }
 

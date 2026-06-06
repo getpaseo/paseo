@@ -96,6 +96,26 @@ describe("prompt attachments", () => {
     ).toBe("<browser-element>button.primary</browser-element>");
   });
 
+  it("renders uploaded file attachments as local file references", () => {
+    expect(
+      renderPromptAttachmentAsText({
+        type: "uploaded_file",
+        id: "upload_req-upload",
+        fileName: "notes.txt",
+        mimeType: "text/plain",
+        size: 11,
+        path: "/tmp/paseo/uploads/upload_req-upload/notes.txt",
+      }),
+    ).toBe(
+      [
+        "Uploaded file: notes.txt",
+        "Path: /tmp/paseo/uploads/upload_req-upload/notes.txt",
+        "MIME: text/plain",
+        "Size: 11 bytes",
+      ].join("\n"),
+    );
+  });
+
   it("returns undefined when firstAgentContext is empty", () => {
     expect(buildAgentBranchNameSeed(undefined)).toBeUndefined();
     expect(buildAgentBranchNameSeed({})).toBeUndefined();

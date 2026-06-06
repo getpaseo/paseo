@@ -24,7 +24,7 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import { asUint8Array, decodeTerminalStreamFrame } from "@getpaseo/protocol/binary-frames/index";
+import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
@@ -1309,8 +1309,8 @@ export class VoiceAssistantWebSocketServer {
     if (!asBytes) {
       return false;
     }
-    const frame = decodeTerminalStreamFrame(asBytes);
-    if (!frame) {
+    const decodedFrame = decodeBinaryFrame(asBytes);
+    if (!decodedFrame) {
       return false;
     }
     if (!activeConnection) {
@@ -1324,7 +1324,7 @@ export class VoiceAssistantWebSocketServer {
       }
       return true;
     }
-    activeConnection.session.handleBinaryFrame(frame);
+    activeConnection.session.handleBinaryFrame(decodedFrame.frame);
     return true;
   }
 
