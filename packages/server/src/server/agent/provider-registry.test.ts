@@ -414,6 +414,39 @@ test("built-in override applies env", () => {
   });
 });
 
+test("OMP is a disabled built-in backed by the Pi adapter", () => {
+  const registry = buildProviderRegistry(logger);
+
+  expect(registry.omp).toMatchObject({
+    id: "omp",
+    label: "OMP",
+    enabled: false,
+    derivedFromProviderId: null,
+  });
+  expect(registry.omp.createClient(logger).provider).toBe("omp");
+  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["omp"],
+      },
+    },
+    providerParams: {
+      sessionDir: "~/.omp/agent/sessions",
+    },
+  });
+});
+
+test("OMP can be enabled without custom provider boilerplate", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      omp: { enabled: true },
+    },
+  });
+
+  expect(registry.omp.enabled).toBe(true);
+});
+
 test("new provider extending claude appears in registry", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {

@@ -25,6 +25,7 @@ export interface AgentProviderDefinition {
   id: string;
   label: string;
   description: string;
+  enabledByDefault?: boolean;
   defaultModeId: string | null;
   modes: AgentProviderModeDefinition[];
   voice?: {
@@ -208,6 +209,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "pi",
     label: "Pi",
     description: "Minimal terminal-based coding agent with multi-provider LLM support",
+    defaultModeId: null,
+    modes: [],
+  },
+  {
+    id: "omp",
+    label: "OMP",
+    description: "Pi-compatible coding agent distributed as Oh My Pi",
+    enabledByDefault: false,
     defaultModeId: null,
     modes: [],
   },

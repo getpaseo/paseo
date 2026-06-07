@@ -135,6 +135,22 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       runtimeSettings,
       providerParams: options?.providerParams,
     }),
+  omp: (logger, runtimeSettings, options) =>
+    new PiRpcAgentClient({
+      logger,
+      runtimeSettings: mergeRuntimeSettings(
+        {
+          command: {
+            mode: "replace",
+            argv: ["omp"],
+          },
+        },
+        runtimeSettings,
+      ),
+      providerParams: options?.providerParams ?? {
+        sessionDir: "~/.omp/agent/sessions",
+      },
+    }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),
 };
@@ -525,7 +541,7 @@ function buildResolvedBuiltinProviders(
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
       profileModelsAreAdditive: false,
-      enabled: override?.enabled !== false,
+      enabled: override?.enabled ?? definition.enabledByDefault ?? true,
       derivedFromProviderId: null,
       providerParams: override?.params,
       createBaseClient: (logger) =>

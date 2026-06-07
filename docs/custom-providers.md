@@ -349,18 +349,30 @@ The `command` array completely replaces the default command for that provider. T
 
 ### Pi-compatible forks with their own session directory
 
-If a provider keeps Pi's `--mode rpc` API but writes sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
+OMP already ships as a built-in provider option. It is disabled by default; enable it with:
 
 ```json
 {
   "agents": {
     "providers": {
-      "omp": {
+      "omp": { "enabled": true }
+    }
+  }
+}
+```
+
+For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-pi-fork": {
         "extends": "pi",
-        "label": "OMP",
-        "command": ["omp"],
+        "label": "My Pi Fork",
+        "command": ["my-pi-fork"],
         "params": {
-          "sessionDir": "~/.omp/agent/sessions"
+          "sessionDir": "~/.my-pi-fork/sessions"
         }
       }
     }
@@ -368,7 +380,7 @@ If a provider keeps Pi's `--mode rpc` API but writes sessions somewhere else, ex
 }
 ```
 
-The session directory is used only for importing sessions that were started outside Paseo. Launching and resuming still go through the configured command, so this example resumes with `omp --mode rpc --session <session-file>`.
+The session directory is used only for importing sessions that were started outside Paseo. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
 
 ---
 
@@ -387,7 +399,7 @@ Set `enabled: false` to hide a provider from the provider list. The provider wil
 }
 ```
 
-This works for both built-in and custom providers. To re-enable, set `enabled: true` or remove the `enabled` field entirely (providers are enabled by default).
+This works for both built-in and custom providers. To re-enable, set `enabled: true` or remove the `enabled` field entirely. Most providers are enabled by default; OMP is intentionally disabled by default and requires `enabled: true`.
 
 ---
 

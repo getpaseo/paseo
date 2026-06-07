@@ -24,6 +24,7 @@ const BUILTIN_PROVIDER_ICONS: Record<BuiltinProviderIconName, ProviderIconCompon
   codex: CodexIcon as unknown as ProviderIconComponent,
   copilot: CopilotIcon as unknown as ProviderIconComponent,
   kiro: PackagePlus,
+  omp: PiIcon as unknown as ProviderIconComponent,
   opencode: OpenCodeIcon as unknown as ProviderIconComponent,
   pi: PiIcon as unknown as ProviderIconComponent,
 };
