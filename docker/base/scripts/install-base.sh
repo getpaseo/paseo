@@ -37,6 +37,7 @@ if command -v apk >/dev/null 2>&1; then
   # Alpine. nodejs/npm come from the distro repos (Alpine 3.21+ ships Node 22).
   apk add --no-cache \
     bash \
+    bzip2 \
     ca-certificates \
     curl \
     git \
@@ -56,11 +57,13 @@ elif command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y --no-install-recommends \
+    bzip2 \
     ca-certificates \
     curl \
     git \
     gnupg \
     jq \
+    lbzip2 \
     procps \
     sudo \
     xz-utils
@@ -78,6 +81,8 @@ elif command -v pacman >/dev/null 2>&1; then
     curl \
     git \
     jq \
+    bzip2 \
+    lbzip2 \
     nodejs \
     npm \
     procps-ng \

@@ -269,6 +269,9 @@ Ubuntu 22.04 arm64.
 - **Provider not showing up** — check the boot log (`docker logs paseo`) for
   `[mods]`/`[mod:<agent>]` lines. A failed `npm install` is logged but does not
   stop the daemon. On Alpine, native agents (Codex) will not install.
+- **`tar (child): lbzip2: Cannot exec` at startup** — pull or rebuild an image
+  that includes the bzip2/lbzip2 runtime tools. This happens before the daemon
+  starts, while boot extracts archives or Docker Mod layers.
 - **Can't connect / 403** — set `PASEO_HOSTNAMES` if reaching the daemon by a DNS
   name; IPs and `localhost` are allowed by default.
 - **OpenCode says `unable to open database file` or fails on
