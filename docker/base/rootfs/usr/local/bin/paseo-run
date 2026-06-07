@@ -3,18 +3,22 @@
 # Runs as the unprivileged `paseo` user (svc-paseo applies s6-setuidgid).
 set -euo pipefail
 
-DEFAULT_PASEO_HOME="/home/paseo"
-: "${PASEO_HOME:=$DEFAULT_PASEO_HOME}"
+IMAGE_DEFAULT_HOME="/home/paseo"
+IMAGE_DEFAULT_PASEO_HOME="${IMAGE_DEFAULT_HOME}/.paseo"
+: "${HOME:=$IMAGE_DEFAULT_HOME}"
+if [[ -z "${PASEO_HOME:-}" || ( "$HOME" != "$IMAGE_DEFAULT_HOME" && "${PASEO_HOME:-}" == "$IMAGE_DEFAULT_PASEO_HOME" ) ]]; then
+  PASEO_HOME="${HOME}/.paseo"
+fi
+export HOME
 export PASEO_HOME
-export HOME="$PASEO_HOME"
 
 home_scoped_env() {
   local name="$1"
   local suffix="$2"
-  local image_default="${DEFAULT_PASEO_HOME}${suffix}"
+  local image_default="${IMAGE_DEFAULT_HOME}${suffix}"
   local value="${!name:-}"
-  if [[ -z "$value" || ( "$PASEO_HOME" != "$DEFAULT_PASEO_HOME" && "$value" == "$image_default" ) ]]; then
-    printf -v "$name" '%s' "${PASEO_HOME}${suffix}"
+  if [[ -z "$value" || ( "$HOME" != "$IMAGE_DEFAULT_HOME" && "$value" == "$image_default" ) ]]; then
+    printf -v "$name" '%s' "${HOME}${suffix}"
   fi
   export "$name"
 }
@@ -23,6 +27,7 @@ home_scoped_env CLAUDE_CONFIG_DIR "/.claude"
 home_scoped_env CODEX_HOME "/.codex"
 home_scoped_env XDG_CONFIG_HOME "/.config"
 home_scoped_env XDG_DATA_HOME "/.local/share"
+home_scoped_env XDG_STATE_HOME "/.local/state"
 home_scoped_env XDG_CACHE_HOME "/.cache"
 
 : "${PASEO_LISTEN:=0.0.0.0:6767}"

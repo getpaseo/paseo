@@ -32,7 +32,8 @@ services:
       # This grants root inside the container; enable only for trusted workspaces.
       # PASEO_ENABLE_SUDO: "true"
 
-      # Optional: move the persistent home. If set, add a matching volume below.
+      # Optional: move Paseo daemon state. HOME stays /home/paseo by default,
+      # so agent config/auth remains under ~/.codex, ~/.claude, etc.
       # PASEO_HOME: "/var/lib/paseo"
 
       # Allow extra hostnames if you reach the daemon by DNS name (IPs and
@@ -44,9 +45,10 @@ services:
       # ANTHROPIC_API_KEY: "sk-ant-..."
       # OPENAI_API_KEY: "sk-..."
     volumes:
-      # Persistent state + agent auth/config (config.json, agents/, ~/.claude, ...).
+      # Persistent HOME: Paseo state in ~/.paseo plus agent auth/config
+      # (~/.claude, ~/.codex, ...).
       - ./paseo-home:/home/paseo
-      # If using PASEO_HOME=/var/lib/paseo above, mount that path instead:
+      # If using PASEO_HOME=/var/lib/paseo above, add that state volume too:
       # - paseo-state:/var/lib/paseo
       # The code Paseo works on. Bind-mount one or more of your repos.
       - ./workspace:/workspace

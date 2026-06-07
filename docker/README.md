@@ -27,9 +27,15 @@ docker run -d --name paseo \
 
 Then point the Paseo app/CLI at `http://<host>:6767`.
 
-The default persistent home is `/home/paseo`. To use another path, set
-`PASEO_HOME` and mount that same path, for example
+The default persistent user home is `/home/paseo`; Paseo daemon state lives in
+`/home/paseo/.paseo`, while agent config stays in paths like `/home/paseo/.codex`
+and `/home/paseo/.claude`. To store daemon state elsewhere, set `PASEO_HOME` and
+mount that same path, for example
 `-e PASEO_HOME=/var/lib/paseo -v paseo-state:/var/lib/paseo`.
+
+Older images stored daemon state directly in `/home/paseo`. Existing volumes
+with that layout should either set `-e PASEO_HOME=/home/paseo` or move the old
+Paseo files into `/home/paseo/.paseo`.
 
 On startup the container prints a pairing QR code and link to its logs once the
 daemon is listening — run `docker logs paseo` and scan it with the Paseo app.

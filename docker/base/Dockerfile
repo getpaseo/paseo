@@ -18,8 +18,8 @@ ARG S6_OVERLAY_VERSION=3.2.0.2
 # Paseo version to install from npm. Defaults to latest; CI pins to the release version.
 ARG PASEO_VERSION=latest
 
-ENV PASEO_HOME=/home/paseo \
-    HOME=/home/paseo \
+ENV HOME=/home/paseo \
+    PASEO_HOME=/home/paseo/.paseo \
     PASEO_LISTEN=0.0.0.0:6767 \
     CLAUDE_CONFIG_DIR=/home/paseo/.claude \
     CODEX_HOME=/home/paseo/.codex \

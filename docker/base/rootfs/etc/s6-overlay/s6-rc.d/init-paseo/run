@@ -26,18 +26,21 @@ case "$(printf '%s' "${PASEO_ENABLE_SUDO:-}" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 
-DEFAULT_PASEO_HOME="/home/paseo"
-PASEO_HOME="${PASEO_HOME:-$DEFAULT_PASEO_HOME}"
-mkdir -p "$PASEO_HOME"
-usermod -d "$PASEO_HOME" paseo || true
+IMAGE_DEFAULT_HOME="/home/paseo"
+IMAGE_DEFAULT_PASEO_HOME="${IMAGE_DEFAULT_HOME}/.paseo"
+CONTAINER_HOME="${HOME:-$IMAGE_DEFAULT_HOME}"
+if [[ -z "${PASEO_HOME:-}" || ( "$CONTAINER_HOME" != "$IMAGE_DEFAULT_HOME" && "${PASEO_HOME:-}" == "$IMAGE_DEFAULT_PASEO_HOME" ) ]]; then
+  PASEO_HOME="${CONTAINER_HOME}/.paseo"
+fi
+usermod -d "$CONTAINER_HOME" paseo || true
 
 home_scoped_dir() {
   local name="$1"
   local suffix="$2"
-  local image_default="${DEFAULT_PASEO_HOME}${suffix}"
+  local image_default="${IMAGE_DEFAULT_HOME}${suffix}"
   local value="${!name:-}"
-  if [[ -z "$value" || ( "$PASEO_HOME" != "$DEFAULT_PASEO_HOME" && "$value" == "$image_default" ) ]]; then
-    printf -v "$name" '%s' "${PASEO_HOME}${suffix}"
+  if [[ -z "$value" || ( "$CONTAINER_HOME" != "$IMAGE_DEFAULT_HOME" && "$value" == "$image_default" ) ]]; then
+    printf -v "$name" '%s' "${CONTAINER_HOME}${suffix}"
   fi
 }
 
@@ -48,37 +51,26 @@ home_scoped_dir XDG_DATA_HOME "/.local/share"
 home_scoped_dir XDG_STATE_HOME "/.local/state"
 home_scoped_dir XDG_CACHE_HOME "/.cache"
 
-ensure_paseo_dir() {
+ensure_owned_dir() {
   local dir="$1"
   local mode="${2:-700}"
-  local existed=0
   if [[ -z "$dir" ]]; then
     return 0
   fi
-  [[ -d "$dir" ]] && existed=1
   mkdir -p "$dir"
-  case "$dir" in
-    "$PASEO_HOME" | "$PASEO_HOME"/*)
-      chown paseo:paseo "$dir" || true
-      chmod "$mode" "$dir" || true
-      ;;
-    *)
-      if [[ "$existed" == 0 ]]; then
-        chown paseo:paseo "$dir" || true
-        chmod "$mode" "$dir" || true
-      fi
-      ;;
-  esac
+  chown paseo:paseo "$dir" || true
+  chmod "$mode" "$dir" || true
 }
 
-# Only chown the top level + small paseo-owned config dirs; avoid clobbering a
-# large bind-mounted PASEO_HOME on every boot.
-ensure_paseo_dir "$PASEO_HOME" 700
-ensure_paseo_dir "$CLAUDE_CONFIG_DIR" 700
-ensure_paseo_dir "$CODEX_HOME" 700
-ensure_paseo_dir "$XDG_CONFIG_HOME" 700
-ensure_paseo_dir "$XDG_DATA_HOME" 700
-ensure_paseo_dir "$XDG_STATE_HOME" 700
-ensure_paseo_dir "$XDG_CACHE_HOME" 700
+# Only chown directory entries, not their contents; avoid clobbering large
+# bind-mounted homes while still making the expected roots writable.
+ensure_owned_dir "$CONTAINER_HOME" 700
+ensure_owned_dir "$PASEO_HOME" 700
+ensure_owned_dir "$CLAUDE_CONFIG_DIR" 700
+ensure_owned_dir "$CODEX_HOME" 700
+ensure_owned_dir "$XDG_CONFIG_HOME" 700
+ensure_owned_dir "$XDG_DATA_HOME" 700
+ensure_owned_dir "$XDG_STATE_HOME" 700
+ensure_owned_dir "$XDG_CACHE_HOME" 700
 
-echo "[init] PASEO_HOME ready (PUID=${PUID} PGID=${PGID} home=${PASEO_HOME})"
+echo "[init] Paseo paths ready (PUID=${PUID} PGID=${PGID} HOME=${CONTAINER_HOME} PASEO_HOME=${PASEO_HOME})"
