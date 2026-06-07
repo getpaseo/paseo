@@ -11,7 +11,13 @@ if command -v pi >/dev/null 2>&1; then
   exit 0
 fi
 
-PI_NPM_PACKAGE="${PI_NPM_PACKAGE:-@mariozechner/pi}"
+PI_NPM_PACKAGE="${PI_NPM_PACKAGE:-@earendil-works/pi-coding-agent}"
 echo "[mod:pi] installing ${PI_NPM_PACKAGE}"
-npm install -g "${PI_NPM_PACKAGE}"
-echo "[mod:pi] done ($(command -v pi || echo 'pi not found — check PI_NPM_PACKAGE'))"
+npm install -g --ignore-scripts "${PI_NPM_PACKAGE}"
+
+PI_BIN="$(command -v pi)" || {
+  echo "[mod:pi] ERROR: ${PI_NPM_PACKAGE} did not install a 'pi' binary on PATH." >&2
+  exit 1
+}
+
+echo "[mod:pi] done (${PI_BIN})"

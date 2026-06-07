@@ -118,13 +118,13 @@ Set `PUID`/`PGID` to the uid/gid that owns the bind-mounted folders on the host
 DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code|ghcr.io/getpaseo/mods:opencode
 ```
 
-| Mod           | Package                     | Binary     | Alpine?                     |
-| ------------- | --------------------------- | ---------- | --------------------------- |
-| `claude-code` | `@anthropic-ai/claude-code` | `claude`   | yes (pure JS)               |
-| `opencode`    | `opencode-ai`               | `opencode` | yes (pure JS)               |
-| `copilot`     | `@github/copilot`           | `copilot`  | usually                     |
-| `codex`       | `@openai/codex`             | `codex`    | **no** (native, glibc only) |
-| `pi`          | `@mariozechner/pi`          | `pi`       | check                       |
+| Mod           | Package                           | Binary     | Alpine?                     |
+| ------------- | --------------------------------- | ---------- | --------------------------- |
+| `claude-code` | `@anthropic-ai/claude-code`       | `claude`   | yes (pure JS)               |
+| `opencode`    | `opencode-ai`                     | `opencode` | yes (pure JS)               |
+| `copilot`     | `@github/copilot`                 | `copilot`  | usually                     |
+| `codex`       | `@openai/codex`                   | `codex`    | **no** (native, glibc only) |
+| `pi`          | `@earendil-works/pi-coding-agent` | `pi`       | check                       |
 
 Agents that ship a native binary via npm (notably Codex) have no musl build, so
 use a glibc image (Debian/Ubuntu) for those. The `pi` package name is overridable
