@@ -49,6 +49,7 @@ export const ProviderOverrideSchema = z.object({
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
   env: z.record(z.string()).optional(),
+  params: z.record(z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),

@@ -347,6 +347,29 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+### Pi-compatible forks with their own session directory
+
+If a provider keeps Pi's `--mode rpc` API but writes sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "omp": {
+        "extends": "pi",
+        "label": "OMP",
+        "command": ["omp"],
+        "params": {
+          "sessionDir": "~/.omp/agent/sessions"
+        }
+      }
+    }
+  }
+}
+```
+
+The session directory is used only for importing sessions that were started outside Paseo. Launching and resuming still go through the configured command, so this example resumes with `omp --mode rpc --session <session-file>`.
+
 ---
 
 ## Disabling a provider

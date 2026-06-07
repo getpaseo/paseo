@@ -6,6 +6,7 @@ import type { AgentModelDefinition } from "./agent-sdk-types.js";
 const mockState = vi.hoisted(() => {
   interface ConstructorEntry {
     runtimeSettings?: unknown;
+    providerParams?: unknown;
   }
 
   return {
@@ -206,10 +207,11 @@ vi.mock("./providers/pi/agent.js", () => ({
     readonly provider = "pi";
     readonly runtimeSettings?: unknown;
 
-    constructor(options: { runtimeSettings?: unknown }) {
+    constructor(options: { runtimeSettings?: unknown; providerParams?: unknown }) {
       this.runtimeSettings = options.runtimeSettings;
       mockState.constructorArgs.pi.push({
         runtimeSettings: options.runtimeSettings,
+        providerParams: options.providerParams,
       });
     }
 
@@ -427,6 +429,36 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.label).toBe("ZAI");
   expect(registry.zai.description).toBe("Claude with ZAI defaults");
   expect(registry.zai.createClient(logger).provider).toBe("zai");
+});
+
+test("new provider extending pi passes params to the base provider constructor", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      omp: {
+        extends: "pi",
+        label: "OMP",
+        command: ["omp"],
+        params: {
+          sessionDir: "~/.omp/agent/sessions",
+        },
+      },
+    },
+  });
+
+  expect(registry.omp.createClient(logger).provider).toBe("omp");
+  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["omp"],
+      },
+      env: undefined,
+      disallowedTools: undefined,
+    },
+    providerParams: {
+      sessionDir: "~/.omp/agent/sessions",
+    },
+  });
 });
 
 test("new provider extending acp uses GenericACPAgentClient", () => {

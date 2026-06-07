@@ -1,4 +1,15 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
@@ -660,6 +671,82 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentClient", () => {
+  test("lists JSONL persisted sessions from configured provider params", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-sessions-"));
+    const cwd = path.join(root, "workspace");
+    const otherCwd = path.join(root, "other");
+    const sessionsDir = path.join(root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, "20260101_session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-session-jsonl",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          cwd,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: { role: "user", content: "first prompt" },
+        }),
+        JSON.stringify({
+          type: "session_info",
+          id: "info-1",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          name: "Imported Pi session",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-2",
+          timestamp: "2026-01-01T00:00:03.000Z",
+          message: { role: "user", content: [{ type: "text", text: "last prompt" }] },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(sessionsDir, "other.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "other", cwd: otherCwd })}\n`,
+      "utf8",
+    );
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: new FakePi(),
+      providerParams: { sessionDir: sessionsDir },
+    });
+
+    await expect(client.listPersistedAgents({ cwd })).resolves.toEqual([
+      {
+        provider: "pi",
+        sessionId: "pi-session-jsonl",
+        cwd,
+        title: "Imported Pi session",
+        lastActivityAt: new Date("2026-01-01T00:00:03.000Z"),
+        persistence: {
+          provider: "pi",
+          sessionId: "pi-session-jsonl",
+          nativeHandle: sessionFile,
+          metadata: { cwd },
+        },
+        timeline: [
+          { type: "user_message", text: "first prompt" },
+          { type: "user_message", text: "last prompt" },
+        ],
+      },
+    ]);
+  });
+
+  test("does not list persisted sessions until a provider supplies sessionDir", async () => {
+    const client = createClient();
+
+    await expect(client.listPersistedAgents()).resolves.toEqual([]);
+  });
+
   test("lists models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
