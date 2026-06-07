@@ -203,6 +203,30 @@ describe("desktop editor targets", () => {
     });
   });
 
+  it("prefers Windows command shims over extensionless shell launchers", async () => {
+    const recorder = createSpawnRecorder();
+    const vscodeBin = "C:/Users/me/AppData/Local/Programs/Microsoft VS Code/bin";
+
+    await openEditorTarget(
+      {
+        editorId: "vscode",
+        path: "C:/repo",
+      },
+      {
+        platform: "win32",
+        env: { PATH: vscodeBin },
+        existsSync: createExistsSync(["C:/repo", `${vscodeBin}/code`, `${vscodeBin}/code.cmd`]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    expect(recorder.calls[0]).toMatchObject({
+      command: `"${vscodeBin}/code.cmd"`,
+      args: ["C:/repo"],
+      options: { shell: true },
+    });
+  });
+
   it("quotes Windows command-script paths without corrupting metacharacters", async () => {
     const recorder = createSpawnRecorder();
 
