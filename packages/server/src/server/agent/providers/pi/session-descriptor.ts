@@ -1,5 +1,4 @@
 import { open, readdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 
 import type {
@@ -78,7 +77,7 @@ export async function listPiJsonlPersistedAgents({
 }
 
 function resolveSessionDir(value: string): string {
-  const expanded = expandTilde(value.replace(/^~(?=$|\/)/u, homedir()));
+  const expanded = expandTilde(value);
   return path.isAbsolute(expanded) ? expanded : path.resolve(process.cwd(), expanded);
 }
 
@@ -193,7 +192,8 @@ function parsePreviewLines(input: string, order: "forward" | "reverse"): PiSessi
       }
     }
 
-    if (title && firstUserMessage && lastUserMessage && lastActivityAt) {
+    const hasPreview = order === "forward" ? title && firstUserMessage : lastUserMessage;
+    if (hasPreview && lastActivityAt) {
       break;
     }
   }
