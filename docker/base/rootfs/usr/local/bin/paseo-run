@@ -28,6 +28,9 @@ home_scoped_env XDG_CACHE_HOME "/.cache"
 : "${PASEO_LISTEN:=0.0.0.0:6767}"
 export PASEO_LISTEN
 
+: "${PASEO_LOG_LEVEL:=warn}"
+export PASEO_LOG_LEVEL
+
 if [[ -z "${PASEO_PASSWORD:-}" ]]; then
   echo "[paseo] WARNING: PASEO_PASSWORD is not set." >&2
   echo "[paseo] The daemon will accept connections without a password." >&2

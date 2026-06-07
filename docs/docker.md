@@ -194,6 +194,8 @@ The image only changes a few container defaults:
 - `PASEO_LISTEN=0.0.0.0:6767`, so the daemon is reachable through Docker port
   publishing.
 - `PASEO_LOG_FORMAT=json` in production.
+- `PASEO_LOG_LEVEL=warn`, so `docker logs` and `/home/paseo/daemon.log` stay
+  focused on warnings and errors unless you opt into more verbose logging.
 
 For daemon/runtime env details, use the existing references:
 
@@ -223,6 +225,25 @@ contract.
 On startup the container prints a pairing QR code and link to its logs once the
 daemon is listening (s6 `svc-paseo-pair` oneshot, best-effort — never blocks
 boot). Scan it from `docker logs` with the Paseo app.
+
+### Docker log verbosity
+
+The container keeps daemon logs quiet by default. `PASEO_LOG_LEVEL` controls the
+daemon log level; the Docker image defaults it to `warn`. Set it to `info` to
+see normal daemon activity:
+
+```bash
+docker run -e PASEO_LOG_LEVEL=info ...
+```
+
+For deeper debugging, use `debug` or `trace`:
+
+```bash
+docker run -e PASEO_LOG_LEVEL=trace ...
+```
+
+The setting affects both `docker logs` and the persisted daemon log. Use
+`docker exec paseo tail -f /home/paseo/daemon.log` to follow the file directly.
 
 ## Security
 
