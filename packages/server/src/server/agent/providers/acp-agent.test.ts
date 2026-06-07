@@ -37,7 +37,7 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentStreamEvent, AgentUsage } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
@@ -47,6 +47,7 @@ interface ACPSessionInternals {
   connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
+  currentTurnUsage: AgentUsage | undefined;
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
 }
 
@@ -509,6 +510,108 @@ describe("mapACPUsage", () => {
       outputTokens: 7,
       cachedInputTokens: 5,
     });
+  });
+});
+
+describe("translateSessionUpdate usage_update", () => {
+  test("emits usage_updated carrying context window size/used", () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      size: 1_000_000,
+      used: 40_002,
+    });
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          contextWindowMaxTokens: 1_000_000,
+          contextWindowUsedTokens: 40_002,
+        },
+      },
+    ]);
+    expect(internals.currentTurnUsage).toEqual({
+      contextWindowMaxTokens: 1_000_000,
+      contextWindowUsedTokens: 40_002,
+    });
+  });
+
+  test("merges context window fields onto existing turn token usage", () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.currentTurnUsage = { inputTokens: 11, outputTokens: 7 };
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      size: 1_000_000,
+      used: 50_000,
+    });
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          inputTokens: 11,
+          outputTokens: 7,
+          contextWindowMaxTokens: 1_000_000,
+          contextWindowUsedTokens: 50_000,
+        },
+      },
+    ]);
+  });
+
+  test("ignores non-positive or non-finite size and used, keeping prior values", () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.currentTurnUsage = {
+      contextWindowMaxTokens: 1_000_000,
+      contextWindowUsedTokens: 12_345,
+    };
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      size: 0,
+      used: Number.NaN,
+    });
+
+    // size=0 (divide-by-zero) and used=NaN must not overwrite the good values.
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          contextWindowMaxTokens: 1_000_000,
+          contextWindowUsedTokens: 12_345,
+        },
+      },
+    ]);
+  });
+
+  test("accepts used=0 as a valid reading", () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      size: 1_000_000,
+      used: 0,
+    });
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          contextWindowMaxTokens: 1_000_000,
+          contextWindowUsedTokens: 0,
+        },
+      },
+    ]);
   });
 });
 

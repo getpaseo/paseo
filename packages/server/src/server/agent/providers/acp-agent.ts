@@ -1982,8 +1982,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return [];
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return [];
+        return [
+          {
+            type: "usage_updated",
+            provider: this.provider,
+            usage: this.handleUsageUpdate(update),
+          },
+        ];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -2090,8 +2095,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentUsage {
+    // ACP UsageUpdate carries the context-window figures (experimental in the
+    // spec): `size` is the total window, `used` is what's currently in context.
+    // Merge them into currentTurnUsage so they ride along with turn_completed
+    // and surface in the composer's context meter, mirroring Claude/Codex.
+    //
+    // The ACP SDK validates shape (size/used are required numbers) before this
+    // runs, but zod still admits NaN / negative / zero values that a loosely
+    // conforming agent might emit. Guard against those so a bad reading never
+    // leaks a NaN percentage or a divide-by-zero into the UI; we keep the prior
+    // valid value instead, matching the Claude provider's contextWindow checks.
+    const usage: AgentUsage = { ...this.currentTurnUsage };
+    if (Number.isFinite(update.size) && update.size > 0) {
+      usage.contextWindowMaxTokens = update.size;
+    }
+    if (Number.isFinite(update.used) && update.used >= 0) {
+      usage.contextWindowUsedTokens = update.used;
+    }
+    this.currentTurnUsage = usage;
+    return usage;
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
