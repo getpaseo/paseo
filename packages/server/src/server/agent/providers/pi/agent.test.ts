@@ -731,7 +731,7 @@ describe("PiRpcAgentClient", () => {
           provider: "pi",
           sessionId: "pi-session-jsonl",
           nativeHandle: sessionFile,
-          metadata: { cwd },
+          metadata: { provider: "pi", cwd },
         },
         timeline: [
           { type: "user_message", text: "first prompt" },
@@ -741,10 +741,56 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
-  test("does not list persisted sessions until a provider supplies sessionDir", async () => {
-    const client = createClient();
+  test("lists JSONL persisted sessions from Pi's configured agent directory", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-default-sessions-"));
+    const cwd = path.join(root, "workspace");
+    const agentDir = path.join(root, ".pi", "agent");
+    const sessionsDir = path.join(agentDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, "20260102_session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-default-session",
+          timestamp: "2026-01-02T00:00:00.000Z",
+          cwd,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          timestamp: "2026-01-02T00:00:01.000Z",
+          message: { role: "user", content: "default dir prompt" },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: new FakePi(),
+      runtimeSettings: {
+        env: {
+          PI_CODING_AGENT_DIR: agentDir,
+        },
+      },
+    });
 
-    await expect(client.listPersistedAgents()).resolves.toEqual([]);
+    await expect(client.listPersistedAgents({ cwd })).resolves.toMatchObject([
+      {
+        provider: "pi",
+        sessionId: "pi-default-session",
+        cwd,
+        title: "default dir prompt",
+        persistence: {
+          provider: "pi",
+          sessionId: "pi-default-session",
+          nativeHandle: sessionFile,
+          metadata: { provider: "pi", cwd },
+        },
+      },
+    ]);
   });
 
   test("lists models from a short-lived Pi session in the requested cwd", async () => {

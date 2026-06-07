@@ -53,7 +53,7 @@ import {
 } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
-import { listPiJsonlPersistedAgents } from "./session-descriptor.js";
+import { listPiPersistedAgents } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -1955,13 +1955,11 @@ export class PiRpcAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    if (!this.providerParams.sessionDir) {
-      return [];
-    }
-    return await listPiJsonlPersistedAgents({
+    return await listPiPersistedAgents({
+      ...options,
       provider: PI_PROVIDER,
       sessionDir: this.providerParams.sessionDir,
-      options,
+      runtimeSettings: this.runtimeSettings,
     });
   }
 

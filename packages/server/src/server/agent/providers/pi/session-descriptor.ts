@@ -1,4 +1,5 @@
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import type {
@@ -7,15 +8,23 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
-import { createRealpathAwarePathMatcher, expandTilde } from "../../../../utils/path.js";
+import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { createRealpathAwarePathMatcher } from "../../../../utils/path.js";
 
+const PI_PROVIDER = "pi";
+const PI_CONFIG_DIR_NAME = ".pi";
+const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 const HEAD_BYTES = 64 * 1024;
 const TAIL_BYTES = 256 * 1024;
+const FULL_SCAN_LINE_LIMIT = 2_000;
 
-interface ListPiJsonlPersistedAgentsInput {
-  provider: string;
-  sessionDir: string;
-  options?: ListPersistedAgentsOptions;
+interface PiSessionDescriptorOptions extends ListPersistedAgentsOptions {
+  provider?: string;
+  sessionDir?: string;
+  runtimeSettings?: ProviderRuntimeSettings;
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
 }
 
 interface PiSessionHeader {
@@ -24,51 +33,27 @@ interface PiSessionHeader {
   createdAt: Date | null;
 }
 
-interface PiSessionPreview {
+interface PiSessionTail {
   title: string | null;
-  firstUserMessage: string | null;
-  lastUserMessage: string | null;
   lastActivityAt: Date | null;
+  lastUserMessage: string | null;
 }
 
-export async function listPiJsonlPersistedAgents({
-  provider,
-  sessionDir,
-  options,
-}: ListPiJsonlPersistedAgentsInput): Promise<PersistedAgentDescriptor[]> {
-  const files = await walkJsonlFiles(resolveSessionDir(sessionDir));
-  const matchesCwd = options?.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
-  const limit = options?.limit ?? 20;
+export async function listPiPersistedAgents(
+  options: PiSessionDescriptorOptions = {},
+): Promise<PersistedAgentDescriptor[]> {
+  const provider = options.provider ?? PI_PROVIDER;
+  const sessionsDir = await resolvePiSessionsDir(options);
+  const files = await walkJsonlFiles(sessionsDir);
+  const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
+  const limit = options.limit ?? 20;
   const descriptors: PersistedAgentDescriptor[] = [];
 
-  for (const filePath of files) {
-    const firstLine = await readFirstLine(filePath);
-    if (!firstLine) continue;
-    const header = parseSessionHeader(firstLine);
-    if (!header) continue;
-    if (matchesCwd && !matchesCwd(header.cwd)) continue;
-
-    const preview = await readSessionPreview(filePath);
-    const lastActivityAt =
-      preview.lastActivityAt ?? (await readFileMtime(filePath)) ?? header.createdAt ?? new Date(0);
-    const persistence: AgentPersistenceHandle = {
-      provider,
-      sessionId: header.sessionId,
-      nativeHandle: filePath,
-      metadata: {
-        cwd: header.cwd,
-      },
-    };
-
-    descriptors.push({
-      provider,
-      sessionId: header.sessionId,
-      cwd: header.cwd,
-      title: preview.title ?? preview.firstUserMessage,
-      lastActivityAt,
-      persistence,
-      timeline: buildPreviewTimeline(preview),
-    });
+  for (const file of files) {
+    const descriptor = await readPiSessionDescriptor(file, provider);
+    if (!descriptor) continue;
+    if (matchesCwd && !matchesCwd(descriptor.cwd)) continue;
+    descriptors.push(descriptor);
   }
 
   return descriptors
@@ -76,9 +61,80 @@ export async function listPiJsonlPersistedAgents({
     .slice(0, limit);
 }
 
-function resolveSessionDir(value: string): string {
-  const expanded = expandTilde(value);
-  return path.isAbsolute(expanded) ? expanded : path.resolve(process.cwd(), expanded);
+async function resolvePiSessionsDir(options: PiSessionDescriptorOptions): Promise<string> {
+  const env = options.env ?? process.env;
+  const homeDir = options.homeDir ?? homedir();
+  const baseDir = options.cwd ?? process.cwd();
+
+  if (options.sessionDir?.trim()) {
+    return resolveConfigPath(options.sessionDir, { baseDir, homeDir });
+  }
+
+  const agentDir = resolvePiAgentDir({ runtimeSettings: options.runtimeSettings, env, homeDir });
+
+  const envSessionDir =
+    options.runtimeSettings?.env?.[PI_SESSION_DIR_ENV] ?? env[PI_SESSION_DIR_ENV];
+  if (envSessionDir?.trim()) {
+    return resolveConfigPath(envSessionDir, { baseDir, homeDir });
+  }
+
+  const settingsSessionDir = await readConfiguredSessionDir({
+    agentDir,
+    cwd: options.cwd,
+  });
+  if (settingsSessionDir?.trim()) {
+    return resolveConfigPath(settingsSessionDir, { baseDir, homeDir });
+  }
+
+  return path.join(agentDir, "sessions");
+}
+
+function resolvePiAgentDir(input: {
+  runtimeSettings?: ProviderRuntimeSettings;
+  env: NodeJS.ProcessEnv;
+  homeDir: string;
+}): string {
+  const configured = input.runtimeSettings?.env?.[PI_AGENT_DIR_ENV] ?? input.env[PI_AGENT_DIR_ENV];
+  if (configured?.trim()) {
+    return resolveConfigPath(configured, { baseDir: process.cwd(), homeDir: input.homeDir });
+  }
+  return path.join(input.homeDir, PI_CONFIG_DIR_NAME, "agent");
+}
+
+async function readConfiguredSessionDir(input: {
+  agentDir: string;
+  cwd: string | undefined;
+}): Promise<string | null> {
+  const values = await Promise.all([
+    readSessionDirFromSettings(path.join(input.agentDir, "settings.json")),
+    input.cwd
+      ? readSessionDirFromSettings(path.join(input.cwd, PI_CONFIG_DIR_NAME, "settings.json"))
+      : null,
+  ]);
+  return values[1] ?? values[0] ?? null;
+}
+
+async function readSessionDirFromSettings(settingsPath: string): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const sessionDir = Reflect.get(parsed, "sessionDir");
+    return typeof sessionDir === "string" && sessionDir.trim() ? sessionDir : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveConfigPath(value: string, options: { baseDir: string; homeDir: string }): string {
+  if (value === "~") {
+    return options.homeDir;
+  }
+  if (value.startsWith("~/")) {
+    return path.join(options.homeDir, value.slice(2));
+  }
+  return path.isAbsolute(value) ? value : path.resolve(options.baseDir, value);
 }
 
 async function walkJsonlFiles(root: string): Promise<string[]> {
@@ -101,46 +157,73 @@ async function walkJsonlFiles(root: string): Promise<string[]> {
   return files.flat();
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
-  const chunk = await readChunk(filePath, HEAD_BYTES, 0);
-  if (!chunk) return null;
-  const newlineIndex = chunk.indexOf("\n");
-  return (newlineIndex === -1 ? chunk : chunk.slice(0, newlineIndex)).trim();
-}
-
-async function readSessionPreview(filePath: string): Promise<PiSessionPreview> {
-  const head = await readChunk(filePath, HEAD_BYTES, 0);
-  const tail = await readTail(filePath);
-  return mergePreviews(
-    parsePreviewLines(head ?? "", "forward"),
-    parsePreviewLines(tail, "reverse"),
-  );
-}
-
-async function readChunk(
+async function readPiSessionDescriptor(
   filePath: string,
-  length: number,
-  position: number,
-): Promise<string | null> {
+  provider: string,
+): Promise<PersistedAgentDescriptor | null> {
+  const firstLine = await readFirstLine(filePath);
+  if (!firstLine) return null;
+  const header = parseSessionHeader(firstLine);
+  if (!header) return null;
+
+  const tail = await readTail(filePath).catch(() => "");
+  const tailInfo = parseSessionTail(tail);
+  const headInfo = await scanSessionHead(filePath);
+  const title = tailInfo.title ?? headInfo.title ?? headInfo.firstUserMessage;
+  const lastActivityAt =
+    tailInfo.lastActivityAt ?? (await readFileMtime(filePath)) ?? header.createdAt ?? new Date(0);
+  const timeline = buildPreviewTimeline({
+    firstUserMessage: headInfo.firstUserMessage,
+    lastUserMessage: tailInfo.lastUserMessage,
+  });
+
+  const persistence: AgentPersistenceHandle = {
+    provider,
+    sessionId: header.sessionId,
+    nativeHandle: filePath,
+    metadata: {
+      provider,
+      cwd: header.cwd,
+    },
+  };
+
+  return {
+    provider,
+    sessionId: header.sessionId,
+    cwd: header.cwd,
+    title,
+    lastActivityAt,
+    persistence,
+    timeline,
+  };
+}
+
+async function readFirstLine(filePath: string): Promise<string | null> {
   const handle = await open(filePath, "r").catch(() => null);
   if (!handle) return null;
   try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    const buffer = Buffer.alloc(HEAD_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) return null;
-    return buffer.subarray(0, bytesRead).toString("utf8");
+    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
+    const newlineIndex = chunk.indexOf("\n");
+    return (newlineIndex === -1 ? chunk : chunk.slice(0, newlineIndex)).trim();
   } finally {
     await handle.close().catch(() => undefined);
   }
 }
 
 async function readTail(filePath: string): Promise<string> {
+  const fileStats = await stat(filePath);
+  const start = Math.max(0, fileStats.size - TAIL_BYTES);
+  const length = fileStats.size - start;
+  const handle = await open(filePath, "r");
   try {
-    const fileStats = await stat(filePath);
-    const start = Math.max(0, fileStats.size - TAIL_BYTES);
-    return (await readChunk(filePath, fileStats.size - start, start)) ?? "";
-  } catch {
-    return "";
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close().catch(() => undefined);
   }
 }
 
@@ -158,19 +241,19 @@ function parseSessionHeader(firstLine: string): PiSessionHeader | null {
   const sessionId = typeof entry.id === "string" ? entry.id : null;
   const cwd = typeof entry.cwd === "string" ? entry.cwd : null;
   if (!sessionId || !cwd) return null;
-  return { sessionId, cwd, createdAt: parseDate(entry.timestamp) };
+  const createdAt = parseDate(entry.timestamp);
+  return { sessionId, cwd, createdAt };
 }
 
-function parsePreviewLines(input: string, order: "forward" | "reverse"): PiSessionPreview {
-  const lines = input.split(/\r?\n/u);
-  const iterable = order === "forward" ? lines : lines.toReversed();
+function parseSessionTail(tail: string): PiSessionTail {
+  const lines = tail.split(/\r?\n/u);
   let title: string | null = null;
-  let firstUserMessage: string | null = null;
-  let lastUserMessage: string | null = null;
   let lastActivityAt: Date | null = null;
+  let fallbackTimestamp: Date | null = null;
+  let lastUserMessage: string | null = null;
 
-  for (const rawLine of iterable) {
-    const entry = parseJsonRecord(rawLine.trim());
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const entry = parseJsonRecord(lines[index].trim());
     if (!entry) continue;
 
     if (!title && entry.type === "session_info") {
@@ -178,45 +261,81 @@ function parsePreviewLines(input: string, order: "forward" | "reverse"): PiSessi
     }
 
     const entryTimestamp = parseDate(entry.timestamp);
+    if (!fallbackTimestamp && entryTimestamp) {
+      fallbackTimestamp = entryTimestamp;
+    }
+
+    if (entry.type !== "message") {
+      continue;
+    }
+
     if (!lastActivityAt && entryTimestamp) {
       lastActivityAt = entryTimestamp;
     }
 
-    if (entry.type === "message" && isRecord(entry.message) && entry.message.role === "user") {
-      const text = extractMessageText(entry.message.content);
-      if (order === "forward" && !firstUserMessage) {
-        firstUserMessage = text;
-      }
-      if (order === "reverse" && !lastUserMessage) {
-        lastUserMessage = text;
-      }
+    if (!lastUserMessage && isRecord(entry.message) && entry.message.role === "user") {
+      lastUserMessage = extractMessageText(entry.message.content);
     }
 
-    const hasPreview = order === "forward" ? title && firstUserMessage : lastUserMessage;
-    if (hasPreview && lastActivityAt) {
+    if (title && lastActivityAt && lastUserMessage) {
       break;
     }
   }
 
-  return { title, firstUserMessage, lastUserMessage, lastActivityAt };
+  return { title, lastActivityAt: lastActivityAt ?? fallbackTimestamp, lastUserMessage };
 }
 
-function mergePreviews(head: PiSessionPreview, tail: PiSessionPreview): PiSessionPreview {
-  return {
-    title: tail.title ?? head.title,
-    firstUserMessage: head.firstUserMessage ?? tail.firstUserMessage,
-    lastUserMessage: tail.lastUserMessage ?? head.lastUserMessage,
-    lastActivityAt: tail.lastActivityAt ?? head.lastActivityAt,
-  };
-}
-
-function buildPreviewTimeline(preview: PiSessionPreview): AgentTimelineItem[] {
-  const items: AgentTimelineItem[] = [];
-  if (preview.firstUserMessage) {
-    items.push({ type: "user_message", text: preview.firstUserMessage });
+async function scanSessionHead(filePath: string): Promise<{
+  title: string | null;
+  firstUserMessage: string | null;
+}> {
+  let content: string;
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch {
+    return { title: null, firstUserMessage: null };
   }
-  if (preview.lastUserMessage && preview.lastUserMessage !== preview.firstUserMessage) {
-    items.push({ type: "user_message", text: preview.lastUserMessage });
+
+  let title: string | null = null;
+  let firstUserMessage: string | null = null;
+  let lineCount = 0;
+
+  for (const rawLine of content.split(/\r?\n/u)) {
+    lineCount += 1;
+    const entry = parseJsonRecord(rawLine.trim());
+    if (!entry) continue;
+
+    if (entry.type === "session_info") {
+      title = readNonEmptyString(entry.name) ?? title;
+    }
+
+    if (!firstUserMessage && entry.type === "message" && isRecord(entry.message)) {
+      if (entry.message.role === "user") {
+        firstUserMessage = extractMessageText(entry.message.content);
+      }
+    }
+
+    if (title && firstUserMessage) {
+      break;
+    }
+    if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
+      break;
+    }
+  }
+
+  return { title, firstUserMessage };
+}
+
+function buildPreviewTimeline(input: {
+  firstUserMessage: string | null;
+  lastUserMessage: string | null;
+}): AgentTimelineItem[] {
+  const items: AgentTimelineItem[] = [];
+  if (input.firstUserMessage) {
+    items.push({ type: "user_message", text: input.firstUserMessage });
+  }
+  if (input.lastUserMessage && input.lastUserMessage !== input.firstUserMessage) {
+    items.push({ type: "user_message", text: input.lastUserMessage });
   }
   return items;
 }
