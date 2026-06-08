@@ -19,6 +19,10 @@ interface WorkspaceAttachmentsStoreActions {
     scopeKey: string;
     attachments: readonly WorkspaceComposerAttachment[];
   }) => void;
+  addWorkspaceAttachment: (input: {
+    scopeKey: string;
+    attachment: WorkspaceComposerAttachment;
+  }) => void;
   clearWorkspaceAttachments: (input: { scopeKey: string }) => void;
 }
 
@@ -102,6 +106,21 @@ export const useWorkspaceAttachmentsStore = create<WorkspaceAttachmentsStore>()(
         const next = { ...state.attachmentsByScope };
         delete next[scopeKey];
         return { attachmentsByScope: next };
+      }
+      return {
+        attachmentsByScope: {
+          ...state.attachmentsByScope,
+          [scopeKey]: attachments,
+        },
+      };
+    });
+  },
+  addWorkspaceAttachment: ({ scopeKey, attachment }) => {
+    set((state) => {
+      const current = state.attachmentsByScope[scopeKey] ?? EMPTY_WORKSPACE_ATTACHMENTS;
+      const attachments = appendWorkspaceAttachment(current, attachment);
+      if (areWorkspaceAttachmentsEqual(current, attachments)) {
+        return state;
       }
       return {
         attachmentsByScope: {

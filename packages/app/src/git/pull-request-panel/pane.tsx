@@ -22,11 +22,7 @@ import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-d
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import {
-  appendWorkspaceAttachment,
-  useWorkspaceAttachments,
-  useWorkspaceAttachmentsStore,
-} from "@/attachments/workspace-attachments-store";
+import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   collapseActivity,
   expandActivity,
@@ -60,6 +56,31 @@ function activityPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.activityRow, Boolean(hovered) && styles.hoverable];
 }
 
+function getCheckIdentity(check: PrPaneCheck): string {
+  if (check.github?.checkRunId !== undefined) {
+    return `${check.provider}:check-run:${check.github.checkRunId}`;
+  }
+  return `${check.provider}:${check.name}:${check.url}`;
+}
+
+function addLoadingCheck(current: ReadonlySet<string>, checkKey: string): ReadonlySet<string> {
+  if (current.has(checkKey)) {
+    return current;
+  }
+  const next = new Set(current);
+  next.add(checkKey);
+  return next;
+}
+
+function removeLoadingCheck(current: ReadonlySet<string>, checkKey: string): ReadonlySet<string> {
+  if (!current.has(checkKey)) {
+    return current;
+  }
+  const next = new Set(current);
+  next.delete(checkKey);
+  return next;
+}
+
 export function PullRequestPane({
   serverId,
   cwd,
@@ -76,13 +97,13 @@ export function PullRequestPane({
   const canFetchGitHubCheckDetails = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.githubCheckDetails === true,
   );
-  const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey ?? "");
-  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
-    (state) => state.setWorkspaceAttachments,
+  const addWorkspaceAttachment = useWorkspaceAttachmentsStore(
+    (state) => state.addWorkspaceAttachment,
   );
   const [checksOpen, setChecksOpen] = useState(true);
   const [reviewsOpen, setReviewsOpen] = useState(true);
   const [activityState, setActivityState] = useState(getActivityState);
+  const [loadingCheckKeys, setLoadingCheckKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   const handleOpenPrUrl = useCallback(() => {
     void openExternalUrl(data.url);
@@ -137,19 +158,18 @@ export function PullRequestPane({
       if (!attachment) {
         return;
       }
-      setWorkspaceAttachments({
+      addWorkspaceAttachment({
         scopeKey: workspaceAttachmentScopeKey,
-        attachments: appendWorkspaceAttachment(workspaceAttachments, attachment),
+        attachment,
       });
     },
     [
+      addWorkspaceAttachment,
       data.number,
       data.provider,
       data.title,
       data.url,
-      setWorkspaceAttachments,
       workspaceAttachmentScopeKey,
-      workspaceAttachments,
     ],
   );
 
@@ -158,41 +178,49 @@ export function PullRequestPane({
       if (!workspaceAttachmentScopeKey) {
         return;
       }
+      const checkKey = getCheckIdentity(check);
+      setLoadingCheckKeys((current) => addLoadingCheck(current, checkKey));
+
       let details = null;
-      const ref = check.github;
-      if (
-        canFetchGitHubCheckDetails &&
-        daemonClient &&
-        check.provider === "github" &&
-        ref?.checkRunId !== undefined &&
-        data.repoOwner &&
-        data.repoName
-      ) {
-        try {
-          const payload = await daemonClient.checkoutGithubGetCheckDetails({
-            cwd,
-            repoOwner: data.repoOwner,
-            repoName: data.repoName,
-            checkRunId: ref.checkRunId,
-            workflowRunId: ref.workflowRunId,
-          });
-          details = payload.success ? payload.details : null;
-        } catch {
-          details = null;
+      try {
+        const ref = check.github;
+        if (
+          canFetchGitHubCheckDetails &&
+          daemonClient &&
+          check.provider === "github" &&
+          ref?.checkRunId !== undefined &&
+          data.repoOwner &&
+          data.repoName
+        ) {
+          try {
+            const payload = await daemonClient.checkoutGithubGetCheckDetails({
+              cwd,
+              repoOwner: data.repoOwner,
+              repoName: data.repoName,
+              checkRunId: ref.checkRunId,
+              workflowRunId: ref.workflowRunId,
+            });
+            details = payload.success ? payload.details : null;
+          } catch {
+            details = null;
+          }
         }
+        const attachment = buildPullRequestCheckContextAttachment({
+          provider: data.provider,
+          pullRequest: { number: data.number, title: data.title, url: data.url },
+          check,
+          githubDetails: details,
+        });
+        addWorkspaceAttachment({
+          scopeKey: workspaceAttachmentScopeKey,
+          attachment,
+        });
+      } finally {
+        setLoadingCheckKeys((current) => removeLoadingCheck(current, checkKey));
       }
-      const attachment = buildPullRequestCheckContextAttachment({
-        provider: data.provider,
-        pullRequest: { number: data.number, title: data.title, url: data.url },
-        check,
-        githubDetails: details,
-      });
-      setWorkspaceAttachments({
-        scopeKey: workspaceAttachmentScopeKey,
-        attachments: appendWorkspaceAttachment(workspaceAttachments, attachment),
-      });
     },
     [
+      addWorkspaceAttachment,
       canFetchGitHubCheckDetails,
       cwd,
       daemonClient,
@@ -202,10 +230,23 @@ export function PullRequestPane({
       data.repoOwner,
       data.title,
       data.url,
-      setWorkspaceAttachments,
       workspaceAttachmentScopeKey,
-      workspaceAttachments,
     ],
+  );
+
+  const renderCheckRow = useCallback(
+    (check: PrPaneCheck) => {
+      const checkKey = getCheckIdentity(check);
+      return (
+        <CheckRow
+          key={checkKey}
+          check={check}
+          isAddingLogsToChat={loadingCheckKeys.has(checkKey)}
+          onAddLogsToChat={handleAddCheckLogsToChat}
+        />
+      );
+    },
+    [handleAddCheckLogsToChat, loadingCheckKeys],
   );
 
   const handleToggleActivityCollapsed = useCallback(
@@ -301,9 +342,7 @@ export function PullRequestPane({
           </>
         }
       >
-        {data.checks.map((check) => (
-          <CheckRow key={check.name} check={check} onAddLogsToChat={handleAddCheckLogsToChat} />
-        ))}
+        {data.checks.map(renderCheckRow)}
       </Section>
 
       <View style={styles.divider} />
@@ -411,9 +450,11 @@ function SummaryPill({
 
 function CheckRow({
   check,
+  isAddingLogsToChat,
   onAddLogsToChat,
 }: {
   check: PrPaneCheck;
+  isAddingLogsToChat: boolean;
   onAddLogsToChat: (check: PrPaneCheck) => void;
 }) {
   const handlePress = useCallback(() => {
@@ -439,8 +480,13 @@ function CheckRow({
       )}
       {check.duration && <Text style={styles.rowMeta}>{check.duration}</Text>}
       {canAddPullRequestCheckLogsToChat(check) ? (
-        <Button variant="ghost" size="xs" onPress={handleAddLogsToChat}>
-          Add logs to chat
+        <Button
+          variant="ghost"
+          size="xs"
+          loading={isAddingLogsToChat}
+          onPress={handleAddLogsToChat}
+        >
+          {isAddingLogsToChat ? "Adding logs" : "Add logs to chat"}
         </Button>
       ) : null}
     </Pressable>

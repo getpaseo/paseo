@@ -117,4 +117,27 @@ describe("workspace attachments store", () => {
 
     expect(appendWorkspaceAttachment([original], replacement)).toEqual([replacement]);
   });
+
+  it("adds a workspace attachment against the current scope state", () => {
+    resetWorkspaceAttachmentsStore();
+    const scopeKey = buildWorkspaceAttachmentScopeKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+    });
+    const review = reviewAttachment("Please simplify this.");
+    const context = contextAttachment("comment-1");
+
+    const addWorkspaceAttachment = useWorkspaceAttachmentsStore.getState().addWorkspaceAttachment;
+    useWorkspaceAttachmentsStore
+      .getState()
+      .setWorkspaceAttachments({ scopeKey, attachments: [review] });
+
+    addWorkspaceAttachment({ scopeKey, attachment: context });
+
+    expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey]).toEqual([
+      review,
+      context,
+    ]);
+  });
 });
