@@ -50,6 +50,9 @@ Set `-e PASEO_PAIRING_QR=0` to disable.
 | `ghcr.io/getpaseo/paseo:alpine`         | Smallest. musl — some agents N/A.        |
 | `ghcr.io/getpaseo/paseo:<ver>-<distro>` | Version-pinned (e.g. `0.1.89-debian13`). |
 
+Debian and Ubuntu images are multi-arch (`amd64`, `arm64`). Alpine and Arch are
+`amd64`-only; use Debian or Ubuntu on arm64 hosts.
+
 ## Agent mods
 
 | Mod                                 | Installs                    | Provider   |

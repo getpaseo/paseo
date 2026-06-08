@@ -38,10 +38,11 @@ The image sources live in [`docker/`](../docker/).
 
 `<distro>` tags: `debian12`, `debian13`, `ubuntu2204`, `ubuntu2404`, `alpine`,
 `arch`. The moving `:debian` / `:ubuntu` / `:alpine` / `:arch` tags track the
-newest version. `:latest` aliases `:debian`. All images are multi-arch
-(`amd64`, `arm64`) **except `:arch`, which is `amd64`-only** (the official Arch
-base has no arm64 build — on Apple Silicon / arm64 hosts use Debian, Ubuntu, or
-Alpine).
+newest version. `:latest` aliases `:debian`. Debian and Ubuntu images are
+multi-arch (`amd64`, `arm64`). `:alpine` and `:arch` are `amd64`-only: Arch has
+no official arm64 base image, and Alpine arm64 builds are disabled because Node
+crashes with `Illegal instruction` under GitHub Actions QEMU emulation. On Apple
+Silicon / arm64 hosts use Debian or Ubuntu.
 
 ## Quick start
 
