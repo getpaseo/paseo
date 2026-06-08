@@ -541,7 +541,7 @@ describe("ImportSessionSheet", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("fans out one request per enabled importable provider when snapshot is supported", async () => {
+  it("fans out one request per enabled provider when snapshot is supported", async () => {
     const fetchRecentProviderSessions = vi.fn(
       async (options: { providers?: string[] } | undefined) => ({
         requestId: `recent-${options?.providers?.[0] ?? "all"}`,
@@ -591,12 +591,15 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).not.toHaveBeenCalledWith(
       expect.objectContaining({ providers: ["opencode"] }),
     );
-    expect(fetchRecentProviderSessions).not.toHaveBeenCalledWith(
-      expect.objectContaining({ providers: ["z-ai"] }),
-    );
+    expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+      cwd: "/repo/paseo",
+      providers: ["z-ai"],
+      limit: 15,
+    });
 
     await screen.findByText("Session claude");
     await screen.findByText("Session codex");
+    await screen.findByText("Session z-ai");
   });
 
   it("shows partial-failure note when one provider request fails but others succeed", async () => {
@@ -716,7 +719,7 @@ describe("ImportSessionSheet", () => {
     expect(screen.queryByTestId("import-session-filter-all")).toBeNull();
   });
 
-  it("shows a no-importable-providers message when snapshot has no enabled importable providers", async () => {
+  it("shows a no-importable-providers message when snapshot has no enabled providers", async () => {
     const fetchRecentProviderSessions = vi.fn();
     const importAgent = vi.fn();
 
@@ -732,7 +735,7 @@ describe("ImportSessionSheet", () => {
             createSnapshotEntry("claude", { enabled: false }),
             createSnapshotEntry("codex", { enabled: false }),
             createSnapshotEntry("opencode", { enabled: false }),
-            createSnapshotEntry("z-ai"),
+            createSnapshotEntry("z-ai", { enabled: false }),
           ],
         },
       },

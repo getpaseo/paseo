@@ -42,6 +42,7 @@ function discoverAgentRoutes(): string[] {
     "docs",
     "download",
     "index",
+    "sponsor",
     "privacy",
   ]);
   return fs

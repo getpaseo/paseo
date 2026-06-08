@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 import {
   type AgentCapabilityFlags,
@@ -52,6 +53,7 @@ import {
 } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
+import { listPiPersistedAgents } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -85,6 +87,14 @@ const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
 const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
+
+export const PiProviderParamsSchema = z
+  .object({
+    sessionDir: z.string().min(1).optional(),
+  })
+  .strict();
+
+type PiProviderParams = z.infer<typeof PiProviderParamsSchema>;
 
 const PI_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
   {
@@ -128,6 +138,7 @@ const PI_THINKING_OPTIONS: ReadonlyArray<{
 interface PiRpcAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
+  providerParams?: unknown;
   runtime?: PiRuntime;
 }
 
@@ -1826,11 +1837,13 @@ export class PiRpcAgentClient implements AgentClient {
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly providerParams: PiProviderParams;
   private readonly runtime: PiRuntime;
 
   constructor(options: PiRpcAgentClientOptions) {
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
+    this.providerParams = PiProviderParamsSchema.parse(options.providerParams ?? {});
     this.runtime = options.runtime ?? createRuntime(options.logger, options.runtimeSettings);
   }
 
@@ -1940,9 +1953,14 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
+    options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    return [];
+    return await listPiPersistedAgents({
+      ...options,
+      provider: PI_PROVIDER,
+      sessionDir: this.providerParams.sessionDir,
+      runtimeSettings: this.runtimeSettings,
+    });
   }
 
   async isAvailable(): Promise<boolean> {

@@ -69,8 +69,6 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
 
-export { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
-
 export interface BuildProviderRegistryOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
@@ -82,6 +80,7 @@ interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
   "workspaceGitService"
 > {
+  providerParams?: unknown;
   customProvider?: {
     id: string;
     label: string;
@@ -103,6 +102,7 @@ interface ResolvedProvider {
   profileModelsAreAdditive: boolean;
   enabled: boolean;
   derivedFromProviderId: string | null;
+  providerParams?: unknown;
   createBaseClient: (logger: Logger) => AgentClient;
 }
 
@@ -129,10 +129,27 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       env: runtimeSettings?.env,
     }),
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
-  pi: (logger, runtimeSettings) =>
+  pi: (logger, runtimeSettings, options) =>
     new PiRpcAgentClient({
       logger,
       runtimeSettings,
+      providerParams: options?.providerParams,
+    }),
+  omp: (logger, runtimeSettings, options) =>
+    new PiRpcAgentClient({
+      logger,
+      runtimeSettings: mergeRuntimeSettings(
+        {
+          command: {
+            mode: "replace",
+            argv: ["omp"],
+          },
+        },
+        runtimeSettings,
+      ),
+      providerParams: options?.providerParams ?? {
+        sessionDir: "~/.omp/agent/sessions",
+      },
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),
@@ -524,11 +541,13 @@ function buildResolvedBuiltinProviders(
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
       profileModelsAreAdditive: false,
-      enabled: override?.enabled !== false,
+      enabled: override?.enabled ?? definition.enabledByDefault ?? true,
       derivedFromProviderId: null,
+      providerParams: override?.params,
       createBaseClient: (logger) =>
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
+          providerParams: override?.params,
         }),
     });
   }
@@ -574,6 +593,7 @@ function addDerivedProviders(
         profileModelsAreAdditive: false,
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
+        providerParams: override.params,
         createBaseClient: (logger) =>
           providerId === "cursor"
             ? new CursorACPAgentClient({
@@ -608,6 +628,7 @@ function addDerivedProviders(
     );
     const baseDefinition = baseProvider.definition;
     const baseFactory = getProviderClientFactory(baseProviderId);
+    const providerParams = override.params ?? baseProvider.providerParams;
 
     resolvedProviders.set(providerId, {
       definition: createDerivedDefinition(providerId, baseDefinition, override),
@@ -617,8 +638,10 @@ function addDerivedProviders(
       profileModelsAreAdditive: false,
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
+      providerParams,
       createBaseClient: (logger) =>
         baseFactory(logger, mergedRuntimeSettings, {
+          providerParams,
           customProvider: {
             id: providerId,
             label: override.label ?? providerId,
