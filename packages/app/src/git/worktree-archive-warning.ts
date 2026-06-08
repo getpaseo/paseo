@@ -55,7 +55,7 @@ export function buildWorktreeArchiveConfirmationMessage(
 ): string | null {
   const reasons = buildWorktreeArchiveRiskReasons(input);
   if (reasons.length === 0) {
-    return null;
+    return "This clean worktree will be removed from disk.";
   }
 
   return reasons.join("\n");

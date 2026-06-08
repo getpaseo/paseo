@@ -6,7 +6,7 @@ import {
 } from "@/git/worktree-archive-warning";
 
 describe("worktree archive warning", () => {
-  it("does not require a confirmation for clean and pushed worktrees", () => {
+  it("requires a confirmation for clean and pushed worktrees", () => {
     expect(
       buildWorktreeArchiveConfirmationMessage({
         worktreeName: "feature",
@@ -14,7 +14,7 @@ describe("worktree archive warning", () => {
         aheadOfOrigin: 0,
         diffStat: null,
       }),
-    ).toBeNull();
+    ).toBe("This clean worktree will be removed from disk.");
   });
 
   it("explains uncommitted line changes", () => {
