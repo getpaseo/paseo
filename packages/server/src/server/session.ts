@@ -5693,46 +5693,6 @@ export class Session {
   ): Promise<void> {
     const { cwd, repoOwner, repoName, checkRunId, workflowRunId, requestId } = msg;
 
-    if (
-      !isValidGitHubRepoSegment(repoOwner) ||
-      !isValidGitHubRepoSegment(repoName) ||
-      !Number.isFinite(checkRunId) ||
-      checkRunId <= 0
-    ) {
-      this.emit({
-        type: "checkout.github.get_check_details.response",
-        payload: {
-          cwd,
-          success: false,
-          details: null,
-          error: {
-            code: "UNKNOWN",
-            message: "GitHub check details request has invalid identity",
-          },
-          requestId,
-        },
-      });
-      return;
-    }
-
-    const githubFeaturesEnabled = await this.github.isAuthenticated({ cwd });
-    if (!githubFeaturesEnabled) {
-      this.emit({
-        type: "checkout.github.get_check_details.response",
-        payload: {
-          cwd,
-          success: false,
-          details: null,
-          error: {
-            code: "UNKNOWN",
-            message: "GitHub CLI is unavailable or not authenticated",
-          },
-          requestId,
-        },
-      });
-      return;
-    }
-
     try {
       const details = await this.github.getGitHubCheckDetails({
         cwd,

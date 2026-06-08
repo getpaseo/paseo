@@ -287,6 +287,30 @@ describe("checkout PR schemas", () => {
     });
   });
 
+  test("rejects invalid GitHub check details request identities", () => {
+    const request = {
+      type: "checkout.github.get_check_details.request",
+      cwd: "/tmp/repo",
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      checkRunId: 12345,
+      requestId: "request-check-details",
+    };
+
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, repoOwner: "../owner" }),
+    ).toThrow();
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, repoName: "" }),
+    ).toThrow();
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, checkRunId: 0 }),
+    ).toThrow();
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, workflowRunId: 1.5 }),
+    ).toThrow();
+  });
+
   test("accepts the GitHub auto-merge server_info feature flag", () => {
     expect(
       ServerInfoStatusPayloadSchema.parse({

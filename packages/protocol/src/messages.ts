@@ -1441,13 +1441,15 @@ export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const GitHubRepoSegmentSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
+
 export const CheckoutGithubGetCheckDetailsRequestSchema = z.object({
   type: z.literal("checkout.github.get_check_details.request"),
   cwd: z.string(),
-  repoOwner: z.string(),
-  repoName: z.string(),
-  checkRunId: z.number(),
-  workflowRunId: z.number().optional(),
+  repoOwner: GitHubRepoSegmentSchema,
+  repoName: GitHubRepoSegmentSchema,
+  checkRunId: z.number().int().positive(),
+  workflowRunId: z.number().int().positive().optional(),
   requestId: z.string(),
 });
 

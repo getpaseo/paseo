@@ -1,3 +1,5 @@
+import { Parser } from "htmlparser2";
+
 export interface MarkdownTextPart {
   kind: "markdown";
   text: string;
@@ -25,6 +27,7 @@ const FENCE_LINE_RE = /^ {0,3}([`~]{3,})[^\n\r]*(?:\r?\n|$)/gm;
 const BACKTICK_RUN_RE = /`+/g;
 const SAFE_IMAGE_SRC_RE = /^(https?:\/\/|data:image\/(?:png|gif|jpe?g);base64,)/i;
 const SAFE_LINK_HREF_RE = /^(https?:\/\/|#(?:$|[\w-]))/i;
+const VOID_HTML_TAGS = new Set(["br", "img"]);
 
 interface ProtectedMarkdownRange {
   start: number;
@@ -61,20 +64,15 @@ interface InlineImageParseResult {
   end: number;
 }
 
-interface HtmlTokenParseResult {
-  token: HtmlToken;
-  end: number;
-}
-
-interface HtmlAttributeParseResult {
-  name: string;
-  value: string;
-  end: number;
-}
-
 interface MarkdownDelimiterMatch {
   index: number;
   end: number;
+}
+
+interface HtmlishTokenParser {
+  write(chunk: string): void;
+  skip(length: number): void;
+  end(): void;
 }
 
 export function splitHtmlishMarkdown(source: string): MarkdownDisplayPart[] {
@@ -412,7 +410,18 @@ function isClosingTag(token: HtmlToken | undefined, name: string): token is Html
 }
 
 function isHeadingTag(token: HtmlToken | undefined): token is HtmlTagToken {
-  return token?.kind === "tag" && /^h[1-6]$/.test(token.name) && !token.closing;
+  return token?.kind === "tag" && isHeadingTagName(token.name) && !token.closing;
+}
+
+function isHeadingTagName(name: string): boolean {
+  return (
+    name === "h1" ||
+    name === "h2" ||
+    name === "h3" ||
+    name === "h4" ||
+    name === "h5" ||
+    name === "h6"
+  );
 }
 
 function isWhitespaceText(token: HtmlToken): boolean {
@@ -422,185 +431,112 @@ function isWhitespaceText(token: HtmlToken): boolean {
 function tokenizeHtmlishMarkdown(source: string): HtmlToken[] {
   const protectedRanges = getProtectedMarkdownRanges(source);
   const tokens: HtmlToken[] = [];
+  const parser = createHtmlishTokenParser(source, tokens);
   let cursor = 0;
 
-  while (cursor < source.length) {
-    const protectedRange = findProtectedRangeAt(cursor, protectedRanges);
-    if (protectedRange) {
-      tokens.push({ kind: "text", value: source.slice(cursor, protectedRange.end) });
-      cursor = protectedRange.end;
-      continue;
-    }
-
-    const nextProtectedRange = findNextProtectedRange(cursor, protectedRanges);
-    const nextTagStart = source.indexOf("<", cursor);
-    if (nextTagStart === -1 || (nextProtectedRange && nextProtectedRange.start < nextTagStart)) {
-      const end = nextProtectedRange?.start ?? source.length;
-      tokens.push({ kind: "text", value: source.slice(cursor, end) });
-      cursor = end;
-      continue;
-    }
-
-    if (nextTagStart > cursor) {
-      tokens.push({ kind: "text", value: source.slice(cursor, nextTagStart) });
-    }
-
-    const parsed = parseHtmlTokenAt(source, nextTagStart);
-    if (!parsed) {
-      tokens.push({ kind: "text", value: "<" });
-      cursor = nextTagStart + 1;
-      continue;
-    }
-
-    tokens.push(parsed.token);
-    cursor = parsed.end;
+  for (const range of protectedRanges) {
+    parser.write(source.slice(cursor, range.start));
+    tokens.push({ kind: "text", value: source.slice(range.start, range.end) });
+    parser.skip(range.end - range.start);
+    cursor = range.end;
   }
 
+  parser.write(source.slice(cursor));
+  parser.end();
   return tokens;
 }
 
-function parseHtmlTokenAt(source: string, start: number): HtmlTokenParseResult | null {
-  if (source.startsWith("<!--", start)) {
-    const close = source.indexOf("-->", start + 4);
-    if (close === -1) {
-      return null;
-    }
-    return { token: { kind: "comment" }, end: getCommentEnd(source, start, close + 3) };
-  }
-
-  let cursor = start + 1;
-  let closing = false;
-  if (source[cursor] === "/") {
-    closing = true;
-    cursor += 1;
-  }
-
-  cursor = skipWhitespace(source, cursor);
-  const nameStart = cursor;
-  while (cursor < source.length && isTagNameCharacter(source[cursor])) {
-    cursor += 1;
-  }
-  if (cursor === nameStart) {
-    return null;
-  }
-
-  const name = source.slice(nameStart, cursor).toLowerCase();
-  const attributes: Record<string, string> = {};
-  let selfClosing = false;
-
-  while (cursor < source.length) {
-    cursor = skipWhitespace(source, cursor);
-    const char = source[cursor];
-    if (char === ">") {
-      const end = cursor + 1;
-      return {
-        token: {
+function createHtmlishTokenParser(source: string, tokens: HtmlToken[]): HtmlishTokenParser {
+  let stripNextLeadingLineBreak = false;
+  let skippedLength = 0;
+  let parser!: Parser;
+  parser = new Parser(
+    {
+      onopentag(name, attributes, isImplied) {
+        if (isImplied) {
+          return;
+        }
+        const selfClosing = VOID_HTML_TAGS.has(name);
+        tokens.push({
           kind: "tag",
           name,
-          closing,
+          closing: false,
           selfClosing,
           attributes,
-          raw: source.slice(start, end),
-        },
-        end,
-      };
-    }
-    if (char === "/" && source[cursor + 1] === ">") {
-      selfClosing = true;
-      const end = cursor + 2;
-      return {
-        token: {
+          raw: renderStartTag(name, attributes),
+        });
+      },
+      onclosetag(name, isImplied) {
+        if (isImplied || VOID_HTML_TAGS.has(name)) {
+          return;
+        }
+        tokens.push({
           kind: "tag",
           name,
-          closing,
-          selfClosing,
-          attributes,
-          raw: source.slice(start, end),
-        },
-        end,
-      };
-    }
-    if (char === undefined || closing) {
-      return null;
-    }
-
-    const attribute = parseAttribute(source, cursor);
-    if (!attribute) {
-      return null;
-    }
-    attributes[attribute.name] = attribute.value;
-    cursor = attribute.end;
-  }
-
-  return null;
+          closing: true,
+          selfClosing: false,
+          attributes: {},
+          raw: `</${name}>`,
+        });
+      },
+      ontext(value) {
+        if (stripNextLeadingLineBreak) {
+          stripNextLeadingLineBreak = false;
+          value = stripLeadingLineBreak(value);
+        }
+        if (!value) {
+          return;
+        }
+        tokens.push({ kind: "text", value });
+      },
+      oncomment() {
+        stripNextLeadingLineBreak = isLineStart(source, parser.startIndex + skippedLength);
+        tokens.push({ kind: "comment" });
+      },
+    },
+    {
+      decodeEntities: false,
+      lowerCaseAttributeNames: true,
+      lowerCaseTags: true,
+      recognizeSelfClosing: true,
+    },
+  );
+  return {
+    write(chunk) {
+      parser.write(chunk);
+    },
+    skip(length) {
+      skippedLength += length;
+    },
+    end() {
+      parser.end();
+    },
+  };
 }
 
-function getCommentEnd(source: string, start: number, defaultEnd: number): number {
-  const startsLine = start === 0 || source[start - 1] === "\n" || source[start - 1] === "\r";
-  if (!startsLine) {
-    return defaultEnd;
-  }
-  if (source.startsWith("\r\n", defaultEnd)) {
-    return defaultEnd + 2;
-  }
-  if (source[defaultEnd] === "\n" || source[defaultEnd] === "\r") {
-    return defaultEnd + 1;
-  }
-  return defaultEnd;
+function isLineStart(source: string, index: number): boolean {
+  return index === 0 || source[index - 1] === "\n" || source[index - 1] === "\r";
 }
 
-function parseAttribute(source: string, start: number): HtmlAttributeParseResult | null {
-  let cursor = start;
-  const nameStart = cursor;
-  while (cursor < source.length && isAttributeNameCharacter(source[cursor])) {
-    cursor += 1;
+function stripLeadingLineBreak(value: string): string {
+  if (value.startsWith("\r\n")) {
+    return value.slice(2);
   }
-  if (cursor === nameStart) {
-    return null;
+  if (value.startsWith("\n") || value.startsWith("\r")) {
+    return value.slice(1);
   }
-
-  const name = source.slice(nameStart, cursor).toLowerCase();
-  cursor = skipWhitespace(source, cursor);
-  if (source[cursor] !== "=") {
-    return { name, value: "", end: cursor };
-  }
-
-  cursor = skipWhitespace(source, cursor + 1);
-  const quote = source[cursor];
-  if (quote === '"' || quote === "'") {
-    const valueStart = cursor + 1;
-    const valueEnd = source.indexOf(quote, valueStart);
-    if (valueEnd === -1) {
-      return null;
-    }
-    return { name, value: source.slice(valueStart, valueEnd), end: valueEnd + 1 };
-  }
-
-  const valueStart = cursor;
-  while (cursor < source.length && !isWhitespace(source[cursor]) && source[cursor] !== ">") {
-    cursor += 1;
-  }
-  return { name, value: source.slice(valueStart, cursor), end: cursor };
+  return value;
 }
 
-function isTagNameCharacter(char: string | undefined): boolean {
-  return Boolean(char && /[A-Za-z0-9:-]/.test(char));
+function renderStartTag(name: string, attributes: Record<string, string>): string {
+  const renderedAttributes = Object.entries(attributes)
+    .map(([key, value]) => (value === "" ? ` ${key}` : ` ${key}="${escapeAttribute(value)}"`))
+    .join("");
+  return `<${name}${renderedAttributes}>`;
 }
 
-function isAttributeNameCharacter(char: string | undefined): boolean {
-  return Boolean(char && /[^\s=/>]/.test(char));
-}
-
-function skipWhitespace(source: string, start: number): number {
-  let cursor = start;
-  while (cursor < source.length && isWhitespace(source[cursor])) {
-    cursor += 1;
-  }
-  return cursor;
-}
-
-function isWhitespace(char: string | undefined): boolean {
-  return char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
+function escapeAttribute(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
 }
 
 function getProtectedMarkdownRanges(source: string): ProtectedMarkdownRange[] {
@@ -708,20 +644,6 @@ function mergeProtectedRanges(ranges: ProtectedMarkdownRange[]): ProtectedMarkdo
   }
 
   return merged;
-}
-
-function findProtectedRangeAt(
-  index: number,
-  ranges: ProtectedMarkdownRange[],
-): ProtectedMarkdownRange | null {
-  return ranges.find((range) => index >= range.start && index < range.end) ?? null;
-}
-
-function findNextProtectedRange(
-  index: number,
-  ranges: ProtectedMarkdownRange[],
-): ProtectedMarkdownRange | null {
-  return ranges.find((range) => range.start > index) ?? null;
 }
 
 function isProtectedIndex(index: number, ranges: ProtectedMarkdownRange[]): boolean {

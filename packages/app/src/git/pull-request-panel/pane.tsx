@@ -17,7 +17,7 @@ import {
 } from "lucide-react-native";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { Button } from "@/components/ui/button";
-import { SharedMarkdownRenderer } from "@/components/markdown/renderer";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -215,6 +215,8 @@ export function PullRequestPane({
           scopeKey: workspaceAttachmentScopeKey,
           attachment,
         });
+      } catch {
+        // The check row should recover even if attachment formatting or insertion fails.
       } finally {
         setLoadingCheckKeys((current) => removeLoadingCheck(current, checkKey));
       }
@@ -586,7 +588,7 @@ function ActivityCard({
       </Pressable>
       {collapsed ? null : (
         <View style={styles.markdownBody}>
-          <SharedMarkdownRenderer
+          <MarkdownRenderer
             text={item.body || "_No review body_"}
             compact
             onLinkPress={handleMarkdownLinkPress}

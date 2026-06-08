@@ -59,7 +59,7 @@ function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRe
 const defaultMarkdownParser = MarkdownIt({ typographer: true, linkify: true });
 const EMPTY_TEXT_STYLE: TextStyle = {};
 const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
-export interface SharedMarkdownRendererProps {
+export interface MarkdownRendererProps {
   text: string;
   compact?: boolean;
   rules?: RenderRules;
@@ -70,7 +70,7 @@ export interface SharedMarkdownRendererProps {
   enableHtmlish?: boolean;
 }
 
-export function SharedMarkdownRenderer({
+export function MarkdownRenderer({
   text,
   compact = false,
   rules,
@@ -79,7 +79,7 @@ export function SharedMarkdownRenderer({
   allowedImageHandlers,
   topLevelMaxExceededItem,
   enableHtmlish = true,
-}: SharedMarkdownRendererProps) {
+}: MarkdownRendererProps) {
   const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
   const parts = useMemo(
     () => (enableHtmlish ? splitHtmlishMarkdown(text) : [{ kind: "markdown" as const, text }]),
@@ -141,7 +141,7 @@ function MarkdownPart({
   rendererProps,
 }: {
   part: MarkdownDisplayPart;
-  rendererProps: Omit<SharedMarkdownRendererProps, "text" | "enableHtmlish"> & {
+  rendererProps: Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
     rules: RenderRules;
   };
 }) {
@@ -168,7 +168,7 @@ function MarkdownFragment({
   onLinkPress,
   allowedImageHandlers,
   topLevelMaxExceededItem,
-}: SharedMarkdownRendererProps & { rules: RenderRules }) {
+}: MarkdownRendererProps & { rules: RenderRules }) {
   const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
   return (
     <ThemedMarkdown
@@ -258,7 +258,7 @@ function MarkdownDetails({
   rendererProps,
 }: {
   part: Extract<MarkdownDisplayPart, { kind: "details" }>;
-  rendererProps: Omit<SharedMarkdownRendererProps, "text" | "enableHtmlish"> & {
+  rendererProps: Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
     rules: RenderRules;
   };
 }) {
