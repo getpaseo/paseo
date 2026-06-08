@@ -3816,7 +3816,7 @@ test("open_project_request does not match a new child directory to an existing p
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const home = path.resolve("/Users/moboudra");
+  const home = path.resolve("/home/developer");
   const worktree = path.join(home, ".paseo", "worktrees", "project-config-lifecycle-textarea");
 
   projects.set(
@@ -3825,7 +3825,7 @@ test("open_project_request does not match a new child directory to an existing p
       projectId: home,
       rootPath: home,
       kind: "non_git",
-      displayName: "moboudra",
+      displayName: "developer",
       createdAt: "2026-04-24T09:00:00.000Z",
       updatedAt: "2026-04-24T09:00:00.000Z",
     }),
@@ -3837,7 +3837,7 @@ test("open_project_request does not match a new child directory to an existing p
       projectId: home,
       cwd: home,
       kind: "directory",
-      displayName: "moboudra",
+      displayName: "developer",
       createdAt: "2026-04-24T09:00:00.000Z",
       updatedAt: "2026-04-24T09:00:00.000Z",
     }),
@@ -3882,7 +3882,7 @@ test("open_project_request does not unarchive an archived parent workspace for a
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const home = path.resolve("/Users/moboudra");
+  const home = path.resolve("/home/developer");
   const worktree = path.join(home, ".paseo", "worktrees", "project-config-lifecycle-textarea");
   const archivedAt = "2026-04-24T08:00:00.000Z";
 
@@ -3950,9 +3950,9 @@ test("open_project_request reclassifies an archived directory workspace when git
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const repoRoot = path.resolve("/Users/moboudra/dev/paseo");
+  const repoRoot = path.resolve("/home/developer/dev/paseo");
   const cwd = path.join(
-    path.resolve("/Users/moboudra"),
+    path.resolve("/home/developer"),
     ".paseo",
     "worktrees",
     "orchestrate",
@@ -4049,9 +4049,9 @@ test("open_project_request reclassifies an active directory workspace when git m
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const repoRoot = path.resolve("/Users/moboudra/dev/paseo");
+  const repoRoot = path.resolve("/home/developer/dev/paseo");
   const cwd = path.join(
-    path.resolve("/Users/moboudra"),
+    path.resolve("/home/developer"),
     ".paseo",
     "worktrees",
     "orchestrate",
@@ -4167,9 +4167,9 @@ test("open_project_request groups a plain git worktree under an existing repo pr
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
-  const repoRoot = path.resolve("/Users/moboudra/dev/paseo");
+  const repoRoot = path.resolve("/home/developer/dev/paseo");
   const cwd = path.join(
-    path.resolve("/Users/moboudra"),
+    path.resolve("/home/developer"),
     ".paseo",
     "worktrees",
     "orchestrate",
