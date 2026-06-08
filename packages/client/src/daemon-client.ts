@@ -37,6 +37,7 @@ import type {
   CheckoutPrMergeResponse,
   CheckoutPrMergeMethod,
   CheckoutGithubSetAutoMergeResponse,
+  CheckoutGithubGetCheckDetailsResponse,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
   CheckoutSwitchBranchResponse,
@@ -292,6 +293,7 @@ type CheckoutRefreshPayload = CheckoutRefreshResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutGithubSetAutoMergePayload = CheckoutGithubSetAutoMergeResponse["payload"];
+type CheckoutGithubGetCheckDetailsPayload = CheckoutGithubGetCheckDetailsResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
@@ -3021,6 +3023,32 @@ export class DaemonClient {
       },
       timeout: 60000,
     });
+  }
+
+  async checkoutGithubGetCheckDetails(
+    input: {
+      cwd: string;
+      repoOwner: string;
+      repoName: string;
+      checkRunId: number;
+      workflowRunId?: number;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubGetCheckDetailsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.get_check_details.response">(
+      {
+        requestId,
+        message: {
+          type: "checkout.github.get_check_details.request",
+          cwd: input.cwd,
+          repoOwner: input.repoOwner,
+          repoName: input.repoName,
+          checkRunId: input.checkRunId,
+          workflowRunId: input.workflowRunId,
+        },
+        timeout: 60000,
+      },
+    );
   }
 
   async checkoutPrStatus(cwd: string, requestId?: string): Promise<CheckoutPrStatusPayload> {

@@ -9,7 +9,7 @@ import {
   getActivityVerb,
   getStateLabel,
   mapPrPaneData,
-} from "./pr-pane-data";
+} from "./data";
 
 type CheckoutPrStatus = NonNullable<CheckoutPrStatusResponse["payload"]["status"]>;
 type PullRequestTimeline = PullRequestTimelineResponse["payload"];
@@ -118,6 +118,7 @@ describe("mapPrPaneData", () => {
 
     expect(data?.checks).toEqual([
       {
+        provider: "github",
         name: "typecheck",
         status: "success",
         url: "https://example.com/checks/1",
@@ -147,16 +148,44 @@ describe("mapPrPaneData", () => {
 
     expect(data?.checks).toEqual([
       {
+        provider: "github",
         name: "success",
         workflow: "CI",
         status: "success",
         duration: "1m",
         url: "https://example.com/1",
       },
-      { name: "failure", status: "failure", url: "https://example.com/2" },
-      { name: "pending", status: "pending", url: "https://example.com/3" },
-      { name: "skipped", status: "skipped", url: "https://example.com/4" },
-      { name: "cancelled", status: "skipped", url: "https://example.com/5" },
+      { provider: "github", name: "failure", status: "failure", url: "https://example.com/2" },
+      { provider: "github", name: "pending", status: "pending", url: "https://example.com/3" },
+      { provider: "github", name: "skipped", status: "skipped", url: "https://example.com/4" },
+      { provider: "github", name: "cancelled", status: "skipped", url: "https://example.com/5" },
+    ]);
+  });
+
+  it("maps GitHub check identifiers into provider refs", () => {
+    const data = mapPrPaneData(
+      status({
+        checks: [
+          {
+            name: "server-tests",
+            status: "failure",
+            url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+            checkRunId: 12345,
+            workflowRunId: 456,
+          },
+        ],
+      }),
+      baseTimeline,
+    );
+
+    expect(data?.checks).toEqual([
+      {
+        provider: "github",
+        name: "server-tests",
+        status: "failure",
+        url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+        github: { checkRunId: 12345, workflowRunId: 456 },
+      },
     ]);
   });
 
@@ -189,6 +218,58 @@ describe("mapPrPaneData", () => {
 
     expect(data?.activity.map((item) => item.kind)).toEqual(["review", "comment"]);
     expect(data?.activity.map((item) => item.author)).toEqual(["alice", "bob"]);
+  });
+
+  it("maps timeline author avatar URLs and inline comment location metadata", () => {
+    const data = mapPrPaneData(
+      baseStatus,
+      timeline({
+        items: [
+          {
+            id: "thread-comment-1",
+            kind: "comment",
+            author: "inline-reviewer",
+            authorUrl: "https://github.com/inline-reviewer",
+            avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+            body: "This should include line context.",
+            createdAt: Date.UTC(2026, 0, 1, 11, 0, 0),
+            url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+            location: {
+              path: "packages/app/src/git/pull-request-panel/data.ts",
+              line: 24,
+              startLine: 20,
+              threadId: "PRRT_1",
+              isResolved: true,
+              isOutdated: false,
+            },
+          },
+        ],
+      }),
+      Date.UTC(2026, 0, 1, 12, 0, 0),
+    );
+
+    expect(data?.activity).toEqual([
+      {
+        id: "thread-comment-1",
+        provider: "github",
+        kind: "comment",
+        author: "inline-reviewer",
+        authorUrl: "https://github.com/inline-reviewer",
+        avatarColor: deriveAvatarColor("inline-reviewer"),
+        avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+        body: "This should include line context.",
+        age: "1h ago",
+        url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+        location: {
+          path: "packages/app/src/git/pull-request-panel/data.ts",
+          line: 24,
+          startLine: 20,
+          threadId: "PRRT_1",
+          isResolved: true,
+          isOutdated: false,
+        },
+      },
+    ]);
   });
 
   it("filters empty commented reviews but keeps blocking review states", () => {

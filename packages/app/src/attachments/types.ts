@@ -41,6 +41,23 @@ export interface BrowserElementAttachment {
   formatted: string;
 }
 
+export type PullRequestContextAttachmentSource =
+  | "pull_request_comment"
+  | "pull_request_review"
+  | "pull_request_check";
+
+export type PullRequestContextAttachmentProvider = "github";
+
+export interface PullRequestContextAttachment {
+  id: string;
+  source: PullRequestContextAttachmentSource;
+  provider: PullRequestContextAttachmentProvider;
+  title: string;
+  subtitle?: string;
+  text: string;
+  url?: string | null;
+}
+
 export type ComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "github_issue"; item: GitHubSearchItem }
@@ -49,6 +66,7 @@ export type ComposerAttachment =
       kind: "browser_element";
       attachment: BrowserElementAttachment;
     }
+  | ({ kind: "context" } & PullRequestContextAttachment)
   | {
       kind: "review";
       attachment: Extract<AgentAttachment, { type: "review" }>;
@@ -58,12 +76,12 @@ export type ComposerAttachment =
 
 export type UserComposerAttachment = Exclude<
   ComposerAttachment,
-  { kind: "review" } | { kind: "browser_element" }
+  { kind: "review" } | { kind: "browser_element" } | { kind: "context" }
 >;
 
 export type WorkspaceComposerAttachment = Extract<
   ComposerAttachment,
-  { kind: "review" } | { kind: "browser_element" }
+  { kind: "review" } | { kind: "browser_element" } | { kind: "context" }
 >;
 
 export type AttachmentDataSource =

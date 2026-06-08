@@ -1,4 +1,5 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
+import { prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
 
 interface CheckoutQueryIdentity {
   serverId: string;
@@ -25,18 +26,6 @@ export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
   return ["checkoutPrStatus", serverId, cwd] as const;
 }
 
-export function prPaneTimelineQueryKey({
-  serverId,
-  cwd,
-  prNumber,
-}: {
-  serverId: string;
-  cwd: string;
-  prNumber: number | null;
-}) {
-  return ["prPaneTimeline", serverId, cwd, prNumber] as const;
-}
-
 export async function invalidateCheckoutGitQueriesForClient(
   queryClient: QueryClient,
   identity: CheckoutQueryIdentity,
@@ -52,7 +41,7 @@ export async function invalidateCheckoutGitQueriesForClient(
       predicate: checkoutQueryPredicate("checkoutPrStatus", identity),
     }),
     queryClient.invalidateQueries({
-      predicate: checkoutQueryPredicate("prPaneTimeline", identity),
+      predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
     }),
   ]);
 }

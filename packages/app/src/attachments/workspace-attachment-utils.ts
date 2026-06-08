@@ -8,7 +8,11 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 export function isWorkspaceAttachment(
   attachment: ComposerAttachment | undefined,
 ): attachment is WorkspaceComposerAttachment {
-  return attachment?.kind === "review" || attachment?.kind === "browser_element";
+  return (
+    attachment?.kind === "review" ||
+    attachment?.kind === "browser_element" ||
+    attachment?.kind === "context"
+  );
 }
 
 export function userAttachmentsOnly(
@@ -16,7 +20,9 @@ export function userAttachmentsOnly(
 ): UserComposerAttachment[] {
   return attachments.filter(
     (attachment): attachment is UserComposerAttachment =>
-      attachment.kind !== "review" && attachment.kind !== "browser_element",
+      attachment.kind !== "review" &&
+      attachment.kind !== "browser_element" &&
+      attachment.kind !== "context",
   );
 }
 
@@ -29,6 +35,14 @@ export function workspaceAttachmentToSubmitAttachment(
       mimeType: "text/plain",
       title: `Browser element · ${attachment.attachment.tag}`,
       text: attachment.attachment.formatted,
+    };
+  }
+  if (attachment.kind === "context") {
+    return {
+      type: "text",
+      mimeType: "text/plain",
+      title: attachment.title,
+      text: attachment.text,
     };
   }
   return attachment.kind === "review" ? attachment.attachment : null;

@@ -60,6 +60,33 @@ function areWorkspaceAttachmentsEqual(
   return left.every((attachment, index) => attachment === right[index]);
 }
 
+function getContextAttachmentKey(attachment: WorkspaceComposerAttachment): string | null {
+  if (attachment.kind !== "context") {
+    return null;
+  }
+  return JSON.stringify({
+    kind: attachment.kind,
+    provider: attachment.provider,
+    source: attachment.source,
+    id: attachment.id,
+  });
+}
+
+export function appendWorkspaceAttachment(
+  current: readonly WorkspaceComposerAttachment[],
+  attachment: WorkspaceComposerAttachment,
+): WorkspaceComposerAttachment[] {
+  const contextKey = getContextAttachmentKey(attachment);
+  if (contextKey === null) {
+    return [...current, attachment];
+  }
+
+  const next = current.filter(
+    (currentAttachment) => getContextAttachmentKey(currentAttachment) !== contextKey,
+  );
+  return [...next, attachment];
+}
+
 export const useWorkspaceAttachmentsStore = create<WorkspaceAttachmentsStore>()((set) => ({
   attachmentsByScope: {},
   setWorkspaceAttachments: ({ scopeKey, attachments }) => {

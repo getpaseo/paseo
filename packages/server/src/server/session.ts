@@ -2071,6 +2071,8 @@ export class Session {
         return this.handleCheckoutPrMergeRequest(msg);
       case "checkout.github.set_auto_merge.request":
         return this.handleCheckoutGithubSetAutoMergeRequest(msg);
+      case "checkout.github.get_check_details.request":
+        return this.handleCheckoutGithubGetCheckDetailsRequest(msg);
       case "checkout_pr_status_request":
         return this.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
@@ -5686,6 +5688,86 @@ export class Session {
     }
   }
 
+  private async handleCheckoutGithubGetCheckDetailsRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.github.get_check_details.request" }>,
+  ): Promise<void> {
+    const { cwd, repoOwner, repoName, checkRunId, workflowRunId, requestId } = msg;
+
+    if (
+      !isValidGitHubRepoSegment(repoOwner) ||
+      !isValidGitHubRepoSegment(repoName) ||
+      !Number.isFinite(checkRunId) ||
+      checkRunId <= 0
+    ) {
+      this.emit({
+        type: "checkout.github.get_check_details.response",
+        payload: {
+          cwd,
+          success: false,
+          details: null,
+          error: {
+            code: "UNKNOWN",
+            message: "GitHub check details request has invalid identity",
+          },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    const githubFeaturesEnabled = await this.github.isAuthenticated({ cwd });
+    if (!githubFeaturesEnabled) {
+      this.emit({
+        type: "checkout.github.get_check_details.response",
+        payload: {
+          cwd,
+          success: false,
+          details: null,
+          error: {
+            code: "UNKNOWN",
+            message: "GitHub CLI is unavailable or not authenticated",
+          },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const details = await this.github.getGitHubCheckDetails({
+        cwd,
+        repoOwner,
+        repoName,
+        checkRunId,
+        workflowRunId,
+      });
+      this.emit({
+        type: "checkout.github.get_check_details.response",
+        payload: {
+          cwd,
+          success: true,
+          details,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.github.get_check_details.response",
+        payload: {
+          cwd,
+          success: false,
+          details: null,
+          error: {
+            code: "UNKNOWN",
+            message: error instanceof Error ? error.message : String(error),
+          },
+          requestId,
+        },
+      });
+    }
+  }
+
   private async handlePaseoWorktreeListRequest(
     msg: Extract<SessionInboundMessage, { type: "paseo_worktree_list_request" }>,
   ): Promise<void> {
@@ -9246,6 +9328,5 @@ function isValidGitHubRepoSegment(value: string): boolean {
 function toPullRequestTimelinePayloadItem(
   item: PullRequestTimelineItem,
 ): PullRequestTimelinePayloadItem {
-  const { authorUrl: _authorUrl, ...payload } = item;
-  return payload;
+  return item;
 }

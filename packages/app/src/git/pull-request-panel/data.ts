@@ -7,27 +7,56 @@ export type PrState = "open" | "draft" | "merged" | "closed";
 export type CheckStatus = "success" | "failure" | "pending" | "skipped";
 export type ReviewState = "approved" | "changes_requested" | "commented";
 export type ActivityKind = "review" | "comment";
+export type PullRequestProvider = "github";
+
+export interface PullRequestProviderMetadata {
+  id: PullRequestProvider;
+  label: string;
+  url?: string | null;
+}
+
+const GITHUB_PROVIDER: PullRequestProviderMetadata = { id: "github", label: "GitHub" };
 
 export interface PrPaneCheck {
+  provider: PullRequestProvider;
   name: string;
   workflow?: string;
   status: CheckStatus;
   duration?: string;
   url: string;
+  github?: {
+    checkRunId?: number;
+    workflowRunId?: number;
+  };
 }
 
 export interface PrPaneActivity {
+  provider: PullRequestProvider;
+  id: string;
   kind: ActivityKind;
   author: string;
+  authorUrl?: string | null;
   avatarColor: string;
+  avatarUrl?: string | null;
   reviewState?: ReviewState;
   body: string;
   age: string;
   url: string;
+  location?: {
+    path: string;
+    line?: number;
+    startLine?: number;
+    threadId?: string;
+    isResolved?: boolean;
+    isOutdated?: boolean;
+  };
 }
 
 export interface PrPaneData {
+  provider: PullRequestProviderMetadata;
   number: number;
+  repoOwner?: string;
+  repoName?: string;
   title: string;
   state: PrState;
   url: string;
@@ -69,7 +98,10 @@ export function mapPrPaneData(
   const timelineMatchesStatus = timeline?.prNumber === number;
 
   return {
+    provider: GITHUB_PROVIDER,
     number,
+    repoOwner: status.repoOwner,
+    repoName: status.repoName,
     title: status.title,
     state: derivePrState(status),
     url: status.url,
@@ -137,11 +169,20 @@ function mapCheck(check: NonNullable<CheckoutPrStatus>["checks"][number]): PrPan
 
   return [
     {
+      provider: "github",
       name: check.name,
-      workflow: check.workflow,
       status: mapCheckStatus(check.status),
-      duration: check.duration,
       url: check.url,
+      ...(check.workflow ? { workflow: check.workflow } : {}),
+      ...(check.duration ? { duration: check.duration } : {}),
+      ...(check.checkRunId !== undefined || check.workflowRunId !== undefined
+        ? {
+            github: {
+              ...(check.checkRunId !== undefined ? { checkRunId: check.checkRunId } : {}),
+              ...(check.workflowRunId !== undefined ? { workflowRunId: check.workflowRunId } : {}),
+            },
+          }
+        : {}),
     },
   ];
 }
@@ -168,12 +209,17 @@ function mapActivity(item: PullRequestTimelineItem, nowMs: number): PrPaneActivi
     }
     return [
       {
+        id: item.id,
+        provider: "github",
         kind: "comment",
         author: item.author,
+        authorUrl: item.authorUrl,
         avatarColor: deriveAvatarColor(item.author),
+        avatarUrl: item.avatarUrl,
         body: item.body,
         age: formatAge(item.createdAt, nowMs),
         url: item.url,
+        location: item.location,
       },
     ];
   }
@@ -184,9 +230,13 @@ function mapActivity(item: PullRequestTimelineItem, nowMs: number): PrPaneActivi
 
   return [
     {
+      id: item.id,
+      provider: "github",
       kind: "review",
       author: item.author,
+      authorUrl: item.authorUrl,
       avatarColor: deriveAvatarColor(item.author),
+      avatarUrl: item.avatarUrl,
       reviewState: item.reviewState,
       body: item.body,
       age: formatAge(item.createdAt, nowMs),

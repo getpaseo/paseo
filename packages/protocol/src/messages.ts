@@ -1441,6 +1441,16 @@ export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutGithubGetCheckDetailsRequestSchema = z.object({
+  type: z.literal("checkout.github.get_check_details.request"),
+  cwd: z.string(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  checkRunId: z.number(),
+  workflowRunId: z.number().optional(),
+  requestId: z.string(),
+});
+
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
   cwd: z.string(),
@@ -1910,6 +1920,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
+  CheckoutGithubGetCheckDetailsRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
@@ -2137,6 +2148,8 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         providersSnapshot: z.boolean().optional(),
         checkoutGithubSetAutoMerge: z.boolean().optional(),
+        // COMPAT(githubCheckDetails): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        githubCheckDetails: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -3031,6 +3044,8 @@ export const CheckoutPrStatusSchema = z.object({
         url: z.string().nullable(),
         workflow: z.string().optional(),
         duration: z.string().optional(),
+        checkRunId: z.number().optional(),
+        workflowRunId: z.number().optional(),
       }),
     )
     .optional()
@@ -3176,6 +3191,58 @@ export const CheckoutGithubSetAutoMergeResponseSchema = z.object({
   }),
 });
 
+const CheckoutGithubCheckAnnotationSchema = z.object({
+  path: z.string().optional(),
+  startLine: z.number().optional(),
+  endLine: z.number().optional(),
+  annotationLevel: z.string().optional(),
+  message: z.string().optional(),
+  title: z.string().optional(),
+  rawDetails: z.string().optional(),
+});
+
+const CheckoutGithubCheckJobSchema = z.object({
+  jobId: z.number(),
+  name: z.string(),
+  status: z.string().nullable().optional(),
+  conclusion: z.string().nullable().optional(),
+  url: z.string().nullable().optional(),
+  logTail: z.string().optional(),
+  logTruncated: z.boolean().optional(),
+});
+
+export const CheckoutGithubCheckDetailsSchema = z.object({
+  checkRunId: z.number(),
+  workflowRunId: z.number().nullable().optional(),
+  name: z.string(),
+  status: z.string().nullable().optional(),
+  conclusion: z.string().nullable().optional(),
+  url: z.string().nullable().optional(),
+  detailsUrl: z.string().nullable().optional(),
+  output: z
+    .object({
+      title: z.string().nullable().optional(),
+      summary: z.string().nullable().optional(),
+      text: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  annotations: z.array(CheckoutGithubCheckAnnotationSchema).optional().default([]),
+  failedJobs: z.array(CheckoutGithubCheckJobSchema).optional().default([]),
+  truncated: z.boolean().optional().default(false),
+});
+
+export const CheckoutGithubGetCheckDetailsResponseSchema = z.object({
+  type: z.literal("checkout.github.get_check_details.response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    details: CheckoutGithubCheckDetailsSchema.nullable().optional().default(null),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutPrStatusResponseSchema = z.object({
   type: z.literal("checkout_pr_status_response"),
   payload: CheckoutPrStatusPayloadSchema,
@@ -3211,6 +3278,8 @@ const PullRequestTimelineReviewItemSchema = z.object({
   id: z.string().optional().default(""),
   kind: z.literal("review"),
   author: z.string().optional().default("unknown"),
+  authorUrl: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   body: z.string().optional().default(""),
   createdAt: z.number().optional().default(0),
   url: z.string().optional().default(""),
@@ -3224,9 +3293,21 @@ const PullRequestTimelineCommentItemSchema = z.object({
   id: z.string().optional().default(""),
   kind: z.literal("comment"),
   author: z.string().optional().default("unknown"),
+  authorUrl: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   body: z.string().optional().default(""),
   createdAt: z.number().optional().default(0),
   url: z.string().optional().default(""),
+  location: z
+    .object({
+      path: z.string(),
+      line: z.number().optional(),
+      startLine: z.number().optional(),
+      threadId: z.string().optional(),
+      isResolved: z.boolean().optional(),
+      isOutdated: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const PullRequestTimelineItemSchema = z.preprocess(
@@ -3772,6 +3853,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
+  CheckoutGithubGetCheckDetailsResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
@@ -4042,6 +4124,13 @@ export type CheckoutGithubSetAutoMergeRequest = z.infer<
 >;
 export type CheckoutGithubSetAutoMergeResponse = z.infer<
   typeof CheckoutGithubSetAutoMergeResponseSchema
+>;
+export type CheckoutGithubGetCheckDetailsRequest = z.infer<
+  typeof CheckoutGithubGetCheckDetailsRequestSchema
+>;
+export type CheckoutGithubCheckDetails = z.infer<typeof CheckoutGithubCheckDetailsSchema>;
+export type CheckoutGithubGetCheckDetailsResponse = z.infer<
+  typeof CheckoutGithubGetCheckDetailsResponseSchema
 >;
 export type PullRequestMergeable = z.infer<typeof CheckoutPrStatusSchema>["mergeable"];
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;

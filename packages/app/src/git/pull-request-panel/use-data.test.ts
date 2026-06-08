@@ -12,7 +12,7 @@ import {
   selectPrPaneState,
   shouldFetchTimelineFrom,
   unsupportedTimelineKey,
-} from "./use-pr-pane-data";
+} from "./use-data";
 
 type CheckoutPrStatus = NonNullable<CheckoutPrStatusResponse["payload"]["status"]>;
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];

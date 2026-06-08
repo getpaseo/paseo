@@ -324,24 +324,24 @@ Total git commands in the dev-style copied-home daemon log:
 
 Top cwd counts:
 
-| Count | Cwd                                                                                   |
-| ----: | ------------------------------------------------------------------------------------- |
-|    44 | `/Users/moboudra/.paseo/worktrees/1luy0po7/merry-ladybug`                             |
-|    44 | `/Users/moboudra/.paseo/worktrees/1luy0po7/hopeful-eel`                               |
-|    44 | `/Users/moboudra/.paseo/worktrees/1luy0po7/fix-compaction-cancel-loading`             |
-|    44 | `/Users/moboudra/.paseo/worktrees/1luy0po7/fix-archive-worktree-session-history`      |
-|    44 | `/Users/moboudra/.paseo/worktrees/0vpo9h4b/breezy-toad`                               |
-|    36 | `/Users/moboudra/.paseo/worktrees/steering-policy-refactor-detached`                  |
-|    36 | `/Users/moboudra/.paseo/worktrees/1luy0po7/integration-session-mcp-command-stack`     |
-|    36 | `/Users/moboudra/.paseo/worktrees/1luy0po7/fix-provider-diagnostic-binary-resolution` |
-|    36 | `/Users/moboudra/.paseo/worktrees/1luy0po7/feat-voice-runtime-on-demand`              |
-|    36 | `/Users/moboudra/.paseo/worktrees/1luy0po7/feat-find-in-pane`                         |
-|    36 | `/Users/moboudra/.paseo/worktrees/1luy0po7/epic-paseo-client-sdk`                     |
-|    24 | `/Users/moboudra/dev/paseo`                                                           |
-|    24 | `/Users/moboudra/dev/blankpage/editor`                                                |
-|    24 | `/Users/moboudra/dev/faro/main`                                                       |
-|    24 | `/Users/moboudra/dev/konbert/web`                                                     |
-|    24 | `/Users/moboudra/dev/paseo-cloud`                                                     |
+| Count | Cwd                                                                                                      |
+| ----: | -------------------------------------------------------------------------------------------------------- |
+|    44 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/merry-ladybug`                             |
+|    44 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/hopeful-eel`                               |
+|    44 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/fix-compaction-cancel-loading`             |
+|    44 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/fix-archive-worktree-session-history`      |
+|    44 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/0vpo9h4b/breezy-toad`                               |
+|    36 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/steering-policy-refactor-detached`                  |
+|    36 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/integration-session-mcp-command-stack`     |
+|    36 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/fix-provider-diagnostic-binary-resolution` |
+|    36 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/feat-voice-runtime-on-demand`              |
+|    36 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/feat-find-in-pane`                         |
+|    36 | `/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/epic-paseo-client-sdk`                     |
+|    24 | `/Users/moboudra/dev/paseo`                                                                              |
+|    24 | `/Users/moboudra/dev/blankpage/editor`                                                                   |
+|    24 | `/Users/moboudra/dev/faro/main`                                                                          |
+|    24 | `/Users/moboudra/dev/konbert/web`                                                                        |
+|    24 | `/Users/moboudra/dev/paseo-cloud`                                                                        |
 
 In the exact OpenCode pressure window, `18:14:19` through `18:14:43`, there were:
 
