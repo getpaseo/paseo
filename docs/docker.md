@@ -140,6 +140,14 @@ with `-e PI_NPM_PACKAGE=...` if it ever changes upstream.
 Mod installs run on every fresh `docker run`; the hook skips reinstalling if the
 binary is already present (e.g. after `docker restart`).
 
+Install hooks run as root because they install system-wide agent CLIs, but the
+mods loader gives them a root-scoped install environment (`HOME`, XDG dirs,
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and the npm cache point under `/root` or
+`/tmp`). This prevents `npm install -g` package scripts from creating root-owned
+files in `/home/paseo`. Hooks that intentionally need the runtime user's paths
+should read the `PASEO_USER_*` variables exposed by the loader instead of
+`HOME`.
+
 ### Agent credentials
 
 Each agent manages its own auth and stores it under `HOME` (`/home/paseo` by

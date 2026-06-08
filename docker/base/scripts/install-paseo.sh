@@ -16,19 +16,32 @@ if [ "$ALPINE" -eq 1 ]; then
   apk add --no-cache --virtual .paseo-build-deps build-base python3
 fi
 
+INSTALL_HOME=/root
+NPM_CACHE=/tmp/paseo-npm-cache
+mkdir -p "$INSTALL_HOME" "$NPM_CACHE"
+
 # sherpa-onnx (voice) is optional and has no musl build; skip it everywhere.
 ONNXRUNTIME_NODE_INSTALL=skip \
+  HOME="$INSTALL_HOME" \
+  npm_config_cache="$NPM_CACHE" \
   npm install -g --omit=optional \
     "@getpaseo/server@${PASEO_VERSION}" \
     "@getpaseo/cli@${PASEO_VERSION}"
 
 # Record the absolute path to the supervisor entrypoint so the launcher can
 # exec it directly (the @getpaseo/server package exposes no bin).
-SERVER_ENTRY="$(npm root -g)/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"
+SERVER_ENTRY="$(
+  HOME="$INSTALL_HOME" \
+    npm_config_cache="$NPM_CACHE" \
+    npm root -g
+)/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"
 test -f "$SERVER_ENTRY"
 printf '%s\n' "$SERVER_ENTRY" > /etc/paseo-server-entry
 
-npm cache clean --force >/dev/null 2>&1 || true
+HOME="$INSTALL_HOME" \
+  npm_config_cache="$NPM_CACHE" \
+  npm cache clean --force >/dev/null 2>&1 || true
+rm -rf "$NPM_CACHE"
 
 if [ "$ALPINE" -eq 1 ]; then
   apk del .paseo-build-deps

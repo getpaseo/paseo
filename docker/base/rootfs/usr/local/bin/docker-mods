@@ -145,6 +145,44 @@ apply_mod() {
 run_install_hooks() {
   shopt -s nullglob
   local hook dir
+  local image_default_home="/home/paseo"
+  local image_default_paseo_home="${image_default_home}/.paseo"
+  local user_home="${HOME:-$image_default_home}"
+  local user_paseo_home="${PASEO_HOME:-}"
+  if [[ -z "$user_paseo_home" || ( "$user_home" != "$image_default_home" && "$user_paseo_home" == "$image_default_paseo_home" ) ]]; then
+    user_paseo_home="${user_home}/.paseo"
+  fi
+
+  local user_claude_config_dir user_codex_home user_xdg_config_home user_xdg_data_home user_xdg_state_home user_xdg_cache_home
+  home_scoped_value() {
+    local name="$1"
+    local suffix="$2"
+    local image_default="${image_default_home}${suffix}"
+    local value="${!name:-}"
+    if [[ -z "$value" || ( "$user_home" != "$image_default_home" && "$value" == "$image_default" ) ]]; then
+      printf '%s' "${user_home}${suffix}"
+    else
+      printf '%s' "$value"
+    fi
+  }
+
+  user_claude_config_dir="$(home_scoped_value CLAUDE_CONFIG_DIR "/.claude")"
+  user_codex_home="$(home_scoped_value CODEX_HOME "/.codex")"
+  user_xdg_config_home="$(home_scoped_value XDG_CONFIG_HOME "/.config")"
+  user_xdg_data_home="$(home_scoped_value XDG_DATA_HOME "/.local/share")"
+  user_xdg_state_home="$(home_scoped_value XDG_STATE_HOME "/.local/state")"
+  user_xdg_cache_home="$(home_scoped_value XDG_CACHE_HOME "/.cache")"
+
+  local install_home="/root"
+  mkdir -p \
+    "${install_home}/.claude" \
+    "${install_home}/.codex" \
+    "${install_home}/.config" \
+    "${install_home}/.local/share" \
+    "${install_home}/.local/state" \
+    "${install_home}/.cache" \
+    /tmp/paseo-npm-cache
+
   for hook in /etc/paseo-mods/*/install; do
     dir="$(dirname "$hook")"
     if [[ -f "${dir}/.done" ]]; then
@@ -152,7 +190,25 @@ run_install_hooks() {
     fi
     echo "[mods] running install hook: ${hook}"
     chmod +x "$hook" || true
-    if "$hook"; then
+    if env \
+      HOME="$install_home" \
+      PASEO_HOME="${install_home}/.paseo" \
+      CLAUDE_CONFIG_DIR="${install_home}/.claude" \
+      CODEX_HOME="${install_home}/.codex" \
+      XDG_CONFIG_HOME="${install_home}/.config" \
+      XDG_DATA_HOME="${install_home}/.local/share" \
+      XDG_STATE_HOME="${install_home}/.local/state" \
+      XDG_CACHE_HOME="${install_home}/.cache" \
+      npm_config_cache=/tmp/paseo-npm-cache \
+      PASEO_USER_HOME="$user_home" \
+      PASEO_USER_PASEO_HOME="$user_paseo_home" \
+      PASEO_USER_CLAUDE_CONFIG_DIR="$user_claude_config_dir" \
+      PASEO_USER_CODEX_HOME="$user_codex_home" \
+      PASEO_USER_XDG_CONFIG_HOME="$user_xdg_config_home" \
+      PASEO_USER_XDG_DATA_HOME="$user_xdg_data_home" \
+      PASEO_USER_XDG_STATE_HOME="$user_xdg_state_home" \
+      PASEO_USER_XDG_CACHE_HOME="$user_xdg_cache_home" \
+      bash "$hook"; then
       touch "${dir}/.done"
     else
       echo "[mods] WARNING: install hook failed: ${hook}" >&2

@@ -62,6 +62,18 @@ ensure_owned_dir() {
   chmod "$mode" "$dir" || true
 }
 
+ensure_owned_parent_dir() {
+  local dir="$1"
+  if [[ -z "$dir" ]]; then
+    return 0
+  fi
+  local parent
+  parent="$(dirname "$dir")"
+  if [[ "$parent" == "$CONTAINER_HOME" || "$parent" == "$CONTAINER_HOME"/* ]]; then
+    ensure_owned_dir "$parent" 700
+  fi
+}
+
 # Only chown directory entries, not their contents; avoid clobbering large
 # bind-mounted homes while still making the expected roots writable.
 ensure_owned_dir "$CONTAINER_HOME" 700
@@ -69,7 +81,9 @@ ensure_owned_dir "$PASEO_HOME" 700
 ensure_owned_dir "$CLAUDE_CONFIG_DIR" 700
 ensure_owned_dir "$CODEX_HOME" 700
 ensure_owned_dir "$XDG_CONFIG_HOME" 700
+ensure_owned_parent_dir "$XDG_DATA_HOME"
 ensure_owned_dir "$XDG_DATA_HOME" 700
+ensure_owned_parent_dir "$XDG_STATE_HOME"
 ensure_owned_dir "$XDG_STATE_HOME" 700
 ensure_owned_dir "$XDG_CACHE_HOME" 700
 
