@@ -188,7 +188,7 @@ describe("pull request context attachments", () => {
       }),
     ).toEqual({
       kind: "context",
-      id: "42:check:server-tests",
+      id: "42:check-run:12345",
       source: "pull_request_check",
       provider: "github",
       title: "server-tests",
@@ -221,6 +221,22 @@ describe("pull request context attachments", () => {
         "Note: Check details were truncated by GitHub/API or local caps.",
       ].join("\n"),
     });
+  });
+
+  it("keeps same-named GitHub checks distinct by check run", () => {
+    const ubuntu = buildPullRequestCheckContextAttachment({
+      ...baseInput,
+      check: check({ github: { checkRunId: 12345, workflowRunId: 456 } }),
+      githubDetails: null,
+    });
+    const windows = buildPullRequestCheckContextAttachment({
+      ...baseInput,
+      check: check({ github: { checkRunId: 67890, workflowRunId: 456 } }),
+      githubDetails: null,
+    });
+
+    expect(ubuntu.id).toBe("42:check-run:12345");
+    expect(windows.id).toBe("42:check-run:67890");
   });
 
   it("formats metadata-only failed check context when details are unavailable", () => {

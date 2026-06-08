@@ -81,7 +81,7 @@ export function buildPullRequestCheckContextAttachment(
 ): PullRequestContextAttachment {
   return {
     kind: "context",
-    id: `${input.pullRequest.number}:check:${input.check.name}`,
+    id: formatPullRequestCheckContextId(input.pullRequest, input.check),
     source: "pull_request_check",
     provider: input.provider.id,
     title: input.check.name,
@@ -89,6 +89,16 @@ export function buildPullRequestCheckContextAttachment(
     text: formatGitHubCheckContextText(input),
     url: input.githubDetails?.detailsUrl ?? input.githubDetails?.url ?? input.check.url,
   };
+}
+
+function formatPullRequestCheckContextId(
+  pullRequest: PullRequestContextMetadata,
+  check: PrPaneCheck,
+): string {
+  if (check.github?.checkRunId !== undefined) {
+    return `${pullRequest.number}:check-run:${check.github.checkRunId}`;
+  }
+  return `${pullRequest.number}:check:${check.name}`;
 }
 
 function formatGitHubCheckContextText({
