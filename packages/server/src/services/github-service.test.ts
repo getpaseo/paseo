@@ -1699,6 +1699,41 @@ describe("GitHubService", () => {
     expect(details.truncated).toBe(true);
   });
 
+  it("marks check details truncated when annotations hit the page cap", async () => {
+    const annotations = Array.from({ length: 20 }, (_, index) => ({
+      path: `packages/server/src/file-${index}.ts`,
+      start_line: index + 1,
+      annotation_level: "failure",
+      message: `Failure ${index + 1}`,
+    }));
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: null },
+      }),
+      JSON.stringify(annotations),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const details = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+
+    expect(details.annotations).toHaveLength(20);
+    expect(details.truncated).toBe(true);
+  });
+
   it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {
     const runner = createScriptedRunner([
       {

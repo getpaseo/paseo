@@ -2148,7 +2148,7 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         providersSnapshot: z.boolean().optional(),
         checkoutGithubSetAutoMerge: z.boolean().optional(),
-        // COMPAT(githubCheckDetails): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        // COMPAT(githubCheckDetails): added in v0.1.92, remove gate after 2026-12-08.
         githubCheckDetails: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),

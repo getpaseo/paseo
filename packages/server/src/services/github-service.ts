@@ -6,6 +6,7 @@ import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
 
 const DEFAULT_GITHUB_CACHE_TTL_MS = 30_000;
+const CHECK_ANNOTATION_PAGE_MAX = 20;
 const CHECK_LOG_TAIL_MAX_LINES = 200;
 const CHECK_LOG_TAIL_MAX_BYTES = 16 * 1024;
 const CHECK_LOG_TAIL_CACHE_MAX_ENTRIES = 128;
@@ -1285,7 +1286,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
                 "api",
                 `${repoPath}/check-runs/${input.checkRunId}/annotations`,
                 "-f",
-                "per_page=20",
+                `per_page=${CHECK_ANNOTATION_PAGE_MAX}`,
               ],
               {
                 cwd: input.cwd,
@@ -1294,7 +1295,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           );
           const workflowRunId = input.workflowRunId ?? checkRun.workflowRunId ?? null;
           const failedJobs: GitHubCheckFailedJob[] = [];
-          let truncated = false;
+          let truncated = annotations.length >= CHECK_ANNOTATION_PAGE_MAX;
 
           if (typeof workflowRunId === "number") {
             const jobs = parseGitHubActionsJobs(
@@ -2370,12 +2371,28 @@ function capCheckLogTail(log: string): { logTail: string; logTruncated: boolean 
   let truncated = lines.length > CHECK_LOG_TAIL_MAX_LINES;
   let tail = lines.slice(-CHECK_LOG_TAIL_MAX_LINES).join("\n");
 
-  while (Buffer.byteLength(tail, "utf8") > CHECK_LOG_TAIL_MAX_BYTES) {
+  if (Buffer.byteLength(tail, "utf8") > CHECK_LOG_TAIL_MAX_BYTES) {
     truncated = true;
-    tail = tail.slice(Math.max(1, tail.length - CHECK_LOG_TAIL_MAX_BYTES));
+    tail = utf8SuffixWithinBytes(tail, CHECK_LOG_TAIL_MAX_BYTES);
   }
 
   return { logTail: tail, logTruncated: truncated };
+}
+
+function utf8SuffixWithinBytes(value: string, maxBytes: number): string {
+  let lowerBound = 0;
+  let upperBound = value.length;
+
+  while (lowerBound < upperBound) {
+    const midpoint = Math.floor((lowerBound + upperBound) / 2);
+    if (Buffer.byteLength(value.slice(midpoint), "utf8") > maxBytes) {
+      lowerBound = midpoint + 1;
+    } else {
+      upperBound = midpoint;
+    }
+  }
+
+  return value.slice(lowerBound);
 }
 
 function mapTimelineReviewState(
