@@ -40,55 +40,52 @@ describe("resolveAssistantImageSource", () => {
     });
   });
 
-  it("falls back to filesystem root for absolute paths outside the workspace", () => {
+  it("rejects absolute paths outside the workspace", () => {
     expect(
       resolveAssistantImageSource({
         source: "/tmp/paseo-codex-screenshot.png",
         workspaceRoot: "/Users/test/project",
       }),
-    ).toEqual({
-      kind: "file_rpc",
-      cwd: "/",
-      path: "/tmp/paseo-codex-screenshot.png",
-    });
+    ).toBeNull();
   });
 
-  it("uses the same home-root target as file previews for tilde paths", () => {
+  it("rejects home-relative paths", () => {
     expect(
       resolveAssistantImageSource({
         source: "~/.paseo/screenshots/output.png",
         workspaceRoot: "/Users/test/project",
       }),
+    ).toBeNull();
+  });
+
+  it("normalizes file URIs inside the workspace into file RPC requests", () => {
+    expect(
+      resolveAssistantImageSource({
+        source: "file:///Users/test/project/screenshots/output.png",
+        workspaceRoot: "/Users/test/project",
+      }),
     ).toEqual({
       kind: "file_rpc",
-      cwd: "~",
-      path: "~/.paseo/screenshots/output.png",
+      cwd: "/Users/test/project",
+      path: "/Users/test/project/screenshots/output.png",
     });
   });
 
-  it("normalizes file URIs into file RPC requests", () => {
+  it("rejects file URIs outside the workspace", () => {
     expect(
       resolveAssistantImageSource({
         source: "file:///tmp/paseo-codex-screenshot.png",
         workspaceRoot: "/Users/test/project",
       }),
-    ).toEqual({
-      kind: "file_rpc",
-      cwd: "/",
-      path: "/tmp/paseo-codex-screenshot.png",
-    });
+    ).toBeNull();
   });
 
-  it("falls back to the drive root for Windows absolute paths", () => {
+  it("rejects Windows absolute paths outside the workspace", () => {
     expect(
       resolveAssistantImageSource({
         source: "C:/Users/test/Desktop/screenshot.png",
         workspaceRoot: "D:/repo",
       }),
-    ).toEqual({
-      kind: "file_rpc",
-      cwd: "C:/",
-      path: "C:/Users/test/Desktop/screenshot.png",
-    });
+    ).toBeNull();
   });
 });

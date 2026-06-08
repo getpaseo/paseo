@@ -23,11 +23,12 @@ export function resolveAssistantImageSource(input: {
     return null;
   }
 
+  const workspaceRoot = input.workspaceRoot?.trim();
   const readTarget = resolveFilePreviewReadTarget({
     path: sourcePath,
-    workspaceRoot: input.workspaceRoot,
+    workspaceRoot,
   });
-  if (!readTarget) {
+  if (!readTarget || readTarget.cwd !== workspaceRoot) {
     return null;
   }
 
