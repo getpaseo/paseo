@@ -45,6 +45,22 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("serves wildcard CORS without reflecting credentialed origins", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      corsAllowedOrigins: ["*"],
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`, {
+        headers: { Origin: "https://evil.example" },
+      });
+
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
   function httpGetWithHost(port: number, host: string, requestPath: string): Promise<Response> {
     return new Promise((resolve, reject) => {
       const req = http.get(
@@ -200,6 +216,32 @@ describe("paseo daemon bootstrap", () => {
         ws.once("error", reject);
       });
       expect(ws.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      ws.close();
+      await daemonHandle.close();
+    }
+  });
+
+  test("rejects wildcard CORS for cross-origin websocket upgrades", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      corsAllowedOrigins: ["*"],
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${daemonHandle.port}/ws`, {
+      headers: { Origin: "https://evil.example" },
+    });
+    try {
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          ws.once("open", () => {
+            ws.close();
+            reject(new Error("Expected websocket upgrade to be rejected"));
+          });
+          ws.once("error", (error) => {
+            expect(error.message).toContain("Unexpected server response: 403");
+            resolve();
+          });
+        }),
+      ).resolves.toBeUndefined();
     } finally {
       ws.close();
       await daemonHandle.close();

@@ -590,7 +590,7 @@ export class VoiceAssistantWebSocketServer {
       !!requestHost &&
       (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
 
-    if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
+    if (!origin || allowedOrigins.has(origin) || sameOrigin) {
       callback(true);
     } else {
       this.incrementRuntimeCounter("originRejected");
