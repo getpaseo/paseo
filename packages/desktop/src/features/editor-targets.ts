@@ -190,6 +190,16 @@ function dirnameForPlatform(value: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? win32.dirname(value) : posix.dirname(value);
 }
 
+// App paths are normalized to forward slashes everywhere (see file-open), but
+// explorer.exe parses each "/segment" of an argument as a command-line switch.
+// Given a POSIX-style path it finds no path token and silently falls back to
+// the default shell folder (the user's Documents). Hand it native backslashes.
+// Only the argument needs converting — CreateProcess resolves the command path
+// fine with forward slashes.
+function toWindowsPathSeparators(value: string): string {
+  return value.replace(/\//g, "\\");
+}
+
 function isWindowsCommandScript(executable: string, platform: NodeJS.Platform): boolean {
   if (platform !== "win32") {
     return false;
@@ -237,7 +247,7 @@ function buildLaunch(input: {
       return { command: input.executable, args: ["-R", input.path] };
     }
     if (input.target.id === "explorer" && input.platform === "win32") {
-      return { command: input.executable, args: ["/select,", input.path] };
+      return { command: input.executable, args: ["/select,", toWindowsPathSeparators(input.path)] };
     }
     if (input.target.id === "file-manager") {
       return { command: input.executable, args: [dirnameForPlatform(input.path, input.platform)] };
@@ -246,6 +256,9 @@ function buildLaunch(input: {
 
   if (input.target.kind === "editor" && input.cwd && input.cwd !== input.path) {
     return { command: input.executable, args: [input.cwd, input.path] };
+  }
+  if (input.target.id === "explorer" && input.platform === "win32") {
+    return { command: input.executable, args: [toWindowsPathSeparators(input.path)] };
   }
   return { command: input.executable, args: [input.path] };
 }

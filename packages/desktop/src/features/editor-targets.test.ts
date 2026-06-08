@@ -162,7 +162,45 @@ describe("desktop editor targets", () => {
     expect(recorder.calls[0]?.args).toEqual(["-R", "/tmp/repo/src/index.ts"]);
   });
 
-  it("reveals files in Explorer on Windows", async () => {
+  it("opens the workspace directory in Explorer using Windows path separators", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      { editorId: "explorer", path: "C:/Users/me/project" },
+      {
+        platform: "win32",
+        env: { PATH: "C:/Windows" },
+        existsSync: createExistsSync(["C:/Users/me/project", "C:/Windows/explorer.exe"]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    // explorer.exe reads each "/segment" of a forward-slash arg as a switch and
+    // falls back to the Documents folder. The path must use backslashes.
+    expect(recorder.calls[0]?.command).toBe("C:/Windows/explorer.exe");
+    expect(recorder.calls[0]?.args).toEqual(["C:\\Users\\me\\project"]);
+    expect(recorder.calls[0]?.options.shell).toBe(false);
+  });
+
+  it("opens UNC workspace directories in Explorer using Windows path separators", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      { editorId: "explorer", path: "//server/share/project" },
+      {
+        platform: "win32",
+        env: { PATH: "C:/Windows" },
+        existsSync: createExistsSync(["//server/share/project", "C:/Windows/explorer.exe"]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    // UNC paths must become \\server\share\... — the leading // is preserved by
+    // the app's path normalization and explorer accepts the backslash form.
+    expect(recorder.calls[0]?.args).toEqual(["\\\\server\\share\\project"]);
+  });
+
+  it("reveals files in Explorer on Windows using Windows path separators", async () => {
     const recorder = createSpawnRecorder();
 
     await openEditorTarget(
@@ -176,7 +214,7 @@ describe("desktop editor targets", () => {
     );
 
     expect(recorder.calls[0]?.command).toBe("C:/Windows/explorer.exe");
-    expect(recorder.calls[0]?.args).toEqual(["/select,", "C:/repo/src/index.ts"]);
+    expect(recorder.calls[0]?.args).toEqual(["/select,", "C:\\repo\\src\\index.ts"]);
     expect(recorder.calls[0]?.options.shell).toBe(false);
   });
 
@@ -196,11 +234,34 @@ describe("desktop editor targets", () => {
       },
     );
 
+    // Separators flip to backslashes; "&" stays literal and the path stays a
+    // separate arg token (Node only quotes the path, not the "/select," switch).
     expect(recorder.calls[0]).toMatchObject({
       command: "C:/Windows/explorer.exe",
-      args: ["/select,", "C:/repo/src/file & calculator.ts"],
+      args: ["/select,", "C:\\repo\\src\\file & calculator.ts"],
       options: { shell: false },
     });
+  });
+
+  it("does not convert separators for editor targets on Windows", async () => {
+    const recorder = createSpawnRecorder();
+
+    await openEditorTarget(
+      { editorId: "vscode", path: "C:/repo/src/index.ts", cwd: "C:/repo" },
+      {
+        platform: "win32",
+        env: { PATH: "C:/Program Files/Microsoft VS Code/bin" },
+        existsSync: createExistsSync([
+          "C:/repo/src/index.ts",
+          "C:/repo",
+          "C:/Program Files/Microsoft VS Code/bin/code.exe",
+        ]),
+        spawn: recorder.spawn,
+      },
+    );
+
+    // Editors accept forward slashes; the backslash conversion is Explorer-scoped.
+    expect(recorder.calls[0]?.args).toEqual(["C:/repo", "C:/repo/src/index.ts"]);
   });
 
   it("prefers Windows command shims over extensionless shell launchers", async () => {
