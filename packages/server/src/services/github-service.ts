@@ -1307,7 +1307,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               ),
             );
             const failed = jobs.filter(isFailedActionsJob);
-            truncated = failed.length > FAILED_CHECK_JOB_LIMIT;
+            truncated ||= failed.length > FAILED_CHECK_JOB_LIMIT;
             for (const job of failed.slice(0, FAILED_CHECK_JOB_LIMIT)) {
               const log = await getCachedCheckLogTail({
                 cwd: input.cwd,

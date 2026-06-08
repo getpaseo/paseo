@@ -1713,9 +1713,10 @@ describe("GitHubService", () => {
         status: "completed",
         conclusion: "failure",
         html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
-        check_suite: { workflow_run: null },
+        check_suite: { workflow_run: { id: 456 } },
       }),
       JSON.stringify(annotations),
+      JSON.stringify({ jobs: [] }),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
