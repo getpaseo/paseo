@@ -31,6 +31,11 @@ interface ProtectedMarkdownRange {
   end: number;
 }
 
+interface MarkdownImageDimensions {
+  width?: number;
+  height?: number;
+}
+
 interface HtmlTextToken {
   kind: "text";
   value: string;
@@ -50,6 +55,27 @@ interface HtmlTagToken {
 }
 
 type HtmlToken = HtmlTextToken | HtmlCommentToken | HtmlTagToken;
+
+interface InlineImageParseResult {
+  part: MarkdownInlineImagePart;
+  end: number;
+}
+
+interface HtmlTokenParseResult {
+  token: HtmlToken;
+  end: number;
+}
+
+interface HtmlAttributeParseResult {
+  name: string;
+  value: string;
+  end: number;
+}
+
+interface MarkdownDelimiterMatch {
+  index: number;
+  end: number;
+}
 
 export function splitHtmlishMarkdown(source: string): MarkdownDisplayPart[] {
   return splitHtmlishTokens(tokenizeHtmlishMarkdown(source));
@@ -90,10 +116,7 @@ function splitHtmlishTokens(tokens: HtmlToken[]): MarkdownDisplayPart[] {
   return parts;
 }
 
-function parseInlineImageAt(
-  tokens: HtmlToken[],
-  start: number,
-): { part: MarkdownInlineImagePart; end: number } | null {
+function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImageParseResult | null {
   const token = tokens[start];
   if (token?.kind !== "tag" || token.closing) {
     return null;
@@ -314,10 +337,7 @@ function imageTokenToInlineImage(
   };
 }
 
-function parseImageDimensions(attributes: Record<string, string>): {
-  width?: number;
-  height?: number;
-} {
+function parseImageDimensions(attributes: Record<string, string>): MarkdownImageDimensions {
   return {
     ...parseImageDimension("width", attributes.width),
     ...parseImageDimension("height", attributes.height),
@@ -439,7 +459,7 @@ function tokenizeHtmlishMarkdown(source: string): HtmlToken[] {
   return tokens;
 }
 
-function parseHtmlTokenAt(source: string, start: number): { token: HtmlToken; end: number } | null {
+function parseHtmlTokenAt(source: string, start: number): HtmlTokenParseResult | null {
   if (source.startsWith("<!--", start)) {
     const close = source.indexOf("-->", start + 4);
     if (close === -1) {
@@ -529,10 +549,7 @@ function getCommentEnd(source: string, start: number, defaultEnd: number): numbe
   return defaultEnd;
 }
 
-function parseAttribute(
-  source: string,
-  start: number,
-): { name: string; value: string; end: number } | null {
+function parseAttribute(source: string, start: number): HtmlAttributeParseResult | null {
   let cursor = start;
   const nameStart = cursor;
   while (cursor < source.length && isAttributeNameCharacter(source[cursor])) {
@@ -621,7 +638,7 @@ function findClosingFence(
   source: string,
   start: number,
   marker: string,
-): { index: number; end: number } | null {
+): MarkdownDelimiterMatch | null {
   const closeRe = new RegExp(
     `^ {0,3}[${marker[0]}]{${marker.length},}[^\\n\\r]*(?:\\r?\\n|$)`,
     "gm",
@@ -663,7 +680,7 @@ function findClosingBacktickRun(
   start: number,
   marker: string,
   fencedRanges: ProtectedMarkdownRange[],
-): { index: number; end: number } | null {
+): MarkdownDelimiterMatch | null {
   BACKTICK_RUN_RE.lastIndex = start;
 
   while (true) {

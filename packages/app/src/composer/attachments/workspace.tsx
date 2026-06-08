@@ -5,7 +5,6 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { FileText, MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
   ComposerAttachment,
-  PullRequestContextAttachmentSource,
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
@@ -13,6 +12,7 @@ import { AttachmentPill } from "@/components/attachment-pill";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   isWorkspaceAttachment,
+  isPullRequestContextAttachment,
   userAttachmentsOnly,
   workspaceAttachmentToSubmitAttachment,
 } from "@/attachments/workspace-attachment-utils";
@@ -62,11 +62,9 @@ function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
       html: attachment.attachment.outerHTML,
     });
   }
-  if (attachment.kind === "context") {
+  if (isPullRequestContextAttachment(attachment)) {
     return JSON.stringify({
-      type: "context",
-      provider: attachment.provider,
-      source: attachment.source,
+      type: attachment.kind,
       id: attachment.id,
     });
   }
@@ -98,21 +96,17 @@ function removeWorkspaceAttachmentsMatching(selectedKey: string): void {
 }
 
 function removeSentContextAttachments(attachments: readonly ComposerAttachment[]): void {
-  const sentContextKeys = attachments
-    .filter(
-      (attachment): attachment is WorkspaceComposerAttachment => attachment.kind === "context",
-    )
-    .map(getAttachmentKey);
+  const sentContextKeys = attachments.filter(isPullRequestContextAttachment).map(getAttachmentKey);
   for (const key of sentContextKeys) {
     removeWorkspaceAttachmentsMatching(key);
   }
 }
 
-function getContextSourceLabel(source: PullRequestContextAttachmentSource): string {
-  if (source === "pull_request_check") {
+function getContextSourceLabel(attachment: WorkspaceComposerAttachment): string {
+  if (attachment.kind === "github.pull_request_check") {
     return "Check logs";
   }
-  if (source === "pull_request_comment") {
+  if (attachment.kind === "github.pull_request_comment") {
     return "Comment";
   }
   return "Review";
@@ -122,8 +116,8 @@ function getPillLabel(attachment: WorkspaceComposerAttachment, t: TranslationFn)
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.browserElement", { tag: attachment.attachment.tag });
   }
-  if (attachment.kind === "context") {
-    return `${getContextSourceLabel(attachment.source)} · ${attachment.title}`;
+  if (isPullRequestContextAttachment(attachment)) {
+    return `${getContextSourceLabel(attachment)} · ${attachment.title}`;
   }
   return attachment.commentCount === 1
     ? t("message.attachments.reviewOne")
@@ -137,7 +131,7 @@ function getOpenAccessibilityLabel(
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.openBrowserElement");
   }
-  if (attachment.kind === "context") {
+  if (isPullRequestContextAttachment(attachment)) {
     return "Open context attachment";
   }
   return t("composer.attachments.openReview");
@@ -150,7 +144,7 @@ function getRemoveAccessibilityLabel(
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.removeBrowserElement");
   }
-  if (attachment.kind === "context") {
+  if (isPullRequestContextAttachment(attachment)) {
     return "Remove context attachment";
   }
   return t("composer.attachments.removeReview");
@@ -160,7 +154,7 @@ function renderPillIcon(attachment: WorkspaceComposerAttachment): ReactElement {
   if (attachment.kind === "browser_element") {
     return <ThemedMousePointer2 size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
   }
-  if (attachment.kind === "context") {
+  if (isPullRequestContextAttachment(attachment)) {
     return <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
   }
   return <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
@@ -241,7 +235,7 @@ function useWorkspaceAttachmentBinding({
     ({ selectedAttachments: current, index }: RemoveWorkspaceAttachmentInput) => {
       const selected = current[index];
       if (isWorkspaceAttachment(selected)) {
-        if (selected.kind === "browser_element" || selected.kind === "context") {
+        if (selected.kind === "browser_element" || isPullRequestContextAttachment(selected)) {
           const selectedKey = getAttachmentKey(selected);
           removeWorkspaceAttachmentsMatching(selectedKey);
           return true;

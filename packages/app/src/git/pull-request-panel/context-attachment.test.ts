@@ -74,10 +74,8 @@ describe("pull request context attachments", () => {
         }),
       }),
     ).toEqual({
-      kind: "context",
+      kind: "github.pull_request_comment",
       id: "42:comment-1",
-      source: "pull_request_comment",
-      provider: "github",
       title: "octocat",
       subtitle: "#42 Fix flaky build",
       url: "https://github.com/getpaseo/paseo/pull/42#issuecomment-1",
@@ -97,10 +95,8 @@ describe("pull request context attachments", () => {
 
   it("formats a review with state as a workspace context attachment", () => {
     expect(buildPullRequestReviewContextAttachment({ ...baseInput, activity: review() })).toEqual({
-      kind: "context",
+      kind: "github.pull_request_review",
       id: "42:review-1",
-      source: "pull_request_review",
-      provider: "github",
       title: "reviewer",
       subtitle: "#42 Fix flaky build",
       url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
@@ -187,10 +183,8 @@ describe("pull request context attachments", () => {
         },
       }),
     ).toEqual({
-      kind: "context",
+      kind: "github.pull_request_check",
       id: "42:check-run:12345",
-      source: "pull_request_check",
-      provider: "github",
       title: "server-tests",
       subtitle: "#42 Fix flaky build",
       url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
@@ -251,10 +245,8 @@ describe("pull request context attachments", () => {
         githubDetails: null,
       }),
     ).toEqual({
-      kind: "context",
+      kind: "github.pull_request_check",
       id: "42:check:status/context",
-      source: "pull_request_check",
-      provider: "github",
       title: "status/context",
       subtitle: "#42 Fix flaky build",
       url: "https://github.com/getpaseo/paseo/status/context",

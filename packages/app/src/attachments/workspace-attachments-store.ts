@@ -65,13 +65,15 @@ function areWorkspaceAttachmentsEqual(
 }
 
 function getContextAttachmentKey(attachment: WorkspaceComposerAttachment): string | null {
-  if (attachment.kind !== "context") {
+  if (
+    attachment.kind !== "github.pull_request_comment" &&
+    attachment.kind !== "github.pull_request_review" &&
+    attachment.kind !== "github.pull_request_check"
+  ) {
     return null;
   }
   return JSON.stringify({
     kind: attachment.kind,
-    provider: attachment.provider,
-    source: attachment.source,
     id: attachment.id,
   });
 }

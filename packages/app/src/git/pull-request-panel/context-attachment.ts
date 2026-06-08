@@ -1,5 +1,5 @@
 import type { CheckoutGithubCheckDetails } from "@getpaseo/protocol/messages";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { PullRequestContextAttachment } from "@/attachments/types";
 import { formatPullRequestActivityLocation } from "./activity-location";
 import type { PrPaneActivity, PrPaneCheck, PullRequestProviderMetadata, ReviewState } from "./data";
 
@@ -22,8 +22,6 @@ export interface PullRequestGithubCheckContextBuilderInput {
   githubDetails?: CheckoutGithubCheckDetails | null;
 }
 
-type PullRequestContextAttachment = Extract<WorkspaceComposerAttachment, { kind: "context" }>;
-
 export function canAddPullRequestActivityToChat(activity: PrPaneActivity): boolean {
   if (activity.kind === "comment") {
     return activity.body.trim().length > 0;
@@ -39,10 +37,8 @@ export function buildPullRequestCommentContextAttachment(
   input: PullRequestContextBuilderInput,
 ): PullRequestContextAttachment {
   return {
-    kind: "context",
+    kind: "github.pull_request_comment",
     id: `${input.pullRequest.number}:${input.activity.id}`,
-    source: "pull_request_comment",
-    provider: input.provider.id,
     title: input.activity.author,
     subtitle: formatPullRequestSubtitle(input.pullRequest),
     text: formatActivityContextText({
@@ -61,10 +57,8 @@ export function buildPullRequestReviewContextAttachment(
   }
 
   return {
-    kind: "context",
+    kind: "github.pull_request_review",
     id: `${input.pullRequest.number}:${input.activity.id}`,
-    source: "pull_request_review",
-    provider: input.provider.id,
     title: input.activity.author,
     subtitle: formatPullRequestSubtitle(input.pullRequest),
     text: formatActivityContextText({
@@ -80,10 +74,8 @@ export function buildPullRequestCheckContextAttachment(
   input: PullRequestGithubCheckContextBuilderInput,
 ): PullRequestContextAttachment {
   return {
-    kind: "context",
+    kind: "github.pull_request_check",
     id: formatPullRequestCheckContextId(input.pullRequest, input.check),
-    source: "pull_request_check",
-    provider: input.provider.id,
     title: input.check.name,
     subtitle: formatPullRequestSubtitle(input.pullRequest),
     text: formatGitHubCheckContextText(input),

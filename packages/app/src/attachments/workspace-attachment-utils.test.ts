@@ -1,21 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { ComposerAttachment, WorkspaceComposerAttachment } from "./types";
+import type { ComposerAttachment, PullRequestContextAttachment } from "./types";
 import {
   isWorkspaceAttachment,
   userAttachmentsOnly,
   workspaceAttachmentToSubmitAttachment,
 } from "./workspace-attachment-utils";
 
-type ContextWorkspaceAttachment = Extract<WorkspaceComposerAttachment, { kind: "context" }>;
-
 function contextAttachment(
-  overrides: Partial<ContextWorkspaceAttachment> = {},
-): ContextWorkspaceAttachment {
+  overrides: Partial<PullRequestContextAttachment> = {},
+): PullRequestContextAttachment {
   return {
-    kind: "context",
+    kind: "github.pull_request_comment",
     id: "comment-1",
-    source: "pull_request_comment",
-    provider: "github",
     title: "Comment · octocat",
     subtitle: "Fix flaky build",
     text: "GitHub pull request comment\n\nLooks good.",

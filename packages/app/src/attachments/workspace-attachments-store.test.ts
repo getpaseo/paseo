@@ -49,10 +49,8 @@ function reviewAttachment(body: string): WorkspaceComposerAttachment {
 
 function contextAttachment(id: string): WorkspaceComposerAttachment {
   return {
-    kind: "context",
+    kind: "github.pull_request_comment",
     id,
-    source: "pull_request_comment",
-    provider: "github",
     title: "Comment · octocat",
     text: "GitHub pull request comment\n\nLooks good.",
     url: `https://github.com/getpaseo/paseo/pull/42#${id}`,

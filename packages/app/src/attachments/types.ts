@@ -41,32 +41,35 @@ export interface BrowserElementAttachment {
   formatted: string;
 }
 
-export type PullRequestContextAttachmentSource =
-  | "pull_request_comment"
-  | "pull_request_review"
-  | "pull_request_check";
+export type PullRequestContextAttachmentKind =
+  | "github.pull_request_comment"
+  | "github.pull_request_review"
+  | "github.pull_request_check";
 
-export type PullRequestContextAttachmentProvider = "github";
-
-export interface PullRequestContextAttachment {
+interface PullRequestContextAttachmentFields {
   id: string;
-  source: PullRequestContextAttachmentSource;
-  provider: PullRequestContextAttachmentProvider;
   title: string;
   subtitle?: string;
   text: string;
   url?: string | null;
 }
 
-export type ComposerAttachment =
+export type PullRequestContextAttachment =
+  | ({ kind: "github.pull_request_comment" } & PullRequestContextAttachmentFields)
+  | ({ kind: "github.pull_request_review" } & PullRequestContextAttachmentFields)
+  | ({ kind: "github.pull_request_check" } & PullRequestContextAttachmentFields);
+
+export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "github_issue"; item: GitHubSearchItem }
-  | { kind: "github_pr"; item: GitHubSearchItem }
+  | { kind: "github_pr"; item: GitHubSearchItem };
+
+export type WorkspaceComposerAttachment =
   | {
       kind: "browser_element";
       attachment: BrowserElementAttachment;
     }
-  | ({ kind: "context" } & PullRequestContextAttachment)
+  | PullRequestContextAttachment
   | {
       kind: "review";
       attachment: Extract<AgentAttachment, { type: "review" }>;
@@ -74,15 +77,7 @@ export type ComposerAttachment =
       commentCount: number;
     };
 
-export type UserComposerAttachment = Exclude<
-  ComposerAttachment,
-  { kind: "review" } | { kind: "browser_element" } | { kind: "context" }
->;
-
-export type WorkspaceComposerAttachment = Extract<
-  ComposerAttachment,
-  { kind: "review" } | { kind: "browser_element" } | { kind: "context" }
->;
+export type ComposerAttachment = UserComposerAttachment | WorkspaceComposerAttachment;
 
 export type AttachmentDataSource =
   | { kind: "bytes"; bytes: Uint8Array }
