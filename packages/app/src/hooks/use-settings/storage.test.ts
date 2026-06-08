@@ -41,6 +41,14 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.theme).toBe("auto");
   });
 
+  it("defaults running-agent Enter behavior to queue", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendBehavior).toBe("queue");
+  });
+
   it("seeds storage with the client defaults when nothing is persisted", async () => {
     const deps = makeDeps();
 

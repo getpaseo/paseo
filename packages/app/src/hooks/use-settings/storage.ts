@@ -43,7 +43,7 @@ export interface Settings extends AppSettings {
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
-  sendBehavior: "interrupt",
+  sendBehavior: "queue",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   uiFontFamily: "",
