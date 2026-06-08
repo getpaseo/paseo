@@ -69,16 +69,13 @@ export function createBottomSheetVisibilityTracker(opts: {
     },
     handleSheetIndexChange(index) {
       if (index !== -1) {
-        if (phase === "presenting") {
+        if (phase === "presenting" || phase === "dismissing") {
           phase = "presented";
         }
         return;
       }
       if (phase === "presenting" || phase === "presented") {
         phase = "dismissing";
-      }
-      if (visible) {
-        notifyClose();
       }
     },
     handleSheetDismiss() {

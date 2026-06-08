@@ -28,6 +28,7 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
+    height: 20,
     gap: 4,
     flexShrink: 0,
   },

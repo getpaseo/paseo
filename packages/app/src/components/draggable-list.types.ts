@@ -46,6 +46,8 @@ export interface DraggableListProps<T> {
   onRefresh?: () => void;
   /** Fill remaining space when content is smaller than container */
   contentContainerFlexGrow?: boolean;
+  /** External row state that should invalidate virtualized native cells. */
+  extraData?: unknown;
   /** Gesture ref for simultaneous handling with parent gestures (e.g., sidebar close) */
   simultaneousGestureRef?: MutableRefObject<GestureType | undefined>;
   /** Gesture ref(s) that the list should wait for before handling scroll */

@@ -11,11 +11,12 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
@@ -77,6 +78,14 @@ const INLINE_REVIEW_GAP = 6;
 export const SMALL_ACTION_HIT_SLOP = 8;
 const REVIEW_CANCEL_SHORTCUT_KEYS: ShortcutKey[] = ["Esc"];
 const REVIEW_SAVE_SHORTCUT_KEYS: ShortcutKey[] = ["mod", "Enter"];
+const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const destructiveIconColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+const accentForegroundIconColorMapping = (theme: Theme) => ({
+  color: theme.colors.accentForeground,
+});
+const ThemedPencil = withUnistyles(Pencil);
+const ThemedPlus = withUnistyles(Plus);
+const ThemedTrash2 = withUnistyles(Trash2);
 
 export interface InlineReviewEditorState {
   target: ReviewableDiffTarget;
@@ -274,6 +283,7 @@ export function InlineReviewGutterCell({
   isLineHovered = false,
   onStartComment,
   style,
+  actionTestID,
 }: {
   children: ReactNode;
   reviewTarget: ReviewableDiffTarget | null | undefined;
@@ -282,8 +292,8 @@ export function InlineReviewGutterCell({
   isLineHovered?: boolean;
   onStartComment: (target: ReviewableDiffTarget) => void;
   style?: StyleProp<ViewStyle>;
+  actionTestID?: string;
 }) {
-  const { theme } = useUnistyles();
   const canComment = Boolean(reviewTarget);
   const hasComments = comments.length > 0;
   const [isGutterHovered, setIsGutterHovered] = useState(false);
@@ -345,8 +355,8 @@ export function InlineReviewGutterCell({
         <View style={labelStyle}>
           {children}
           {showAction ? (
-            <View style={styles.gutterActionIcon}>
-              <Plus size={16} strokeWidth={2.4} color={theme.colors.accentForeground} />
+            <View style={styles.gutterActionIcon} testID={actionTestID}>
+              <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />
             </View>
           ) : null}
         </View>
@@ -429,8 +439,6 @@ function CommentRow({
   onEditComment: (target: ReviewableDiffTarget, comment: ReviewDraftComment) => void;
   onDeleteComment: (id: string) => void;
 }) {
-  const { theme } = useUnistyles();
-
   const handleEdit = useCallback(
     () => onEditComment(reviewTarget, comment),
     [onEditComment, reviewTarget, comment],
@@ -455,7 +463,7 @@ function CommentRow({
           onPress={handleEdit}
           style={iconButtonStyle}
         >
-          <Pencil size={14} color={theme.colors.foregroundMuted} />
+          <ThemedPencil size={14} uniProps={foregroundMutedIconColorMapping} />
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -465,7 +473,7 @@ function CommentRow({
           onPress={handleDelete}
           style={iconButtonDestructiveStyle}
         >
-          <Trash2 size={14} color={theme.colors.destructive} />
+          <ThemedTrash2 size={14} uniProps={destructiveIconColorMapping} />
         </Pressable>
       </View>
     </View>
@@ -499,7 +507,6 @@ export function InlineReviewEditor({
   onSave: (body: string) => void;
   testID?: string;
 }) {
-  const { theme } = useUnistyles();
   const inputRef = useRef<TextInput | null>(null);
   const focus = useWorkspaceFocusRestoration();
   const canShowKeyboardHints = useCanShowReviewKeyboardHints();
@@ -577,7 +584,7 @@ export function InlineReviewEditor({
         accessibilityLabel="Review comment"
         testID={testID ? `${testID}-input` : undefined}
         placeholder="Leave a comment"
-        placeholderTextColor={theme.colors.foregroundMuted}
+        placeholderTextColor={styles.placeholderColor.color}
         multiline
         value={body}
         onChangeText={setBody}
@@ -617,16 +624,16 @@ export function InlineReviewEditor({
 const styles = StyleSheet.create((theme) => ({
   gutterInner: {
     minHeight: theme.lineHeight.diff,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
     overflow: "visible",
   },
   gutterLabel: {
     width: "100%",
     minWidth: 0,
     height: theme.lineHeight.diff,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
     position: "relative",
     overflow: "visible",
   },
@@ -645,6 +652,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.accent,
     zIndex: 10,
     elevation: 10,
+  },
+  placeholderColor: {
+    color: theme.colors.foregroundMuted,
   },
   threadContainer: {
     flex: 1,

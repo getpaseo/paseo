@@ -357,7 +357,7 @@ export function buildHostOpenProjectRoute(serverId: string) {
 
 export function buildHostNewWorkspaceRoute(
   serverId: string,
-  sourceDirectory: string,
+  sourceDirectory?: string,
   options?: { displayName?: string; projectId?: string },
 ) {
   const base = buildHostRootRoute(serverId);
@@ -365,18 +365,25 @@ export function buildHostNewWorkspaceRoute(
     return "/" as const;
   }
   const params = new URLSearchParams();
-  params.set("dir", sourceDirectory);
+  if (sourceDirectory) {
+    params.set("dir", sourceDirectory);
+  }
   if (options?.displayName) {
     params.set("name", options.displayName);
   }
   if (options?.projectId) {
     params.set("projectId", options.projectId);
   }
-  return `${base}/new?${params.toString()}` as const;
+  const query = params.toString();
+  if (!query) {
+    return `${base}/new` as const;
+  }
+  return `${base}/new?${query}` as const;
 }
 
 export const SETTINGS_SECTION_SLUGS = [
   "general",
+  "daemon",
   "appearance",
   "shortcuts",
   "integrations",
@@ -391,12 +398,30 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
   return (SETTINGS_SECTION_SLUGS as readonly string[]).includes(value);
 }
 
-export const HOST_SECTION_SLUGS = ["connections", "orchestration", "providers", "daemon"] as const;
+export const HOST_SECTION_SLUGS = [
+  "connections",
+  "agents",
+  "workspaces",
+  "providers",
+  "host",
+] as const;
 
 export type HostSectionSlug = (typeof HOST_SECTION_SLUGS)[number];
 
+const LEGACY_HOST_SECTION_SLUGS: Record<string, HostSectionSlug> = {
+  orchestration: "agents",
+  daemon: "host",
+};
+
 export function isHostSectionSlug(value: string): value is HostSectionSlug {
   return (HOST_SECTION_SLUGS as readonly string[]).includes(value);
+}
+
+export function normalizeHostSectionSlug(value: string): HostSectionSlug | null {
+  if (isHostSectionSlug(value)) {
+    return value;
+  }
+  return LEGACY_HOST_SECTION_SLUGS[value] ?? null;
 }
 
 export function buildSettingsRoute() {

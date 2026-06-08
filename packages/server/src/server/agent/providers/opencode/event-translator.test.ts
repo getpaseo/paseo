@@ -31,6 +31,8 @@ function createState(sessionId = "session-1"): OpenCodeEventTranslationState {
     accumulatedUsage: {},
     streamedPartKeys: new Set(),
     emittedStructuredMessageIds: new Set(),
+    compactionSummaryMessageIds: new Set(),
+    emittedCompactionPartIds: new Set(),
     partTypes: new Map(),
   };
 }
@@ -796,6 +798,107 @@ describe("translateOpenCodeEvent", () => {
           type: "compaction",
           status: "loading",
           trigger: "auto",
+        },
+      },
+    ]);
+  });
+
+  it("does not render OpenCode compaction summaries as assistant messages", () => {
+    const state = createState();
+
+    const loading = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-part-1",
+            sessionID: "session-1",
+            messageID: "message-compaction-user-1",
+            type: "compaction",
+            auto: true,
+          },
+        },
+      },
+      state,
+    );
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-compaction-summary-1",
+            sessionID: "session-1",
+            role: "assistant",
+            mode: "compaction",
+            agent: "compaction",
+            summary: true,
+          },
+        },
+      },
+      state,
+    );
+
+    const summaryText = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "summary-text-part-1",
+            sessionID: "session-1",
+            messageID: "message-compaction-summary-1",
+            type: "text",
+            text: "## Goal\n- Preserve context while continuing the task.",
+            time: { start: 1, end: 2 },
+          },
+        },
+      },
+      state,
+    );
+
+    const duplicateLoading = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-part-1",
+            sessionID: "session-1",
+            messageID: "message-compaction-user-1",
+            type: "compaction",
+            auto: true,
+            tail_start_id: "message-tail-1",
+          },
+        },
+      },
+      state,
+    );
+
+    const completed = translateOpenCodeEvent(
+      {
+        type: "session.compacted",
+        properties: {
+          sessionID: "session-1",
+        },
+      },
+      state,
+    );
+
+    expect([...loading, ...summaryText, ...duplicateLoading, ...completed]).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "compaction",
+          status: "loading",
+          trigger: "auto",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "compaction",
+          status: "completed",
         },
       },
     ]);

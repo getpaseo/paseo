@@ -155,7 +155,7 @@ interface UseGitActionsResult {
 export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): UseGitActionsResult {
   const toast = useToast();
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
-  const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
+  const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
 
   const { status, isLoading: isStatusLoading } = useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;
@@ -186,15 +186,19 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   useEffect(() => {
     if (!shipDefaultStorageKey) {
+      setShipDefault("pr");
       return;
     }
     let isActive = true;
+    setShipDefault("pr");
     AsyncStorage.getItem(shipDefaultStorageKey)
       .then((value) => {
         if (!isActive) return;
         if (value === "pr" || value === "merge") {
           setShipDefault(value);
+          return;
         }
+        setShipDefault("pr");
         return;
       })
       .catch(() => undefined);
@@ -210,7 +214,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       try {
         await AsyncStorage.setItem(shipDefaultStorageKey, next);
       } catch {
-        // Ignore persistence failures; default will reset to "merge".
+        // Ignore persistence failures; default will reset to "pr".
       }
     },
     [shipDefaultStorageKey],

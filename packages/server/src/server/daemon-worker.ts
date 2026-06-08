@@ -19,10 +19,26 @@ type SupervisorLifecycleMessage =
       reason?: string;
     };
 
+interface SupervisorHeartbeatMessage {
+  type: "paseo:supervisor-heartbeat";
+}
+
 interface BootstrapResult {
   paseoHome: string;
   logger: ReturnType<typeof createRootLogger>;
   config: ReturnType<typeof loadConfig>;
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
 }
 
 function bootstrapFromEnvironment(): BootstrapResult {
@@ -149,6 +165,56 @@ async function main() {
     }
     beginShutdown("restart lifecycle intent", { successExitCode: 0 });
   };
+
+  const installSupervisorLivenessGuard = () => {
+    if (typeof process.send !== "function") {
+      return;
+    }
+
+    const supervisorPid = process.ppid;
+    let lastSupervisorHeartbeatAt = Date.now();
+    let supervisorExitRequested = false;
+    const exitAfterSupervisorLoss = () => {
+      if (supervisorExitRequested) {
+        return;
+      }
+      supervisorExitRequested = true;
+
+      // The supervisor owns the worker's stdout/stderr pipes. Once it is gone,
+      // logging during graceful shutdown can block on the broken pipe and leave
+      // the daemon orphaned, so supervisor loss is a hard process boundary.
+      process.exit(0);
+    };
+
+    process.on("message", (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        (message as SupervisorHeartbeatMessage).type === "paseo:supervisor-heartbeat"
+      ) {
+        lastSupervisorHeartbeatAt = Date.now();
+      }
+    });
+    process.on("disconnect", exitAfterSupervisorLoss);
+
+    const timer = setInterval(() => {
+      const ipcConnected = typeof process.connected === "boolean" ? process.connected : true;
+      const heartbeatExpired = Date.now() - lastSupervisorHeartbeatAt > 3500;
+      const supervisorChanged = process.ppid !== supervisorPid;
+      if (
+        ipcConnected === false ||
+        supervisorChanged ||
+        !isPidAlive(supervisorPid) ||
+        heartbeatExpired
+      ) {
+        exitAfterSupervisorLoss();
+      }
+    }, 1000);
+    timer.unref();
+  };
+
+  installSupervisorLivenessGuard();
 
   try {
     daemon = await createPaseoDaemon(

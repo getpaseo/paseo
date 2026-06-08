@@ -121,7 +121,6 @@ function createCheckoutSnapshotFacts(cwd: string): CheckoutSnapshotFacts {
     comparisonBaseRef: null,
     branchRemoteName: "origin",
     branchMergeRef: "refs/heads/main",
-    trackedOriginBranch: "main",
     pullRequestLookupTarget: { headRef: "main" },
   };
 }

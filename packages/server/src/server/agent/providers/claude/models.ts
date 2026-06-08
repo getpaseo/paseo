@@ -98,9 +98,12 @@ export function getClaudeModels(): AgentModelDefinition[] {
   return CLAUDE_MODELS.map((model) => ({ ...model }));
 }
 
-export async function getClaudeModelsWithSettings(logger: Logger): Promise<AgentModelDefinition[]> {
+export async function getClaudeModelsWithSettings(
+  logger: Logger,
+  configDir?: string,
+): Promise<AgentModelDefinition[]> {
   const hardcodedModels = getClaudeModels();
-  const settingsModels = await readClaudeSettingsModels(logger);
+  const settingsModels = await readClaudeSettingsModels(logger, configDir);
   if (settingsModels.length === 0) {
     return hardcodedModels;
   }
@@ -119,8 +122,11 @@ export async function getClaudeModelsWithSettings(logger: Logger): Promise<Agent
   return models;
 }
 
-async function readClaudeSettingsModels(logger: Logger): Promise<AgentModelDefinition[]> {
-  const settingsPath = path.join(resolveClaudeConfigDir(), "settings.json");
+async function readClaudeSettingsModels(
+  logger: Logger,
+  configDir?: string,
+): Promise<AgentModelDefinition[]> {
+  const settingsPath = path.join(resolveClaudeConfigDir(configDir), "settings.json");
 
   let parsed: unknown;
   try {
@@ -155,8 +161,8 @@ async function readClaudeSettingsModels(logger: Logger): Promise<AgentModelDefin
   return models;
 }
 
-function resolveClaudeConfigDir(): string {
-  return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+function resolveClaudeConfigDir(configDir?: string): string {
+  return configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
 }
 
 function addSettingsModel(

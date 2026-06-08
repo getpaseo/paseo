@@ -1,10 +1,10 @@
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export const PROVIDERS_SNAPSHOT_QUERY_ROOT = "providersSnapshot";
 
 export function normalizeProvidersSnapshotCwd(cwd?: string | null): string | null {
-  const trimmed = cwd?.trim();
-  return trimmed ? trimmed : null;
+  return normalizeWorkspacePath(cwd);
 }
 
 export function providersSnapshotQueryRoot(serverId: string | null) {

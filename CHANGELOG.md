@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.1.90 - 2026-06-04
+
+### Added
+
+- **Group the sidebar by status so workspaces waiting on you, ready to review, working, and done are visible at a glance** ([#1317](https://github.com/getpaseo/paseo/pull/1317))
+- **Start a new workspace from the global sidebar button without choosing a project first** ([#1324](https://github.com/getpaseo/paseo/pull/1324))
+- **Open the active file directly in your editor, file manager, or GitHub instead of only opening the workspace root** ([#1285](https://github.com/getpaseo/paseo/pull/1285) by [@aaronzhongg](https://github.com/aaronzhongg))
+- **Automatically archive clean PR workspaces after the PR is merged from host settings** ([#1313](https://github.com/getpaseo/paseo/pull/1313))
+- **Desktop-managed Paseo skills stay current after installing a newer desktop build** ([#1309](https://github.com/getpaseo/paseo/pull/1309))
+- **Dart files and Dart code blocks are now syntax-highlighted** ([#1326](https://github.com/getpaseo/paseo/pull/1326))
+
+### Improved
+
+- Sidebar workspaces can be marked as read when they are ready to review or failed ([#1317](https://github.com/getpaseo/paseo/pull/1317))
+- Child agents keep unattended permissions when delegated across providers ([#1315](https://github.com/getpaseo/paseo/pull/1315))
+- Scheduled agents open with the real prompt and title instead of looking empty ([#1316](https://github.com/getpaseo/paseo/pull/1316))
+- Git controls prioritize the action that gets a ready branch shipped ([#1316](https://github.com/getpaseo/paseo/pull/1316))
+- Multiple agent questions are shown one at a time
+- OpenCode questions with free-write answers show the typed response in Paseo
+- Delegated agent activity is visible on the parent workspace
+- Sessions are ordered by latest activity
+- ACP provider catalog entries are updated for Claude Agent, Cline, Codebuddy Code, Factory Droid, and Qoder
+
+### Fixed
+
+- Timeline catch-up no longer leaves older messages unloaded
+- Markdown code in file previews renders correctly
+- Long dictation retries no longer stall new audio
+- Settings host picker navigation works from host settings pages
+- Diff gutter rows stay aligned with changed code
+- Mobile sidebar gestures stay responsive under load
+- Compact sheets keep their footer and bottom spacing visible
+
+## 0.1.89 - 2026-06-02
+
+### Added
+
+- **Open workspace services through public service proxy links** ([#1280](https://github.com/getpaseo/paseo/pull/1280) by [@mcowger](https://github.com/mcowger))
+- **Choose where new worktrees are created** ([#1230](https://github.com/getpaseo/paseo/pull/1230) by [@mcowger](https://github.com/mcowger))
+- **Desktop windows reopen at the same size and position** ([#1224](https://github.com/getpaseo/paseo/pull/1224) by [@everton-dgn](https://github.com/everton-dgn))
+- **Delegated agents can run independently and send recurring heartbeat updates**
+
+### Improved
+
+- Composer controls fit better in narrow panes
+- Fork pull request badges stay visible in worktrees
+- Cline in the ACP catalog is updated to v3
+
+### Fixed
+
+- Archiving a worktree finishes even if teardown hits an error ([#1260](https://github.com/getpaseo/paseo/pull/1260) by [@mcowger](https://github.com/mcowger))
+- iOS chat messages render bold, italics, strikethrough, and line breaks correctly ([#1254](https://github.com/getpaseo/paseo/pull/1254) by [@outofrange-consulting](https://github.com/outofrange-consulting))
+- Right-edge split pane resizing no longer clips ([#1261](https://github.com/getpaseo/paseo/pull/1261) by [@everton-dgn](https://github.com/everton-dgn))
+- Pi extension command output no longer hangs
+- Delegated agents no longer appear in workspace alert counts
+
 ## 0.1.88 - 2026-06-01
 
 ### Added

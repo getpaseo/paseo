@@ -8,6 +8,7 @@ interface ProviderSettingsTarget {
 interface ProviderSettingsStoreState {
   serverId: string | null;
   provider: string | null;
+  visible: boolean;
   open: (target: ProviderSettingsTarget) => void;
   close: () => void;
 }
@@ -15,10 +16,11 @@ interface ProviderSettingsStoreState {
 export const useProviderSettingsStore = create<ProviderSettingsStoreState>()((set) => ({
   serverId: null,
   provider: null,
+  visible: false,
   open: ({ serverId, provider }) => {
-    set({ serverId, provider });
+    set({ serverId, provider, visible: true });
   },
   close: () => {
-    set({ serverId: null, provider: null });
+    set({ visible: false });
   },
 }));

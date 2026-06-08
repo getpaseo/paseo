@@ -10,6 +10,7 @@ import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionUpdatedInput,
+  toClaudeSdkMcpConfig,
 } from "./agent.js";
 import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../../agent-sdk-types.js";
 
@@ -397,28 +398,37 @@ describe("ClaudeAgentClient.listModels", () => {
   const logger = createTestLogger();
 
   test("returns hardcoded claude models", async () => {
-    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
-    const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveBinary: async () => "/test/claude/bin",
+        configDir: emptyConfigDir,
+      });
+      const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
-    expect(models.map((m) => m.id)).toEqual([
-      "claude-opus-4-8[1m]",
-      "claude-opus-4-8",
-      "claude-opus-4-7[1m]",
-      "claude-opus-4-7",
-      "claude-opus-4-6[1m]",
-      "claude-opus-4-6",
-      "claude-sonnet-4-6[1m]",
-      "claude-sonnet-4-6",
-      "claude-haiku-4-5",
-    ]);
+      expect(models.map((m) => m.id)).toEqual([
+        "claude-opus-4-8[1m]",
+        "claude-opus-4-8",
+        "claude-opus-4-7[1m]",
+        "claude-opus-4-7",
+        "claude-opus-4-6[1m]",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6[1m]",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+      ]);
 
-    for (const model of models) {
-      expect(model.provider).toBe("claude");
-      expect(model.label.length).toBeGreaterThan(0);
+      for (const model of models) {
+        expect(model.provider).toBe("claude");
+        expect(model.label.length).toBeGreaterThan(0);
+      }
+
+      const defaultModel = models.find((m) => m.isDefault);
+      expect(defaultModel?.id).toBe("claude-opus-4-8");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
-
-    const defaultModel = models.find((m) => m.isDefault);
-    expect(defaultModel?.id).toBe("claude-opus-4-8");
   });
 });
 
@@ -1663,5 +1673,65 @@ describe("ClaudeAgentSession context window usage", () => {
         messageId: "assistant-third-party-1",
       },
     ]);
+  });
+});
+
+describe("toClaudeSdkMcpConfig", () => {
+  test("preserves alwaysLoad on stdio servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "chrome-devtools-mcp@latest"],
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "chrome-devtools-mcp@latest"],
+      env: undefined,
+      alwaysLoad: true,
+    });
+  });
+
+  test("preserves alwaysLoad on http servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer x" },
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "http",
+      url: "https://example.com/mcp",
+      headers: { Authorization: "Bearer x" },
+      alwaysLoad: true,
+    });
+  });
+
+  test("preserves alwaysLoad on sse servers", () => {
+    expect(
+      toClaudeSdkMcpConfig({
+        type: "sse",
+        url: "https://example.com/sse",
+        alwaysLoad: true,
+      }),
+    ).toEqual({
+      type: "sse",
+      url: "https://example.com/sse",
+      headers: undefined,
+      alwaysLoad: true,
+    });
+  });
+
+  test("leaves alwaysLoad undefined when not provided (preserves default deferral)", () => {
+    const result = toClaudeSdkMcpConfig({
+      type: "stdio",
+      command: "uvx",
+      args: ["markitdown-mcp"],
+    });
+    expect(result.type).toBe("stdio");
+    expect(result.alwaysLoad).toBeUndefined();
   });
 });

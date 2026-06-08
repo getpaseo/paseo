@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
-import { projectIconToDataUri, useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -29,6 +28,7 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
+import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -219,6 +219,21 @@ function ProjectSettingsBody({
   });
 
   const data = readQuery.data;
+  const projectIconTargets = useMemo(
+    () => [
+      {
+        serverId: selectedHost.serverId,
+        projectKey: project.projectKey,
+        iconWorkingDir: selectedHost.repoRoot,
+      },
+    ],
+    [project.projectKey, selectedHost.repoRoot, selectedHost.serverId],
+  );
+  const projectIconDataByKey = useProjectIconDataByProjectKey({
+    serverId: null,
+    projects: projectIconTargets,
+  });
+  const projectIconDataUri = projectIconDataByKey.get(project.projectKey) ?? null;
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
@@ -236,7 +251,7 @@ function ProjectSettingsBody({
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
           <ProjectTitleIcon
-            host={selectedHost}
+            iconDataUri={projectIconDataUri}
             projectName={project.projectName}
             projectKey={project.projectKey}
           />
@@ -886,19 +901,18 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
 }
 
 function ProjectTitleIcon({
-  host,
+  iconDataUri,
   projectName,
   projectKey,
 }: {
-  host: ProjectHostEntry;
+  iconDataUri: string | null;
   projectName: string;
   projectKey: string;
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
-  const { icon } = useProjectIconQuery({ serverId: host.serverId, cwd: host.repoRoot });
   return (
     <ProjectIconView
-      iconDataUri={projectIconToDataUri(icon)}
+      iconDataUri={iconDataUri}
       initial={initial}
       projectKey={projectKey}
       imageStyle={styles.titleIcon}

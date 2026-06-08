@@ -802,7 +802,6 @@ export type CheckoutSnapshotFacts =
       comparisonBaseRef: string | null;
       branchRemoteName: string | null;
       branchMergeRef: string | null;
-      trackedOriginBranch: string | null;
       pullRequestLookupTarget: PullRequestStatusLookupTarget | null;
     };
 
@@ -1407,57 +1406,46 @@ async function getAheadBehind(
 async function getAheadOfOrigin(
   cwd: string,
   currentBranch: string,
-  baseRef: string | null,
   context?: CheckoutContext,
 ): Promise<number | null> {
   if (!currentBranch) {
     return null;
   }
-  const trackedOriginBranch = await getTrackedOriginBranch(cwd, currentBranch, context);
-  const originBranch = trackedOriginBranch ?? currentBranch;
+  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
+  if (!upstreamRef) {
+    return null;
+  }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `origin/${originBranch}..${currentBranch}`],
+      ["rev-list", "--count", `${upstreamRef}..${currentBranch}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
     const count = Number.parseInt(stdout.trim(), 10);
     return Number.isNaN(count) ? null : count;
   } catch {
-    if (trackedOriginBranch) {
-      return null;
-    }
-    if (!baseRef || normalizeLocalBranchRefName(baseRef) === currentBranch) {
-      return null;
-    }
-    try {
-      const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef, context);
-      const { stdout } = await runGitCommand(
-        ["rev-list", "--count", `${comparisonBaseRef}..${currentBranch}`],
-        { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
-      );
-      const count = Number.parseInt(stdout.trim(), 10);
-      return Number.isNaN(count) ? null : count;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
-async function getTrackedOriginBranch(
+async function getConfiguredUpstreamRef(
   cwd: string,
   currentBranch: string,
   context?: CheckoutContext,
 ): Promise<string | null> {
-  if (context?.facts?.isGit && context.facts.currentBranch === currentBranch) {
-    return context.facts.trackedOriginBranch;
-  }
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
-  if (remoteName !== "origin") {
+  const remoteName =
+    context?.facts?.isGit && context.facts.currentBranch === currentBranch
+      ? context.facts.branchRemoteName
+      : await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
+  if (!remoteName) {
     return null;
   }
 
-  const mergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
-  return parseBranchMergeHeadRef(mergeRef);
+  const mergeRef =
+    context?.facts?.isGit && context.facts.currentBranch === currentBranch
+      ? context.facts.branchMergeRef
+      : await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
+  const upstreamBranch = parseBranchMergeHeadRef(mergeRef);
+  return upstreamBranch ? `${remoteName}/${upstreamBranch}` : null;
 }
 
 async function getBehindOfOrigin(
@@ -1468,9 +1456,13 @@ async function getBehindOfOrigin(
   if (!currentBranch) {
     return null;
   }
+  const upstreamRef = await getConfiguredUpstreamRef(cwd, currentBranch, context);
+  if (!upstreamRef) {
+    return null;
+  }
   try {
     const { stdout } = await runGitCommand(
-      ["rev-list", "--count", `${currentBranch}..origin/${currentBranch}`],
+      ["rev-list", "--count", `${currentBranch}..${upstreamRef}`],
       { cwd, envOverlay: READ_ONLY_GIT_ENV, logger: context?.logger },
     );
     const count = Number.parseInt(stdout.trim(), 10);
@@ -1602,8 +1594,6 @@ export async function getCheckoutSnapshotFacts(
       }
     }
   }
-  const trackedOriginBranch =
-    branchRemoteName === "origin" ? parseBranchMergeHeadRef(branchMergeRef) : null;
   const pullRequestLookupTarget = inspected.currentBranch
     ? buildPullRequestLookupTargetFromBranchConfig({
         currentBranch: inspected.currentBranch,
@@ -1627,7 +1617,6 @@ export async function getCheckoutSnapshotFacts(
     comparisonBaseRef,
     branchRemoteName,
     branchMergeRef,
-    trackedOriginBranch,
     pullRequestLookupTarget,
   };
 }
@@ -1765,7 +1754,7 @@ export async function getCheckoutStatus(
       ? getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
-      ? getAheadOfOrigin(cwd, currentBranch, baseRef, factsContext)
+      ? getAheadOfOrigin(cwd, currentBranch, factsContext)
       : Promise.resolve(null),
     hasRemote && currentBranch
       ? getBehindOfOrigin(cwd, currentBranch, factsContext)

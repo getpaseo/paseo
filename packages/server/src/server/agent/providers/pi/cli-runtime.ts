@@ -129,6 +129,17 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     await this.request({ type: "prompt", message, ...(images?.length ? { images } : {}) });
   }
 
+  async compact(customInstructions?: string): Promise<void> {
+    await this.request({
+      type: "compact",
+      ...(customInstructions ? { customInstructions } : {}),
+    });
+  }
+
+  async setAutoCompaction(enabled: boolean): Promise<void> {
+    await this.request({ type: "set_auto_compaction", enabled });
+  }
+
   async abort(): Promise<void> {
     await this.request({ type: "abort" });
   }

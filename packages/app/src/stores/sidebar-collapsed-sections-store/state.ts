@@ -1,9 +1,11 @@
 export interface CollapsedProjectsState {
   collapsedProjectKeys: Set<string>;
+  collapsedStatusGroupKeys: Set<string>;
 }
 
 export interface PersistedCollapsedProjects {
   collapsedProjectKeys?: unknown;
+  collapsedStatusGroupKeys?: unknown;
 }
 
 export function toggleProjectCollapsed(
@@ -16,7 +18,20 @@ export function toggleProjectCollapsed(
   } else {
     next.add(projectKey);
   }
-  return { collapsedProjectKeys: next };
+  return { ...state, collapsedProjectKeys: next };
+}
+
+export function toggleStatusGroupCollapsed(
+  state: CollapsedProjectsState,
+  statusGroupKey: string,
+): CollapsedProjectsState {
+  const next = new Set(state.collapsedStatusGroupKeys);
+  if (next.has(statusGroupKey)) {
+    next.delete(statusGroupKey);
+  } else {
+    next.add(statusGroupKey);
+  }
+  return { ...state, collapsedStatusGroupKeys: next };
 }
 
 export function setProjectCollapsed(
@@ -30,13 +45,17 @@ export function setProjectCollapsed(
   } else {
     next.delete(projectKey);
   }
-  return { collapsedProjectKeys: next };
+  return { ...state, collapsedProjectKeys: next };
 }
 
 export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
+  collapsedStatusGroupKeys: string[];
 } {
-  return { collapsedProjectKeys: Array.from(state.collapsedProjectKeys) };
+  return {
+    collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
+    collapsedStatusGroupKeys: Array.from(state.collapsedStatusGroupKeys),
+  };
 }
 
 export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState>(
@@ -44,16 +63,24 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
   current: S,
 ): S {
   if (!persisted?.collapsedProjectKeys) {
+    if (!persisted?.collapsedStatusGroupKeys) return current;
+  }
+  const restoredProjects = deserializeCollapsedKeys(persisted.collapsedProjectKeys);
+  const restoredStatusGroups = deserializeCollapsedKeys(persisted.collapsedStatusGroupKeys);
+  if (
+    areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
+    areSetsEqual(current.collapsedStatusGroupKeys, restoredStatusGroups)
+  ) {
     return current;
   }
-  const restored = deserializeCollapsedProjectKeys(persisted.collapsedProjectKeys);
-  if (areSetsEqual(current.collapsedProjectKeys, restored)) {
-    return current;
-  }
-  return { ...current, collapsedProjectKeys: restored };
+  return {
+    ...current,
+    collapsedProjectKeys: restoredProjects,
+    collapsedStatusGroupKeys: restoredStatusGroups,
+  };
 }
 
-function deserializeCollapsedProjectKeys(value: unknown): Set<string> {
+function deserializeCollapsedKeys(value: unknown): Set<string> {
   if (!Array.isArray(value)) {
     return new Set();
   }

@@ -726,8 +726,8 @@ function reduceTimelineCompaction(
       const updated: CompactionItem = {
         ...existing,
         status: "completed",
-        trigger: item.trigger,
-        preTokens: item.preTokens,
+        trigger: item.trigger ?? existing.trigger,
+        preTokens: item.preTokens ?? existing.preTokens,
       };
       return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
     }

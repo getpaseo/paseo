@@ -250,6 +250,27 @@ describe("applyProvidersSnapshotUpdate", () => {
       providersSnapshot([]),
     );
   });
+
+  it("applies Windows daemon updates to app-normalized workspace paths", () => {
+    const workspaceCwd = "C:/Users/Ezekiel Bulver/project";
+    const daemonCwd = "C:\\Users\\Ezekiel Bulver\\project";
+    queryClient.setQueryData(
+      providersSnapshotQueryKey(serverId, workspaceCwd),
+      providersSnapshot([codexEntry("loading")]),
+    );
+
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("ready", [readyCodexModel])], daemonCwd),
+    });
+
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId, workspaceCwd))).toEqual({
+      entries: [codexEntry("ready", [readyCodexModel])],
+      generatedAt: "2026-01-01T00:00:01.000Z",
+      requestId: "providers_snapshot_update",
+    });
+  });
 });
 
 describe("selectorOpenRefetchDecision", () => {

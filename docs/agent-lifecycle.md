@@ -54,6 +54,12 @@ Closing a tab on a **subagent** (any agent with `parentAgentId`) is **layout-onl
 
 The asymmetry is intentional: a subagent's home is the parent's track, not the tab. Tabs are ephemeral viewing slots; the track is the persistent record of the parent's children.
 
+## Workspace activity
+
+Agent lifecycle status stays literal: a parent agent is `idle` when its own turn is idle, even if a child is running.
+
+Workspace status is an aggregate activity signal. Root agents contribute their normal state bucket to their own workspace. Running subagents contribute `running` to their root parent's workspace, not to the subagent's current `cwd` or worktree. Non-running subagent attention, permission, and error states stay in the parent's subagents track and do not escalate the workspace bucket.
+
 ## The subagents track
 
 The collapsible track above the composer in an agent's pane (`packages/app/src/subagents/track.tsx`). Membership rule (`packages/app/src/subagents/select.ts`):

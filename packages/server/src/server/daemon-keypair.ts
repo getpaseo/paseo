@@ -11,7 +11,7 @@ import {
   importSecretKey,
   type KeyPair,
 } from "@getpaseo/relay/e2ee";
-import { ensurePrivateFile, writePrivateFileSync } from "./private-files.js";
+import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
 
 const KeyPairSchema = z.object({
   v: z.literal(2),
@@ -62,7 +62,7 @@ export async function loadOrCreateDaemonKeyPair(
     secretKeyB64,
   };
 
-  writePrivateFileSync(filePath, JSON.stringify(payload, null, 2) + "\n");
+  writePrivateFileAtomicSync(filePath, JSON.stringify(payload, null, 2) + "\n");
   log?.info({ filePath }, "Saved daemon keypair");
 
   return { keyPair, publicKeyB64 };

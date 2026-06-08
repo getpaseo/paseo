@@ -188,9 +188,8 @@ vi.mock("@/hooks/use-projects", () => ({
   useProjects: () => projectsState.current,
 }));
 
-vi.mock("@/hooks/use-project-icon-query", () => ({
-  useProjectIconQuery: () => ({ icon: null, isLoading: false, isError: false }),
-  projectIconToDataUri: () => null,
+vi.mock("@/projects/project-icons", () => ({
+  useProjectIconDataByProjectKey: () => new Map(),
 }));
 
 import ProjectsScreen from "./projects-screen";

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DaemonStartService } from "./daemon-start-service";
+import { DaemonStartService, upsertDesktopDaemonConnection } from "./daemon-start-service";
 import type { HostRuntimeStore } from "./host-runtime";
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 
@@ -221,5 +221,52 @@ describe("DaemonStartService", () => {
     unsubscribe();
     await service.start();
     expect(notifications).toBe(countAfterFirst);
+  });
+});
+
+describe("upsertDesktopDaemonConnection", () => {
+  it("upserts a valid desktop daemon status", async () => {
+    const fake = createFakeStore();
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus());
+
+    expect(result).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([
+      { listenAddress: "127.0.0.1:6767", serverId: "srv_desktop", hostname: "desktop" },
+    ]);
+  });
+
+  it("rejects a missing listen address without upserting", async () => {
+    const fake = createFakeStore();
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ listen: null }));
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Desktop daemon did not return a listen address.",
+    });
+    expect(fake.upserts).toEqual([]);
+  });
+
+  it("rejects a missing server id without upserting", async () => {
+    const fake = createFakeStore();
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ serverId: "" }));
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Desktop daemon did not return a server id.",
+    });
+    expect(fake.upserts).toEqual([]);
+  });
+
+  it("rejects an unsupported listen address without upserting", async () => {
+    const fake = createFakeStore();
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ listen: "???" }));
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : result.error).toContain("unsupported listen address");
+    expect(fake.upserts).toEqual([]);
   });
 });

@@ -8,11 +8,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import {
-  shouldUseDesktopDaemon,
-  type SkillOp,
-  type SkillsStatus,
-} from "@/desktop/daemon/desktop-daemon";
+import { shouldUseDesktopDaemon, type SkillsStatus } from "@/desktop/daemon/desktop-daemon";
 import { useCliInstall, useSkillsStatus } from "@/desktop/hooks/use-install-status";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
@@ -20,21 +16,6 @@ const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 const UNINSTALL_MESSAGE =
   "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex.";
-
-const OP_KIND_ORDER: Record<SkillOp["kind"], number> = { add: 0, update: 1, delete: 2 };
-const OP_KIND_LABEL: Record<SkillOp["kind"], string> = {
-  add: "Add skill",
-  update: "Update skill",
-  delete: "Delete skill",
-};
-
-function formatUpdateMessage(ops: readonly SkillOp[]): string {
-  const sorted = [...ops].sort((a, b) => {
-    const kindOrder = OP_KIND_ORDER[a.kind] - OP_KIND_ORDER[b.kind];
-    return kindOrder !== 0 ? kindOrder : a.name.localeCompare(b.name);
-  });
-  return sorted.map((op) => `${OP_KIND_LABEL[op.kind]} ${op.name}`).join("\n");
-}
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();
@@ -75,15 +56,8 @@ export function IntegrationsSection() {
 
   const handleUpdateSkills = useCallback(async () => {
     if (isSkillsWorking) return;
-    const ops = skillsStatus?.ops ?? [];
-    const confirmed = await confirmDialog({
-      title: "Update Paseo skills?",
-      message: ops.length > 0 ? formatUpdateMessage(ops) : "Sync bundled skills to your machine.",
-      confirmLabel: "Update",
-    });
-    if (!confirmed) return;
     await updateSkills();
-  }, [isSkillsWorking, skillsStatus, updateSkills]);
+  }, [isSkillsWorking, updateSkills]);
 
   const handleUninstallSkills = useCallback(async () => {
     if (isSkillsWorking) return;

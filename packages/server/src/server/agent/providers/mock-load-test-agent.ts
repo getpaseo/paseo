@@ -128,6 +128,10 @@ function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+plan\s+approval/i.test(promptToText(prompt));
 }
 
+function shouldEmitQuestionPrompt(prompt: AgentPromptInput): boolean {
+  return /emit\s+(?:a\s+)?synthetic\s+questions?/i.test(promptToText(prompt));
+}
+
 function resolveModelProfile(modelId: string | null | undefined): {
   modelId: string;
   durationMs: number;
@@ -524,6 +528,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const stress = parseAgentStreamStressPrompt(prompt);
     if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
+    } else if (shouldEmitQuestionPrompt(prompt)) {
+      this.scheduleQuestionPromptTurn(turn);
     } else if (largePayload) {
       this.scheduleLargePayloadTurn(turn, largePayload);
     } else if (stress) {
@@ -576,9 +582,11 @@ export class MockLoadTestAgentSession implements AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
-    if (!this.pendingPermissions.delete(requestId)) {
+    const request = this.pendingPermissions.get(requestId);
+    if (!request) {
       return undefined;
     }
+    this.pendingPermissions.delete(requestId);
 
     const turn = this.activeTurn;
     this.emit({
@@ -590,7 +598,12 @@ export class MockLoadTestAgentSession implements AgentSession {
     });
 
     if (turn) {
-      this.finishTurnWithText(turn, "Synthetic plan approval resolved");
+      this.finishTurnWithText(
+        turn,
+        request.kind === "question"
+          ? "Synthetic questions resolved"
+          : "Synthetic plan approval resolved",
+      );
     }
     return undefined;
   }
@@ -689,6 +702,13 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
+  private scheduleQuestionPromptTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      this.emitQuestionPromptTurn(turn);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
   private emitPlanApprovalTurn(turn: ActiveTurn): void {
     if (this.activeTurn !== turn) {
       return;
@@ -729,6 +749,61 @@ export class MockLoadTestAgentSession implements AgentSession {
       ],
       metadata: {
         source: "mock_plan_approval",
+      },
+    };
+
+    this.pendingPermissions.set(request.id, request);
+    this.emit({
+      type: "permission_requested",
+      provider: this.provider,
+      request,
+      turnId: turn.turnId,
+    });
+  }
+
+  private emitQuestionPromptTurn(turn: ActiveTurn): void {
+    if (this.activeTurn !== turn) {
+      return;
+    }
+
+    this.clearTurnTimer(turn);
+    this.emit({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: turn.turnId,
+    });
+
+    const request: AgentPermissionRequest = {
+      id: `mock-questions-${turn.turnId}`,
+      provider: this.provider,
+      name: "MockQuestions",
+      kind: "question",
+      title: "Questions",
+      input: {
+        questions: [
+          {
+            question: "Which surface should this apply to?",
+            header: "surface",
+            options: [{ label: "App" }, { label: "Desktop" }],
+            multiSelect: false,
+          },
+          {
+            question: "Which rollout should we use?",
+            header: "rollout",
+            options: [{ label: "Immediately" }, { label: "Behind feature flag" }],
+            multiSelect: false,
+          },
+          {
+            question: "What success criteria should we use?",
+            header: "success",
+            options: [],
+            multiSelect: false,
+            placeholder: "Describe success...",
+          },
+        ],
+      },
+      metadata: {
+        source: "mock_questions",
       },
     };
 

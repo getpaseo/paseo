@@ -26,15 +26,6 @@ export function ensurePrivateFile(filePath: string): void {
   chmodBestEffort(filePath, PRIVATE_FILE_MODE);
 }
 
-export function writePrivateFileSync(
-  filePath: string,
-  data: string | NodeJS.ArrayBufferView,
-): void {
-  ensurePrivateDirectory(path.dirname(filePath));
-  writeFileSync(filePath, data, { mode: PRIVATE_FILE_MODE });
-  ensurePrivateFile(filePath);
-}
-
 export function writePrivateFileAtomicSync(
   filePath: string,
   data: string | NodeJS.ArrayBufferView,

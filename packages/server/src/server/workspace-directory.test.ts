@@ -30,11 +30,24 @@ class WorkspaceStatus {
     archivedAt: null,
   };
 
+  private readonly worktreeWorkspace: PersistedWorkspaceRecord = {
+    workspaceId: "workspace-worktree",
+    projectId: this.project.projectId,
+    cwd: "/workspace/project/.paseo/worktrees/feature",
+    kind: "worktree",
+    displayName: "feature",
+    createdAt: NOW,
+    updatedAt: NOW,
+    archivedAt: null,
+  };
+
+  private readonly workspaces = [this.workspace];
+
   private readonly agents: AgentSnapshotPayload[] = [];
   private readonly directory = new WorkspaceDirectory({
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
-    workspaceRegistry: { list: async () => [this.workspace] },
+    workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
     isProviderVisibleToClient: () => true,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
@@ -71,12 +84,34 @@ class WorkspaceStatus {
     );
   }
 
+  hasWorktreeWorkspace(): void {
+    this.workspaces.push(this.worktreeWorkspace);
+  }
+
+  hasDelegatedAgentInWorktree(input: AgentState): void {
+    this.agents.push(
+      createAgent({
+        ...input,
+        cwd: this.worktreeWorkspace.cwd,
+        labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+      }),
+    );
+  }
+
   async workspaceStatus(): Promise<WorkspaceDescriptorPayload["status"]> {
     const entries = await this.directory.listFetchEntries({
       type: "fetch_workspaces_request",
       requestId: "workspace-status",
     });
     return entries.entries[0]?.status ?? "done";
+  }
+
+  async workspaceStatuses(): Promise<Record<string, WorkspaceDescriptorPayload["status"]>> {
+    const entries = await this.directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-statuses",
+    });
+    return Object.fromEntries(entries.entries.map((entry) => [entry.id, entry.status]));
   }
 }
 
@@ -149,5 +184,18 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("running delegated child contributes running to the parent workspace, not its worktree", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasWorktreeWorkspace();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgentInWorktree({ id: "child-agent", status: "running" });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "running",
+      "workspace-worktree": "done",
+    });
   });
 });

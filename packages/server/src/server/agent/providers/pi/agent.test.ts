@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import type { AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
@@ -693,9 +693,199 @@ describe("PiRpcAgentClient", () => {
     ];
 
     await expect(session.listCommands()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Manually compact the session context",
+        argumentHint: "[instructions]",
+      },
+      {
+        name: "autocompact",
+        description: "Toggle automatic context compaction",
+        argumentHint: "[on|off|toggle]",
+      },
       { name: "review", description: "Review changes", argumentHint: "" },
       { name: "fix-tests", description: "Fix tests", argumentHint: "" },
       { name: "skill:docs", description: "Read docs", argumentHint: "" },
+    ]);
+  });
+
+  test("lists Pi compact even when RPC get_commands omits built-in slash commands", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().commands = [
+      { name: "review", description: "Review changes", source: "extension" },
+    ];
+
+    await expect(session.listCommands()).resolves.toContainEqual({
+      name: "compact",
+      description: "Manually compact the session context",
+      argumentHint: "[instructions]",
+    });
+    await expect(session.listCommands()).resolves.toContainEqual({
+      name: "autocompact",
+      description: "Toggle automatic context compaction",
+      argumentHint: "[on|off|toggle]",
+    });
+  });
+
+  test("preserves known argument hints when RPC get_commands returns built-in slash commands", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().commands = [
+      { name: "compact", description: "Compact from RPC", source: "extension" },
+      { name: "autocompact", description: "Auto compact from RPC", source: "extension" },
+    ];
+
+    await expect(session.listCommands()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Compact from RPC",
+        argumentHint: "[instructions]",
+      },
+      {
+        name: "autocompact",
+        description: "Auto compact from RPC",
+        argumentHint: "[on|off|toggle]",
+      },
+    ]);
+  });
+
+  test("executes Pi compact through RPC instead of prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact focus on tests");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.compactRequests).toEqual([{ customInstructions: "focus on tests" }]);
+    expect(fakeSession.prompts).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "completed", trigger: "manual" },
+      },
+    ]);
+  });
+
+  test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.emitCompactEnd = false;
+    fakeSession.compactError = new Error("summarizer failed");
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "completed", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Failed to compact context: summarizer failed",
+        },
+      },
+    ]);
+  });
+
+  test("executes Pi autocompact through RPC instead of prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact off");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([false]);
+    expect(fakeSession.prompts).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "Auto-compaction disabled." },
+      },
+    ]);
+  });
+
+  test("rejects unknown Pi autocompact mode instead of toggling", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact banana");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Usage: /autocompact [on|off|toggle]",
+        },
+      },
+    ]);
+  });
+
+  test("toggles Pi autocompact through current RPC state", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.state.autoCompactionEnabled = false;
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([true]);
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "pi",
+      item: { type: "assistant_message", text: "Auto-compaction enabled." },
+    });
+  });
+
+  test("rejects Pi autocompact toggle when current RPC state is unavailable", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    delete fakeSession.state.autoCompactionEnabled;
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Auto-compaction state is unavailable. Use /autocompact on or /autocompact off.",
+        },
+      },
     ]);
   });
 

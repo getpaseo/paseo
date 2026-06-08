@@ -2,6 +2,7 @@ import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
 import {
+  decodeFileTransferFrame,
   encodeFileTransferFrame,
   FileTransferOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
@@ -101,6 +102,12 @@ function wrapSessionMessage(message: unknown): string {
 function assertStr(data: string | Uint8Array | ArrayBuffer | undefined): string {
   if (typeof data !== "string") throw new Error("Expected string frame");
   return data;
+}
+
+function assertUint8Array(data: string | Uint8Array | ArrayBuffer | undefined): Uint8Array {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  throw new Error("Expected binary frame");
 }
 
 function parseSentFrame(
@@ -565,6 +572,110 @@ test("readFile resolves from binary file frames when the daemon supports them", 
     modifiedAt: "2026-05-02T00:00:00.000Z",
   });
   expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("uploadFile sends metadata request and file bytes as binary chunks", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.uploadFile({
+    fileName: "notes.txt",
+    mimeType: "text/plain",
+    bytes: new TextEncoder().encode("hello world"),
+    modifiedAt: "2026-05-02T00:00:00.000Z",
+    requestId: "req-upload",
+    chunkSize: 5,
+  });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-upload",
+    },
+  });
+  expect(mock.sent.slice(1).map(assertUint8Array).map(decodeFileTransferFrame)).toEqual([
+    {
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-upload",
+      metadata: {
+        mime: "text/plain",
+        size: 11,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+        fileName: "notes.txt",
+      },
+      payload: new Uint8Array(),
+    },
+    {
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-upload",
+      payload: new TextEncoder().encode("hello"),
+    },
+    {
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-upload",
+      payload: new TextEncoder().encode(" worl"),
+    },
+    {
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-upload",
+      payload: new TextEncoder().encode("d"),
+    },
+    {
+      opcode: FileTransferOpcode.FileEnd,
+      requestId: "req-upload",
+      payload: new Uint8Array(),
+    },
+  ]);
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file.upload.response",
+      payload: {
+        requestId: "req-upload",
+        file: {
+          type: "uploaded_file",
+          id: "upload_req-upload",
+          fileName: "notes.txt",
+          mimeType: "text/plain",
+          size: 11,
+          path: "/tmp/paseo-uploads/upload_req-upload/notes.txt",
+        },
+        error: null,
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    requestId: "req-upload",
+    file: {
+      type: "uploaded_file",
+      id: "upload_req-upload",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      path: "/tmp/paseo-uploads/upload_req-upload/notes.txt",
+    },
+    error: null,
+  });
 });
 
 test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {

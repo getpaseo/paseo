@@ -22,6 +22,7 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import { ScheduleService } from "./service.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
@@ -36,6 +37,13 @@ const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: false,
   supportsToolInvocations: true,
+};
+
+const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
+  async resolveCreateConfig(input) {
+    expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+    return { modeId: undefined, featureValues: input.featureValues };
+  },
 };
 
 describe("ScheduleService", () => {
@@ -64,6 +72,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async (schedule) => ({
         agentId: "00000000-0000-0000-0000-000000000001",
@@ -102,6 +111,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({
         agentId: null,
@@ -137,6 +147,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({
         agentId: null,
@@ -176,6 +187,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
     });
 
@@ -202,6 +214,212 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.agentId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+  });
+
+  test("titles scheduled new agents from the schedule prompt", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "Audit flaky checkout flow\n\nReport only blockers.",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          approvalPolicy: "never",
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    const agentId = inspected.runs[0]?.agentId;
+    expect(agentId).toMatch(/^[0-9a-f-]{36}$/);
+    const storedAgent = await agentStorage.get(agentId!);
+    expect(storedAgent?.title).toBe("Audit flaky checkout flow");
+  });
+
+  test("shows scheduled new-agent prompts as normal user turns", async () => {
+    class PromptEchoScheduleSession implements AgentSession {
+      readonly provider = "claude";
+      readonly capabilities = SCHEDULE_TEST_CAPABILITIES;
+      readonly id = "scheduled-prompt-echo-session";
+      private turnCount = 0;
+      private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+
+      async run(_prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
+        return {
+          sessionId: this.id,
+          finalText: "done",
+          timeline: [{ type: "assistant_message", text: "done" }],
+        };
+      }
+
+      async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+        const turnId = `turn-${++this.turnCount}`;
+        const textPrompt = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
+        setImmediate(() => {
+          this.emit({ type: "turn_started", provider: this.provider, turnId });
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "user_message", text: textPrompt },
+          });
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text: "done" },
+          });
+          this.emit({
+            type: "turn_completed",
+            provider: this.provider,
+            turnId,
+            usage: { inputTokens: 1, outputTokens: 1 },
+          });
+        });
+        return { turnId };
+      }
+
+      subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+        this.subscribers.add(callback);
+        return () => {
+          this.subscribers.delete(callback);
+        };
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+      async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: null,
+          modeId: null,
+        };
+      }
+
+      async getAvailableModes(): Promise<AgentMode[]> {
+        return [];
+      }
+
+      async getCurrentMode(): Promise<string | null> {
+        return null;
+      }
+
+      async setMode(_modeId: string): Promise<void> {}
+
+      getPendingPermissions(): AgentPermissionRequest[] {
+        return [];
+      }
+
+      async respondToPermission(
+        _requestId: string,
+        _response: AgentPermissionResponse,
+      ): Promise<void> {}
+
+      describePersistence(): AgentPersistenceHandle {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+        };
+      }
+
+      async interrupt(): Promise<void> {}
+
+      async close(): Promise<void> {}
+
+      private emit(event: AgentStreamEvent): void {
+        for (const subscriber of this.subscribers) {
+          subscriber(event);
+        }
+      }
+    }
+
+    class PromptEchoScheduleClient implements AgentClient {
+      readonly provider = "claude";
+      readonly capabilities = SCHEDULE_TEST_CAPABILITIES;
+
+      async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+        return new PromptEchoScheduleSession();
+      }
+
+      async resumeSession(_handle: AgentPersistenceHandle): Promise<AgentSession> {
+        return new PromptEchoScheduleSession();
+      }
+
+      async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+        return [];
+      }
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+    }
+
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: { claude: new PromptEchoScheduleClient() },
+      registry: agentStorage,
+    });
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const observedUserMessages: string[] = [];
+    const unsubscribe = manager.subscribe((event) => {
+      if (event.type !== "agent_stream" || event.event.type !== "timeline") {
+        return;
+      }
+      if (event.event.item.type === "user_message") {
+        observedUserMessages.push(event.event.item.text);
+      }
+    });
+
+    const created = await service.create({
+      prompt: "Audit nightly run",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          approvalPolicy: "never",
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    try {
+      await service.tick();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(observedUserMessages).toEqual(["Audit nightly run"]);
+    expect((await service.inspect(created.id)).runs[0]?.status).toBe("succeeded");
   });
 
   test("archives new-agent schedule sessions after the run finishes", async () => {
@@ -350,6 +568,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
     });
 
@@ -391,6 +610,12 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+          return { modeId: "bypassPermissions", featureValues: input.featureValues };
+        },
+      },
       now: () => now,
     });
 
@@ -419,12 +644,77 @@ describe("ScheduleService", () => {
     expect(agent?.archivedAt).toBeTruthy();
   });
 
+  test("defaults OpenCode new-agent schedules to build plus auto accept", async () => {
+    const createdConfigs: AgentSessionConfig[] = [];
+    const clients = createTestAgentClients();
+    const opencodeClient = clients.opencode;
+    if (!opencodeClient) {
+      throw new Error("Expected OpenCode test client");
+    }
+    clients.opencode = {
+      provider: opencodeClient.provider,
+      capabilities: opencodeClient.capabilities,
+      createSession: async (...args) => {
+        createdConfigs.push(args[0]);
+        return opencodeClient.createSession(...args);
+      },
+      resumeSession: (...args) => opencodeClient.resumeSession(...args),
+      listModels: (...args) => opencodeClient.listModels(...args),
+      isAvailable: () => opencodeClient.isAvailable(),
+    } satisfies AgentClient;
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients,
+      registry: agentStorage,
+    });
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+          return {
+            modeId: "build",
+            featureValues: { ...input.featureValues, auto_accept: true },
+          };
+        },
+      },
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "Respond with exactly hello",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "opencode",
+          cwd: tempDir,
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs[0]?.error).toBeNull();
+    expect(createdConfigs[0]).toMatchObject({
+      modeId: "build",
+      featureValues: { auto_accept: true },
+    });
+  });
+
   test("advances stale nextRunAt on daemon restart", async () => {
     const service1 = new ScheduleService({
       paseoHome: tempDir,
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -449,6 +739,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -474,6 +765,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => {
         releaseRun?.();
@@ -522,6 +814,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: manager,
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
     });
 
@@ -579,6 +872,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -601,6 +895,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -624,6 +919,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -646,6 +942,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -669,6 +966,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async (schedule) => ({
         agentId: "00000000-0000-0000-0000-000000000099",
@@ -704,6 +1002,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -756,6 +1055,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -788,6 +1088,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ran" }),
     });
@@ -819,6 +1120,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -844,6 +1146,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -868,6 +1171,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -912,6 +1216,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -942,6 +1247,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });
@@ -967,6 +1273,7 @@ describe("ScheduleService", () => {
       logger: createTestLogger(),
       agentManager: new AgentManager({ logger: createTestLogger() }),
       agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
       runner: async () => ({ agentId: null, output: "ok" }),
     });

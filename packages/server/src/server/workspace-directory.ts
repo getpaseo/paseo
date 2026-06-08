@@ -10,8 +10,9 @@ import type {
 import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
+  type WorkspaceStateBucket,
 } from "@getpaseo/protocol/agent-state-bucket";
-import { isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
@@ -22,6 +23,19 @@ const FETCH_WORKSPACES_SORT_KEYS = [
   "name",
   "project_id",
 ] as const;
+
+/**
+ * Per-workspace bucket history. Drives the priority-unmasking semantic for
+ * `statusEnteredAt`: when the winning bucket changes from a higher-priority
+ * mask to a lower-priority bucket, the new entry time is the unmask time
+ * (i.e., the moment the higher-priority bucket cleared), not when the
+ * underlying agent originally entered the lower-priority bucket. Cleared when
+ * the workspace has never had contributing agents.
+ */
+interface WorkspaceBucketHistoryEntry {
+  bucket: WorkspaceStateBucket;
+  enteredAt: string;
+}
 
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
@@ -93,6 +107,12 @@ export function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspace
 
 export class WorkspaceDirectory {
   private readonly archivingByWorkspaceId = new Map<string, string>();
+  /**
+   * Per-workspace last-seen winning bucket + entered-at. Persists across
+   * `buildDescriptorMap` calls inside the daemon process; reset on cold start.
+   * Server-internal; never crosses the wire.
+   */
+  private readonly bucketHistoryByWorkspaceId = new Map<string, WorkspaceBucketHistoryEntry>();
 
   private readonly pager = new SortablePager<
     WorkspaceDescriptorPayload,
@@ -181,18 +201,34 @@ export class WorkspaceDirectory {
       });
     }
 
-    for (const agent of agents) {
-      if (agent.archivedAt) {
-        continue;
-      }
-      if (!this.deps.isProviderVisibleToClient(agent.provider)) {
-        continue;
-      }
+    const activeAgents = agents.filter(
+      (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
+    );
+    const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
+
+    for (const agent of activeAgents) {
+      let workspaceAgent = agent;
+      let bucket: WorkspaceDescriptorPayload["status"];
       if (isDelegatedAgent(agent)) {
-        continue;
+        if (agent.status !== "running") {
+          continue;
+        }
+        const parentAgent = resolveDelegationRootAgent(agent, activeAgentsById);
+        if (!parentAgent) {
+          continue;
+        }
+        workspaceAgent = parentAgent;
+        bucket = "running";
+      } else {
+        bucket = deriveAgentStateBucket({
+          status: agent.status,
+          pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+          requiresAttention: agent.requiresAttention,
+          attentionReason: agent.attentionReason ?? null,
+        });
       }
 
-      const workspaceId = workspaceIdsByDirectory.get(normalizeWorkspaceId(agent.cwd));
+      const workspaceId = workspaceIdsByDirectory.get(normalizeWorkspaceId(workspaceAgent.cwd));
       if (workspaceId === undefined) {
         continue;
       }
@@ -201,12 +237,6 @@ export class WorkspaceDirectory {
         continue;
       }
 
-      const bucket = deriveAgentStateBucket({
-        status: agent.status,
-        pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
-        requiresAttention: agent.requiresAttention,
-        attentionReason: agent.attentionReason ?? null,
-      });
       if (
         getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
       ) {
@@ -214,7 +244,126 @@ export class WorkspaceDirectory {
       }
     }
 
+    // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
+    // on `resolveStatusEnteredAt`).
+    const nowIso = new Date().toISOString();
+    for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
+      const contributingAgents = agents.filter(
+        (agent) =>
+          !agent.archivedAt &&
+          this.deps.isProviderVisibleToClient(agent.provider) &&
+          workspaceIdsByDirectory.get(normalizeWorkspaceId(agent.cwd)) === workspaceId,
+      );
+      const result = this.resolveStatusEnteredAt({
+        workspaceId,
+        winningBucket: descriptor.status,
+        contributingAgents,
+        previous: this.bucketHistoryByWorkspaceId.get(workspaceId) ?? null,
+        nowIso,
+      });
+      descriptor.statusEnteredAt = result.statusEnteredAt;
+      if (result.recordUpdate) {
+        this.bucketHistoryByWorkspaceId.set(workspaceId, result.recordUpdate);
+      } else if (result.recordDelete) {
+        this.bucketHistoryByWorkspaceId.delete(workspaceId);
+      }
+    }
+
     return descriptorsByWorkspaceId;
+  }
+
+  // Aggregate the workspace-level `statusEnteredAt` from its contributing
+  // agents. Aggregate semantics:
+  //   - winning bucket = highest-priority across contributing agents;
+  //   - entry time = best-effort timestamp from agents in the winning bucket;
+  //   - priority unmasking: when the winning bucket transitions (e.g. a
+  //     higher-priority bucket cleared), the new entry time is "now";
+  //   - same-bucket emits reuse the previous entered-at;
+  //   - empty workspaces that never had contributing agents get
+  //     `statusEnteredAt: null`.
+  //   - when archived agents leave a previously active workspace empty, keep
+  //     the previous done timestamp or stamp the transition to done now.
+  private resolveStatusEnteredAt(params: {
+    workspaceId: string;
+    winningBucket: WorkspaceStateBucket;
+    contributingAgents: AgentSnapshotPayload[];
+    previous: WorkspaceBucketHistoryEntry | null;
+    nowIso: string;
+  }): {
+    statusEnteredAt: string | null;
+    recordUpdate?: WorkspaceBucketHistoryEntry;
+    recordDelete?: true;
+  } {
+    const { winningBucket, contributingAgents, previous, nowIso } = params;
+
+    if (contributingAgents.length === 0) {
+      if (!previous) {
+        return { statusEnteredAt: null };
+      }
+
+      const enteredAt = previous.bucket === "done" ? previous.enteredAt : nowIso;
+      return {
+        statusEnteredAt: enteredAt,
+        recordUpdate: { bucket: "done", enteredAt },
+      };
+    }
+
+    if (!previous) {
+      const newestInWinningBucket = this.findNewestAgentTimestampInBucket(
+        contributingAgents,
+        winningBucket,
+      );
+      const enteredAt = newestInWinningBucket ?? nowIso;
+      return {
+        statusEnteredAt: enteredAt,
+        recordUpdate: { bucket: winningBucket, enteredAt },
+      };
+    }
+
+    if (previous.bucket !== winningBucket) {
+      return {
+        statusEnteredAt: nowIso,
+        recordUpdate: { bucket: winningBucket, enteredAt: nowIso },
+      };
+    }
+
+    return {
+      statusEnteredAt: previous.enteredAt,
+      recordUpdate: previous,
+    };
+  }
+
+  // Best-effort newest timestamp across contributing agents whose derived
+  // bucket matches `winningBucket`. Uses available agent fields:
+  //   - `attentionTimestamp` when attention is set (covers attention/failed)
+  //   - `updatedAt` as a general fallback for any bucket
+  // Returns `null` if no matching agent has a parseable timestamp.
+  private findNewestAgentTimestampInBucket(
+    contributingAgents: AgentSnapshotPayload[],
+    winningBucket: WorkspaceStateBucket,
+  ): string | null {
+    const candidates = contributingAgents
+      .filter((agent) => {
+        const derived = deriveAgentStateBucket({
+          status: agent.status,
+          pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+          requiresAttention: agent.requiresAttention,
+          attentionReason: agent.attentionReason ?? null,
+        });
+        return derived === winningBucket;
+      })
+      .map((agent) => {
+        // Prefer attentionTimestamp when the agent has attention set — this is
+        // the most accurate "entered current status" signal.
+        if (agent.attentionTimestamp) {
+          return agent.attentionTimestamp;
+        }
+        // Fall back to updatedAt as a general proxy for recent activity.
+        return agent.updatedAt;
+      })
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .sort();
+    return candidates.at(-1) ?? null;
   }
 
   resolveRegisteredWorkspaceIdForCwd(cwd: string, workspaces: PersistedWorkspaceRecord[]): string {
@@ -334,5 +483,29 @@ export class WorkspaceDirectory {
         hasMore,
       },
     };
+  }
+}
+
+function resolveDelegationRootAgent(
+  agent: AgentSnapshotPayload,
+  activeAgentsById: ReadonlyMap<string, AgentSnapshotPayload>,
+): AgentSnapshotPayload | null {
+  const seen = new Set<string>([agent.id]);
+  let current = agent;
+
+  while (true) {
+    const parentAgentId = getParentAgentIdFromLabels(current.labels);
+    if (!parentAgentId) {
+      return current;
+    }
+    if (seen.has(parentAgentId)) {
+      return null;
+    }
+    const parent = activeAgentsById.get(parentAgentId);
+    if (!parent) {
+      return null;
+    }
+    seen.add(parentAgentId);
+    current = parent;
   }
 }

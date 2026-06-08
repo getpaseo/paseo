@@ -835,7 +835,7 @@ describe("model merging", () => {
     ]);
   });
 
-  test("built-in Claude profile models append to runtime models", async () => {
+  test("built-in Claude profile models replace runtime models (issue #1299)", async () => {
     mockState.runtimeModels.set("claude", [
       {
         provider: "claude",
@@ -872,11 +872,6 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
-      {
-        provider: "claude",
-        id: "runtime-model",
-        label: "Runtime Model",
-      },
       {
         provider: "claude",
         id: "shared-model",
@@ -1128,5 +1123,33 @@ describe("model merging", () => {
 
     const defaultModel = models.find((model) => model.isDefault) ?? models[0];
     expect(defaultModel?.id).toBe("profile-default");
+  });
+
+  test("built-in Claude models override replaces hardcoded first-party models (issue #1299)", async () => {
+    mockState.runtimeModels.set("claude", [
+      { provider: "claude", id: "claude-opus-4-8", label: "Opus 4.8", isDefault: true },
+      { provider: "claude", id: "claude-opus-4-7", label: "Opus 4.7" },
+      { provider: "claude", id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+      { provider: "claude", id: "claude-haiku-4-5", label: "Haiku 4.5" },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            { id: "MiniMax-M2.7", label: "MiniMax-M2.7" },
+            { id: "MiniMax-M3", label: "MiniMax-M3", isDefault: true },
+          ],
+        },
+      },
+    });
+
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models.map((model) => model.id)).toEqual(["MiniMax-M2.7", "MiniMax-M3"]);
+    expect(models.find((model) => model.isDefault)?.id).toBe("MiniMax-M3");
   });
 });

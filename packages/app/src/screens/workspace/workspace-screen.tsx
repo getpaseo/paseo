@@ -135,6 +135,7 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuEntry,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useDesktopBrowserNewTabRequests } from "@/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   resolveWorkspaceHeaderRenderState,
@@ -199,6 +200,31 @@ function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
 ): WorkspaceDescriptor["scripts"] {
   return workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS;
+}
+
+interface WorkspaceFileLocationFields {
+  path: string | null;
+  lineStart?: number;
+  lineEnd?: number;
+}
+
+function getWorkspaceFileLocationFields(
+  tab: WorkspaceTabDescriptor | null,
+): WorkspaceFileLocationFields {
+  const target = tab?.target;
+  if (target?.kind !== "file") {
+    return { path: null };
+  }
+  return { path: target.path, lineStart: target.lineStart, lineEnd: target.lineEnd };
+}
+
+function buildWorkspaceFileLocation(
+  fields: WorkspaceFileLocationFields,
+): WorkspaceFileLocation | null {
+  if (fields.path === null) {
+    return null;
+  }
+  return { path: fields.path, lineStart: fields.lineStart, lineEnd: fields.lineEnd };
 }
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
@@ -757,19 +783,17 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
 
 interface MobileExplorerOpenGestureSurfaceProps {
   children: ReactNode;
+  enabled: boolean;
   onOpenExplorer: () => void;
 }
 
 function MobileExplorerOpenGestureSurface({
   children,
+  enabled,
   onOpenExplorer,
 }: MobileExplorerOpenGestureSurfaceProps) {
-  const canOpenExplorerFromAgentView = usePanelStore(
-    (state) =>
-      state.mobileView === "agent" && !selectIsFileExplorerOpen(state, { isCompact: true }),
-  );
   const explorerOpenGesture = useExplorerOpenGesture({
-    enabled: canOpenExplorerFromAgentView,
+    enabled,
     onOpen: onOpenExplorer,
   });
 
@@ -2336,6 +2360,12 @@ function WorkspaceScreenContent({
     [openWorkspaceTabFocused, persistenceKey],
   );
 
+  useDesktopBrowserNewTabRequests({
+    enabled: Boolean(persistenceKey),
+    workspaceLayout,
+    openUrl: handleOpenUrlInBrowserTab,
+  });
+
   const handleSelectSwitcherTab = useCallback(
     (key: string) => {
       navigateToTabId(key);
@@ -2409,7 +2439,7 @@ function WorkspaceScreenContent({
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
         const closePolicy = resolveCloseAgentTabPolicy(agent);
-        const isRunning = agent?.status === "running" || agent?.status === "initializing";
+        const isRunning = agent?.status === "running";
 
         if (isRunning && closePolicy.kind === "archive-on-close") {
           const confirmed = await confirmDialog({
@@ -2881,6 +2911,19 @@ function WorkspaceScreenContent({
   });
 
   const activeTabDescriptor = useMemo(() => activeTab?.descriptor ?? null, [activeTab]);
+  const activeFileFields = getWorkspaceFileLocationFields(activeTabDescriptor);
+  const activeFilePath = activeFileFields.path;
+  const activeFileLineStart = activeFileFields.lineStart;
+  const activeFileLineEnd = activeFileFields.lineEnd;
+  const activeFileLocation = useMemo<WorkspaceFileLocation | null>(
+    () =>
+      buildWorkspaceFileLocation({
+        path: activeFilePath,
+        lineStart: activeFileLineStart,
+        lineEnd: activeFileLineEnd,
+      }),
+    [activeFileLineEnd, activeFileLineStart, activeFilePath],
+  );
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const shouldRenderDesktopPaneFallback = useMemo(
     () => !isMobile && !canRenderDesktopPaneSplits,
@@ -3117,10 +3160,11 @@ function WorkspaceScreenContent({
             hideLabels={showCompactButtonLabels}
           />
         ) : null}
-        {!isMobile ? (
+        {!isMobile && workspaceDirectory ? (
           <WorkspaceOpenInEditorButton
             serverId={normalizedServerId}
-            cwd={normalizedWorkspaceId}
+            cwd={workspaceDirectory}
+            activeFile={activeFileLocation}
             hideLabels={showCompactButtonLabels}
           />
         ) : null}
@@ -3227,6 +3271,8 @@ function WorkspaceScreenContent({
       workspaceDescriptor,
       normalizedServerId,
       normalizedWorkspaceId,
+      workspaceDirectory,
+      activeFileLocation,
       liveTerminalIds,
       handleScriptTerminalStarted,
       handleViewScriptTerminal,
@@ -3437,7 +3483,10 @@ function WorkspaceScreenContent({
 
       <View style={styles.centerContent}>
         {isMobile ? (
-          <MobileExplorerOpenGestureSurface onOpenExplorer={openExplorerForWorkspace}>
+          <MobileExplorerOpenGestureSurface
+            enabled={Boolean(activeExplorerCheckout)}
+            onOpenExplorer={openExplorerForWorkspace}
+          >
             {content}
           </MobileExplorerOpenGestureSurface>
         ) : (
