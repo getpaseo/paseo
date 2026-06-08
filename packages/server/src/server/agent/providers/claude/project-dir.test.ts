@@ -66,8 +66,8 @@ const cases: ParityCase[] = [
   },
   {
     label: "non-existent path (canonicalize fallback)",
-    // realpath will throw; canonicalize falls back to NFC of input. SDK does
-    // the same, so paths should still match.
+    // realpath will throw; canonicalize falls back to the input path. SDK does
+    // the same, including platform-specific normalization, so paths should match.
     build: async () => join(workspaceRoot, "this-path-was-never-created-" + randomUUID()),
   },
 ];

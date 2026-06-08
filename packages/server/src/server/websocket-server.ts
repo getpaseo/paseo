@@ -1048,7 +1048,7 @@ export class VoiceAssistantWebSocketServer {
       serverId: this.serverId,
       hostname: getHostname(),
       version: this.daemonVersion,
-      ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
+      capabilities: this.serverCapabilities,
       features: {
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,

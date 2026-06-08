@@ -33,6 +33,23 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("parses worktree config when only one lifecycle hook is present", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        worktree: {
+          setup: "npm install",
+          terminals: [{ name: "Dev", command: "npm run dev" }],
+        },
+      }),
+    ).toEqual({
+      worktree: {
+        setup: ["npm install"],
+        teardown: [],
+        terminals: [{ name: "Dev", command: "npm run dev" }],
+      },
+    });
+  });
+
   it("parses all metadata generation instruction entries", () => {
     expect(
       PaseoConfigSchema.parse({

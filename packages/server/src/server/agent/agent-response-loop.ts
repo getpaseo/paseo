@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
@@ -111,11 +110,10 @@ function isZodSchema(value: unknown): value is z.ZodTypeAny {
 }
 
 function buildZodValidator<T>(schema: z.ZodTypeAny, schemaName: string): SchemaValidator<T> {
-  const zodToJsonSchemaAny = zodToJsonSchema as unknown as (
-    input: z.ZodTypeAny,
-    name?: string,
-  ) => JsonSchema;
-  const jsonSchema = zodToJsonSchemaAny(schema, schemaName);
+  const jsonSchema = {
+    ...z.toJSONSchema(schema, { target: "draft-7" }),
+    title: schemaName,
+  } as JsonSchema;
   return {
     jsonSchema,
     validate: (value) => {

@@ -424,11 +424,12 @@ interface ToolReadOutputValue {
   content?: string;
 }
 
-export const ToolReadOutputSchema: z.ZodType<ToolReadOutputValue, z.ZodTypeDef, unknown> =
-  ToolReadOutputContentSchema;
+export const ToolReadOutputSchema: z.ZodType<ToolReadOutputValue> = ToolReadOutputContentSchema;
 
-export const ToolReadOutputWithPathSchema: z.ZodType<ToolReadOutputValue, z.ZodTypeDef, unknown> =
-  z.union([ToolReadOutputContentSchema, ToolReadOutputPathSchema]);
+export const ToolReadOutputWithPathSchema: z.ZodType<ToolReadOutputValue> = z.union([
+  ToolReadOutputContentSchema,
+  ToolReadOutputPathSchema,
+]);
 
 export const ToolWriteContentSchema = z
   .object({
@@ -934,8 +935,12 @@ export function toolDetailBranchByName<
     input: inputSchema.nullable(),
     output: outputSchema.nullable(),
   });
-  return schema.transform((value: z.infer<typeof schema>) => {
-    return mapper(value.input, value.output);
+  return schema.transform((value) => {
+    const parsed = value as unknown as {
+      input: z.infer<InputSchema> | null;
+      output: z.infer<OutputSchema> | null;
+    };
+    return mapper(parsed.input, parsed.output);
   });
 }
 
@@ -957,8 +962,12 @@ export function toolDetailBranchByToolName<
     input: inputSchema.nullable(),
     output: outputSchema.nullable(),
   });
-  return schema.transform((value: z.infer<typeof schema>) => {
-    return mapper(value.input, value.output);
+  return schema.transform((value) => {
+    const parsed = value as unknown as {
+      input: z.infer<InputSchema> | null;
+      output: z.infer<OutputSchema> | null;
+    };
+    return mapper(parsed.input, parsed.output);
   });
 }
 
@@ -982,7 +991,12 @@ export function toolDetailBranchByNameWithCwd<
     output: outputSchema.nullable(),
     cwd: z.string().optional().nullable(),
   });
-  return schema.transform((value: z.infer<typeof schema>) => {
-    return mapper(value.input, value.output, value.cwd ?? null);
+  return schema.transform((value) => {
+    const parsed = value as unknown as {
+      input: z.infer<InputSchema> | null;
+      output: z.infer<OutputSchema> | null;
+      cwd?: string | null;
+    };
+    return mapper(parsed.input, parsed.output, parsed.cwd ?? null);
   });
 }

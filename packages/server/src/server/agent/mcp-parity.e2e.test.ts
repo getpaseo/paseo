@@ -31,7 +31,7 @@ function str(val: unknown): string {
 }
 
 function recordArr(val: unknown): StructuredContent[] {
-  return z.array(z.record(z.unknown())).parse(val);
+  return z.array(z.record(z.string(), z.unknown())).parse(val);
 }
 
 function expectAgentFeatureValue(snapshot: StructuredContent, featureId: string, value: unknown) {
@@ -355,7 +355,7 @@ describe("Suite A: Core Fixes", () => {
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
       const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
-      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      const snapshot = z.record(z.string(), z.unknown()).parse(status.snapshot);
       expectAgentFeatureValue(snapshot, "test_feature", true);
     } finally {
       await archiveAgentIfPresent(agentId);
@@ -373,7 +373,7 @@ describe("Suite A: Core Fixes", () => {
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
       const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
-      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      const snapshot = z.record(z.string(), z.unknown()).parse(status.snapshot);
       expectAgentFeatureValue(snapshot, "test_feature", true);
     } finally {
       await archiveAgentIfPresent(agentId);
@@ -393,7 +393,7 @@ describe("Suite A: Core Fixes", () => {
       expect(internalSnapshot?.config.featureValues).toEqual({ test_feature: true });
 
       const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
-      const snapshot = z.record(z.unknown()).parse(status.snapshot);
+      const snapshot = z.record(z.string(), z.unknown()).parse(status.snapshot);
       expectAgentFeatureValue(snapshot, "test_feature", true);
     } finally {
       await archiveAgentIfPresent(agentId);

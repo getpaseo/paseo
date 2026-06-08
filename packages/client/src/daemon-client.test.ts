@@ -116,7 +116,7 @@ function parseSentFrame(
   return z
     .object({
       type: z.literal("session"),
-      message: z.record(z.unknown()),
+      message: z.record(z.string(), z.unknown()),
     })
     .parse(JSON.parse(assertStr(data))).message;
 }

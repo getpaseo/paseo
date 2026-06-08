@@ -18,13 +18,13 @@ export interface FavoriteModelRow {
 const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
-  thinkingByModel: z.record(z.string()).optional(),
-  featureValues: z.record(z.unknown()).optional(),
+  thinkingByModel: z.record(z.string(), z.string()).optional(),
+  featureValues: z.record(z.string(), z.unknown()).optional(),
 });
 
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
-  providerPreferences: z.record(providerPreferencesSchema).optional(),
+  providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
   favoriteModels: z
     .array(
       z.object({

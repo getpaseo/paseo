@@ -6,7 +6,6 @@ import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import Ajv from "ajv";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
@@ -112,7 +111,7 @@ async function invokeToolWithParsedInput(
 
 function expectOutputSchemaAccepts(tool: RegisteredMcpTool, data: unknown): void {
   expect(tool.outputSchema).toBeDefined();
-  const jsonSchema = zodToJsonSchema(tool.outputSchema as z.ZodTypeAny);
+  const jsonSchema = z.toJSONSchema(tool.outputSchema as z.ZodTypeAny, { target: "draft-7" });
   const ajv = new Ajv({ allErrors: true, strict: false });
   const validate = ajv.compile(jsonSchema);
   expect(validate(data), JSON.stringify(validate.errors, null, 2)).toBe(true);
@@ -121,7 +120,7 @@ function expectOutputSchemaAccepts(tool: RegisteredMcpTool, data: unknown): void
 function agentsOf(response: {
   structuredContent: LooseStructuredContent;
 }): Array<Record<string, unknown>> {
-  return z.array(z.record(z.unknown())).parse(response.structuredContent.agents);
+  return z.array(z.record(z.string(), z.unknown())).parse(response.structuredContent.agents);
 }
 
 type AgentManagerSpies = ReturnType<typeof buildAgentManagerSpies>;
@@ -3205,7 +3204,7 @@ describe("agent snapshot MCP serialization", () => {
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({});
     const structured = z
-      .object({ agents: z.array(z.record(z.unknown())) })
+      .object({ agents: z.array(z.record(z.string(), z.unknown())) })
       .parse(response.structuredContent);
 
     expect(structured).toEqual({
@@ -3317,7 +3316,7 @@ describe("agent snapshot MCP serialization", () => {
     });
     const tool = registeredTool(server, "get_agent_status");
     const response = await tool.handler({ agentId: "full-detail-agent" });
-    const snapshot = z.record(z.unknown()).parse(response.structuredContent.snapshot);
+    const snapshot = z.record(z.string(), z.unknown()).parse(response.structuredContent.snapshot);
 
     const parsed = AgentSnapshotPayloadSchema.safeParse(snapshot);
     if (!parsed.success) {

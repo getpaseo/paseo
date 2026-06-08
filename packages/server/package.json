@@ -58,13 +58,14 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.133",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.168",
+    "@anthropic-ai/sdk": "^0.102.0",
     "@getpaseo/client": "0.1.91-beta.2",
     "@getpaseo/highlight": "0.1.91-beta.2",
     "@getpaseo/protocol": "0.1.91-beta.2",
     "@getpaseo/relay": "0.1.91-beta.2",
     "@isaacs/ttlcache": "^2.1.4",
-    "@modelcontextprotocol/sdk": "^1.20.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "1.14.46",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
@@ -76,7 +77,7 @@
     "lru-cache": "^11.5.1",
     "mnemonic-id": "^3.2.7",
     "node-pty": "1.2.0-beta.11",
-    "openai": "^4.20.0",
+    "openai": "^6.42.0",
     "p-limit": "^7.3.0",
     "p-memoize": "^8.0.0",
     "pino": "^10.2.0",
@@ -89,8 +90,7 @@
     "uuid": "^9.0.1",
     "which": "^5.0.0",
     "ws": "^8.14.2",
-    "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.25.1"
+    "zod": "^4.1.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

@@ -17,10 +17,17 @@ export const ScheduleCadenceSchema = z.discriminatedUnion("type", [
 ]);
 export type ScheduleCadence = z.infer<typeof ScheduleCadenceSchema>;
 
+const LegacyUuidSchema = z
+  .string()
+  .regex(
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+    "Invalid UUID",
+  );
+
 export const ScheduleTargetSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("agent"),
-    agentId: z.string().uuid(),
+    agentId: LegacyUuidSchema,
   }),
   z.object({
     type: z.literal("new-agent"),
@@ -35,16 +42,16 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
       sandboxMode: z.string().trim().min(1).optional(),
       networkAccess: z.boolean().optional(),
       webSearch: z.boolean().optional(),
-      featureValues: z.record(z.unknown()).optional(),
+      featureValues: z.record(z.string(), z.unknown()).optional(),
       extra: z
         .object({
-          codex: z.record(z.unknown()).optional(),
-          claude: z.record(z.unknown()).optional(),
+          codex: z.record(z.string(), z.unknown()).optional(),
+          claude: z.record(z.string(), z.unknown()).optional(),
         })
         .partial()
         .optional(),
       systemPrompt: z.string().optional(),
-      mcpServers: z.record(z.unknown()).optional(),
+      mcpServers: z.record(z.string(), z.unknown()).optional(),
     }),
   }),
 ]);
@@ -56,7 +63,7 @@ export const ScheduleRunSchema = z.object({
   startedAt: z.string(),
   endedAt: z.string().nullable(),
   status: z.enum(["running", "succeeded", "failed"]),
-  agentId: z.string().uuid().nullable(),
+  agentId: LegacyUuidSchema.nullable(),
   output: z.string().nullable(),
   error: z.string().nullable(),
 });
