@@ -29,7 +29,7 @@ describe("ensureWorkspaceServicePortPlan", () => {
     expect(allocationCount).toBe(3);
   });
 
-  it("returns the existing plan without calling the allocator on later calls", async () => {
+  it("extends the existing plan for later service declarations without reallocating known services", async () => {
     let allocationCount = 0;
 
     const firstPlan = await ensureWorkspaceServicePortPlan({
@@ -43,16 +43,23 @@ describe("ensureWorkspaceServicePortPlan", () => {
 
     const secondPlan = await ensureWorkspaceServicePortPlan({
       workspaceId: "registry-first-wins-workspace",
-      services: [{ scriptName: "new-service" }],
+      services: [{ scriptName: "api" }, { scriptName: "web" }, { scriptName: "new-service" }],
       allocatePort: async () => {
         allocationCount += 1;
         return 4300;
       },
     });
 
-    expect(Array.from(secondPlan.entries())).toEqual(Array.from(firstPlan.entries()));
-    expect(secondPlan.has("new-service")).toBe(false);
-    expect(allocationCount).toBe(2);
+    expect(Array.from(firstPlan.entries())).toEqual([
+      ["api", 4201],
+      ["web", 4202],
+    ]);
+    expect(Array.from(secondPlan.entries())).toEqual([
+      ["api", 4201],
+      ["web", 4202],
+      ["new-service", 4300],
+    ]);
+    expect(allocationCount).toBe(3);
   });
 
   it("shares one first-plan build across concurrent callers", async () => {
@@ -119,6 +126,54 @@ describe("ensureWorkspaceServicePortPlan", () => {
     expect(allocationCount).toBe(0);
   });
 
+  it("updates an existing plan when a later declaration sets an explicit port", async () => {
+    let allocationCount = 0;
+
+    const firstPlan = await ensureWorkspaceServicePortPlan({
+      workspaceId: "registry-later-explicit-port-workspace",
+      services: [{ scriptName: "api" }, { scriptName: "web" }],
+      allocatePort: async () => {
+        allocationCount += 1;
+        return 4450 + allocationCount;
+      },
+    });
+
+    const secondPlan = await ensureWorkspaceServicePortPlan({
+      workspaceId: "registry-later-explicit-port-workspace",
+      services: [{ scriptName: "api" }, { scriptName: "web", port: 5173 }],
+      allocatePort: async () => {
+        allocationCount += 1;
+        return 4499;
+      },
+    });
+
+    expect(Array.from(firstPlan.entries())).toEqual([
+      ["api", 4451],
+      ["web", 4452],
+    ]);
+    expect(Array.from(secondPlan.entries())).toEqual([
+      ["api", 4451],
+      ["web", 5173],
+    ]);
+    expect(allocationCount).toBe(2);
+  });
+
+  it("drops services that are no longer declared", async () => {
+    await ensureWorkspaceServicePortPlan({
+      workspaceId: "registry-removed-service-workspace",
+      services: [{ scriptName: "api" }, { scriptName: "web" }],
+      allocatePort: createSequentialPortAllocator(4460),
+    });
+
+    const nextPlan = await ensureWorkspaceServicePortPlan({
+      workspaceId: "registry-removed-service-workspace",
+      services: [{ scriptName: "api" }],
+      allocatePort: async () => 4469,
+    });
+
+    expect(Array.from(nextPlan.entries())).toEqual([["api", 4460]]);
+  });
+
   it("keeps workspace plans independent", async () => {
     const firstPlan = await ensureWorkspaceServicePortPlan({
       workspaceId: "registry-independent-workspace-a",
@@ -145,7 +200,7 @@ describe("ensureWorkspaceServicePortPlan", () => {
 
     const second = await ensureWorkspaceServicePortPlan({
       workspaceId: "registry-defensive-snapshot-workspace",
-      services: [],
+      services: [{ scriptName: "api" }],
       allocatePort: async () => 4701,
     });
 
@@ -171,7 +226,7 @@ describe("refreshWorkspaceServicePort", () => {
 
     const snapshot = await ensureWorkspaceServicePortPlan({
       workspaceId: "registry-refresh-workspace",
-      services: [],
+      services: [{ scriptName: "api" }, { scriptName: "web" }],
       allocatePort: async () => 4901,
     });
 

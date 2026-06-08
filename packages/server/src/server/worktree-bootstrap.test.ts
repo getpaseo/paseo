@@ -813,6 +813,75 @@ describe("runAsyncWorktreeBootstrap", () => {
     });
   });
 
+  it("extends a cached service port plan when paseo.json gains another service", async () => {
+    commitPaseoScripts(
+      {
+        "backend-dev": {
+          type: "service",
+          command: "npm run backend",
+        },
+      },
+      "add backend service script config",
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-service-plan-update",
+      scriptName: "backend-dev",
+      daemonPort: 6767,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    commitPaseoScripts(
+      {
+        "backend-dev": {
+          type: "service",
+          command: "npm run backend",
+        },
+        web: {
+          type: "service",
+          command: "npm run web",
+        },
+      },
+      "add web service script config",
+    );
+
+    const webResult = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-service-plan-update",
+      scriptName: "web",
+      daemonPort: 6767,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    expect(webResult.scriptName).toBe("web");
+    expect(createTerminalCalls).toHaveLength(2);
+    const backendPort = createTerminalCalls[0]?.env?.PASEO_SERVICE_BACKEND_DEV_PORT;
+    const webPort = createTerminalCalls[1]?.env?.PASEO_SERVICE_WEB_PORT;
+    expect(backendPort).toEqual(expect.stringMatching(/^\d+$/));
+    expect(webPort).toEqual(expect.stringMatching(/^\d+$/));
+    expect(webPort).not.toBe(backendPort);
+    expect(createTerminalCalls[1]?.env?.PASEO_SERVICE_BACKEND_DEV_PORT).toBe(backendPort);
+    expect(createTerminalCalls[1]?.env?.PASEO_PORT).toBe(webPort);
+    expect(createTerminalCalls[1]?.env?.PASEO_SERVICE_WEB_URL).toBe(
+      "http://web--feature-service-plan-update--repo.localhost:6767",
+    );
+  });
+
   it("spawns services with public aliases and public service URLs", async () => {
     commitPaseoScripts(
       {
