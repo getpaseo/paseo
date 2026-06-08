@@ -58,6 +58,7 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
+import { insertComposerTabIndent } from "./tab-indent";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerHeightMirror } from "./height-mirror";
 import { computeCanStartDictation } from "./state";
@@ -161,8 +162,10 @@ interface TextAreaHandle {
   clientHeight?: number;
   offsetHeight?: number;
   scrollTop?: number;
+  value?: string;
   selectionStart?: number | null;
   selectionEnd?: number | null;
+  setSelectionRange?: (selectionStart: number, selectionEnd: number) => void;
   style?: {
     height?: string;
     overflowY?: string;
@@ -653,6 +656,100 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
   ]);
+}
+
+interface WebTabIndentEffectArgs {
+  getWebTextArea: () => TextAreaHandle | null;
+  valueRef: React.MutableRefObject<string>;
+  onChangeText: (nextValue: string) => void;
+  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
+  disabled: boolean;
+  isDictating: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+}
+
+function useWebTabIndentEffect(args: WebTabIndentEffectArgs): void {
+  const {
+    getWebTextArea,
+    valueRef,
+    onChangeText,
+    onKeyPressCallback,
+    disabled,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+  } = args;
+
+  useEffect(() => {
+    if (!isWeb) return;
+
+    const textarea = getWebTextArea() as
+      | (TextAreaHandle & {
+          addEventListener?: (type: string, listener: (event: KeyboardEvent) => void) => void;
+          removeEventListener?: (type: string, listener: (event: KeyboardEvent) => void) => void;
+        })
+      | null;
+    if (
+      !textarea ||
+      typeof textarea.addEventListener !== "function" ||
+      typeof textarea.removeEventListener !== "function"
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isPlainTabKey(event)) return;
+      if (disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
+
+      if (onKeyPressCallback) {
+        const handled = onKeyPressCallback({
+          key: event.key,
+          preventDefault: () => event.preventDefault(),
+        });
+        if (handled) return;
+      }
+
+      event.preventDefault();
+      const next = insertComposerTabIndent({
+        value: valueRef.current,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+      });
+      valueRef.current = next.value;
+      textarea.value = next.value;
+      onChangeText(next.value);
+      restoreTextAreaSelection(textarea, next.selectionStart, next.selectionEnd);
+    };
+
+    textarea.addEventListener("keydown", handleKeyDown);
+    return () => {
+      textarea.removeEventListener?.("keydown", handleKeyDown);
+    };
+  }, [
+    disabled,
+    getWebTextArea,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+    onChangeText,
+    onKeyPressCallback,
+    valueRef,
+  ]);
+}
+
+function isPlainTabKey(event: KeyboardEvent): boolean {
+  return (
+    event.key === "Tab" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
+  );
+}
+
+function restoreTextAreaSelection(
+  textarea: TextAreaHandle,
+  selectionStart: number,
+  selectionEnd: number,
+): void {
+  textarea.setSelectionRange?.(selectionStart, selectionEnd);
+  requestAnimationFrame(() => {
+    textarea.setSelectionRange?.(selectionStart, selectionEnd);
+  });
 }
 
 function useAutoFocusOnWebEffect(
@@ -1767,6 +1864,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       },
       [onChangeText],
     );
+
+    useWebTabIndentEffect({
+      getWebTextArea,
+      valueRef,
+      onChangeText: handleInputChange,
+      onKeyPressCallback,
+      disabled,
+      isDictating,
+      isRealtimeVoiceForCurrentAgent,
+    });
 
     const handleInputFocus = useCallback(() => {
       isInputFocusedRef.current = true;
