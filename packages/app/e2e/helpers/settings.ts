@@ -319,8 +319,8 @@ export async function serveJson(page: Page, url: string, body: unknown): Promise
   });
 }
 
-export async function openAddProviderModal(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Add provider", exact: true }).click();
+export async function openAddProviderArea(page: Page): Promise<void> {
+  await page.getByTestId("host-page-add-provider-card").scrollIntoViewIfNeeded();
   await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
 }
 
@@ -332,7 +332,6 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0);
 }
 
 export async function expectProviderInstalledInSettings(
