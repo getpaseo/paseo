@@ -94,6 +94,8 @@ const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 ] as const;
 
+const MODEL_CONTEXT_WINDOW_OVERRIDES = new Map<string, number>([["minimax-m3", 1_000_000]]);
+
 export function getClaudeModels(): AgentModelDefinition[] {
   return CLAUDE_MODELS.map((model) => ({ ...model }));
 }
@@ -219,4 +221,19 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   const minor = runtimeMatch[3];
   const suffix = runtimeMatch[4] ?? "";
   return `claude-${family}-${major}-${minor}${suffix}`;
+}
+
+export function resolveClaudeModelContextWindowOverride(
+  modelId: string | null | undefined,
+): number | undefined {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : "";
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (/\[1m\]$/i.test(trimmed)) {
+    return 1_000_000;
+  }
+
+  return MODEL_CONTEXT_WINDOW_OVERRIDES.get(trimmed.toLowerCase());
 }

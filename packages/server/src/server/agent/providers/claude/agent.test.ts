@@ -750,11 +750,19 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 
-  async function createSessionForTest(): Promise<TestClaudeSession> {
-    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
+  async function createSessionForTest(options?: {
+    model?: string;
+    runtimeEnv?: Record<string, string>;
+  }): Promise<TestClaudeSession> {
+    const client = new ClaudeAgentClient({
+      logger,
+      resolveBinary: async () => "/test/claude/bin",
+      runtimeSettings: options?.runtimeEnv ? { env: options.runtimeEnv } : undefined,
+    });
     const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),
+      model: options?.model,
     });
     return session as unknown as TestClaudeSession;
   }
@@ -1030,6 +1038,68 @@ describe("ClaudeAgentSession context window usage", () => {
       {
         "claude-sonnet-4-6": { contextWindow: 200_000 },
         "claude-opus-4-6": { contextWindow: 1_000_000 },
+      },
+    );
+
+    expect(usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      totalCostUsd: 0.12,
+      contextWindowMaxTokens: 1_000_000,
+      contextWindowUsedTokens: 22,
+    });
+  });
+
+  test("convertUsage prefers known selected-model context over SDK default context", async () => {
+    const session = await createSessionForTest({ model: "MiniMax-M3" });
+
+    const usage = session.convertUsage(
+      {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 5,
+          output_tokens: 7,
+        },
+        total_cost_usd: 0.12,
+      },
+      {
+        "MiniMax-M3": { contextWindow: 200_000 },
+      },
+    );
+
+    expect(usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      totalCostUsd: 0.12,
+      contextWindowMaxTokens: 1_000_000,
+      contextWindowUsedTokens: 22,
+    });
+  });
+
+  test("convertUsage uses configured Anthropic model env context when no session model is selected", async () => {
+    const session = await createSessionForTest({
+      runtimeEnv: {
+        ANTHROPIC_MODEL: "MiniMax-M3",
+      },
+    });
+
+    const usage = session.convertUsage(
+      {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 5,
+          output_tokens: 7,
+        },
+        total_cost_usd: 0.12,
+      },
+      {
+        "MiniMax-M3": { contextWindow: 200_000 },
       },
     );
 
